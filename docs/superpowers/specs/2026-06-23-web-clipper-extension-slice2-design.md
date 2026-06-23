@@ -216,8 +216,14 @@ narrowed by a guard before use — never `any`.
   **never `innerHTML`**. The indexed content is attacker-influenceable (an email
   subject, a page title), and the contract types `snippet` as a plain string with
   no highlight markup, so plain-text rendering is both correct and the XSS
-  backstop. For a link hit, only `href` is set (to the validated `url` string) and
-  the visible text is the title via `textContent`.
+  backstop.
+- **`href` scheme allowlist.** `RelatedHit.url` is also attacker-influenceable, so
+  a hit's `url` is parsed with the `URL` constructor and used as an `href` **only**
+  when its protocol is `http:` or `https:`. Any other scheme (`javascript:`,
+  `data:`, `vbscript:`, …) or an unparseable/relative value falls back to the
+  plain-text branch — a clickable `javascript:` link executes on click regardless
+  of `target`/`rel`, so scheme validation (not just `rel="noopener"`) is the
+  defense. The visible text is always the title via `textContent`.
 - **Self-contained styles.** All CSS is an **inlined string** bundled into
   `panel.js` and injected as a `<style>` element in the shadow root — no `<link>`,
   no `chrome.runtime.getURL`, and therefore no `web_accessible_resources` entry.
@@ -261,6 +267,9 @@ via a temporary action badge is **deferred** — see Design review resolutions.)
   only, never `innerHTML` (see Rendering). The indexed content is
   attacker-influenceable, and the Shadow root, while style-isolated, is **not** a
   security boundary against script — plain-text rendering is the actual defense.
+- **`href` scheme allowlist** — a hit `url` becomes a link only when it parses as
+  `http:`/`https:`; any other scheme (e.g. `javascript:`/`data:`) renders as plain
+  text (see Rendering). Found by the automated commit security review and fixed.
 - **Outbound links** — hit links open with `rel="noopener noreferrer"` and
   `target="_blank"`.
 
@@ -287,7 +296,9 @@ carry coverage; the Shadow-DOM/injection UI is dev-loaded / manual).
   text node; a `url` string renders an `<a>` with `target="_blank"` +
   `rel="noopener noreferrer"`; **XSS regression** — a hit whose `title`/`snippet`
   contains `"<img src=x onerror=…>"` yields a text node with that literal string
-  and **zero** element children (proves `textContent`, not `innerHTML`).
+  and **zero** element children (proves `textContent`, not `innerHTML`); and a
+  `url: "javascript:…"` (or `data:`) hit renders **no** `<a>` (scheme-allowlist
+  regression).
 
 **Manual (dev-load checklist in `docs/development.md`):** `panel.js` injection +
 self-toggle + `AbortController` teardown, Shadow-DOM isolation on a real page, the
