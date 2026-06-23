@@ -8,11 +8,19 @@ import { handleClip, handlePair } from "./handlers.ts";
 
 addMessageListener((message, respond) => {
   if (isPairRequest(message)) {
-    handlePair({ confirmPair, setConnection, nowMs: () => Date.now() }, message).then(respond);
+    handlePair({ confirmPair, setConnection, nowMs: () => Date.now() }, message)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "pair", ok: false, reason: "server_error" });
+      });
     return true;
   }
   if (isClipRequest(message)) {
-    handleClip({ getConnection, postClip, nowMs: () => Date.now() }, message).then(respond);
+    handleClip({ getConnection, postClip, nowMs: () => Date.now() }, message)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "clip", ok: false, reason: "server_error" });
+      });
     return true;
   }
   return false;
