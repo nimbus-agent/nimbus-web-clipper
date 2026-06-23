@@ -1,0 +1,82 @@
+name: Publish Web Clipper
+
+# Triggered by tags of the form `v0.1.0`. The tag version is written into
+# package.json before building so the manifest version matches the tag, then a
+# zip per browser target is attached to a GitHub Release. The zips are
+# submission-ready for the Chrome Web Store and AMO (store upload is manual /
+# a follow-on — there are no store secrets here yet).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build + attach browser zips to the GitHub Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun run test
+        env:
+          CI: "true"
+
+      - name: Resolve version from tag
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '$GITHUB_REF_NAME' did not parse as semver after stripping 'v'"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp package.json with the tag version
+        run: npm pkg set version="${{ steps.version.outputs.version }}"
+
+      - name: Build bundles + manifests
+        run: bun run build
+
+      - name: Verify the build invariant
+        run: bun run check-build
+
+      - name: Package per-target zips
+        run: bun run package
+
+      - name: Attach zips to the GitHub Release
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        with:
+          files: dist-zip/*.zip
+          tag_name: ${{ github.ref_name }}
+          name: Web Clipper ${{ steps.version.outputs.version }}
+          generate_release_notes: true

@@ -1,0 +1,103 @@
+# Nimbus Web Clipper — Claude Code Context
+
+## What this is
+
+`nimbus-web-clipper` is a Chrome + Firefox **MV3 browser extension** that clips
+web pages (readable article or selection) into the user's local-first
+[Nimbus](https://github.com/nimbus-agent/Nimbus) index, and surfaces related
+indexed items in an on-demand panel. It is a **thin client**: it talks only to a
+Nimbus gateway on `127.0.0.1` over a locked HTTP contract. No cloud calls, no
+telemetry.
+
+It mirrors the `nimbus-vscode` satellite-repo template (own CI, Biome, esbuild,
+Sonar, MIT) and is the browser-side **Plan B** of the web clipper; the gateway
+side (**Plan A**) shipped in the Nimbus monorepo (PR #718).
+
+## The locked HTTP contract (do NOT redesign)
+
+The gateway surface is shipped and versioned. Build against it; don't change its
+shape here.
+
+- `POST /v1/clips` — ingest a clip. `Authorization: Bearer <paired token>`.
+  Body: `{ url, canonicalUrl?, title, mode: "article"|"selection", body, tags?, capturedAt }`.
+  Returns `{ id, status: "created"|"updated" }`.
+- `POST /v1/clips/pair/confirm` — redeem a 6-digit pairing code. Body `{ code }`.
+  Returns `{ token, label }` (or 403 fail-closed when no pairing window is open).
+- `POST /v1/clips/related` — bearer-authed read; related indexed items for the
+  current page. Body `{ title?, canonicalUrl?, selection?, limit? }`.
+
+Pairing: the owner runs `nimbus clip pair` on the gateway to open a short
+in-memory window (TTL ~120s, attempt-capped, single-use); the extension POSTs the
+printed code to `/pair/confirm` to mint a long-lived token. The gateway binds
+`127.0.0.1` only (invariant **I6**); minting is fail-closed (invariant **I30**).
+
+Reference (in the Nimbus monorepo): the design spec
+`docs/superpowers/specs/2026-06-21-web-clipper-design.md` and the gateway plan
+`docs/superpowers/plans/2026-06-21-web-clipper-gateway.md`.
+
+## Architecture (load-bearing)
+
+- **Loopback-only.** The only network destination is the gateway on
+  `127.0.0.1` / `localhost`. `host_permissions` is restricted to those origins —
+  never `<all_urls>`, never a remote host.
+- **The bearer token is the only secret.** It lives in extension storage
+  (`chrome.storage`), is held by the background service worker, and is **never
+  logged** and never put in the page DOM. The pairing code is likewise never
+  logged.
+- **Bundled, no runtime deps.** `esbuild.mjs` bundles each entry
+  (`background`, `popup`, `options`) into `dist/<target>/` as fully-inlined IIFE.
+  The shipped extension has no `node_modules`.
+- **One manifest, two targets.** `src/manifest/manifest.ts` composes the MV3
+  manifest per browser. Chrome → `background.service_worker`; Firefox →
+  `background.scripts` + `browser_specific_settings.gecko.id`. Everything else is
+  shared; a drift between targets is a type error.
+
+## Layout
+
+- `src/manifest/` — typed manifest compose (`composeManifest(target, version)`)
+- `src/background/` — MV3 service worker (token store, gateway fetch, message routing)
+- `src/popup/` — toolbar popup (clip actions)
+- `src/options/` — options page (pairing UI, paired-device list)
+- `src/shared/` — pure modules shared across entries (`gateway.ts` endpoints,
+  `messages.ts` typed message envelope)
+- `test/unit/` — Vitest unit tests (node env; DOM tests opt into jsdom via a docblock)
+- `esbuild.mjs` — build (run via `bun`, imports the TS manifest module)
+- `scripts/` — `clean.mjs`, `check-build.mjs` (guards per-target completeness),
+  `package.mjs` (zips each target)
+- `docs/` — design spec + implementation plan (superpowers spec→plan layout)
+
+## Commands
+
+```bash
+bun install
+bun run typecheck     # tsc --noEmit (strict)
+bun run lint          # biome check src/
+bun run test          # vitest run
+bun run build         # esbuild → dist/chrome + dist/firefox
+bun run watch         # rebuild on save
+bun run check-build   # assert each target is a complete MV3 extension (run after build)
+bun run package       # zip dist/<target> → dist-zip/ for sideload/store
+```
+
+## Conventions / non-negotiables
+
+- TypeScript **strict**; **no `any`** — use `unknown` for external/cross-boundary
+  data and narrow with a type guard. Biome enforces this (`noExplicitAny`,
+  `noConsole` in `src/`, `noNonNullAssertion`, …) — see `biome.json`.
+- **No `console.*` in `src/`** — the extension ships to users. (Tests and
+  `scripts/` may log.)
+- **Never log the bearer token or the pairing code.**
+- **Loopback only** — do not add host permissions or fetches beyond
+  `127.0.0.1` / `localhost`.
+- Local-first: the engine never pulls; the browser pushes. Clip ingest is
+  inbound and not egress/HITL-gated (the consent moment is `nimbus clip pair`).
+- WebExtension APIs (`chrome.*`) are used directly; both Chrome and Firefox
+  expose the `chrome.*` namespace for MV3. Keep pure logic out of the API surface
+  so it stays unit-testable.
+
+## Releasing
+
+Tag-driven (`vX.Y.Z`): `publish.yml` builds, packages a zip per target, and
+attaches them to a GitHub Release. The tag version is stamped into the manifest at
+build time; the `version` in `package.json` is only a baseline. Chrome Web Store /
+AMO submission is a deferred follow-on (the release zips are submission-ready).

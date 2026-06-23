@@ -1,0 +1,38 @@
+{
+  "name": "nimbus-web-clipper",
+  "displayName": "Nimbus Web Clipper",
+  "description": "Clip articles and selections from the browser into your local-first Nimbus index.",
+  "version": "0.0.1",
+  "license": "MIT",
+  "private": false,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nimbus-agent/nimbus-web-clipper"
+  },
+  "bugs": {
+    "url": "https://github.com/nimbus-agent/nimbus-web-clipper/issues"
+  },
+  "homepage": "https://nimbus-agent.dev/web-clipper",
+  "scripts": {
+    "build": "bun esbuild.mjs",
+    "watch": "bun esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/",
+    "test": "bunx vitest run",
+    "test:coverage": "bunx vitest run --coverage",
+    "check-build": "bun scripts/check-build.mjs",
+    "package": "bun scripts/package.mjs",
+    "clean": "bun scripts/clean.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.0",
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^26.0.0",
+    "@vitest/coverage-v8": "^4.1.9",
+    "esbuild": "^0.28.1",
+    "jsdom": "^29.1.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
