@@ -102,7 +102,14 @@ function readContext(): { title: string; canonicalUrl?: string; selection: strin
 }
 
 async function query(body: HTMLElement): Promise<void> {
-  const res = await sendMessage({ kind: "related", ...readContext() });
+  let res: unknown;
+  try {
+    res = await sendMessage({ kind: "related", ...readContext() });
+  } catch {
+    body.replaceChildren();
+    body.append(renderError(document, "Couldn't connect to Nimbus."));
+    return;
+  }
   body.replaceChildren();
   if (!isRelatedResponse(res)) {
     body.append(renderError(document, "Unexpected response."));
