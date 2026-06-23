@@ -39,6 +39,19 @@ describe("renderHit", () => {
     expect(el.textContent).toContain("<img src=x onerror=alert(1)>");
     expect(el.textContent).toContain("<script>alert(2)</script>");
   });
+  test("javascript: URL — no anchor rendered, title appears as plain text", () => {
+    const el = renderHit(document, { ...base, url: "javascript:alert(1)" });
+    expect(el.querySelector("a")).toBeNull();
+    expect(el.textContent).toContain("Doc");
+  });
+  test("data: URL — no anchor rendered, title appears as plain text", () => {
+    const el = renderHit(document, {
+      ...base,
+      url: "data:text/html,<script>alert(1)</script>",
+    });
+    expect(el.querySelector("a")).toBeNull();
+    expect(el.textContent).toContain("Doc");
+  });
 });
 
 describe("renderHits", () => {

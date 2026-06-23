@@ -4,6 +4,18 @@
 // attacker-influenceable, so plain-text rendering is the XSS backstop.
 import type { RelatedHit } from "../shared/types.ts";
 
+/** Returns the parsed href when the scheme is http or https; null otherwise.
+ *  Rejects javascript:, data:, vbscript:, relative paths, and malformed URLs. */
+function safeHttpUrl(raw: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
+}
+
 export function renderError(doc: Document, message: string): HTMLElement {
   const p = doc.createElement("p");
   p.className = "nimbus-related__status";
@@ -15,10 +27,12 @@ export function renderHit(doc: Document, hit: RelatedHit): HTMLElement {
   const item = doc.createElement("li");
   item.className = "nimbus-related__item";
 
+  const href = hit.url !== null ? safeHttpUrl(hit.url) : null;
+
   let title: HTMLElement;
-  if (hit.url !== null) {
+  if (href !== null) {
     const link = doc.createElement("a");
-    link.href = hit.url;
+    link.href = href;
     link.target = "_blank";
     link.rel = "noopener noreferrer";
     link.textContent = hit.title;
