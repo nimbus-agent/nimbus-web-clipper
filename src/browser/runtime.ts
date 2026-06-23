@@ -11,3 +11,7 @@ export function addMessageListener(
     fn(message, sendResponse),
   );
 }
+
+export function addCommandListener(fn: (command: string) => void): void {
+  chrome.commands.onCommand.addListener(fn);
+}

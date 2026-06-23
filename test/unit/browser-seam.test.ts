@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { runCapture } from "../../src/browser/scripting.ts";
+import { injectPanel, runCapture } from "../../src/browser/scripting.ts";
 import { storageGet, storageRemove, storageSet } from "../../src/browser/storage.ts";
 import { activeTab } from "../../src/browser/tabs.ts";
 import { installChromeStub } from "./chrome-stub.ts";
@@ -40,5 +40,13 @@ describe("runCapture", () => {
   test("throws when the injected result is not a CaptureResult", async () => {
     installChromeStub({ executeResults: [{ result: undefined }] });
     await expect(runCapture(7, "article")).rejects.toThrow();
+  });
+});
+
+describe("injectPanel", () => {
+  test("injects panel.js into the target tab", async () => {
+    const { executeCalls } = installChromeStub();
+    await injectPanel(7);
+    expect(executeCalls).toEqual([{ target: { tabId: 7 }, files: ["panel.js"] }]);
   });
 });

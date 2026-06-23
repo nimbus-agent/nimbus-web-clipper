@@ -5,8 +5,12 @@ interface StubOptions {
 }
 
 /** Install a minimal fake `chrome` on globalThis; returns the backing storage map. */
-export function installChromeStub(opts: StubOptions = {}): { storage: Map<string, unknown> } {
+export function installChromeStub(opts: StubOptions = {}): {
+  storage: Map<string, unknown>;
+  executeCalls: unknown[];
+} {
   const storage = new Map<string, unknown>(Object.entries(opts.storage ?? {}));
+  const executeCalls: unknown[] = [];
   const fake = {
     storage: {
       local: {
@@ -27,7 +31,10 @@ export function installChromeStub(opts: StubOptions = {}): { storage: Map<string
       ],
     },
     scripting: {
-      executeScript: async () => opts.executeResults ?? [{ result: undefined }],
+      executeScript: async (injection: unknown) => {
+        executeCalls.push(injection);
+        return opts.executeResults ?? [{ result: undefined }];
+      },
     },
     runtime: {
       sendMessage: async () => ({ ok: true }),
@@ -35,5 +42,5 @@ export function installChromeStub(opts: StubOptions = {}): { storage: Map<string
     },
   };
   (globalThis as unknown as { chrome: unknown }).chrome = fake;
-  return { storage };
+  return { storage, executeCalls };
 }
