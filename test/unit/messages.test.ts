@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { isClipRequest, isPairRequest, isPingMessage } from "../../src/shared/messages.ts";
+import {
+  isClipRequest,
+  isPairRequest,
+  isPingMessage,
+  isRelatedRequest,
+  isRelatedResponse,
+} from "../../src/shared/messages.ts";
 
 describe("isPingMessage", () => {
   test("accepts a well-formed ping", () => {
@@ -47,5 +53,32 @@ describe("isClipRequest", () => {
     expect(
       isClipRequest({ kind: "clip", capture: { ...capture, canonicalUrl: 123 }, tags: [] }),
     ).toBe(false);
+  });
+});
+
+describe("isRelatedRequest", () => {
+  test("accepts a related request with all/optional fields", () => {
+    expect(
+      isRelatedRequest({ kind: "related", title: "T", canonicalUrl: "u", selection: "s" }),
+    ).toBe(true);
+    expect(isRelatedRequest({ kind: "related" })).toBe(true);
+  });
+  test("rejects wrong kind, non-string fields, and non-objects", () => {
+    expect(isRelatedRequest({ kind: "clip" })).toBe(false);
+    expect(isRelatedRequest({ kind: "related", title: 1 })).toBe(false);
+    expect(isRelatedRequest(null)).toBe(false);
+  });
+});
+
+describe("isRelatedResponse", () => {
+  const hit = { id: "1", title: "T", service: "gmail", snippet: "s", url: null };
+  test("accepts ok with a RelatedHit[] and a failure with a reason", () => {
+    expect(isRelatedResponse({ kind: "related", ok: true, items: [hit] })).toBe(true);
+    expect(isRelatedResponse({ kind: "related", ok: false, reason: "not_paired" })).toBe(true);
+  });
+  test("rejects malformed items, wrong kind, and missing ok", () => {
+    expect(isRelatedResponse({ kind: "related", ok: true, items: [{ id: 1 }] })).toBe(false);
+    expect(isRelatedResponse({ kind: "clip", ok: true, items: [] })).toBe(false);
+    expect(isRelatedResponse({ kind: "related" })).toBe(false);
   });
 });

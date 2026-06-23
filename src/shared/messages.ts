@@ -2,7 +2,8 @@
 // background service worker via chrome.runtime messaging. External data crossing
 // the messaging boundary is `unknown` until narrowed by a guard here — never `any`.
 
-import type { CaptureResult, ClipError, PairError } from "./types.ts";
+import { isRelatedHit } from "./related.ts";
+import type { CaptureResult, ClipError, PairError, RelatedError, RelatedHit } from "./types.ts";
 
 /** A liveness probe the popup sends to confirm the service worker is responsive. */
 export interface PingMessage {
@@ -33,7 +34,14 @@ export interface ClipRequest {
   readonly tags: string[];
 }
 
-export type ExtensionRequest = PairRequest | ClipRequest;
+export interface RelatedRequest {
+  readonly kind: "related";
+  readonly title?: string;
+  readonly canonicalUrl?: string;
+  readonly selection?: string;
+}
+
+export type ExtensionRequest = PairRequest | ClipRequest | RelatedRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -48,7 +56,11 @@ export type ClipResponse =
     }
   | { readonly kind: "clip"; readonly ok: false; readonly reason: ClipError };
 
-export type ExtensionResponse = PairResponse | ClipResponse;
+export type RelatedResponse =
+  | { readonly kind: "related"; readonly ok: true; readonly items: RelatedHit[] }
+  | { readonly kind: "related"; readonly ok: false; readonly reason: RelatedError };
+
+export type ExtensionResponse = PairResponse | ClipResponse | RelatedResponse;
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -83,4 +95,27 @@ export function isClipRequest(v: unknown): v is ClipRequest {
     Array.isArray(v["tags"]) &&
     v["tags"].every((t) => typeof t === "string")
   );
+}
+
+export function isRelatedRequest(v: unknown): v is RelatedRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "related" &&
+    (v["title"] === undefined || typeof v["title"] === "string") &&
+    (v["canonicalUrl"] === undefined || typeof v["canonicalUrl"] === "string") &&
+    (v["selection"] === undefined || typeof v["selection"] === "string")
+  );
+}
+
+export function isRelatedResponse(v: unknown): v is RelatedResponse {
+  if (!isObject(v) || v["kind"] !== "related") {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return Array.isArray(v["items"]) && v["items"].every(isRelatedHit);
+  }
+  if (v["ok"] === false) {
+    return typeof v["reason"] === "string";
+  }
+  return false;
 }
