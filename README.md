@@ -1,5 +1,9 @@
 # Nimbus Web Clipper
 
+[![CI](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/ci.yml/badge.svg)](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/codeql.yml/badge.svg)](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
 Save what you read into your private, local-first [Nimbus](https://github.com/nimbus-agent/Nimbus)
 index — straight from the browser. A Chrome + Firefox (MV3) extension that clips
 the readable article or your current selection into Nimbus, where it becomes
@@ -15,9 +19,10 @@ Everything stays on your machine: the extension talks **only** to a Nimbus
 gateway running on `127.0.0.1`. There are no remote servers, no telemetry, and
 no cloud calls.
 
-> **Status:** scaffolding. The build, CI, and a loadable empty MV3 shell are in
-> place; the clip / pair / related features are designed in
-> [`docs/`](./docs/) and land next.
+> **Status:** Slice 1 shipped — pairing, article/selection capture, and clip
+> ingest (`POST /v1/clips`) are implemented and dev-loadable in both Chrome and
+> Firefox. The related-items panel (Slice 2, `POST /v1/clips/related`) is
+> designed in [`docs/`](./docs/) and lands next.
 
 ## How it works
 
@@ -63,6 +68,7 @@ Nimbus gateway repository; this repo builds against that stable surface.
 ## See also
 
 - [Documentation](./docs/) — design spec, architecture, and the implementation plan
+- [Changelog](./CHANGELOG.md) — notable changes per release
 - [Nimbus](https://github.com/nimbus-agent/Nimbus) — the gateway this extension talks to
 - [nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) — the sibling editor client
 

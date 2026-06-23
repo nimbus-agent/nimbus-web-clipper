@@ -14,6 +14,7 @@ const TARGETS = ["chrome", "firefox"];
 const REQUIRED_FILES = [
   "manifest.json",
   "background.js",
+  "capture.js",
   "popup.js",
   "popup.html",
   "popup.css",
@@ -58,7 +59,7 @@ for (const target of TARGETS) {
 
   if (target === "chrome") {
     if (manifest.background?.service_worker !== "background.js") {
-      failures.push("chrome: background.service_worker must be \"background.js\"");
+      failures.push('chrome: background.service_worker must be "background.js"');
     }
     if (manifest.browser_specific_settings !== undefined) {
       failures.push("chrome: browser_specific_settings must be absent (Gecko-only)");
