@@ -1,5 +1,5 @@
 import { sendMessage } from "../browser/runtime.ts";
-import { runCapture } from "../browser/scripting.ts";
+import { injectPanel, runCapture } from "../browser/scripting.ts";
 import { activeTab } from "../browser/tabs.ts";
 import { parseTags } from "../shared/clip.ts";
 import type { ClipResponse } from "../shared/messages.ts";
@@ -57,9 +57,20 @@ async function clip(mode: "article" | "selection"): Promise<void> {
   }
 }
 
+async function showRelated(): Promise<void> {
+  try {
+    const tab = await activeTab();
+    await injectPanel(tab.id);
+    window.close();
+  } catch {
+    setStatus("Nimbus can't show related on browser system pages.");
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("clip-page")?.addEventListener("click", () => void clip("article"));
   document
     .getElementById("clip-selection")
     ?.addEventListener("click", () => void clip("selection"));
+  document.getElementById("show-related")?.addEventListener("click", () => void showRelated());
 });

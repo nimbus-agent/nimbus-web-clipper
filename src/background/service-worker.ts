@@ -1,10 +1,12 @@
 // MV3 background service worker / Firefox event page. Owns the bearer token and all
-// gateway I/O; the popup and options page reach it only via runtime messages.
-import { addMessageListener } from "../browser/runtime.ts";
-import { isClipRequest, isPairRequest } from "../shared/messages.ts";
+// gateway I/O; the popup, options page, and injected panel reach it via messages.
+import { addCommandListener, addMessageListener } from "../browser/runtime.ts";
+import { injectPanel } from "../browser/scripting.ts";
+import { activeTab } from "../browser/tabs.ts";
+import { isClipRequest, isPairRequest, isRelatedRequest } from "../shared/messages.ts";
 import { getConnection, setConnection } from "./connection-store.ts";
-import { confirmPair, postClip } from "./gateway-client.ts";
-import { handleClip, handlePair } from "./handlers.ts";
+import { confirmPair, postClip, postRelated } from "./gateway-client.ts";
+import { handleClip, handlePair, handleRelated } from "./handlers.ts";
 
 addMessageListener((message, respond) => {
   if (isPairRequest(message)) {
@@ -23,5 +25,24 @@ addMessageListener((message, respond) => {
       });
     return true;
   }
+  if (isRelatedRequest(message)) {
+    handleRelated({ getConnection, postRelated }, message)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "related", ok: false, reason: "server_error" });
+      });
+    return true;
+  }
   return false;
+});
+
+// The hotkey injects the panel into the active tab. activeTab is granted on the
+// command gesture. A restricted page (chrome://, store) rejects injection — there
+// is no page surface to report on, so fail closed silently.
+addCommandListener((command) => {
+  if (command === "show_related") {
+    activeTab()
+      .then((tab) => injectPanel(tab.id))
+      .catch(() => undefined);
+  }
 });
