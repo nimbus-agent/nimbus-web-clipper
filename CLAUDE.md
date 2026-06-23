@@ -109,6 +109,9 @@ bun run package       # zip dist/<target> → dist-zip/ for sideload/store
 
 ## Releasing
 
+Record user-facing changes in `CHANGELOG.md` under `## [Unreleased]` as you go;
+on release that heading becomes the version.
+
 Tag-driven (`vX.Y.Z`): `publish.yml` builds, packages a zip per target, and
 attaches them to a GitHub Release. The tag version is stamped into the manifest at
 build time; the `version` in `package.json` is only a baseline. Chrome Web Store /
