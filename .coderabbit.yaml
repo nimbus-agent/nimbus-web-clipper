@@ -1,0 +1,30 @@
+# CodeRabbit configuration — https://docs.coderabbit.ai/configure/
+# The CodeRabbit GitHub App must have access to this repository (org-level
+# install on nimbus-agent, or add nimbus-web-clipper to the app's repo list).
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+  path_filters:
+    - "!dist/**"
+    - "!**/*.zip"
+  path_instructions:
+    - path: "src/**/*.ts"
+      instructions: >-
+        This is a Chrome + Firefox MV3 browser extension that talks ONLY to a
+        local Nimbus gateway on 127.0.0.1 over the locked HTTP contract
+        (/v1/clips, /v1/clips/pair/confirm, /v1/clips/related). Flag: any network
+        call to a non-loopback origin; any use of `any` (prefer `unknown`); any
+        `console.*` in src (it ships to users); any logging of the bearer token or
+        the pairing code; and any host_permissions beyond 127.0.0.1/localhost. The
+        bearer token is the only secret — it must live in extension storage and
+        never be logged.
+chat:
+  auto_reply: true
