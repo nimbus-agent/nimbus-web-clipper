@@ -365,6 +365,8 @@ git commit -m "feat(messages): related request/response envelope and guards"
 
 ```typescript
 // append to test/unit/gateway-client.test.ts
+// (also add `vi` to the existing `import { describe, expect, test } from "vitest";`
+//  at the top of the file — merge, don't add a second vitest import)
 import { postRelated } from "../../src/background/gateway-client.ts";
 import type { RelatedQuery } from "../../src/shared/related.ts";
 
@@ -419,6 +421,26 @@ describe("postRelated", () => {
         throw new Error("net");
       }),
     ).toEqual({ ok: false, reason: "unreachable" });
+  });
+  test("aborts and returns unreachable after the timeout fires", async () => {
+    vi.useFakeTimers();
+    try {
+      const result = postRelated(
+        "http://127.0.0.1:8765",
+        "t",
+        query,
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            );
+          }),
+      );
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await result).toEqual({ ok: false, reason: "unreachable" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 ```
@@ -1080,6 +1102,10 @@ function mount(): void {
 
   const panel = document.createElement("section");
   panel.className = "nimbus-related";
+  // A non-modal landmark, NOT role="dialog": the user reads the page alongside the
+  // panel, so focus is intentionally not trapped (a trap would fight that).
+  panel.setAttribute("role", "complementary");
+  panel.setAttribute("aria-label", "Related items in Nimbus");
 
   const header = document.createElement("header");
   header.className = "nimbus-related__header";
@@ -1123,6 +1149,8 @@ function mount(): void {
     { signal, capture: true },
   );
 
+  // Land keyboard/screen-reader users inside the panel (focus only — no trap).
+  close.focus();
   void query(body);
 }
 
@@ -1272,6 +1300,8 @@ In `src/popup/popup.ts`, add the import for `injectPanel` (merge with the existi
 import { injectPanel, runCapture } from "../browser/scripting.ts";
 ```
 
+`activeTab` (from `../browser/tabs.ts`) and `setStatus` are **already** imported/defined in this file (used by the existing `clip()` flow) — `showRelated` reuses them, no new import for those.
+
 Add a handler function before the `DOMContentLoaded` listener:
 
 ```typescript
@@ -1372,6 +1402,29 @@ gh pr create --base main --fill
 Verify CI (build-test, CodeQL, Sonar) goes green on the PR before merge.
 
 ---
+
+## Plan review resolutions (2026-06-23)
+
+From [the Slice 2 plan review](./2026-06-23-web-clipper-extension-slice2-review.md):
+
+1. **`activeTab` import in `popup.ts` (verified non-issue; clarified).** `popup.ts`
+   already imports `activeTab` from `../browser/tabs.ts` for the existing `clip()`
+   flow; `showRelated` reuses it. Task 8 now states this explicitly so the only
+   new import is `injectPanel`.
+2. **Focus management (fixed; full trap rejected).** Task 7 now focuses the close
+   button on mount and marks the panel `role="complementary"` with an `aria-label`.
+   A full focus **trap** is rejected: this is a non-modal sidecar the user reads
+   alongside the page (no click-outside dismiss), so trapping focus would be a
+   regression, not an improvement.
+3. **Hotkey silent-failure feedback (deferred / rejected — already decided).** Same
+   item the spec design-review resolved: `console.warn` is rejected (Biome
+   `noConsole` bans `console.*` in `src/`); a temporary action-badge is deferred as
+   YAGNI; a warning sound is rejected as intrusive. The popup-button path already
+   shows a clear message; the hotkey path fails closed silently by design.
+4. **Abort/timeout test for `postRelated` (fixed).** Task 3 adds a fake-timers test
+   that wires the injected `fetch` to the abort signal, advances past
+   `RELATED_TIMEOUT_MS` (8s), and asserts the result is `unreachable` — matching the
+   abort coverage Slice 1 added to `gateway-client` in review.
 
 ## Self-Review Notes (author)
 
