@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { installChromeStub } from "./chrome-stub.ts";
+import { runCapture } from "../../src/browser/scripting.ts";
 import { storageGet, storageRemove, storageSet } from "../../src/browser/storage.ts";
 import { activeTab } from "../../src/browser/tabs.ts";
-import { runCapture } from "../../src/browser/scripting.ts";
+import { installChromeStub } from "./chrome-stub.ts";
 
 afterEach(() => {
   (globalThis as unknown as { chrome?: unknown }).chrome = undefined;
@@ -27,7 +27,13 @@ describe("activeTab", () => {
 
 describe("runCapture", () => {
   test("returns the CaptureResult the injected function yields", async () => {
-    const capture = { url: "https://ex.com/p", title: "P", mode: "article", body: "b", readableFound: true };
+    const capture = {
+      url: "https://ex.com/p",
+      title: "P",
+      mode: "article",
+      body: "b",
+      readableFound: true,
+    };
     installChromeStub({ executeResults: [{ result: capture }] });
     expect(await runCapture(7, "article")).toEqual(capture);
   });

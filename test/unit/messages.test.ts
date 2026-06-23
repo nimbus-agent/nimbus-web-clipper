@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { isPingMessage, isClipRequest, isPairRequest } from "../../src/shared/messages.ts";
+import { isClipRequest, isPairRequest, isPingMessage } from "../../src/shared/messages.ts";
 
 describe("isPingMessage", () => {
   test("accepts a well-formed ping", () => {
@@ -16,7 +16,9 @@ describe("isPingMessage", () => {
 
 describe("isPairRequest", () => {
   test("accepts a well-formed pair request", () => {
-    expect(isPairRequest({ kind: "pair", origin: "http://127.0.0.1:8765", code: "429173" })).toBe(true);
+    expect(isPairRequest({ kind: "pair", origin: "http://127.0.0.1:8765", code: "429173" })).toBe(
+      true,
+    );
   });
   test("rejects wrong kind / missing fields / non-object", () => {
     expect(isPairRequest({ kind: "clip" })).toBe(false);
@@ -42,6 +44,8 @@ describe("isClipRequest", () => {
     expect(isClipRequest("clip")).toBe(false);
   });
   test("rejects a capture whose optional canonicalUrl is present but not a string", () => {
-    expect(isClipRequest({ kind: "clip", capture: { ...capture, canonicalUrl: 123 }, tags: [] })).toBe(false);
+    expect(
+      isClipRequest({ kind: "clip", capture: { ...capture, canonicalUrl: 123 }, tags: [] }),
+    ).toBe(false);
   });
 });

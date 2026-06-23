@@ -1,9 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  BROWSER_TARGETS,
-  composeManifest,
-  FIREFOX_ADDON_ID,
-} from "../../src/manifest/manifest.ts";
+import { BROWSER_TARGETS, composeManifest, FIREFOX_ADDON_ID } from "../../src/manifest/manifest.ts";
 
 describe("composeManifest", () => {
   test("both targets share the locked core (MV3, name, loopback-only hosts)", () => {

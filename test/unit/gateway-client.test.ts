@@ -4,7 +4,10 @@ import type { ClipPayload } from "../../src/shared/clip.ts";
 
 const ORIGIN = "http://127.0.0.1:8765";
 function jsonRes(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 describe("confirmPair", () => {
@@ -21,19 +24,27 @@ describe("confirmPair", () => {
     expect(out).toEqual({ ok: true, token: "tok-abc", label: "chrome" });
   });
   test("403 → pairing_failed", async () => {
-    expect(await confirmPair(ORIGIN, "x", async () => jsonRes(403, { error: "pairing_failed" }))).toEqual({
+    expect(
+      await confirmPair(ORIGIN, "x", async () => jsonRes(403, { error: "pairing_failed" })),
+    ).toEqual({
       ok: false,
       reason: "pairing_failed",
     });
   });
   test("fetch throw → unreachable", async () => {
-    expect(await confirmPair(ORIGIN, "x", async () => { throw new Error("net"); })).toEqual({
+    expect(
+      await confirmPair(ORIGIN, "x", async () => {
+        throw new Error("net");
+      }),
+    ).toEqual({
       ok: false,
       reason: "unreachable",
     });
   });
   test("5xx → server_error", async () => {
-    expect(await confirmPair(ORIGIN, "x", async () => jsonRes(500, { error: "internal_error" }))).toEqual({
+    expect(
+      await confirmPair(ORIGIN, "x", async () => jsonRes(500, { error: "internal_error" })),
+    ).toEqual({
       ok: false,
       reason: "server_error",
     });
@@ -65,25 +76,37 @@ describe("postClip", () => {
     expect(out).toEqual({ ok: true, status: "created" });
   });
   test("200 updated → ok updated", async () => {
-    expect(await postClip(ORIGIN, "t", payload, async () => jsonRes(200, { id: "x", status: "updated" }))).toEqual({
+    expect(
+      await postClip(ORIGIN, "t", payload, async () =>
+        jsonRes(200, { id: "x", status: "updated" }),
+      ),
+    ).toEqual({
       ok: true,
       status: "updated",
     });
   });
   test("401 → unauthorized", async () => {
-    expect(await postClip(ORIGIN, "t", payload, async () => jsonRes(401, { error: "unauthorized" }))).toEqual({
+    expect(
+      await postClip(ORIGIN, "t", payload, async () => jsonRes(401, { error: "unauthorized" })),
+    ).toEqual({
       ok: false,
       reason: "unauthorized",
     });
   });
   test("400 → invalid_request", async () => {
-    expect(await postClip(ORIGIN, "t", payload, async () => jsonRes(400, { error: "invalid_request" }))).toEqual({
+    expect(
+      await postClip(ORIGIN, "t", payload, async () => jsonRes(400, { error: "invalid_request" })),
+    ).toEqual({
       ok: false,
       reason: "invalid_request",
     });
   });
   test("fetch throw → unreachable", async () => {
-    expect(await postClip(ORIGIN, "t", payload, async () => { throw new Error("net"); })).toEqual({
+    expect(
+      await postClip(ORIGIN, "t", payload, async () => {
+        throw new Error("net");
+      }),
+    ).toEqual({
       ok: false,
       reason: "unreachable",
     });

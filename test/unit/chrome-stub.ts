@@ -18,7 +18,13 @@ export function installChromeStub(opts: StubOptions = {}): { storage: Map<string
       },
     },
     tabs: {
-      query: async () => [{ id: opts.tab?.id ?? 1, url: opts.tab?.url ?? "https://ex.com", title: opts.tab?.title ?? "T" }],
+      query: async () => [
+        {
+          id: opts.tab?.id ?? 1,
+          url: opts.tab?.url ?? "https://ex.com",
+          title: opts.tab?.title ?? "T",
+        },
+      ],
     },
     scripting: {
       executeScript: async () => opts.executeResults ?? [{ result: undefined }],
