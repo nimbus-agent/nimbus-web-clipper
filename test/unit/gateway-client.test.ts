@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { confirmPair, postClip } from "../../src/background/gateway-client.ts";
 import type { ClipPayload } from "../../src/shared/clip.ts";
 
@@ -87,5 +87,42 @@ describe("postClip", () => {
       ok: false,
       reason: "unreachable",
     });
+  });
+});
+
+describe("timeout", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("confirmPair aborts after its timeout → unreachable", async () => {
+    const doFetch = (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    const p = confirmPair(ORIGIN, "429173", doFetch);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(await p).toEqual({ ok: false, reason: "unreachable" });
+  });
+
+  test("postClip aborts after its timeout → unreachable", async () => {
+    const payload = {
+      url: "https://ex.com/p",
+      title: "T",
+      mode: "article" as const,
+      body: "b",
+      tags: [],
+      capturedAt: 1,
+    };
+    const doFetch = (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    const p = postClip(ORIGIN, "tok", payload, doFetch);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(await p).toEqual({ ok: false, reason: "unreachable" });
   });
 });
