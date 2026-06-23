@@ -1,7 +1,21 @@
 import { buildClipPayload } from "../shared/clip.ts";
 import { isLoopbackOrigin } from "../shared/gateway.ts";
-import type { ClipRequest, ClipResponse, PairRequest, PairResponse } from "../shared/messages.ts";
-import type { ClipError, Connection, PairError } from "../shared/types.ts";
+import type {
+  ClipRequest,
+  ClipResponse,
+  PairRequest,
+  PairResponse,
+  RelatedRequest,
+  RelatedResponse,
+} from "../shared/messages.ts";
+import { buildRelatedQuery, type RelatedQuery } from "../shared/related.ts";
+import type {
+  ClipError,
+  Connection,
+  PairError,
+  RelatedError,
+  RelatedHit,
+} from "../shared/types.ts";
 
 export interface PairDeps {
   readonly confirmPair: (
@@ -52,4 +66,28 @@ export async function handleClip(deps: ClipDeps, req: ClipRequest): Promise<Clip
     return { kind: "clip", ok: false, reason: r.reason };
   }
   return { kind: "clip", ok: true, status: r.status, bookmarked: !req.capture.readableFound };
+}
+
+export interface RelatedDeps {
+  readonly getConnection: () => Promise<Connection | null>;
+  readonly postRelated: (
+    origin: string,
+    token: string,
+    query: RelatedQuery,
+  ) => Promise<{ ok: true; items: RelatedHit[] } | { ok: false; reason: RelatedError }>;
+}
+
+export async function handleRelated(
+  deps: RelatedDeps,
+  req: RelatedRequest,
+): Promise<RelatedResponse> {
+  const conn = await deps.getConnection();
+  if (conn === null) {
+    return { kind: "related", ok: false, reason: "not_paired" };
+  }
+  const r = await deps.postRelated(conn.origin, conn.token, buildRelatedQuery(req));
+  if (!r.ok) {
+    return { kind: "related", ok: false, reason: r.reason };
+  }
+  return { kind: "related", ok: true, items: r.items };
 }

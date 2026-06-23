@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { handleClip, handlePair } from "../../src/background/handlers.ts";
+import { handleClip, handlePair, handleRelated } from "../../src/background/handlers.ts";
 import type { Connection } from "../../src/shared/types.ts";
 
 const conn: Connection = {
@@ -121,5 +121,59 @@ describe("handleClip", () => {
       { kind: "clip", capture, tags: [] },
     );
     expect(res).toEqual({ kind: "clip", ok: false, reason: "unauthorized" });
+  });
+});
+
+describe("handleRelated", () => {
+  const conn: Connection = {
+    origin: "http://127.0.0.1:8765",
+    token: "tok",
+    label: "chrome",
+    pairedAt: 1,
+  };
+  const hit = { id: "1", title: "Doc", service: "drive", snippet: "…", url: null };
+
+  test("not paired → not_paired without posting", async () => {
+    let called = false;
+    const res = await handleRelated(
+      {
+        getConnection: async () => null,
+        postRelated: async () => {
+          called = true;
+          return { ok: true, items: [] };
+        },
+      },
+      { kind: "related", title: "T" },
+    );
+    expect(res).toEqual({ kind: "related", ok: false, reason: "not_paired" });
+    expect(called).toBe(false);
+  });
+  test("paired → builds the query, posts to the connection origin, returns items", async () => {
+    let postedTo = "";
+    let postedQuery: unknown;
+    const res = await handleRelated(
+      {
+        getConnection: async () => conn,
+        postRelated: async (origin, _token, query) => {
+          postedTo = origin;
+          postedQuery = query;
+          return { ok: true, items: [hit] };
+        },
+      },
+      { kind: "related", title: "  Hello  ", canonicalUrl: "https://ex.com/p", selection: "" },
+    );
+    expect(postedTo).toBe("http://127.0.0.1:8765");
+    expect(postedQuery).toEqual({ title: "Hello", canonicalUrl: "https://ex.com/p", limit: 10 });
+    expect(res).toEqual({ kind: "related", ok: true, items: [hit] });
+  });
+  test("propagates unauthorized", async () => {
+    const res = await handleRelated(
+      {
+        getConnection: async () => conn,
+        postRelated: async () => ({ ok: false, reason: "unauthorized" }),
+      },
+      { kind: "related", title: "T" },
+    );
+    expect(res).toEqual({ kind: "related", ok: false, reason: "unauthorized" });
   });
 });
