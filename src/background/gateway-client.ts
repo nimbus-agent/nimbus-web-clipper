@@ -1,11 +1,13 @@
 import type { ClipPayload } from "../shared/clip.ts";
 import { type ClipEndpoint, endpointUrl } from "../shared/gateway.ts";
-import type { ClipError, PairError } from "../shared/types.ts";
+import { isRelatedHit, type RelatedQuery } from "../shared/related.ts";
+import type { ClipError, PairError, RelatedError, RelatedHit } from "../shared/types.ts";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 const PAIR_TIMEOUT_MS = 5_000;
 const CLIP_TIMEOUT_MS = 10_000;
+const RELATED_TIMEOUT_MS = 8_000;
 
 async function postJson(
   doFetch: FetchLike,
@@ -96,6 +98,38 @@ export async function postClip(
   }
   if (res.status === 400) {
     return { ok: false, reason: "invalid_request" };
+  }
+  return { ok: false, reason: "server_error" };
+}
+
+export async function postRelated(
+  origin: string,
+  token: string,
+  query: RelatedQuery,
+  doFetch: FetchLike = fetch,
+): Promise<{ ok: true; items: RelatedHit[] } | { ok: false; reason: RelatedError }> {
+  let res: Response;
+  try {
+    res = await postJson(
+      doFetch,
+      origin,
+      "related",
+      query,
+      { authorization: `Bearer ${token}` },
+      RELATED_TIMEOUT_MS,
+    );
+  } catch {
+    return { ok: false, reason: "unreachable" };
+  }
+  if (res.status === 200) {
+    const data = await readJson(res);
+    if (isObject(data) && Array.isArray(data["items"]) && data["items"].every(isRelatedHit)) {
+      return { ok: true, items: data["items"] as RelatedHit[] };
+    }
+    return { ok: false, reason: "server_error" };
+  }
+  if (res.status === 401) {
+    return { ok: false, reason: "unauthorized" };
   }
   return { ok: false, reason: "server_error" };
 }
