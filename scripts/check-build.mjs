@@ -14,6 +14,7 @@ const TARGETS = ["chrome", "firefox"];
 const REQUIRED_FILES = [
   "manifest.json",
   "background.js",
+  "capture.js",
   "popup.js",
   "popup.html",
   "popup.css",

@@ -25,6 +25,7 @@ const ENTRIES = [
   { in: "src/background/service-worker.ts", out: "background" },
   { in: "src/popup/popup.ts", out: "popup" },
   { in: "src/options/options.ts", out: "options" },
+  { in: "src/capture/capture-in-page.ts", out: "capture" },
 ];
 
 // Static assets copied verbatim into each target dir.
