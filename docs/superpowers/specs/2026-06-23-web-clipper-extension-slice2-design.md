@@ -77,9 +77,21 @@ so `endpointUrl(origin, "related")` is used unchanged.
 the SW; re-injection *is* the toggle:
 
 - On run, look for the host element `#nimbus-related-host` on `document.documentElement`.
-- **Present** → remove it (and its keydown listener) and return → toggle-closed.
+- **Present** → tear down (see below) and return → toggle-closed.
 - **Absent** → create the host + a Shadow root, mount the overlay in the loading
   state, read the page context, and message the SW.
+
+**Teardown via `AbortController`.** Mounting creates one `AbortController`; every
+page/document listener (the X button, the document `keydown`) is registered with
+`{ signal: controller.signal }`. Closing (X, Esc, or re-invoke) calls
+`controller.abort()` and removes the host element — one call detaches all
+listeners, so no orphaned handlers survive a toggle.
+
+**Esc must not leak to the host page.** The `keydown` listener is attached in the
+**capture phase** and, when it consumes **Esc** (closing the panel), calls
+`event.stopPropagation()` + `event.preventDefault()` so host apps with their own
+Esc handling (Docs, Jira, GitHub) don't also react. Other keys pass through
+untouched.
 
 Files injected via `executeScript({ files })` come from the extension package and
 do **not** need `web_accessible_resources`.
@@ -106,8 +118,10 @@ src/
                         #   isRelatedHit() / isRelatedResponse() guards
     messages.ts         # MOD: RelatedRequest / RelatedResponse + isRelatedRequest()
   panel/
-    panel-in-page.ts    # NEW esbuild entry → dist/<target>/panel.js: self-toggle,
-                        #   mount Shadow-DOM overlay, read context, message SW, render
+    panel-view.ts       # NEW: pure DOM builders (renderHits/renderHit/renderError) that
+                        #   create nodes via textContent only — jsdom-unit-tested (XSS backstop)
+    panel-in-page.ts    # NEW esbuild entry → dist/<target>/panel.js: self-toggle, mount
+                        #   Shadow-DOM overlay, read context, message SW, delegate render to panel-view
   background/
     gateway-client.ts   # MOD: postRelated() — fetch + Bearer + status→reason + RelatedError
     handlers.ts         # MOD: handleRelated() — getConnection → buildRelatedQuery → postRelated
@@ -164,6 +178,11 @@ handleRelated(deps: RelatedDeps, req: RelatedRequest): Promise<RelatedResponse>
 
 // browser/scripting.ts (additive)
 injectPanel(tabId: number): Promise<void>   // executeScript({ target:{tabId}, files:["panel.js"] })
+
+// panel/panel-view.ts (pure DOM builders — textContent only, never innerHTML; jsdom-tested)
+renderHits(doc: Document, items: RelatedHit[]): HTMLElement   // list, or the empty-state node
+renderHit(doc: Document, hit: RelatedHit): HTMLElement        // link when url is a string, else text
+renderError(doc: Document, message: string): HTMLElement
 ```
 
 Cross-boundary data (the SW message, the gateway response) is typed `unknown` and
@@ -186,18 +205,30 @@ narrowed by a guard before use — never `any`.
 7. **Close** via X, Esc, or re-invoking the trigger → teardown removes the host
    element and the keydown listener.
 
-## Rendering
-
 - Each hit row: **title**, a **service badge** (e.g. `gmail`, `drive`), and a
   **snippet**. When `url` is a non-null string the title is an
   `<a target="_blank" rel="noopener noreferrer">`; when `url` is `null` the title
   is plain text.
 - States: **loading** (immediately on mount), **list**, **empty**
   ("No related items found."), **error** (mapped message).
+- **Safe rendering — `textContent` only.** Every gateway field (`title`,
+  `snippet`, `service`) is written with `Element.textContent` / `createElement` —
+  **never `innerHTML`**. The indexed content is attacker-influenceable (an email
+  subject, a page title), and the contract types `snippet` as a plain string with
+  no highlight markup, so plain-text rendering is both correct and the XSS
+  backstop. For a link hit, only `href` is set (to the validated `url` string) and
+  the visible text is the title via `textContent`.
+- **Self-contained styles.** All CSS is an **inlined string** bundled into
+  `panel.js` and injected as a `<style>` element in the shadow root — no `<link>`,
+  no `chrome.runtime.getURL`, and therefore no `web_accessible_resources` entry.
 - Shadow-DOM CSS isolation: the sidecar root sets `:host { all: initial; … }` to
   drop inherited typography/color, and references only its **own** namespaced
   `--nimbus-*` custom properties (never a host `:root` token — `all: initial` does
   not reset custom properties). Fixed to the right edge with a high `z-index`.
+- **Color scheme.** The inlined styles honor the user's preference via
+  `@media (prefers-color-scheme: dark)` swapping the `--nimbus-*` token set
+  (light + dark), consistent with the Slice-1 popup/options (`color-scheme:
+  light dark`). The host page's background is **not** sniffed.
 
 ## Error handling
 
@@ -214,7 +245,8 @@ narrowed by a guard before use — never `any`.
 pages rejects. On the **popup-button** path the popup catches it and shows "Nimbus
 can't show related on browser system pages." On the **hotkey** path there is no
 page surface to render into, so the SW swallows the rejected injection (fails
-closed, silent) — this is expected behavior.
+closed, silent) — this is expected behavior. (Surfacing the hotkey-path failure
+via a temporary action badge is **deferred** — see Design review resolutions.)
 
 ## Security posture
 
@@ -225,6 +257,10 @@ closed, silent) — this is expected behavior.
   on a click or hotkey via `activeTab` + `scripting`.
 - **Token isolation** — the token stays in the SW; the panel only ever receives
   rendered `RelatedHit` data, never the token.
+- **DOM-XSS backstop** — gateway-returned strings are rendered with `textContent`
+  only, never `innerHTML` (see Rendering). The indexed content is
+  attacker-influenceable, and the Shadow root, while style-isolated, is **not** a
+  security boundary against script — plain-text rendering is the actual defense.
 - **Outbound links** — hit links open with `rel="noopener noreferrer"` and
   `target="_blank"`.
 
@@ -246,10 +282,18 @@ carry coverage; the Shadow-DOM/injection UI is dev-loaded / manual).
 - `background/handlers.ts` — `handleRelated`: `not_paired` short-circuit (no fetch),
   paired→posts the built query + returns items, propagates `unauthorized` /
   `unreachable`.
+- `panel/panel-view.ts` (**jsdom**, via the `@vitest-environment jsdom` docblock) —
+  `renderHit`/`renderHits`/`renderError`: a `url:null` hit renders as a non-link
+  text node; a `url` string renders an `<a>` with `target="_blank"` +
+  `rel="noopener noreferrer"`; **XSS regression** — a hit whose `title`/`snippet`
+  contains `"<img src=x onerror=…>"` yields a text node with that literal string
+  and **zero** element children (proves `textContent`, not `innerHTML`).
 
 **Manual (dev-load checklist in `docs/development.md`):** `panel.js` injection +
-toggle, Shadow-DOM isolation/rendering on a real page, the hotkey, link opens in a
-new tab, empty/error/not-paired states, restricted-page behavior, Firefox parity.
+self-toggle + `AbortController` teardown, Shadow-DOM isolation on a real page, the
+hotkey (incl. Esc not leaking to the host app), link opens in a new tab,
+empty/error/not-paired states, restricted-page behavior, dark-mode appearance,
+Firefox parity.
 
 No hard local coverage thresholds; SonarCloud's "Sonar way" gate (80% new code)
 governs.
@@ -270,3 +314,31 @@ governs.
    `buildRelatedQuery`, keeping `panel-in-page` thin (symmetry with `handleClip` +
    `buildClipPayload`).
 6. **Limit:** fixed `RELATED_LIMIT = 10` for this slice.
+
+## Design review resolutions (2026-06-23)
+
+From [the Slice 2 design review](./2026-06-23-web-clipper-extension-slice2-design-review.md):
+
+1. **Snippet/title DOM-XSS (fixed).** All gateway fields render via `textContent`,
+   never `innerHTML`; `snippet` is a plain string per the contract. Added to
+   Rendering + Security posture. The unit tests for the (pure) render-model mapper
+   assert no markup is interpreted.
+2. **Shadow-DOM style delivery (fixed).** Styles are an inlined string injected as
+   a `<style>` element in the shadow root — no `<link>`, no `getURL`, no
+   `web_accessible_resources`. Stated in Rendering.
+3. **Esc propagation (fixed).** The `keydown` listener runs in the capture phase
+   and calls `stopPropagation()` + `preventDefault()` when it consumes Esc, so host
+   apps don't double-handle it. Stated in Delivery & toggle.
+4. **Listener cleanup (fixed).** Teardown uses a single `AbortController` whose
+   `signal` is passed to every listener; `abort()` on close detaches them all.
+   Stated in Delivery & toggle.
+5. **Restricted-page feedback (deferred / partially rejected).** Console logging is
+   **rejected** — Biome `noConsole` bans `console.*` in `src/` and the extension
+   ships none. A temporary action-badge ("Err"/"N/A") on the silent hotkey path is
+   **deferred** as YAGNI: it adds badge set/clear/timeout state for a by-design edge
+   case, and the popup-button path already shows a clear message. Revisit if users
+   report confusion.
+6. **Dark mode (fixed, lightweight).** The inlined styles honor
+   `@media (prefers-color-scheme: dark)` via the `--nimbus-*` tokens, matching the
+   Slice-1 popup/options. The alternative — sniffing the host page's background
+   brightness — is **rejected** as fragile and complex.
