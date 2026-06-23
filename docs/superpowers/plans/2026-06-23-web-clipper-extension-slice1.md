@@ -317,6 +317,9 @@ describe("isClipRequest", () => {
     expect(isClipRequest({ kind: "clip", tags: [] })).toBe(false);
     expect(isClipRequest("clip")).toBe(false);
   });
+  test("rejects a capture whose optional canonicalUrl is present but not a string", () => {
+    expect(isClipRequest({ kind: "clip", capture: { ...capture, canonicalUrl: 123 }, tags: [] })).toBe(false);
+  });
 });
 ```
 
@@ -372,6 +375,7 @@ function isCaptureResult(v: unknown): v is CaptureResult {
   return (
     isObject(v) &&
     typeof v["url"] === "string" &&
+    (v["canonicalUrl"] === undefined || typeof v["canonicalUrl"] === "string") &&
     typeof v["title"] === "string" &&
     (v["mode"] === "article" || v["mode"] === "selection") &&
     typeof v["body"] === "string" &&
@@ -471,8 +475,10 @@ export function isLoopbackOrigin(origin: string): boolean {
   if (url.protocol !== "http:") {
     return false;
   }
+  // WHATWG URL serializes an IPv6 host WITH brackets, so url.hostname is "[::1]"
+  // (never bare "::1"), consistently across Chrome/Firefox/Node.
   const host = url.hostname;
-  return host === "localhost" || host === "[::1]" || host === "::1" || LOOPBACK_V4.test(host);
+  return host === "localhost" || host === "[::1]" || LOOPBACK_V4.test(host);
 }
 ```
 
@@ -866,12 +872,17 @@ export async function activeTab(): Promise<{ id: number; url: string; title: str
 import type { CaptureResult } from "../shared/types.ts";
 
 function isCaptureResult(v: unknown): v is CaptureResult {
+  if (typeof v !== "object" || v === null) {
+    return false;
+  }
+  const o = v as Record<string, unknown>;
   return (
-    typeof v === "object" &&
-    v !== null &&
-    typeof (v as Record<string, unknown>)["url"] === "string" &&
-    typeof (v as Record<string, unknown>)["body"] === "string" &&
-    typeof (v as Record<string, unknown>)["readableFound"] === "boolean"
+    typeof o["url"] === "string" &&
+    (o["canonicalUrl"] === undefined || typeof o["canonicalUrl"] === "string") &&
+    typeof o["title"] === "string" &&
+    (o["mode"] === "article" || o["mode"] === "selection") &&
+    typeof o["body"] === "string" &&
+    typeof o["readableFound"] === "boolean"
   );
 }
 
@@ -1177,6 +1188,8 @@ export async function handlePair(deps: PairDeps, req: PairRequest): Promise<Pair
   }
   const r = await deps.confirmPair(req.origin, req.code);
   if (!r.ok) {
+    // Intentional: a failed re-pair (e.g. wrong code) leaves any existing working
+    // connection untouched — we overwrite it only on a confirmed new token.
     return { kind: "pair", ok: false, reason: r.reason };
   }
   await deps.setConnection({
@@ -1293,7 +1306,8 @@ function capture(mode: string): CaptureResult {
     return { url, ...canonicalPart, title, mode: "selection", body, readableFound: body !== "" };
   }
 
-  // Readability mutates the DOM it parses — give it a clone.
+  // Readability mutates the DOM it parses — give it a clone. document.cloneNode(true)
+  // is Mozilla's documented entry: `new Readability(document.cloneNode(true)).parse()`.
   const clone = document.cloneNode(true) as Document;
   const article = new Readability(clone).parse();
   const text = article?.textContent?.trim() ?? "";
@@ -1544,8 +1558,14 @@ async function pair(): Promise<void> {
   if (!(originEl instanceof HTMLInputElement) || !(codeEl instanceof HTMLInputElement)) {
     return;
   }
+  const origin = originEl.value.trim();
+  const code = codeEl.value.trim();
+  if (origin === "" || code === "") {
+    setStatus("Enter both the gateway URL and the pairing code.");
+    return;
+  }
   setStatus("Pairing…");
-  const res = await sendMessage({ kind: "pair", origin: originEl.value.trim(), code: codeEl.value.trim() });
+  const res = await sendMessage({ kind: "pair", origin, code });
   if (!isPairResponse(res)) {
     setStatus("Unexpected response.");
     return;
@@ -1659,6 +1679,28 @@ gh pr create --fill
 Verify CI (build-test, CodeQL, Sonar) goes green on the PR before merge.
 
 ---
+
+## Plan review resolutions (2026-06-23)
+
+From [the plan review](./2026-06-23-web-clipper-extension-slice1-review.md):
+
+1. **IPv6 loopback (fixed).** `URL.hostname` returns `[::1]` *with* brackets per
+   WHATWG (verified across Node/Chrome/Firefox), so the bare `"::1"` branch was dead
+   and is removed (Task 4).
+2. **HTTPS local/reverse-proxy (deferred).** Consistent with the spec: the shipped
+   gateway is HTTP-only on loopback. If a user-run HTTPS gateway is ever supported it
+   is a one-line change (allow `https:` in `isLoopbackOrigin` + add the `https://`
+   host permissions) — left out of Slice 1 as YAGNI.
+3. **`isCaptureResult` optional `canonicalUrl` (fixed).** Both guards (Task 3 message
+   guard, Task 6 scripting guard) now reject a present-but-non-string `canonicalUrl`;
+   a guard test is added (Task 3).
+4. **Readability clone (no change).** `document.cloneNode(true)` is Mozilla's
+   documented entry point; comment added to make that explicit (Task 9).
+5. **Options presence validation (fixed).** The options page short-circuits to a
+   local error when the URL or code is empty, before messaging the SW (Task 10).
+6. **Keep connection on failed pair (accepted as intended).** A failed re-pair leaves
+   an existing working connection untouched; this is now documented in `handlePair`
+   (Task 8).
 
 ## Self-Review Notes (author)
 
