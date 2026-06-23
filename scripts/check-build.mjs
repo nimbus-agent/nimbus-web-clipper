@@ -15,6 +15,7 @@ const REQUIRED_FILES = [
   "manifest.json",
   "background.js",
   "capture.js",
+  "panel.js",
   "popup.js",
   "popup.html",
   "popup.css",
