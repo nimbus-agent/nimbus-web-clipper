@@ -9,7 +9,13 @@
   <body>
     <main class="popup">
       <h1 class="popup__title">Nimbus Web Clipper</h1>
-      <p id="status" class="popup__status">Checking gateway…</p>
+      <label class="popup__label" for="tags">Tags (comma-separated)</label>
+      <input id="tags" class="popup__tags" type="text" placeholder="research, work" />
+      <div class="popup__actions">
+        <button id="clip-page" type="button">Clip page</button>
+        <button id="clip-selection" type="button">Clip selection</button>
+      </div>
+      <p id="status" class="popup__status" role="status"></p>
     </main>
     <script src="popup.js"></script>
   </body>

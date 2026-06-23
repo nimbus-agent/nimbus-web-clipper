@@ -1,25 +1,9 @@
-:root {
-  color-scheme: light dark;
-}
-
-body {
-  margin: 0;
-  font-family: system-ui, sans-serif;
-}
-
-.popup {
-  min-width: 260px;
-  padding: 16px;
-}
-
-.popup__title {
-  margin: 0 0 8px;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.popup__status {
-  margin: 0;
-  font-size: 13px;
-  opacity: 0.8;
-}
+:root { color-scheme: light dark; }
+body { margin: 0; font-family: system-ui, sans-serif; }
+.popup { min-width: 280px; padding: 16px; }
+.popup__title { margin: 0 0 12px; font-size: 14px; font-weight: 600; }
+.popup__label { display: block; font-size: 12px; opacity: 0.8; margin-bottom: 4px; }
+.popup__tags { width: 100%; box-sizing: border-box; padding: 6px 8px; margin-bottom: 12px; }
+.popup__actions { display: flex; gap: 8px; }
+.popup__actions button { flex: 1; padding: 8px; cursor: pointer; }
+.popup__status { margin: 12px 0 0; font-size: 13px; min-height: 1.2em; }

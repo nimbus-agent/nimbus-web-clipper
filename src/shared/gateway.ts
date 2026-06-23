@@ -3,9 +3,6 @@
 // to loopback. The port is configurable because the owner can run the gateway on
 // a non-default port — the pairing step is where the chosen origin is confirmed.
 
-/** Default loopback origin for a stock gateway install. */
-export const DEFAULT_GATEWAY_ORIGIN = "http://127.0.0.1:8765";
-
 /** Locked endpoint paths — do not redesign (see PR #718). */
 export const CLIP_PATHS = {
   ingest: "/v1/clips",

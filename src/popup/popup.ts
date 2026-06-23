@@ -1,30 +1,65 @@
-// Popup entry. Backbone stub: probe the service worker and report liveness.
-// The Clip / Clip selection buttons and the related-items panel are added during
-// feature work (see docs/ spec + plan).
+import { sendMessage } from "../browser/runtime.ts";
+import { runCapture } from "../browser/scripting.ts";
+import { activeTab } from "../browser/tabs.ts";
+import { parseTags } from "../shared/clip.ts";
+import type { ClipResponse } from "../shared/messages.ts";
 
-import type { PingResponse } from "../shared/messages.ts";
+const CLIP_MESSAGES: Record<string, string> = {
+  not_paired: "Pair a browser first (Options).",
+  unauthorized: "Pairing expired — re-pair in Options.",
+  invalid_request: "Couldn't save this page.",
+  unreachable: "Can't reach Nimbus — is the gateway running?",
+  server_error: "Nimbus had an error saving this.",
+};
 
-function isPingResponse(value: unknown): value is PingResponse {
-  return typeof value === "object" && value !== null && (value as { ok?: unknown }).ok === true;
+function isClipResponse(v: unknown): v is ClipResponse {
+  return typeof v === "object" && v !== null && (v as { kind?: unknown }).kind === "clip";
 }
 
-async function probeWorker(): Promise<boolean> {
-  const response: unknown = await chrome.runtime.sendMessage({ kind: "ping" });
-  return isPingResponse(response);
+function setStatus(text: string): void {
+  const el = document.getElementById("status");
+  if (el !== null) {
+    el.textContent = text;
+  }
 }
 
-function render(statusEl: HTMLElement, alive: boolean): void {
-  statusEl.textContent = alive
-    ? "Ready. Pair a device in Options to start clipping."
-    : "Service worker unreachable — try reopening the popup.";
+async function clip(mode: "article" | "selection"): Promise<void> {
+  setStatus("Clipping…");
+  const tagsInput = document.getElementById("tags");
+  const tags = tagsInput instanceof HTMLInputElement ? parseTags(tagsInput.value) : [];
+  let capture: Awaited<ReturnType<typeof runCapture>>;
+  try {
+    const tab = await activeTab();
+    capture = await runCapture(tab.id, mode);
+  } catch {
+    setStatus("Nimbus can't clip browser system or store pages.");
+    return;
+  }
+  if (mode === "selection" && capture.body === "") {
+    setStatus("Select some text first.");
+    return;
+  }
+  const res = await sendMessage({ kind: "clip", capture, tags });
+  if (!isClipResponse(res)) {
+    setStatus("Unexpected response.");
+    return;
+  }
+  if (res.ok) {
+    setStatus(
+      res.bookmarked
+        ? "Saved as a bookmark."
+        : res.status === "updated"
+          ? "Updated in Nimbus."
+          : "Saved to Nimbus.",
+    );
+  } else {
+    setStatus(CLIP_MESSAGES[res.reason] ?? "Couldn't save this page.");
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  const statusEl = document.getElementById("status");
-  if (statusEl === null) {
-    return;
-  }
-  probeWorker()
-    .then((alive) => render(statusEl, alive))
-    .catch(() => render(statusEl, false));
+  document.getElementById("clip-page")?.addEventListener("click", () => void clip("article"));
+  document
+    .getElementById("clip-selection")
+    ?.addEventListener("click", () => void clip("selection"));
 });

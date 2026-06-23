@@ -9,13 +9,15 @@
   <body>
     <main class="options">
       <h1>Nimbus Web Clipper</h1>
-      <section class="options__pairing">
+      <section>
         <h2>Pair this browser</h2>
-        <p>
-          Run <code>nimbus clip pair</code> on the machine running your Nimbus gateway, then enter
-          the 6-digit code it prints.
-        </p>
-        <p id="pairing-status" class="options__status">Pairing UI lands in a later release.</p>
+        <p>Run <code>nimbus clip pair</code> on the machine running your Nimbus gateway, then enter its URL and the 6-digit code it prints.</p>
+        <label for="origin">Gateway URL</label>
+        <input id="origin" type="text" placeholder="http://127.0.0.1:8765" />
+        <label for="code">Pairing code</label>
+        <input id="code" type="text" inputmode="numeric" placeholder="429173" />
+        <button id="pair" type="button">Pair this browser</button>
+        <p id="pairing-status" class="options__status" role="status"></p>
       </section>
     </main>
     <script src="options.js"></script>

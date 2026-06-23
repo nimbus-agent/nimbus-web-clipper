@@ -1,7 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
   CLIP_PATHS,
-  DEFAULT_GATEWAY_ORIGIN,
   endpointUrl,
   isLoopbackOrigin,
 } from "../../src/shared/gateway.ts";
@@ -13,10 +12,6 @@ describe("gateway endpoints", () => {
       pairConfirm: "/v1/clips/pair/confirm",
       related: "/v1/clips/related",
     });
-  });
-
-  test("the default origin is loopback", () => {
-    expect(DEFAULT_GATEWAY_ORIGIN.startsWith("http://127.0.0.1")).toBe(true);
   });
 
   test("endpointUrl joins origin + path", () => {
