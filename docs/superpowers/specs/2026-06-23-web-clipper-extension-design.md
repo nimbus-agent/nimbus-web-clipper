@@ -25,7 +25,12 @@ slices**, each getting its own implementation plan:
 
 - Clip the readable article (Mozilla Readability) **or** the current selection
   into the local index, with optional tags applied at capture time.
-- Re-clipping an article updates the existing item (gateway dedups by canonical URL).
+- Re-clipping an article updates the existing item (gateway dedups by canonical
+  URL). **Tags are overwritten, not merged** — the gateway writes
+  `metadata.tags = request.tags` on every upsert (last write wins;
+  `clip-ingest.ts:127`). So a re-clip with an empty tags field clears prior tags.
+  The popup cannot show previously-applied tags (see Deferred — clip-status
+  pre-fetch).
 - Owner-consented pairing: the extension holds a long-lived bearer token minted
   by the gateway's `nimbus clip pair` handshake.
 - (Slice 2) On-demand panel of related local items for the current page.
@@ -100,7 +105,8 @@ src/
     messages.ts         # discriminated Request/Response union + guards  (extends the stub)
     clip.ts             # ClipPayload type, buildClipPayload(), parseTags()  (pure)
   capture/
-    capture-in-page.ts  # injected fn: Readability on a document clone, or selection text
+    capture-in-page.ts  # SEPARATE esbuild entry → dist/<target>/capture.js (Readability inlined);
+                        #   injected via scripting.executeScript({files:["capture.js"]})
     fallback.ts         # fallbackBody(meta) = description ?? url  (pure)
   background/
     service-worker.ts   # message router: handlePair(), handleClip()  (entry)
@@ -144,7 +150,7 @@ interface ClipPayload {     // exactly the gateway request shape
   mode: "article" | "selection"; body: string; tags: string[]; capturedAt: number;
 }
 buildClipPayload(c: CaptureResult, tags: string[], nowMs: number): ClipPayload
-parseTags(input: string): string[]   // "a, b ,a" → ["a","b"]  (trim, drop empties, dedupe)
+parseTags(input: string): string[]   // see Tag parsing rules below
 
 // shared/messages.ts (discriminated union + type guards)
 type Request =
@@ -165,6 +171,35 @@ postClip(origin: string, token: string, payload: ClipPayload): Promise<{ ok: tru
 
 Cross-boundary data (messages, gateway responses, injected-capture results) is
 typed `unknown` and narrowed by a guard before use — never `any`.
+
+### Tag parsing rules
+
+`parseTags` is deliberately minimal (tags are freeform text the gateway stores
+verbatim in `metadata.tags`):
+
+- **Split** on commas only.
+- **Trim** surrounding whitespace from each segment; **multi-word tags are kept**
+  (`"machine learning"` → `["machine learning"]`) — inner spaces are preserved.
+- **Drop** empty segments.
+- **Dedupe** exact duplicates, **case-sensitively** (`"AI"` and `"ai"` are
+  distinct — the gateway does not normalize case, so neither do we; forcing
+  lowercase would silently rewrite the user's tags).
+- **No** punctuation stripping (a `#tag` stays `#tag`).
+
+Example: `"AI, machine learning ,AI, "` → `["AI", "machine learning"]`.
+
+### Capture injection & bundling
+
+`capture/capture-in-page.ts` is **its own esbuild entry** bundled to a standalone
+`dist/<target>/capture.js` (Mozilla Readability inlined). The popup injects it
+with `chrome.scripting.executeScript({ target: { tabId }, files: ["capture.js"] })`
+and reads the result the script posts back — **not** the `func:` form, which
+cannot carry the Readability import into the page's isolated world. This adds a
+fourth esbuild entry alongside `background` / `popup` / `options`, and
+`@mozilla/readability` as a build-time dependency (inlined at bundle time, so the
+shipped extension still has no runtime `node_modules`). Files injected via
+`scripting.executeScript({ files })` come from the extension package and do **not**
+need `web_accessible_resources`.
 
 ## Data flows
 
@@ -200,6 +235,7 @@ typed `unknown` and narrowed by a guard before use — never `any`.
 | --- | --- | --- |
 | Not paired (clip) | no `Connection` | "Pair a browser first (Options)." |
 | Bad gateway origin | not a loopback host | "Enter a 127.0.0.1 / localhost URL." |
+| Restricted page | `activeTab`/`scripting` injection rejects, or tab URL is `chrome:`/`about:`/`edge:`/extension-store | "Nimbus can't clip browser system or store pages." |
 | Gateway unreachable | `fetch` throws / abort timeout | "Can't reach Nimbus — is the gateway running?" + Retry |
 | Token rejected | `401 {error:"unauthorized"}` | "Pairing expired — re-pair in Options." |
 | Bad payload | `400 {error:"invalid_request", field?}` | "Couldn't save (`field`)." (shouldn't occur — payload is typed) |
@@ -209,14 +245,28 @@ typed `unknown` and narrowed by a guard before use — never `any`.
 | Re-clip | `200 {status:"updated"}` | "Updated in Nimbus." |
 | No readable article | `readableFound:false` | "Saved as a bookmark." |
 
-`confirmPair`/`postClip` wrap `fetch` in an `AbortController` timeout (~5s). No
-background retry in Slice 1.
+`confirmPair`/`postClip` wrap `fetch` in an `AbortController` timeout, sized per
+call: **~5s for `confirmPair`** (a trivial in-memory code check) and **~10s for
+`postClip`** to absorb a large body write on a slow machine. The gateway schedules
+embedding **asynchronously** and returns right after the DB upsert (`scheduleEmbedding`
+is fire-and-forget), so embedding latency is not on the response path — 10s is
+headroom, not an expected wait. No background retry in Slice 1.
 
 ## Security posture
 
 - **Loopback only.** `host_permissions` stays `http://127.0.0.1/*` +
-  `http://localhost/*`; the user-entered origin is validated to be a loopback host
-  before any request. No remote origin is ever contacted.
+  `http://localhost/*`. The hard backstop is the manifest itself: a `fetch` to any
+  other host is blocked by the browser regardless of validation (and the
+  bypass-style hosts `127.0.0.1.attacker.com` / `localhost.attacker.com` are
+  distinct hosts that those patterns do **not** match). On top of that, the
+  user-entered origin is validated in `connection-store.ts` with the `URL`
+  constructor (never a substring/regex check on the raw string) — for clean UX and
+  defense-in-depth — accepting only: `protocol === "http:"` **and** `hostname` is
+  exactly `localhost`, `[::1]`, or matches `^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$`
+  (the `127.0.0.0/8` loopback block). Anything else → `bad_origin`, no request sent.
+  HTTPS is intentionally excluded: the shipped gateway serves plain HTTP on
+  loopback (`Bun.serve` with no `tls:`, `http-server.ts:639`), and loopback traffic
+  never leaves the machine (see Deferred — HTTPS loopback).
 - **Token isolation.** The bearer token lives in `chrome.storage.local` and the
   service worker only. It is never placed in the popup/options/page DOM, never
   logged, and never included in an error string. It leaves the SW solely as the
@@ -270,6 +320,24 @@ references only its **own** namespaced `--*` custom properties (never a host
 own host). The panel lists each `RelatedHit` — title, service badge, snippet, and
 a link — rendering a `url:null` hit as non-link text. Slice 2 gets its own spec
 addendum / plan before implementation.
+
+## Deferred (design review, 2026-06-23)
+
+Raised in [the design review](./2026-06-23-web-clipper-extension-design-review.md)
+and consciously deferred:
+
+- **Clip-status pre-fetch ("Already clipped" + pre-filled tags).** Showing whether
+  the current page is already clipped, and pre-filling its prior tags, would need a
+  new gateway read (e.g. `GET /v1/clips/check?url=…`). The gateway HTTP contract is
+  **locked** by Plan A (PR #718); adding an endpoint is a cross-repo gateway change,
+  out of scope for this extension repo. Until/unless the gateway adds it, the popup
+  starts with an empty tags field and a re-clip overwrites prior tags (documented in
+  Goals). Tracked as a possible future gateway enhancement + Slice-3 UX.
+- **HTTPS loopback.** The shipped gateway serves plain HTTP on `127.0.0.1`
+  (`Bun.serve`, no `tls:`), and loopback traffic never traverses the network, so TLS
+  buys nothing here. Adding `https://127.0.0.1/*` / `https://localhost/*` host
+  permissions now would be YAGNI. Revisit only if the gateway grows a TLS loopback
+  listener.
 
 ## Open decisions (resolved at brainstorm, 2026-06-23)
 
