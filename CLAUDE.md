@@ -45,8 +45,9 @@ Reference (in the Nimbus monorepo): the design spec
   logged** and never put in the page DOM. The pairing code is likewise never
   logged.
 - **Bundled, no runtime deps.** `esbuild.mjs` bundles each entry
-  (`background`, `popup`, `options`) into `dist/<target>/` as fully-inlined IIFE.
-  The shipped extension has no `node_modules`.
+  (`background`, `popup`, `options`, `capture`) into `dist/<target>/` as
+  fully-inlined IIFE. `@mozilla/readability` is a devDependency inlined into
+  `capture.js`. The shipped extension has no `node_modules`.
 - **One manifest, two targets.** `src/manifest/manifest.ts` composes the MV3
   manifest per browser. Chrome → `background.service_worker`; Firefox →
   `background.scripts` + `browser_specific_settings.gecko.id`. Everything else is
@@ -55,23 +56,34 @@ Reference (in the Nimbus monorepo): the design spec
 ## Layout
 
 - `src/manifest/` — typed manifest compose (`composeManifest(target, version)`)
-- `src/background/` — MV3 service worker (token store, gateway fetch, message routing)
-- `src/popup/` — toolbar popup (clip actions)
-- `src/options/` — options page (pairing UI, paired-device list)
-- `src/shared/` — pure modules shared across entries (`gateway.ts` endpoints,
-  `messages.ts` typed message envelope)
+- `src/background/` — MV3 service worker: `connection-store.ts` (token store over
+  `chrome.storage.local`), `gateway-client.ts` (`confirmPair`/`postClip` fetch +
+  timeout + status mapping), `handlers.ts` (pure `handlePair`/`handleClip` with
+  injected deps), `service-worker.ts` (message routing)
+- `src/browser/` — the thin typed seam over `chrome.*` (`storage`, `tabs`,
+  `scripting`, `runtime`); the only place WebExtension APIs are touched directly
+- `src/capture/` — page capture: `capture-in-page.ts` (injected `capture.js`,
+  Mozilla Readability / selection → `CaptureResult`) + pure `fallback.ts`
+- `src/popup/` — toolbar popup (clip page / clip selection + tags + status)
+- `src/options/` — options page (gateway URL + 6-digit code → pairing form)
+- `src/shared/` — pure modules shared across entries (`types.ts` cross-module
+  types, `clip.ts` tag parsing + payload builder, `gateway.ts` endpoints +
+  loopback origin validation, `messages.ts` typed message envelope + guards)
 - `test/unit/` — Vitest unit tests (node env; DOM tests opt into jsdom via a docblock)
 - `esbuild.mjs` — build (run via `bun`, imports the TS manifest module)
 - `scripts/` — `clean.mjs`, `check-build.mjs` (guards per-target completeness),
   `package.mjs` (zips each target)
-- `docs/` — design spec + implementation plan (superpowers spec→plan layout)
+- `docs/` — design spec + implementation plan (superpowers spec→plan layout);
+  `development.md` is the dev-load + manual-verification checklist for the
+  surfaces that aren't unit-tested (capture-in-page, popup/options DOM, SW glue)
 
 ## Commands
 
 ```bash
 bun install
 bun run typecheck     # tsc --noEmit (strict)
-bun run lint          # biome check src/
+bun run lint          # biome check . (src + test + scripts, per biome.json overrides)
+bun run format        # biome check --write . (apply fixes)
 bun run test          # vitest run
 bun run build         # esbuild → dist/chrome + dist/firefox
 bun run watch         # rebuild on save
