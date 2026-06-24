@@ -26,6 +26,12 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 - `docs/development.md` — dev-load steps and a manual verification checklist for
   the surfaces that are not unit-tested (capture-in-page, popup/options DOM,
   service-worker glue).
+- **Slice 2 — related-items sidecar.** An on-demand Shadow-DOM panel (opened from a
+  "Show related" popup button or the `Alt+Shift+R` hotkey) that queries
+  `POST /v1/clips/related` and lists related indexed items for the current page
+  (title, service badge, snippet, link). Query-once-on-open; toggle / X / Esc to
+  close. Renders via `textContent` only (DOM-XSS backstop); honors
+  `prefers-color-scheme`. No new permissions.
 
 ### Security
 
