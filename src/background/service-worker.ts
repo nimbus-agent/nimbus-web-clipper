@@ -4,6 +4,7 @@ import { addCommandListener, addMessageListener } from "../browser/runtime.ts";
 import { injectPanel } from "../browser/scripting.ts";
 import { activeTab } from "../browser/tabs.ts";
 import { isClipRequest, isPairRequest, isRelatedRequest } from "../shared/messages.ts";
+import { updateQueue } from "./clip-queue-store.ts";
 import { getConnection, setConnection } from "./connection-store.ts";
 import { confirmPair, postClip, postRelated } from "./gateway-client.ts";
 import { handleClip, handlePair, handleRelated } from "./handlers.ts";
@@ -18,7 +19,7 @@ addMessageListener((message, respond) => {
     return true;
   }
   if (isClipRequest(message)) {
-    handleClip({ getConnection, postClip, nowMs: () => Date.now() }, message)
+    handleClip({ getConnection, postClip, updateQueue, nowMs: () => Date.now() }, message)
       .then(respond)
       .catch(() => {
         respond({ kind: "clip", ok: false, reason: "server_error" });
