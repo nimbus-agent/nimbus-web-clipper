@@ -341,6 +341,10 @@ describe("updateQueue", () => {
   });
 
   test("serializes concurrent read-modify-writes (no lost update)", async () => {
+    // Both calls are invoked synchronously, so without the lock both reads would see
+    // [] at the first await and each write a single entry — the result would be ["a"]
+    // or ["b"], never ["a","b"]. This assertion therefore fails the moment the
+    // promise-chain lock is removed (a real regression guard, not just a happy path).
     installChromeStub({ storage: { clipQueue: [] } });
     const p1 = updateQueue((q) => enqueue(q, entry("a")));
     const p2 = updateQueue((q) => enqueue(q, entry("b")));
@@ -1485,7 +1489,9 @@ Append to `src/popup/popup.css`:
 ```css
 .queue { margin-top: 12px; border-top: 1px solid rgba(128, 128, 128, 0.3); padding-top: 8px; }
 .queue__heading { margin: 0 0 8px; font-size: 12px; font-weight: 600; opacity: 0.8; }
-.queue__list { list-style: none; margin: 0; padding: 0; }
+/* Cap the list height so a long backlog scrolls inside the section rather than
+   pushing "Retry all" past the browser's ~600px popup ceiling. */
+.queue__list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
 .queue__item { display: flex; flex-direction: column; gap: 2px; padding: 8px 0; border-bottom: 1px solid rgba(128, 128, 128, 0.2); }
 .queue__item-title { font-size: 13px; font-weight: 600; }
 .queue__item-meta { font-size: 11px; opacity: 0.7; }
@@ -1732,11 +1738,15 @@ addAlarmListener((name) => {
   }
 });
 
-// On startup: set the badge color once, reconcile badge/alarm with the persisted
-// queue, and attempt an immediate drain (the gateway may be back).
-setBadgeBackground("#5b6470").catch(() => undefined);
-syncQueueState().catch(() => undefined);
-flushQueue(flushDeps).then(syncQueueState).catch(() => undefined);
+// On startup, run the sequence deterministically (awaited, not three concurrent
+// top-level promises): set the badge color, paint the persisted backlog immediately,
+// then attempt a drain and reconcile once more. Sequencing avoids a race where the
+// initial badge paint could resolve after the post-drain one and show a stale count.
+void (async () => {
+  await setBadgeBackground("#5b6470").catch(() => undefined);
+  await syncQueueState().catch(() => undefined);
+  await flushQueue(flushDeps).then(syncQueueState).catch(() => undefined);
+})();
 ```
 
 - [ ] **Step 2: Build + full gate**
@@ -1826,6 +1836,27 @@ gh pr create --base main --fill
 > **Blocked locally:** the GitHub account is suspended, so this step is deferred. The branch is complete and green; push + PR when access returns. Verify CI (build-test, CodeQL, Sonar) goes green before merge.
 
 ---
+
+## Plan review resolutions (2026-06-27)
+
+From [the Slice 3 plan review](./2026-06-27-web-clipper-extension-slice3-review.md):
+
+1. **Service-worker startup race (fixed).** The three top-level startup promises in
+   Task 10 are now sequenced inside an awaited async IIFE (set badge color → paint the
+   persisted backlog → drain → reconcile), removing any window where the initial badge
+   paint could resolve after the post-drain one and show a stale count.
+2. **Popup reflow / long-backlog headroom (fixed, lightweight).** Task 9's
+   `.queue__list` gains `max-height: 260px; overflow-y: auto`, so a long queue scrolls
+   inside the section instead of pushing "Retry all" past the browser's ~600px popup
+   ceiling. The popup is otherwise auto-height already (no fixed height to fight).
+3. **Explicit delayed-mutator serialization test (deferred — redundant).** The Task 2
+   parallel test already deterministically catches a lost update: both `updateQueue`
+   calls are invoked synchronously, so without the lock both reads see `[]` and the
+   result is `["a"]`/`["b"]`, never `["a","b"]` — the assertion fails the moment the
+   lock is removed. The suggested "delay inside the mutator" also mis-fits the design
+   (the mutator is a synchronous `(q) => QueuedClip[]`; the only awaitable point is the
+   storage write in the seam). A clarifying comment was added to the existing test
+   rather than a second, redundant one.
 
 ## Self-Review Notes (author)
 
