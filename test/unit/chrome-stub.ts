@@ -2,6 +2,7 @@ interface StubOptions {
   storage?: Record<string, unknown>;
   tab?: { id?: number; url?: string; title?: string };
   executeResults?: Array<{ result?: unknown }>;
+  failFirstSet?: boolean;
 }
 
 /** Install a minimal fake `chrome` on globalThis; returns the backing storage map. */
@@ -11,11 +12,16 @@ export function installChromeStub(opts: StubOptions = {}): {
 } {
   const storage = new Map<string, unknown>(Object.entries(opts.storage ?? {}));
   const executeCalls: unknown[] = [];
+  let failsLeft = opts.failFirstSet ? 1 : 0;
   const fake = {
     storage: {
       local: {
         get: async (key: string) => ({ [key]: storage.get(key) }),
         set: async (items: Record<string, unknown>) => {
+          if (failsLeft > 0) {
+            failsLeft--;
+            throw new Error("QUOTA_BYTES quota exceeded");
+          }
           for (const [k, v] of Object.entries(items)) storage.set(k, v);
         },
         remove: async (key: string) => void storage.delete(key),
