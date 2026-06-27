@@ -9,9 +9,13 @@ interface StubOptions {
 export function installChromeStub(opts: StubOptions = {}): {
   storage: Map<string, unknown>;
   executeCalls: unknown[];
+  alarmCalls: unknown[];
+  badgeTexts: string[];
 } {
   const storage = new Map<string, unknown>(Object.entries(opts.storage ?? {}));
   const executeCalls: unknown[] = [];
+  const alarmCalls: unknown[] = [];
+  const badgeTexts: string[] = [];
   let failsLeft = opts.failFirstSet ? 1 : 0;
   const fake = {
     storage: {
@@ -46,7 +50,23 @@ export function installChromeStub(opts: StubOptions = {}): {
       sendMessage: async () => ({ ok: true }),
       onMessage: { addListener: () => undefined },
     },
+    alarms: {
+      create: (name: string, info: unknown) => {
+        alarmCalls.push({ create: name, info });
+      },
+      clear: async (name: string) => {
+        alarmCalls.push({ clear: name });
+        return true;
+      },
+      onAlarm: { addListener: () => undefined },
+    },
+    action: {
+      setBadgeText: async (details: { text: string }) => {
+        badgeTexts.push(details.text);
+      },
+      setBadgeBackgroundColor: async () => undefined,
+    },
   };
   (globalThis as unknown as { chrome: unknown }).chrome = fake;
-  return { storage, executeCalls };
+  return { storage, executeCalls, alarmCalls, badgeTexts };
 }
