@@ -74,7 +74,7 @@ hours later still records when it was actually captured.
 | `server_error` | yes (maybe entry-specific) | **Enqueue** at clip time; on flush, mark attempt and **continue** to the next entry. |
 | `unauthorized` | no | Not queued at clip time. If hit during flush (token died mid-drain): **stop the batch**, keep entries; surfaced via the manager. |
 | `not_paired` | no | Not queued (nothing to send to). |
-| `invalid_request` | no | Not queued at clip time. If hit during flush: keep + mark (visible/removable), continue. |
+| `invalid_request` | no | Not queued at clip time. If hit during flush: keep + mark, then **skip on automatic flushes** (a 400 won't self-fix) — retried only when the user explicitly hits Retry on it; labelled in the manager. |
 
 ## Interaction model (resolved at brainstorm, 2026-06-27)
 
@@ -134,19 +134,23 @@ connection store + SW (invariant preserved). `payload.url` is the entry identity
 - `isQueuedClip(v): v is QueuedClip` — narrow `unknown` from storage (validates the
   nested `ClipPayload`).
 
+Each of these is a pure `QueuedClip[] → QueuedClip[]` mutator, so they compose
+directly as the argument to the serialized `updateQueue` below — every write is
+expressed as a function of the *current* persisted state, never a stale snapshot.
+
 ## Module layout (mirrors the Slice 1/2 split: pure logic vs. `chrome.*` seam)
 
 | File | Kind | Responsibility |
 | --- | --- | --- |
 | `src/shared/queue.ts` | new, pure | `QueuedClip`/`QueuedClipView`/`MAX_QUEUE` + `enqueue`/`removeFromQueue`/`markAttempt`/`toView` + `isQueuedClip` |
-| `src/background/clip-queue-store.ts` | new | `getQueue`/`setQueue` over `chrome.storage.local` (mirrors `connection-store.ts`) |
-| `src/background/queue-flush.ts` | new | `flushQueue(deps)` — dep-injected drain orchestration |
-| `src/browser/alarms.ts` | new seam | `ensureAlarm(name, periodInMinutes)` + `addAlarmListener(fn)` over `chrome.alarms` |
+| `src/background/clip-queue-store.ts` | new | `getQueue` + **serialized** `updateQueue(mutator)` (read-modify-write under a module-level promise lock) over `chrome.storage.local` (mirrors `connection-store.ts`) |
+| `src/background/queue-flush.ts` | new | `flushQueue(deps, opts)` — dep-injected drain orchestration |
+| `src/browser/alarms.ts` | new seam | `ensureAlarm(name, periodInMinutes)` / `clearAlarm(name)` + `addAlarmListener(fn)` over `chrome.alarms` |
 | `src/browser/action.ts` | new seam | `setBadgeCount(n)` over `chrome.action.setBadgeText` / `setBadgeBackgroundColor` |
 | `src/popup/queue-view.ts` | new, pure | `textContent`-only DOM builders for the manager (jsdom-tested, like `panel-view.ts`) |
 | `src/shared/messages.ts` | modify | `queue-list` / `queue-retry` / `queue-remove` requests + `QueueResponse` + guards; `ClipResponse` gains `queued?` |
 | `src/background/handlers.ts` | modify | `handleClip` enqueues on transient failure; add `handleQueueList`/`handleQueueRetry`/`handleQueueRemove` |
-| `src/background/service-worker.ts` | modify | register the alarm + startup flush; route queue messages; refresh the badge after every queue mutation |
+| `src/background/service-worker.ts` | modify | ensure/clear the flush alarm by queue state + startup flush; route queue messages; refresh the badge after every queue mutation |
 | `src/popup/popup.{html,ts,css}` | modify | the queue-manager section |
 | `src/manifest/manifest.ts` | modify | add the `"alarms"` permission (+ interface unchanged — permissions is already `string[]`) |
 
@@ -156,16 +160,17 @@ No new esbuild entry (`popup` already exists); `check-build` is unchanged.
 
 ### Enqueue (clip-time) — `handleClip`
 
-`handleClip` gains queue deps (`getQueue`/`setQueue`, the pure `enqueue`, `nowMs`):
+`handleClip` gains queue deps (`updateQueue`, the pure `enqueue`, `nowMs`):
 
 1. `getConnection()` null → `{ ok:false, reason:"not_paired" }` (unchanged; not queued).
 2. `postClip(...)` → `ok` → return success (unchanged).
-3. `!ok`, reason ∈ {`unreachable`, `server_error`} → `enqueue` the payload, return
-   `{ kind:"clip", ok:false, reason, queued:true }`.
+3. `!ok`, reason ∈ {`unreachable`, `server_error`} → `updateQueue(q => enqueue(q, entry))`,
+   return `{ kind:"clip", ok:false, reason, queued:true }`.
 4. `!ok`, reason ∈ {`unauthorized`, `invalid_request`} → return `{ ok:false, reason }`
    (unchanged; not queued).
 
-The SW refreshes the badge from the queue length after the handler resolves.
+After the handler resolves, the SW refreshes the badge from the queue length and
+(if the queue went from empty → non-empty) ensures the flush alarm exists.
 
 ### Flush (drain) — `flushQueue(deps)`
 
@@ -173,40 +178,64 @@ The SW refreshes the badge from the queue length after the handler resolves.
 interface FlushDeps {
   readonly getConnection: () => Promise<Connection | null>;
   readonly getQueue: () => Promise<QueuedClip[]>;
-  readonly setQueue: (q: QueuedClip[]) => Promise<void>;
+  readonly updateQueue: (mutator: (q: QueuedClip[]) => QueuedClip[]) => Promise<QueuedClip[]>;
   readonly postClip: ClipDeps["postClip"];
 }
-// flushQueue(deps, opts?: { url?: string }): Promise<{ remaining: number }>
+// flushQueue(deps, opts?: { url?: string; manual?: boolean }): Promise<{ remaining: number }>
 ```
 
 - `getConnection()` null → return `{ remaining: queue.length }`, queue untouched
   (can't drain while unpaired; the badge still shows the backlog).
 - Empty queue → `{ remaining: 0 }`.
-- Walk entries FIFO (or just the `opts.url` entry for a single-item retry), posting
-  each. **An entry leaves the queue only on `ok`.** Per the retryability table:
-  `unreachable`/`unauthorized` **stop the batch** (keep the rest);
-  `server_error`/`invalid_request` mark the attempt and **continue**.
-- `setQueue(working)`; return the remaining count.
+- Take a **snapshot** of the entries to attempt: `opts.url` selects one entry for a
+  single-item retry; otherwise all entries, **except** that an *automatic* flush
+  (`manual` falsy) skips entries whose `lastReason === "invalid_request"` (they
+  won't self-fix — see the retryability table). A `manual` flush (any popup Retry)
+  attempts everything, including those.
+- Walk the snapshot FIFO, posting each. **An entry leaves the queue only on `ok`.**
+  After each result, apply the outcome as a *delta against current state* via
+  `updateQueue` — `updateQueue(q => removeFromQueue(q, url))` on success,
+  `updateQueue(q => markAttempt(q, url, reason))` on a kept failure. Never write a
+  whole stale array (this is what makes a concurrent popup Remove safe — see
+  Concurrency). Per the retryability table: `unreachable`/`unauthorized` **stop the
+  batch** (keep the rest); `server_error`/`invalid_request` mark and **continue**.
+- Return the remaining count (`(await getQueue()).length`).
 
 Triggers, all funneling into `flushQueue` + a badge refresh: the `chrome.alarms`
-alarm, SW startup (`onStartup`/top-level), and the popup Retry / Retry-all
-messages.
+alarm (only live while the queue is non-empty — see Alarm lifecycle), SW startup
+(`onStartup`/top-level), and the popup Retry (`manual: true`) / Retry-all messages.
 
 ### Manager (popup)
 
 On open the popup sends `queue-list` → renders `QueuedClipView[]`. The section is
 **hidden when empty**. Each row: title (or host if untitled) · host · relative age
-· a status line when `attempts > 0`/`lastReason` is set. Per-row **Retry**
+· a status line when `attempts > 0`/`lastReason` is set (an `invalid_request` entry
+reads as e.g. *"Couldn't save — won't retry automatically"*). Per-row **Retry**
 (`queue-retry { url }`) and **Remove** (`queue-remove { url }`), and a **Retry all**
 (`queue-retry {}`) button. Each action messages the SW and re-renders from the
 returned `QueueResponse`. All gateway/page strings render `textContent`-only.
 
+**No navigable links.** The manager does **not** render `payload.url` as an `href`
+— the row shows the host as `textContent` (parsed with a guarded `new URL(url)`;
+an unparseable URL falls back to the raw string as text). There is therefore no
+`javascript:`-href surface in this slice. If a future slice adds an "open page"
+link, it MUST reuse the http(s) scheme allowlist already shipped as `safeHttpUrl`
+in `panel-view.ts` (Slice 2) rather than assigning `.href` directly.
+
 ## Concurrency & invariants
 
-- **Single writer.** Every queue mutation (enqueue, flush, remove) runs in the
-  service-worker context — the alarm handler and the message handlers share that
-  one context, so there are no lost-update races. The popup **never** writes
-  storage directly; it only messages the SW.
+- **Serialized read-modify-write (no lost updates).** The service worker is
+  single-*threaded* but not single-*task*: an alarm flush and a popup `queue-remove`
+  are both `async` and interleave at `await` points, so two naïve
+  `getQueue → mutate → setQueue` cycles would clobber each other (the later write
+  wins, resurrecting a just-removed entry). The store therefore exposes **only**
+  `getQueue` (read) and a serialized `updateQueue(mutator)` — every write is a pure
+  `QueuedClip[] → QueuedClip[]` function applied to the *freshly-read current* state,
+  and `updateQueue` chains calls on a module-level promise so read-modify-write runs
+  atomically end-to-end. `flushQueue` never holds the lock across a `postClip`
+  network call: it snapshots, posts unlocked, then applies each outcome as a small
+  delta (`removeFromQueue`/`markAttempt`) through `updateQueue`. The popup **never**
+  writes storage directly; it only messages the SW.
 - **Token confinement.** The token is never serialized into the queue; `flushQueue`
   re-reads it from `getConnection()` at drain time.
 - **Loopback only.** No new `host_permissions`, no new fetch destinations — the
@@ -224,6 +253,20 @@ flush, remove) and on startup: `setBadgeCount(n)` → `setBadgeText(n > 0 ? Stri
 with a neutral background color set once. The badge clears to empty when the queue
 drains to zero. Display caps at `MAX_QUEUE`.
 
+## Alarm lifecycle (efficiency)
+
+The flush alarm is **only scheduled while there is work to do** — it is *not* a
+permanent 1-min heartbeat. `ensureAlarm("flush-clip-queue", 1)` is called when the
+queue transitions empty → non-empty (i.e. on enqueue), and `clearAlarm` is called
+when a flush drains it to zero. On SW startup the alarm is (re-)ensured iff the
+persisted queue is non-empty. This removes idle wakeups entirely when nothing is
+pending, which is the real resource cost — a single ~1-min `POST` to a *loopback*
+gateway while a backlog exists is cheap. (Note: `navigator.onLine` is deliberately
+**not** used to gate the flush — the gateway is on `127.0.0.1`, so it is reachable
+even when the machine has no internet, e.g. on a plane; `navigator.onLine` reflects
+internet reachability, not loopback, and would wrongly block local-first draining.
+Exponential backoff is deferred — see Deferred.)
+
 ## Error handling & edge cases
 
 - **Unpaired at flush** → no-op, queue intact, badge still shows the backlog.
@@ -234,8 +277,17 @@ drains to zero. Display caps at `MAX_QUEUE`.
   manager shows the reason so the user knows to re-pair in Options.
 - **Malformed stored queue** (`isQueuedClip` rejects) → treat as empty (fail safe),
   consistent with `getConnection`'s `isConnection` guard.
-- **Storage quota** → `chrome.storage.local` is generous (≥5 MB) and `MAX_QUEUE`
-  bounds the queue; not separately handled this slice.
+- **Persistent `invalid_request`** → kept and labelled, but **skipped by automatic
+  flushes** (only an explicit user Retry attempts it) so a permanently-rejected
+  payload doesn't burn a `POST` every minute. The user can Remove it.
+- **Storage quota** → bounded on two sides: `MAX_QUEUE` caps the count, and the
+  body is **readable text only** (raw-HTML archival is a project non-goal), so a
+  payload is typically tens of KB, not megabytes. The write itself is still treated
+  as fallible: `updateQueue` wraps the `storage.set` in try/catch and, on a quota
+  rejection during enqueue, evicts the oldest entry and retries once; if it still
+  fails it leaves the existing queue intact and the enqueue surfaces as a normal
+  clip failure to the popup (no partial/corrupt write). A hard per-payload byte cap
+  / body truncation is deferred (see Deferred) as YAGNI given readable-text-only.
 
 ## Testing
 
@@ -247,11 +299,16 @@ as Slices 1–2.
   `markAttempt`, `toView` (no body), `isQueuedClip` guard.
 - `queue-flush.test.ts` — empty/unpaired no-ops; success drains; `unreachable` and
   `unauthorized` stop the batch and keep entries; `server_error` marks-and-continues;
-  single-`url` retry; mixed batch.
+  `invalid_request` **skipped on auto flush but attempted on `manual`**; single-`url`
+  retry; mixed batch; **a remove applied (via `updateQueue`) mid-drain is not clobbered
+  by the flush's own write** (the serialization regression test).
+- `clip-queue-store.test.ts` — `updateQueue` serializes concurrent
+  read-modify-writes (two overlapping mutators both land; no lost update).
 - `handlers.test.ts` — `handleClip` enqueues on transient, **not** on
   `unauthorized`/`invalid_request`, returns `queued:true`; the queue handlers
   list/retry/remove.
-- `clip-queue-store` + the `alarms`/`action` seams via the chrome-stub.
+- the `alarms` (`ensureAlarm`/`clearAlarm`/listener) + `action` (`setBadgeCount`) seams
+  via the chrome-stub; the alarm is **ensured on enqueue and cleared on drain-to-zero**.
 - `messages.test.ts` — the queue request/response guards.
 - `manifest.test.ts` — `"alarms"` present for both targets.
 - `queue-view.test.ts` (jsdom) — `textContent`-only rendering, age formatting,
@@ -270,7 +327,44 @@ coherent slice.
 ## Deferred (out of scope; possible later slices)
 
 - **Auto-expiry / max-attempts give-up** with a "failed" state in the manager.
-- **Live popup refresh** via a background→popup push when a flush changes the queue.
+- **Live popup refresh** via a background→popup push when a flush changes the queue,
+  and a `setInterval` ticking the relative ages while the popup is open — both polish
+  for a transient popup; static "age at open" is sufficient this slice.
+- **Exponential flush backoff** (2 → 5 → 10 min) on repeated `unreachable`. The
+  conditional alarm already eliminates idle wakeups; a fixed 1-min cadence against a
+  loopback gateway while a backlog exists is cheap, so backoff is YAGNI for now.
+- **Per-payload body size cap / truncation** and `unlimitedStorage`. Bounded today by
+  `MAX_QUEUE` + readable-text-only bodies + the `updateQueue` quota fail-safe.
 - **Per-entry capture refresh** (re-reading the page before a late drain).
 - **Clip-status pre-fetch** ("Already clipped" + prior tags) — still blocked on a
   new gateway endpoint (locked contract); unchanged from the Slice 2 deferral.
+
+## Design review resolutions (2026-06-27)
+
+From [the Slice 3 design review](./2026-06-27-web-clipper-extension-slice3-design-review.md):
+
+1. **Async read-modify-write race (fixed).** The "single writer" claim conflated
+   single-threaded with atomic; concurrent `async` mutations interleave at `await`s
+   and can lose updates. Resolved by replacing `setQueue` with a serialized
+   `updateQueue(mutator)` (module-level promise lock; pure-function deltas applied to
+   freshly-read state) and by having `flushQueue` apply per-entry deltas rather than
+   writing a stale whole-array. See Concurrency & the flush section.
+2. **Storage quota with large bodies (partially fixed; rest deferred).** `updateQueue`
+   now treats the write as fallible (evict-oldest-and-retry on quota rejection, else
+   fail safe). A hard per-payload byte cap / truncation is deferred — bodies are
+   readable-text-only (raw-HTML archival is a non-goal), so multi-MB payloads aren't
+   expected, and `MAX_QUEUE` bounds the count.
+3. **Alarm cadence / battery (fixed via conditional alarm; two sub-points rejected
+   or deferred).** The alarm is now scheduled only while the queue is non-empty and
+   cleared on drain-to-zero, removing idle wakeups. `navigator.onLine` gating is
+   **rejected**: the gateway is loopback (`127.0.0.1`), reachable with no internet, so
+   that guard would wrongly block local-first draining. Exponential backoff is
+   deferred as YAGNI against a loopback gateway.
+4. **Safe URL navigation (clarified — no behavior change needed).** The manager
+   renders no `href` (host as `textContent` only), so there is no `javascript:`-href
+   surface; any future "open page" link must reuse Slice 2's `safeHttpUrl` allowlist.
+   The **live-age `setInterval`** suggestion is deferred as YAGNI for a transient popup.
+5. **Persistent `invalid_request` (fixed).** Such entries are kept and labelled but
+   **skipped by automatic flushes** — only an explicit user Retry attempts them — so a
+   permanently-rejected payload isn't re-`POST`ed every minute. See the retryability
+   table and Error handling.
