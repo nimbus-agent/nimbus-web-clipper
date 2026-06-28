@@ -528,11 +528,11 @@ Replace the `<main class="options"> … </main>` block in `src/options/options.h
 
 - [ ] **Step 2: Style the unpair buttons**
 
-Append to `src/options/options.css`:
+Append to `src/options/options.css` (the generic `.options button` rule already sets
+`cursor: pointer`, so only the cancel button's spacing is new):
 
 ```css
-#unpair { cursor: pointer; }
-#unpair-cancel { margin-left: 8px; cursor: pointer; }
+#unpair-cancel { margin-left: 8px; }
 ```
 
 - [ ] **Step 3: Rewrite the Options script**
@@ -630,10 +630,10 @@ async function pair(): Promise<void> {
 }
 
 async function onUnpairClick(): Promise<void> {
+  const unpair = document.getElementById("unpair");
+  const cancel = document.getElementById("unpair-cancel");
   if (!unpairArmed) {
     unpairArmed = true;
-    const unpair = document.getElementById("unpair");
-    const cancel = document.getElementById("unpair-cancel");
     if (unpair instanceof HTMLButtonElement) {
       unpair.textContent = "Click again to confirm unpair";
     }
@@ -642,8 +642,25 @@ async function onUnpairClick(): Promise<void> {
     }
     return;
   }
-  disarmUnpair();
-  renderConnection(await sendMessage({ kind: "unpair" }));
+  // Confirmed. Show an in-flight state and disable the buttons; do NOT pre-disarm
+  // (resetting the button text first would briefly flash the normal paired panel
+  // before the section is hidden). renderConnection performs the final transition —
+  // its not-paired branch calls disarmUnpair() to reset the button text + cancel.
+  if (unpair instanceof HTMLButtonElement) {
+    unpair.textContent = "Unpairing…";
+    unpair.disabled = true;
+  }
+  if (cancel instanceof HTMLButtonElement) {
+    cancel.disabled = true;
+  }
+  const res = await sendMessage({ kind: "unpair" });
+  if (unpair instanceof HTMLButtonElement) {
+    unpair.disabled = false;
+  }
+  if (cancel instanceof HTMLButtonElement) {
+    cancel.disabled = false;
+  }
+  renderConnection(res);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -735,6 +752,32 @@ gh pr create --base main --fill
 > **Blocked locally:** the GitHub account is suspended, so this step is deferred. The branch is complete and green; push + PR when access returns. Note `spec/connection-mgmt` is stacked on the unmerged Slice 1–3 branches — base the PR appropriately (or merge the earlier slices first).
 
 ---
+
+## Plan review resolutions (2026-06-28)
+
+From [the plan review](./2026-06-28-web-clipper-extension-connection-management-review.md):
+
+1. **Unpair-confirm flicker (fixed).** Task 5's `onUnpairClick` no longer calls
+   `disarmUnpair()` synchronously before the await (which would briefly reset the
+   button to the normal paired look before the section hides). It now shows an
+   `"Unpairing…"` in-flight state with the buttons disabled, re-enables on resolve,
+   and lets `renderConnection` perform the final transition.
+2. **Disable inputs during async actions (partially fixed; rest deferred).** The
+   unpair buttons are now disabled while the unpair is in flight (folded into #1).
+   Disabling the **pairing** inputs/button during `"Pairing…"` is deferred — that is
+   the pre-existing Slice 1 pair flow, outside this slice's scope; behavior is
+   unchanged from what shipped.
+3. **Redundant `cursor: pointer` (fixed).** Task 5's CSS drops the redundant
+   `cursor` rules (the generic `.options button` already sets it) and keeps only
+   `#unpair-cancel { margin-left: 8px; }`.
+4. **Multi-tab sync (deferred — Option A, out of scope).** A second open Options tab
+   won't auto-refresh when another unpairs. For a settings page this is a rare edge,
+   and a `chrome.storage.onChanged` listener adds a new seam for stale-until-reload
+   state. Acceptable as-is; revisit if multi-tab Options becomes common.
+5. **Date localization (deferred).** `formatPairedSince` stays deterministic `en-US`.
+   The entire extension UI is English-only; localizing just the date would be
+   inconsistent, and full i18n is a separate, larger effort. Revisit alongside a
+   project-wide localization pass.
 
 ## Self-Review Notes (author)
 
