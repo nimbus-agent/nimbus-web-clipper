@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   isClipRequest,
+  isConnectionResponse,
+  isConnectionStatusRequest,
   isPairRequest,
   isPingMessage,
   isQueueListRequest,
@@ -9,6 +11,7 @@ import {
   isQueueRetryRequest,
   isRelatedRequest,
   isRelatedResponse,
+  isUnpairRequest,
 } from "../../src/shared/messages.ts";
 
 describe("isPingMessage", () => {
@@ -110,5 +113,37 @@ describe("isQueueResponse", () => {
   test("rejects malformed items and the wrong kind", () => {
     expect(isQueueResponse({ kind: "queue", items: [{ url: 1 }] })).toBe(false);
     expect(isQueueResponse({ kind: "clip", items: [] })).toBe(false);
+  });
+});
+
+describe("connection request guards", () => {
+  test("accept their kinds", () => {
+    expect(isConnectionStatusRequest({ kind: "connection-status" })).toBe(true);
+    expect(isUnpairRequest({ kind: "unpair" })).toBe(true);
+  });
+  test("reject wrong kinds and non-objects", () => {
+    expect(isConnectionStatusRequest({ kind: "unpair" })).toBe(false);
+    expect(isUnpairRequest({ kind: "connection-status" })).toBe(false);
+    expect(isConnectionStatusRequest(null)).toBe(false);
+  });
+});
+
+describe("isConnectionResponse", () => {
+  test("accepts not-paired and a well-formed paired response", () => {
+    expect(isConnectionResponse({ kind: "connection", paired: false })).toBe(true);
+    expect(
+      isConnectionResponse({
+        kind: "connection",
+        paired: true,
+        label: "chrome",
+        origin: "http://127.0.0.1:8765",
+        pairedAt: 1,
+      }),
+    ).toBe(true);
+  });
+  test("rejects a paired response missing fields, the wrong kind, and a missing paired flag", () => {
+    expect(isConnectionResponse({ kind: "connection", paired: true, label: "c" })).toBe(false);
+    expect(isConnectionResponse({ kind: "clip", paired: false })).toBe(false);
+    expect(isConnectionResponse({ kind: "connection" })).toBe(false);
   });
 });
