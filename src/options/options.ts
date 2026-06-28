@@ -1,5 +1,6 @@
 import { sendMessage } from "../browser/runtime.ts";
-import type { PairResponse } from "../shared/messages.ts";
+import { isConnectionResponse, type PairResponse } from "../shared/messages.ts";
+import { formatPairedSince } from "./connection-view.ts";
 
 const PAIR_MESSAGES: Record<string, string> = {
   bad_origin: "Enter a 127.0.0.1 / localhost URL.",
@@ -17,6 +18,46 @@ function setStatus(text: string): void {
   if (el !== null) {
     el.textContent = text;
   }
+}
+
+let unpairArmed = false;
+
+function disarmUnpair(): void {
+  unpairArmed = false;
+  const unpair = document.getElementById("unpair");
+  const cancel = document.getElementById("unpair-cancel");
+  if (unpair instanceof HTMLButtonElement) {
+    unpair.textContent = "Unpair this browser";
+  }
+  if (cancel instanceof HTMLElement) {
+    cancel.hidden = true;
+  }
+}
+
+function renderConnection(res: unknown): void {
+  const pairing = document.getElementById("pairing-section");
+  const connection = document.getElementById("connection-section");
+  const status = document.getElementById("connection-status");
+  if (
+    !(pairing instanceof HTMLElement) ||
+    !(connection instanceof HTMLElement) ||
+    status === null
+  ) {
+    return;
+  }
+  if (!isConnectionResponse(res) || !res.paired) {
+    connection.hidden = true;
+    pairing.hidden = false;
+    disarmUnpair();
+    return;
+  }
+  status.textContent = `Paired as "${res.label}" to ${res.origin}, since ${formatPairedSince(res.pairedAt)}.`;
+  pairing.hidden = true;
+  connection.hidden = false;
+}
+
+async function refreshConnection(): Promise<void> {
+  renderConnection(await sendMessage({ kind: "connection-status" }));
 }
 
 async function pair(): Promise<void> {
@@ -38,13 +79,51 @@ async function pair(): Promise<void> {
     return;
   }
   if (res.ok) {
-    setStatus(`Paired as "${res.label}".`);
     codeEl.value = "";
+    setStatus("");
+    await refreshConnection();
   } else {
     setStatus(PAIR_MESSAGES[res.reason] ?? "Pairing failed.");
   }
 }
 
+async function onUnpairClick(): Promise<void> {
+  const unpair = document.getElementById("unpair");
+  const cancel = document.getElementById("unpair-cancel");
+  if (!unpairArmed) {
+    unpairArmed = true;
+    if (unpair instanceof HTMLButtonElement) {
+      unpair.textContent = "Click again to confirm unpair";
+    }
+    if (cancel instanceof HTMLElement) {
+      cancel.hidden = false;
+    }
+    return;
+  }
+  // Confirmed. Show an in-flight state and disable the buttons; do NOT pre-disarm
+  // (resetting the button text first would briefly flash the normal paired panel
+  // before the section is hidden). renderConnection performs the final transition —
+  // its not-paired branch calls disarmUnpair() to reset the button text + cancel.
+  if (unpair instanceof HTMLButtonElement) {
+    unpair.textContent = "Unpairing…";
+    unpair.disabled = true;
+  }
+  if (cancel instanceof HTMLButtonElement) {
+    cancel.disabled = true;
+  }
+  const res = await sendMessage({ kind: "unpair" });
+  if (unpair instanceof HTMLButtonElement) {
+    unpair.disabled = false;
+  }
+  if (cancel instanceof HTMLButtonElement) {
+    cancel.disabled = false;
+  }
+  renderConnection(res);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("pair")?.addEventListener("click", () => void pair());
+  document.getElementById("unpair")?.addEventListener("click", () => void onUnpairClick());
+  document.getElementById("unpair-cancel")?.addEventListener("click", () => disarmUnpair());
+  void refreshConnection();
 });
