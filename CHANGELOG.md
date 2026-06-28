@@ -40,6 +40,13 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   bearer token is never stored in the queue (re-read at flush time); queue writes are
   serialized to prevent lost updates; the manager renders `textContent`-only and no
   links. Adds only the `alarms` permission; still loopback-only.
+- **Connection management (Options).** The Options page now shows the current
+  pairing — *"Paired as "<label>" to <origin>, since <date>."* — and adds an
+  **Unpair** button (inline two-step confirm) that clears the stored connection. The
+  state is fetched from the service worker as a **token-free** projection (the bearer
+  token never enters the Options page). Unpair is local-only (the gateway contract has
+  no revoke endpoint); queued offline clips survive an unpair and drain after
+  re-pairing. No new permission.
 
 ### Security
 
