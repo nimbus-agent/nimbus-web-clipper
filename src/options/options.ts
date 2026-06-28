@@ -73,17 +73,22 @@ async function pair(): Promise<void> {
     return;
   }
   setStatus("Pairing…");
-  const res = await sendMessage({ kind: "pair", origin, code });
-  if (!isPairResponse(res)) {
-    setStatus("Unexpected response.");
-    return;
-  }
-  if (res.ok) {
-    codeEl.value = "";
-    setStatus("");
-    await refreshConnection();
-  } else {
-    setStatus(PAIR_MESSAGES[res.reason] ?? "Pairing failed.");
+  try {
+    const res = await sendMessage({ kind: "pair", origin, code });
+    if (!isPairResponse(res)) {
+      setStatus("Unexpected response.");
+      return;
+    }
+    if (res.ok) {
+      codeEl.value = "";
+      setStatus("");
+      await refreshConnection();
+    } else {
+      setStatus(PAIR_MESSAGES[res.reason] ?? "Pairing failed.");
+    }
+  } catch {
+    // The message channel rejected — recover the status rather than sticking on "Pairing…".
+    setStatus("Couldn't reach the extension — please try again.");
   }
 }
 
@@ -111,14 +116,21 @@ async function onUnpairClick(): Promise<void> {
   if (cancel instanceof HTMLButtonElement) {
     cancel.disabled = true;
   }
-  const res = await sendMessage({ kind: "unpair" });
-  if (unpair instanceof HTMLButtonElement) {
-    unpair.disabled = false;
+  try {
+    renderConnection(await sendMessage({ kind: "unpair" }));
+  } catch {
+    // The message channel itself rejected (e.g. the SW didn't respond) — the unpair
+    // didn't happen, so reset the button and leave the paired panel as-is rather than
+    // sticking on a disabled "Unpairing…".
+    disarmUnpair();
+  } finally {
+    if (unpair instanceof HTMLButtonElement) {
+      unpair.disabled = false;
+    }
+    if (cancel instanceof HTMLButtonElement) {
+      cancel.disabled = false;
+    }
   }
-  if (cancel instanceof HTMLButtonElement) {
-    cancel.disabled = false;
-  }
-  renderConnection(res);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
