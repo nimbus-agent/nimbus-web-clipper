@@ -28,9 +28,16 @@ import {
   handleRelated,
 } from "./handlers.ts";
 import { flushQueue } from "./queue-flush.ts";
+import { singleFlight } from "./single-flight.ts";
 
 const FLUSH_ALARM = "flush-clip-queue";
 const flushDeps = { getConnection, getQueue, updateQueue, postClip };
+
+// Background drains (the periodic alarm and the cold-start drain) can fire together on
+// a fresh wake; coalescing them through one in-flight guard stops the same clips being
+// POSTed twice. The popup retry path stays direct — it is user-initiated and may carry
+// a specific url / manual flag, and its writes are already serialized by updateQueue.
+const backgroundFlush = singleFlight(() => flushQueue(flushDeps).then(syncQueueState));
 
 // Reconcile the toolbar badge and the flush alarm with the current queue length:
 // the alarm exists only while there is work to do (no idle wakeups).
@@ -121,9 +128,7 @@ addCommandListener((command) => {
 // The periodic alarm drains the queue, then reconciles the badge + alarm lifecycle.
 addAlarmListener((name) => {
   if (name === FLUSH_ALARM) {
-    flushQueue(flushDeps)
-      .then(syncQueueState)
-      .catch(() => undefined);
+    backgroundFlush().catch(() => undefined);
   }
 });
 
@@ -134,7 +139,5 @@ addAlarmListener((name) => {
 void (async () => {
   await setBadgeBackground("#5b6470").catch(() => undefined);
   await syncQueueState().catch(() => undefined);
-  await flushQueue(flushDeps)
-    .then(syncQueueState)
-    .catch(() => undefined);
+  await backgroundFlush().catch(() => undefined);
 })();
