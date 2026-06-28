@@ -1,11 +1,13 @@
 import { describe, expect, test } from "vitest";
 import {
   handleClip,
+  handleConnectionStatus,
   handlePair,
   handleQueueList,
   handleQueueRemove,
   handleQueueRetry,
   handleRelated,
+  handleUnpair,
 } from "../../src/background/handlers.ts";
 import type { QueuedClip } from "../../src/shared/queue.ts";
 import type { Connection } from "../../src/shared/types.ts";
@@ -271,5 +273,37 @@ describe("handleQueue* handlers", () => {
       { kind: "queue-remove", url: "a" },
     );
     expect(res.items.map((i) => i.url)).toEqual(["b"]);
+  });
+});
+
+describe("handleConnectionStatus", () => {
+  test("not paired → { paired: false }", async () => {
+    const res = await handleConnectionStatus({ getConnection: async () => null });
+    expect(res).toEqual({ kind: "connection", paired: false });
+  });
+  test("paired → token-free projection (label/origin/pairedAt; NO token)", async () => {
+    // `conn` (defined at the top of this file) carries a token; the response must not.
+    const res = await handleConnectionStatus({ getConnection: async () => conn });
+    expect(res).toEqual({
+      kind: "connection",
+      paired: true,
+      label: "chrome",
+      origin: "http://127.0.0.1:8765",
+      pairedAt: 100,
+    });
+    expect("token" in res).toBe(false);
+  });
+});
+
+describe("handleUnpair", () => {
+  test("clears the connection and returns { paired: false }", async () => {
+    let cleared = false;
+    const res = await handleUnpair({
+      clearConnection: async () => {
+        cleared = true;
+      },
+    });
+    expect(cleared).toBe(true);
+    expect(res).toEqual({ kind: "connection", paired: false });
   });
 });
