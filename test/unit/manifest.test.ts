@@ -44,3 +44,11 @@ describe("composeManifest — commands", () => {
     });
   }
 });
+
+describe("composeManifest — alarms permission", () => {
+  for (const target of BROWSER_TARGETS) {
+    test(`${target} declares the alarms permission (for the offline-queue flush)`, () => {
+      expect(composeManifest(target, "1.2.3").permissions).toContain("alarms");
+    });
+  }
+});

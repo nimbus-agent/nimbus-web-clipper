@@ -32,6 +32,14 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   (title, service badge, snippet, link). Query-once-on-open; toggle / X / Esc to
   close. Renders via `textContent` only (DOM-XSS backstop); honors
   `prefers-color-scheme`. No new permissions.
+- **Slice 3 — offline retry queue.** Clips that fail because the gateway is
+  unreachable (or errors) are saved to a local queue and retried automatically — a
+  `chrome.alarms` flush (live only while the queue is non-empty) plus drains on
+  service-worker startup and on demand. A toolbar **badge** shows the pending count
+  and the popup gains a **queue manager** (per-item Retry/Remove + Retry all). The
+  bearer token is never stored in the queue (re-read at flush time); queue writes are
+  serialized to prevent lost updates; the manager renders `textContent`-only and no
+  links. Adds only the `alarms` permission; still loopback-only.
 
 ### Security
 

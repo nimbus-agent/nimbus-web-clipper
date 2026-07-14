@@ -73,8 +73,9 @@ export function composeManifest(target: BrowserTarget, version: string): WebClip
     description:
       "Clip articles and selections from the browser into your local-first Nimbus index.",
     // Minimal, capability-scoped: storage holds the paired bearer token; activeTab +
-    // scripting let the popup capture the current page on user action (no broad host access).
-    permissions: ["activeTab", "scripting", "storage"],
+    // scripting let the popup capture the current page on user action (no broad host
+    // access); alarms wakes the SW to drain the offline retry queue.
+    permissions: ["activeTab", "scripting", "storage", "alarms"],
     // The gateway is loopback-only (invariant I6). The extension never talks to any
     // other origin — no remote host permissions, by design.
     host_permissions: ["http://127.0.0.1/*", "http://localhost/*"],

@@ -50,6 +50,30 @@ Prereq: paired (Slice 1) and the gateway has some indexed items.
 8. **Dark mode:** with the OS in dark mode, the panel renders dark.
 9. Repeat 1–6 in Firefox.
 
+## Manual verification — Slice 3 (offline retry queue)
+
+Prereq: paired (Slice 1). To force the transient path, stop the gateway (or point
+the Options origin at an unused port) so clips fail with "Can't reach Nimbus".
+
+1. **Queue on failure:** with the gateway stopped, Clip page → status reads
+   "Saved offline — will sync when Nimbus is back."; the popup shows a "Waiting to
+   sync (1)" section and the toolbar badge shows `1`.
+2. **Dedup:** re-clip the same page → still one entry (payload replaced), badge `1`.
+   Clip a second page → badge `2`, two rows.
+3. **Auto-drain:** start the gateway and wait ~1 min (or reopen the popup) → the
+   queue drains, the section hides, the badge clears.
+4. **Manual retry:** queue some clips offline, start the gateway, open the popup,
+   press **Retry all** (and a per-row **Retry**) → those entries sync and disappear.
+5. **Remove:** press a row's **Remove** → the entry is dropped; badge decrements.
+6. **Unpaired backlog:** with entries queued, unpair (Options) → the badge still
+   shows the backlog; entries don't drain until re-paired.
+7. **Restart persistence:** queue offline, then disable+enable the extension (or
+   restart the browser) → the queue and badge survive; it drains when the gateway
+   returns.
+8. **Not-queued errors:** while paired but mid-session token loss (or a 400) → the
+   clip reports its error and is **not** queued.
+9. Repeat 1–5 in Firefox.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any
