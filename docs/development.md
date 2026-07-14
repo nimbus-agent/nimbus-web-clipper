@@ -74,6 +74,25 @@ the Options origin at an unused port) so clips fail with "Can't reach Nimbus".
    clip reports its error and is **not** queued.
 9. Repeat 1–5 in Firefox.
 
+## Manual verification — Connection management (Options)
+
+1. **Unpaired state:** with no connection stored, open Options → the **pairing form**
+   is shown (gateway URL + code + Pair); the Connection panel is hidden.
+2. **Pair → paired panel:** complete a pairing → the form is replaced by
+   *"Paired as "<label>" to <origin>, since <date>."* and an **Unpair** button.
+3. **Persistence:** reload the Options page → it still shows the paired panel (state
+   comes from the service worker, not the page).
+4. **Unpair two-step:** click **Unpair** → it becomes *"Click again to confirm
+   unpair"* with a **Cancel**; click **Cancel** → reverts (still paired); click
+   **Unpair** twice → returns to the pairing form.
+5. **Token never exposed:** with DevTools open on the Options page, confirm no
+   bearer token appears in the DOM or in the `connection-status` message payload
+   (only label/origin/pairedAt).
+6. **Re-pair after unpair:** pairing again from the form returns to the paired panel.
+7. **Queued clips survive unpair:** with offline clips queued (Slice 3), unpairing
+   leaves them queued; after re-pairing they drain on the next flush.
+8. Repeat 1–6 in Firefox.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any

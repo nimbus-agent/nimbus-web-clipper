@@ -10,22 +10,26 @@ import { injectPanel } from "../browser/scripting.ts";
 import { activeTab } from "../browser/tabs.ts";
 import {
   isClipRequest,
+  isConnectionStatusRequest,
   isPairRequest,
   isQueueListRequest,
   isQueueRemoveRequest,
   isQueueRetryRequest,
   isRelatedRequest,
+  isUnpairRequest,
 } from "../shared/messages.ts";
 import { getQueue, updateQueue } from "./clip-queue-store.ts";
-import { getConnection, setConnection } from "./connection-store.ts";
+import { clearConnection, getConnection, setConnection } from "./connection-store.ts";
 import { confirmPair, postClip, postRelated } from "./gateway-client.ts";
 import {
   handleClip,
+  handleConnectionStatus,
   handlePair,
   handleQueueList,
   handleQueueRemove,
   handleQueueRetry,
   handleRelated,
+  handleUnpair,
 } from "./handlers.ts";
 import { flushQueue } from "./queue-flush.ts";
 import { singleFlight } from "./single-flight.ts";
@@ -109,6 +113,22 @@ addMessageListener((message, respond) => {
       })
       .catch(() => {
         respond({ kind: "queue", items: [] });
+      });
+    return true;
+  }
+  if (isConnectionStatusRequest(message)) {
+    handleConnectionStatus({ getConnection })
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "connection", paired: false });
+      });
+    return true;
+  }
+  if (isUnpairRequest(message)) {
+    handleUnpair({ clearConnection })
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "connection", paired: false });
       });
     return true;
   }

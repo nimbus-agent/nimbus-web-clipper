@@ -9,7 +9,7 @@
   <body>
     <main class="options">
       <h1>Nimbus Web Clipper</h1>
-      <section>
+      <section id="pairing-section">
         <h2>Pair this browser</h2>
         <p>Run <code>nimbus clip pair</code> on the machine running your Nimbus gateway, then enter its URL and the 6-digit code it prints.</p>
         <label for="origin">Gateway URL</label>
@@ -18,6 +18,12 @@
         <input id="code" type="text" inputmode="numeric" placeholder="429173" />
         <button id="pair" type="button">Pair this browser</button>
         <p id="pairing-status" class="options__status" role="status"></p>
+      </section>
+      <section id="connection-section" hidden>
+        <h2>Connection</h2>
+        <p id="connection-status" class="options__status" role="status"></p>
+        <button id="unpair" type="button">Unpair this browser</button>
+        <button id="unpair-cancel" type="button" hidden>Cancel</button>
       </section>
     </main>
     <script src="options.js"></script>

@@ -3,6 +3,7 @@ import { isLoopbackOrigin } from "../shared/gateway.ts";
 import type {
   ClipRequest,
   ClipResponse,
+  ConnectionResponse,
   PairRequest,
   PairResponse,
   QueueRemoveRequest,
@@ -134,4 +135,35 @@ export async function handleQueueRemove(
 ): Promise<QueueResponse> {
   const q = await deps.updateQueue((qq) => removeFromQueue(qq, req.url));
   return { kind: "queue", items: q.map(toView) };
+}
+
+export interface ConnectionStatusDeps {
+  readonly getConnection: () => Promise<Connection | null>;
+}
+
+export async function handleConnectionStatus(
+  deps: ConnectionStatusDeps,
+): Promise<ConnectionResponse> {
+  const conn = await deps.getConnection();
+  if (conn === null) {
+    return { kind: "connection", paired: false };
+  }
+  // Explicit field-by-field projection — the token is deliberately omitted so it
+  // never crosses the messaging boundary into the Options page.
+  return {
+    kind: "connection",
+    paired: true,
+    label: conn.label,
+    origin: conn.origin,
+    pairedAt: conn.pairedAt,
+  };
+}
+
+export interface UnpairDeps {
+  readonly clearConnection: () => Promise<void>;
+}
+
+export async function handleUnpair(deps: UnpairDeps): Promise<ConnectionResponse> {
+  await deps.clearConnection();
+  return { kind: "connection", paired: false };
 }

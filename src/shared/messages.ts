@@ -56,13 +56,23 @@ export interface QueueRemoveRequest {
   readonly url: string;
 }
 
+export interface ConnectionStatusRequest {
+  readonly kind: "connection-status";
+}
+
+export interface UnpairRequest {
+  readonly kind: "unpair";
+}
+
 export type ExtensionRequest =
   | PairRequest
   | ClipRequest
   | RelatedRequest
   | QueueListRequest
   | QueueRetryRequest
-  | QueueRemoveRequest;
+  | QueueRemoveRequest
+  | ConnectionStatusRequest
+  | UnpairRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -88,7 +98,22 @@ export type RelatedResponse =
 
 export type QueueResponse = { readonly kind: "queue"; readonly items: QueuedClipView[] };
 
-export type ExtensionResponse = PairResponse | ClipResponse | RelatedResponse | QueueResponse;
+export type ConnectionResponse =
+  | { readonly kind: "connection"; readonly paired: false }
+  | {
+      readonly kind: "connection";
+      readonly paired: true;
+      readonly label: string;
+      readonly origin: string;
+      readonly pairedAt: number;
+    };
+
+export type ExtensionResponse =
+  | PairResponse
+  | ClipResponse
+  | RelatedResponse
+  | QueueResponse
+  | ConnectionResponse;
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -182,4 +207,29 @@ export function isQueueResponse(v: unknown): v is QueueResponse {
     Array.isArray(v["items"]) &&
     v["items"].every(isQueuedClipView)
   );
+}
+
+export function isConnectionStatusRequest(v: unknown): v is ConnectionStatusRequest {
+  return isObject(v) && v["kind"] === "connection-status";
+}
+
+export function isUnpairRequest(v: unknown): v is UnpairRequest {
+  return isObject(v) && v["kind"] === "unpair";
+}
+
+export function isConnectionResponse(v: unknown): v is ConnectionResponse {
+  if (!isObject(v) || v["kind"] !== "connection") {
+    return false;
+  }
+  if (v["paired"] === false) {
+    return true;
+  }
+  if (v["paired"] === true) {
+    return (
+      typeof v["label"] === "string" &&
+      typeof v["origin"] === "string" &&
+      typeof v["pairedAt"] === "number"
+    );
+  }
+  return false;
 }
