@@ -34,3 +34,21 @@ describe("composeManifest", () => {
     expect(chromeRest).toEqual(firefoxRest);
   });
 });
+
+describe("composeManifest — commands", () => {
+  for (const target of ["chrome", "firefox"] as const) {
+    test(`${target} declares the show_related command with a suggested key`, () => {
+      const m = composeManifest(target, "1.2.3");
+      expect(m.commands.show_related.suggested_key.default).toBe("Alt+Shift+R");
+      expect(m.commands.show_related.description.length).toBeGreaterThan(0);
+    });
+  }
+});
+
+describe("composeManifest — alarms permission", () => {
+  for (const target of BROWSER_TARGETS) {
+    test(`${target} declares the alarms permission (for the offline-queue flush)`, () => {
+      expect(composeManifest(target, "1.2.3").permissions).toContain("alarms");
+    });
+  }
+});

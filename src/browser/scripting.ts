@@ -37,3 +37,8 @@ export async function runCapture(
   }
   return value;
 }
+
+/** Inject the bundled panel.js into a tab. The script self-toggles on re-injection. */
+export async function injectPanel(tabId: number): Promise<void> {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["panel.js"] });
+}

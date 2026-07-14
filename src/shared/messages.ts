@@ -2,7 +2,9 @@
 // background service worker via chrome.runtime messaging. External data crossing
 // the messaging boundary is `unknown` until narrowed by a guard here — never `any`.
 
-import type { CaptureResult, ClipError, PairError } from "./types.ts";
+import type { QueuedClipView } from "./queue.ts";
+import { isRelatedHit } from "./related.ts";
+import type { CaptureResult, ClipError, PairError, RelatedError, RelatedHit } from "./types.ts";
 
 /** A liveness probe the popup sends to confirm the service worker is responsive. */
 export interface PingMessage {
@@ -33,7 +35,34 @@ export interface ClipRequest {
   readonly tags: string[];
 }
 
-export type ExtensionRequest = PairRequest | ClipRequest;
+export interface RelatedRequest {
+  readonly kind: "related";
+  readonly title?: string;
+  readonly canonicalUrl?: string;
+  readonly selection?: string;
+}
+
+export interface QueueListRequest {
+  readonly kind: "queue-list";
+}
+
+export interface QueueRetryRequest {
+  readonly kind: "queue-retry";
+  readonly url?: string;
+}
+
+export interface QueueRemoveRequest {
+  readonly kind: "queue-remove";
+  readonly url: string;
+}
+
+export type ExtensionRequest =
+  | PairRequest
+  | ClipRequest
+  | RelatedRequest
+  | QueueListRequest
+  | QueueRetryRequest
+  | QueueRemoveRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -46,9 +75,20 @@ export type ClipResponse =
       readonly status: "created" | "updated";
       readonly bookmarked: boolean;
     }
-  | { readonly kind: "clip"; readonly ok: false; readonly reason: ClipError };
+  | {
+      readonly kind: "clip";
+      readonly ok: false;
+      readonly reason: ClipError;
+      readonly queued?: boolean;
+    };
 
-export type ExtensionResponse = PairResponse | ClipResponse;
+export type RelatedResponse =
+  | { readonly kind: "related"; readonly ok: true; readonly items: RelatedHit[] }
+  | { readonly kind: "related"; readonly ok: false; readonly reason: RelatedError };
+
+export type QueueResponse = { readonly kind: "queue"; readonly items: QueuedClipView[] };
+
+export type ExtensionResponse = PairResponse | ClipResponse | RelatedResponse | QueueResponse;
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -82,5 +122,64 @@ export function isClipRequest(v: unknown): v is ClipRequest {
     isCaptureResult(v["capture"]) &&
     Array.isArray(v["tags"]) &&
     v["tags"].every((t) => typeof t === "string")
+  );
+}
+
+export function isRelatedRequest(v: unknown): v is RelatedRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "related" &&
+    (v["title"] === undefined || typeof v["title"] === "string") &&
+    (v["canonicalUrl"] === undefined || typeof v["canonicalUrl"] === "string") &&
+    (v["selection"] === undefined || typeof v["selection"] === "string")
+  );
+}
+
+export function isRelatedResponse(v: unknown): v is RelatedResponse {
+  if (!isObject(v) || v["kind"] !== "related") {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return Array.isArray(v["items"]) && v["items"].every(isRelatedHit);
+  }
+  if (v["ok"] === false) {
+    return typeof v["reason"] === "string";
+  }
+  return false;
+}
+
+export function isQueueListRequest(v: unknown): v is QueueListRequest {
+  return isObject(v) && v["kind"] === "queue-list";
+}
+
+export function isQueueRetryRequest(v: unknown): v is QueueRetryRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "queue-retry" &&
+    (v["url"] === undefined || typeof v["url"] === "string")
+  );
+}
+
+export function isQueueRemoveRequest(v: unknown): v is QueueRemoveRequest {
+  return isObject(v) && v["kind"] === "queue-remove" && typeof v["url"] === "string";
+}
+
+function isQueuedClipView(v: unknown): v is QueuedClipView {
+  return (
+    isObject(v) &&
+    typeof v["url"] === "string" &&
+    typeof v["title"] === "string" &&
+    typeof v["queuedAt"] === "number" &&
+    typeof v["attempts"] === "number" &&
+    (v["lastReason"] === undefined || typeof v["lastReason"] === "string")
+  );
+}
+
+export function isQueueResponse(v: unknown): v is QueueResponse {
+  return (
+    isObject(v) &&
+    v["kind"] === "queue" &&
+    Array.isArray(v["items"]) &&
+    v["items"].every(isQueuedClipView)
   );
 }

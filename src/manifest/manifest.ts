@@ -24,6 +24,13 @@ interface ManifestAction {
   readonly default_title: string;
 }
 
+interface ManifestCommands {
+  readonly show_related: {
+    readonly suggested_key: { readonly default: string };
+    readonly description: string;
+  };
+}
+
 interface ChromeBackground {
   readonly service_worker: string;
 }
@@ -47,6 +54,7 @@ export interface WebClipperManifest {
   readonly permissions: readonly string[];
   readonly host_permissions: readonly string[];
   readonly action: ManifestAction;
+  readonly commands: ManifestCommands;
   readonly options_ui: { readonly page: string; readonly open_in_tab: boolean };
   readonly background: ChromeBackground | FirefoxBackground;
   readonly icons: Readonly<Record<string, string>>;
@@ -65,14 +73,24 @@ export function composeManifest(target: BrowserTarget, version: string): WebClip
     description:
       "Clip articles and selections from the browser into your local-first Nimbus index.",
     // Minimal, capability-scoped: storage holds the paired bearer token; activeTab +
-    // scripting let the popup capture the current page on user action (no broad host access).
-    permissions: ["activeTab", "scripting", "storage"],
+    // scripting let the popup capture the current page on user action (no broad host
+    // access); alarms wakes the SW to drain the offline retry queue.
+    permissions: ["activeTab", "scripting", "storage", "alarms"],
     // The gateway is loopback-only (invariant I6). The extension never talks to any
     // other origin — no remote host permissions, by design.
     host_permissions: ["http://127.0.0.1/*", "http://localhost/*"],
     action: {
       default_popup: "popup.html",
       default_title: "Clip to Nimbus",
+    },
+    // A separate trigger from the toolbar action (which opens the clip popup): this
+    // hotkey injects the related-items panel. Users can rebind it at the browser's
+    // extension-shortcuts page. Alt+Shift+R is chosen to avoid Chrome/Firefox defaults.
+    commands: {
+      show_related: {
+        suggested_key: { default: "Alt+Shift+R" },
+        description: "Show related items in Nimbus",
+      },
     },
     options_ui: {
       page: "options.html",

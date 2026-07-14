@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { confirmPair, postClip } from "../../src/background/gateway-client.ts";
+import { confirmPair, postClip, postRelated } from "../../src/background/gateway-client.ts";
 import type { ClipPayload } from "../../src/shared/clip.ts";
+import type { RelatedQuery } from "../../src/shared/related.ts";
 
 const ORIGIN = "http://127.0.0.1:8765";
 function jsonRes(status: number, body: unknown): Response {
@@ -147,5 +148,100 @@ describe("timeout", () => {
     const p = postClip(ORIGIN, "tok", payload, doFetch);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(await p).toEqual({ ok: false, reason: "unreachable" });
+  });
+});
+
+describe("postRelated", () => {
+  const query: RelatedQuery = {
+    title: "T",
+    canonicalUrl: "https://ex.com/p",
+    selection: "s",
+    limit: 10,
+  };
+  const hit = {
+    id: "nimbus:1",
+    title: "Doc",
+    service: "drive",
+    snippet: "…",
+    url: "https://ex.com/d",
+  };
+
+  test("200 → ok with items; sends Bearer + query to the related path", async () => {
+    let seenUrl = "";
+    let auth: string | null = null;
+    let seenBody: unknown;
+    const out = await postRelated("http://127.0.0.1:8765", "tok-abc", query, async (url, init) => {
+      seenUrl = url;
+      auth = new Headers(init?.headers).get("authorization");
+      seenBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ items: [hit] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    expect(seenUrl).toBe("http://127.0.0.1:8765/v1/clips/related");
+    expect(auth).toBe("Bearer tok-abc");
+    expect(seenBody).toEqual(query);
+    expect(out).toEqual({ ok: true, items: [hit] });
+  });
+  test("200 with a malformed item → server_error", async () => {
+    const out = await postRelated(
+      "http://127.0.0.1:8765",
+      "t",
+      query,
+      async () =>
+        new Response(JSON.stringify({ items: [{ id: 1 }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    expect(out).toEqual({ ok: false, reason: "server_error" });
+  });
+  test("401 → unauthorized", async () => {
+    expect(
+      await postRelated(
+        "http://127.0.0.1:8765",
+        "t",
+        query,
+        async () => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }),
+      ),
+    ).toEqual({ ok: false, reason: "unauthorized" });
+  });
+  test("400/500 → server_error", async () => {
+    expect(
+      await postRelated(
+        "http://127.0.0.1:8765",
+        "t",
+        query,
+        async () => new Response(JSON.stringify({ error: "invalid_json" }), { status: 400 }),
+      ),
+    ).toEqual({ ok: false, reason: "server_error" });
+  });
+  test("fetch throw → unreachable", async () => {
+    expect(
+      await postRelated("http://127.0.0.1:8765", "t", query, async () => {
+        throw new Error("net");
+      }),
+    ).toEqual({ ok: false, reason: "unreachable" });
+  });
+  test("aborts and returns unreachable after the timeout fires", async () => {
+    vi.useFakeTimers();
+    try {
+      const result = postRelated(
+        "http://127.0.0.1:8765",
+        "t",
+        query,
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError")),
+            );
+          }),
+      );
+      await vi.advanceTimersByTimeAsync(8_000);
+      expect(await result).toEqual({ ok: false, reason: "unreachable" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

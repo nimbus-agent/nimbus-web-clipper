@@ -1,5 +1,13 @@
 import { describe, expect, test } from "vitest";
-import { handleClip, handlePair } from "../../src/background/handlers.ts";
+import {
+  handleClip,
+  handlePair,
+  handleQueueList,
+  handleQueueRemove,
+  handleQueueRetry,
+  handleRelated,
+} from "../../src/background/handlers.ts";
+import type { QueuedClip } from "../../src/shared/queue.ts";
 import type { Connection } from "../../src/shared/types.ts";
 
 const conn: Connection = {
@@ -77,6 +85,7 @@ describe("handleClip", () => {
           called = true;
           return { ok: true, status: "created" };
         },
+        updateQueue: async (m) => m([]),
         nowMs: () => 1,
       },
       { kind: "clip", capture, tags: [] },
@@ -93,6 +102,7 @@ describe("handleClip", () => {
           postedTo = origin;
           return { ok: true, status: "created" };
         },
+        updateQueue: async (m) => m([]),
         nowMs: () => 1,
       },
       { kind: "clip", capture, tags: ["a"] },
@@ -105,6 +115,7 @@ describe("handleClip", () => {
       {
         getConnection: async () => conn,
         postClip: async () => ({ ok: true, status: "created" }),
+        updateQueue: async (m) => m([]),
         nowMs: () => 1,
       },
       { kind: "clip", capture: { ...capture, readableFound: false }, tags: [] },
@@ -116,10 +127,149 @@ describe("handleClip", () => {
       {
         getConnection: async () => conn,
         postClip: async () => ({ ok: false, reason: "unauthorized" }),
+        updateQueue: async (m) => m([]),
         nowMs: () => 1,
       },
       { kind: "clip", capture, tags: [] },
     );
     expect(res).toEqual({ kind: "clip", ok: false, reason: "unauthorized" });
+  });
+});
+
+describe("handleRelated", () => {
+  const conn: Connection = {
+    origin: "http://127.0.0.1:8765",
+    token: "tok",
+    label: "chrome",
+    pairedAt: 1,
+  };
+  const hit = { id: "1", title: "Doc", service: "drive", snippet: "…", url: null };
+
+  test("not paired → not_paired without posting", async () => {
+    let called = false;
+    const res = await handleRelated(
+      {
+        getConnection: async () => null,
+        postRelated: async () => {
+          called = true;
+          return { ok: true, items: [] };
+        },
+      },
+      { kind: "related", title: "T" },
+    );
+    expect(res).toEqual({ kind: "related", ok: false, reason: "not_paired" });
+    expect(called).toBe(false);
+  });
+  test("paired → builds the query, posts to the connection origin, returns items", async () => {
+    let postedTo = "";
+    let postedQuery: unknown;
+    const res = await handleRelated(
+      {
+        getConnection: async () => conn,
+        postRelated: async (origin, _token, query) => {
+          postedTo = origin;
+          postedQuery = query;
+          return { ok: true, items: [hit] };
+        },
+      },
+      { kind: "related", title: "  Hello  ", canonicalUrl: "https://ex.com/p", selection: "" },
+    );
+    expect(postedTo).toBe("http://127.0.0.1:8765");
+    expect(postedQuery).toEqual({ title: "Hello", canonicalUrl: "https://ex.com/p", limit: 10 });
+    expect(res).toEqual({ kind: "related", ok: true, items: [hit] });
+  });
+  test("propagates unauthorized", async () => {
+    const res = await handleRelated(
+      {
+        getConnection: async () => conn,
+        postRelated: async () => ({ ok: false, reason: "unauthorized" }),
+      },
+      { kind: "related", title: "T" },
+    );
+    expect(res).toEqual({ kind: "related", ok: false, reason: "unauthorized" });
+  });
+});
+
+function queued(url: string): QueuedClip {
+  return {
+    payload: { url, title: url, mode: "article", body: "b", tags: [], capturedAt: 1 },
+    queuedAt: 1,
+    attempts: 0,
+  };
+}
+
+describe("handleClip — offline queue", () => {
+  test("enqueues on a transient failure and reports queued:true", async () => {
+    let enqueued: QueuedClip[] = [];
+    const res = await handleClip(
+      {
+        getConnection: async () => conn,
+        postClip: async () => ({ ok: false, reason: "unreachable" }),
+        updateQueue: async (m) => {
+          enqueued = m(enqueued);
+          return enqueued;
+        },
+        nowMs: () => 42,
+      },
+      { kind: "clip", capture, tags: [] },
+    );
+    expect(res).toEqual({ kind: "clip", ok: false, reason: "unreachable", queued: true });
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]?.payload.url).toBe("https://ex.com/p");
+    expect(enqueued[0]?.queuedAt).toBe(42);
+  });
+  test("does NOT enqueue a non-transient failure (unauthorized)", async () => {
+    let called = false;
+    const res = await handleClip(
+      {
+        getConnection: async () => conn,
+        postClip: async () => ({ ok: false, reason: "unauthorized" }),
+        updateQueue: async (m) => {
+          called = true;
+          return m([]);
+        },
+        nowMs: () => 1,
+      },
+      { kind: "clip", capture, tags: [] },
+    );
+    expect(res).toEqual({ kind: "clip", ok: false, reason: "unauthorized" });
+    expect(called).toBe(false);
+  });
+});
+
+describe("handleQueue* handlers", () => {
+  test("handleQueueList returns the queue projected to views (no body)", async () => {
+    const res = await handleQueueList({ getQueue: async () => [queued("a")] });
+    expect(res).toEqual({
+      kind: "queue",
+      items: [{ url: "a", title: "a", queuedAt: 1, attempts: 0 }],
+    });
+  });
+  test("handleQueueRetry flushes (manual) with the given url, then returns the list", async () => {
+    let flushOpts: unknown;
+    const res = await handleQueueRetry(
+      {
+        flush: async (opts) => {
+          flushOpts = opts;
+        },
+        getQueue: async () => [queued("a")],
+      },
+      { kind: "queue-retry", url: "a" },
+    );
+    expect(flushOpts).toEqual({ url: "a", manual: true });
+    expect(res.items.map((i) => i.url)).toEqual(["a"]);
+  });
+  test("handleQueueRemove drops the url and returns the remaining list", async () => {
+    let state = [queued("a"), queued("b")];
+    const res = await handleQueueRemove(
+      {
+        updateQueue: async (m) => {
+          state = m(state);
+          return state;
+        },
+      },
+      { kind: "queue-remove", url: "a" },
+    );
+    expect(res.items.map((i) => i.url)).toEqual(["b"]);
   });
 });

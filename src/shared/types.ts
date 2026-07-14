@@ -21,3 +21,13 @@ export type ClipError =
   | "invalid_request"
   | "unreachable"
   | "server_error";
+
+export interface RelatedHit {
+  readonly id: string;
+  readonly title: string;
+  readonly service: string;
+  readonly snippet: string;
+  readonly url: string | null;
+}
+
+export type RelatedError = "not_paired" | "unauthorized" | "unreachable" | "server_error";

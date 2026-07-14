@@ -1,8 +1,9 @@
 import { sendMessage } from "../browser/runtime.ts";
-import { runCapture } from "../browser/scripting.ts";
+import { injectPanel, runCapture } from "../browser/scripting.ts";
 import { activeTab } from "../browser/tabs.ts";
 import { parseTags } from "../shared/clip.ts";
-import type { ClipResponse } from "../shared/messages.ts";
+import { type ClipResponse, isQueueResponse } from "../shared/messages.ts";
+import { renderQueueList } from "./queue-view.ts";
 
 const CLIP_MESSAGES: Record<string, string> = {
   not_paired: "Pair a browser first (Options).",
@@ -53,7 +54,58 @@ async function clip(mode: "article" | "selection"): Promise<void> {
           : "Saved to Nimbus.",
     );
   } else {
-    setStatus(CLIP_MESSAGES[res.reason] ?? "Couldn't save this page.");
+    setStatus(
+      res.queued === true
+        ? "Saved offline — will sync when Nimbus is back."
+        : (CLIP_MESSAGES[res.reason] ?? "Couldn't save this page."),
+    );
+    await refreshQueue();
+  }
+}
+
+async function showRelated(): Promise<void> {
+  try {
+    const tab = await activeTab();
+    await injectPanel(tab.id);
+    window.close();
+  } catch {
+    setStatus("Nimbus can't show related on browser system pages.");
+  }
+}
+
+function renderQueue(res: unknown): void {
+  const section = document.getElementById("queue");
+  const list = document.getElementById("queue-list");
+  const count = document.getElementById("queue-count");
+  if (!(section instanceof HTMLElement) || list === null || count === null) {
+    return;
+  }
+  if (!isQueueResponse(res) || res.items.length === 0) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  count.textContent = String(res.items.length);
+  list.replaceChildren(renderQueueList(document, res.items, Date.now()));
+}
+
+async function refreshQueue(): Promise<void> {
+  renderQueue(await sendMessage({ kind: "queue-list" }));
+}
+
+async function onQueueClick(event: MouseEvent): Promise<void> {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) {
+    return;
+  }
+  const url = target.dataset["url"];
+  if (url === undefined) {
+    return;
+  }
+  if (target.classList.contains("queue__retry")) {
+    renderQueue(await sendMessage({ kind: "queue-retry", url }));
+  } else if (target.classList.contains("queue__remove")) {
+    renderQueue(await sendMessage({ kind: "queue-remove", url }));
   }
 }
 
@@ -62,4 +114,14 @@ document.addEventListener("DOMContentLoaded", () => {
   document
     .getElementById("clip-selection")
     ?.addEventListener("click", () => void clip("selection"));
+  document.getElementById("show-related")?.addEventListener("click", () => void showRelated());
+  document.getElementById("queue-list")?.addEventListener("click", (event) => {
+    if (event instanceof MouseEvent) {
+      void onQueueClick(event);
+    }
+  });
+  document.getElementById("queue-retry-all")?.addEventListener("click", () => {
+    void (async () => renderQueue(await sendMessage({ kind: "queue-retry" })))();
+  });
+  void refreshQueue();
 });
