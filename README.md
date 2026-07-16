@@ -19,10 +19,11 @@ Everything stays on your machine: the extension talks **only** to a Nimbus
 gateway running on `127.0.0.1`. There are no remote servers, no telemetry, and
 no cloud calls.
 
-> **Status:** Slice 1 shipped — pairing, article/selection capture, and clip
-> ingest (`POST /v1/clips`) are implemented and dev-loadable in both Chrome and
-> Firefox. The related-items panel (Slice 2, `POST /v1/clips/related`) is
-> designed in [`docs/`](./docs/) and lands next.
+> **Status:** dev-loadable in both Chrome and Firefox. Pairing, article/selection
+> capture, and clip ingest (`POST /v1/clips`), the related-items panel
+> (`POST /v1/clips/related`), the offline retry queue, and connection management
+> (pairing status + unpair) are all implemented. Store submission is a follow-on.
+> See the [changelog](./CHANGELOG.md) for the per-slice breakdown.
 
 ## How it works
 
