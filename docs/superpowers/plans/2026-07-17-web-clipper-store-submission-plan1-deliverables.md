@@ -71,6 +71,10 @@ describe("store/listing.md ↔ manifest permission parity", () => {
     const md = readFileSync(resolve(ROOT, "store/listing.md"), "utf8");
     const justified = justifiedPermissions(md);
     const manifest = composeManifest("chrome", "0.0.0");
+    // Host access is justified as ONE group under the literal `host_permissions`
+    // key (the Chrome Web Store's model), not enumerated per URL pattern — so we
+    // expect the four API permissions plus the single "host_permissions" token.
+    expect(manifest.host_permissions.length).toBeGreaterThan(0);
     const expected = new Set<string>([...manifest.permissions, "host_permissions"]);
     expect(justified).toEqual(expected);
   });
@@ -579,9 +583,12 @@ bun add -d playwright
 bunx playwright install chromium
 ```
 
-In `package.json`, add to `scripts`:
+In `package.json`, add to `scripts` (the `:setup` line installs the Chromium
+binary on a clean machine, so a fresh clone can run the harness without a
+confusing "browser not found" failure):
 
 ```json
+    "screenshots:setup": "playwright install chromium",
     "screenshots": "bun scripts/screenshots/capture.ts"
 ```
 
@@ -625,9 +632,14 @@ async function main(): Promise<void> {
 
   try {
     // Resolve the dynamically-generated extension id from the MV3 service worker.
+    // MV3 workers can register lazily under headless, so nudge activation by
+    // opening a page first, then resolve via Playwright's serviceWorkers()/event
+    // with a timeout (fail loudly, don't hang). Note: the Puppeteer
+    // `targetcreated` / `target.type()` form does not exist in Playwright.
+    await context.newPage();
     let [sw] = context.serviceWorkers();
     if (!sw) {
-      sw = await context.waitForEvent("serviceworker");
+      sw = await context.waitForEvent("serviceworker", { timeout: 15_000 });
     }
     const extId = new URL(sw.url()).host;
 
@@ -643,10 +655,13 @@ async function main(): Promise<void> {
     const popup = await context.newPage();
     await popup.setViewportSize(VIEWPORT);
     await popup.goto(`chrome-extension://${extId}/popup.html`);
+    // popup.css sets no width on <body> (only `.popup { min-width: 280px }`), so
+    // pin an explicit width here — otherwise the flex-centered body renders at an
+    // unnatural width. 360px matches the popup's natural min-width + padding.
     await popup.addStyleTag({
       content:
         "html{margin:0;min-height:800px;display:flex;align-items:center;justify-content:center;background:#eef1f7}" +
-        "body{box-shadow:0 12px 40px rgba(0,0,0,.18);border-radius:12px;overflow:hidden}",
+        "body{width:360px;box-shadow:0 12px 40px rgba(0,0,0,.18);border-radius:12px;overflow:hidden}",
     });
     await popup.screenshot({ path: resolve(OUT_CHROME, "popup.png") });
 
@@ -695,7 +710,7 @@ Expected: pass. (`chrome.*` inside `sw.evaluate` callbacks typechecks against `@
 Run: `bun run build && bun run screenshots`
 Expected: prints `wrote 3 screenshots …`; `store/screenshots/chrome/` and `store/screenshots/firefox/` each contain `popup.png`, `options.png`, `panel.png`.
 
-Troubleshooting (not part of the committed code): if the service worker never appears, re-run with the extension loaded under new headless by adding `"--headless=new"` to `args` and setting `headless: false`; if the panel selector times out, confirm `dist/chrome/panel.js` exists (it is built from `src/panel/panel-in-page.ts`).
+Troubleshooting (not part of the committed code): if Chromium is missing ("browser not found"), run `bun run screenshots:setup`; if the service worker never appears (the 15s timeout trips), re-run with the extension under new headless by adding `"--headless=new"` to `args` and setting `headless: false`; if the panel selector times out, confirm `dist/chrome/panel.js` exists (it is built from `src/panel/panel-in-page.ts`).
 
 - [ ] **Step 5: Commit the harness (script + deps only — images land in Task 6)**
 
