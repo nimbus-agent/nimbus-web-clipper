@@ -46,6 +46,12 @@ The build is phased into **two implementation plans** under this one spec:
   UI change.
 - **Hosting the privacy policy in this repo.** The policy text is authored here
   but published on `nimbus-agent.dev`; the listings reference the hosted URL.
+- **Automated cross-repo privacy-policy sync.** Deploying `store/privacy-policy.md`
+  to `nimbus-agent.dev`, or CI-checking that the hosted copy matches, would
+  reintroduce the cross-repo dependency the external-hosting decision avoids, for a
+  document that changes a handful of times over the extension's life. Instead,
+  `docs/store-submission.md` documents the manual "republish after editing" step;
+  this repo stays the source of truth.
 - **Staged / percentage rollouts.** Releases submit for review outright.
 - Safari packaging; store-optimization / A-B of listing copy.
 
@@ -93,10 +99,14 @@ docs/
 
 - **`store/listing.md`** — one document that both dashboards are filled from:
   name; short summary (Chrome Web Store ≤132 chars, AMO ≤250); full description;
-  category; the Chrome Web Store **single-purpose** statement; a **per-permission
-  justification** for each declared permission; and the three `nimbus-agent.dev`
-  URLs (homepage, support, privacy). It depends on nothing at runtime; a unit test
-  keeps its permission list in lockstep with the manifest.
+  category; the Chrome Web Store **single-purpose** statement; per-permission
+  justifications; and the three `nimbus-agent.dev` URLs (homepage, support,
+  privacy). To keep the parity test robust rather than regex-parsing prose, the
+  justifications live under a fixed `## Permission justifications` heading in a
+  **machine-parseable** convention — one `` `permission`: reason `` bullet per API
+  permission, plus a single `` `host_permissions` `` bullet (Chrome Web Store
+  justifies host access as one group, not per-URL-pattern). It depends on nothing
+  at runtime.
 
 - **`store/privacy-policy.md`** — standalone policy text. Content mirrors the
   security posture: no data collection, no telemetry, no cloud calls; loopback-only
@@ -123,12 +133,28 @@ docs/
   manual dev fixture. Exposed as `bun run mock-gateway`.
 
 - **`scripts/screenshots/capture.mjs`** — Playwright (Chromium) launches a
-  persistent context with the unpacked `dist/chrome` loaded, reads the extension
-  id from its service worker, pairs the extension against the mock gateway, and
-  captures at the Chrome Web Store dimension (**1280×800**):
+  persistent context with the unpacked `dist/chrome` loaded, pairs the extension
+  against the mock gateway, and captures each surface at the Chrome Web Store
+  dimension (**1280×800**):
   - the **popup** in its meaningful states (default, saved, queue-manager),
   - the **options** page paired state,
   - the **related-items shadow-DOM panel** injected into a sample local page.
+
+  **Extension id resolution.** Unpacked extensions get a *dynamically generated*
+  id, so the script must not hard-code one, and we deliberately do **not** add a
+  fixed `key` to the manifest (no dev key belongs in the repo). Playwright exposes
+  the loaded MV3 service worker on the context — `context.serviceWorkers()[0]`
+  (or awaiting the `serviceworker` event) — and the id is the host of its URL:
+  `sw.url().split("/")[2]`. (Note: the Puppeteer `context.targets()` form does not
+  exist in Playwright.)
+
+  **Popup rendering.** Playwright cannot screenshot the native toolbar popup, so
+  the script navigates directly to `chrome-extension://<id>/popup.html`. Because
+  the popup renders at its own ~400px design width — far smaller than 1280×800 —
+  the popup shots are captured at the popup's natural size and **composited
+  centered onto a padded 1280×800 canvas** (clean background) to meet the store
+  dimension. The options page and related-items panel fill a 1280×800 viewport
+  directly.
 
   Fixed viewport + fixed mock data + disabled animations make the output stable.
   Writes to `store/screenshots/chrome/`; Firefox reuses the Chromium captures
@@ -146,8 +172,22 @@ window before store accounts exist):
   existing item, then submit for review. Secrets: `CWS_CLIENT_ID`,
   `CWS_CLIENT_SECRET`, `CWS_REFRESH_TOKEN`, `CWS_EXTENSION_ID`.
 - **AMO** — Mozilla `web-ext sign`, channel `listed`, submits the firefox build
-  as a new version for review, uploading source to satisfy the bundled-code
-  requirement. Secrets: `AMO_JWT_ISSUER`, `AMO_JWT_SECRET`.
+  as a new version for review. AMO requires the matching **source zip** for any
+  bundled/minified code; the workflow builds it with
+  `git archive --format=zip --output=dist/source.zip HEAD`, which excludes
+  `node_modules`, untracked files, and any local secrets by construction. The
+  exact **upload mechanism** for that source zip (a `web-ext` flag vs. a direct
+  AMO addons-API call) is **verified at plan time against the shipped `web-ext`
+  version** rather than assumed here — as of writing, `web-ext sign` does not
+  clearly expose a source-upload flag, so the plan confirms the current path
+  before wiring it. Secrets: `AMO_JWT_ISSUER`, `AMO_JWT_SECRET`.
+
+The two store uploads are **independent steps**: a failure in one does not block
+the other, and each surfaces its own status in the Actions run. Because a tag's
+workflow can be re-run, both steps handle **"version already exists"** as a
+non-fatal outcome (log and skip) so a partial release — e.g. Chrome Web Store
+succeeded, AMO failed on a transient error — can be retried without the
+already-uploaded store erroring the run.
 
 Any new action is pinned by commit SHA, consistent with the repo's
 `harden-runner` posture. `docs/store-submission.md` lists each secret and how to
@@ -181,10 +221,12 @@ mint it.
 | --- | --- |
 | Store credentials absent | Upload steps skip via the preflight gate; release-attach still runs. |
 | First-ever release (item does not exist yet) | API upload would 404; documented as manual — the owner creates the listing by hand before enabling automation. |
-| Screenshot dimensions off | `capture.mjs` fixes viewport + output size to 1280×800; no post-crop. |
+| Screenshot dimensions off | `capture.mjs` fixes viewport + output size to 1280×800; the popup is composited onto a padded canvas, not post-cropped. |
+| Playwright can't find the extension id | Resolved from `context.serviceWorkers()[0].url()`; no hard-coded id or manifest `key`. |
 | Mock gateway drifts from the contract | Unit test asserts contract-shaped responses; fails CI on drift. |
-| New manifest permission added without justification | Unit test asserts `listing.md` justifies exactly the manifest's permissions; fails CI. |
-| AMO rejects for missing source | Reviewer notes + `web-ext sign` source upload cover the bundled-code rule. |
+| New manifest permission added without justification | Parity test asserts `listing.md` justifies exactly the manifest's permissions; fails CI. |
+| AMO rejects for missing source | `git archive HEAD` builds the matching source zip; reviewer notes document the build. Upload path verified at plan time against the shipped `web-ext`/AMO API. |
+| One store upload fails, the other succeeds | Steps are independent; the run reports the failure, and re-running the tag treats "version already exists" as non-fatal so the failed store retries cleanly. |
 
 ## Testing
 
@@ -195,9 +237,12 @@ carry coverage; browser-integration and CI are dev-run / manual).
 - **Mock gateway contract shape** — each endpoint returns a response that
   satisfies the existing response types (reuse `shared/` types), so the fixture
   cannot silently diverge from the locked contract.
-- **Listing ↔ manifest permission parity** — the set of permissions justified in
-  `store/listing.md` equals `composeManifest(...).permissions ∪ host_permissions`;
-  adding a permission later fails CI until it is justified.
+- **Listing ↔ manifest permission parity** — the parser reads the back-ticked
+  keys under `store/listing.md`'s `## Permission justifications` heading and
+  asserts they equal `composeManifest(...).permissions` **plus** the single
+  `host_permissions` group key. Adding an API permission to the manifest later
+  fails CI until it is justified. (Host patterns are justified as one group, per
+  the Chrome Web Store's own model, not enumerated per URL.)
 
 **Manual / integration (documented, not unit-tested):**
 - `bun run screenshots` against `bun run mock-gateway` renders every surface at
@@ -227,7 +272,9 @@ No new local coverage thresholds; SonarCloud's gate governs, as elsewhere.
    `mock-gateway` / `screenshots` package scripts, and the two drift-guard unit
    tests.
 2. **Plan 2 — CI upload automation:** the secret-gated Chrome Web Store and AMO
-   upload steps in `publish.yml` and `docs/store-submission.md` (first-time manual
-   checklist + secrets and how to mint them).
+   upload steps in `publish.yml` (including the `git archive` source zip and the
+   plan-time verification of the AMO source-upload path) and
+   `docs/store-submission.md` (first-time manual checklist, the manual
+   privacy-policy republish step, and the required secrets + how to mint them).
 
 Each plan gets its own implementation plan document and review.
