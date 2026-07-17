@@ -78,7 +78,7 @@
       }
     },
     {
-      "includes": ["scripts/**/*.mjs", "esbuild.mjs"],
+      "includes": ["scripts/**/*.mjs", "scripts/**/*.ts", "esbuild.mjs"],
       "linter": {
         "rules": {
           "suspicious": {
