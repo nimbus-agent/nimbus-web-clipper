@@ -178,6 +178,15 @@ New `store/publishing.md` (linked from `README.md` "Releasing" and referenced in
 
 ### Required GitHub repository secrets
 
+All six are **new** — no browser-store credentials exist in this repo, at the
+`nimbus-agent` org level, or in any sibling repo (`nimbus-vscode` holds
+`VSCE_PAT`/`OVSX_PAT`, but those are VS Code Marketplace / Open VSX tokens, not
+Chrome Web Store / AMO — not reusable). They are scoped at **repository** level,
+not org level: `nimbus-web-clipper` is the only browser extension in the org, so
+org-scoping would grant publish credentials to repos that never use them (a
+least-privilege violation). Org scope is reserved for genuinely cross-repo
+secrets (already the case for `RELEASE_PLEASE_PAT` and `SONAR_TOKEN`).
+
 | Secret | Store | Purpose |
 |--------|-------|---------|
 | `CWS_EXTENSION_ID` | Chrome | Target item id (from first manual submission) |
