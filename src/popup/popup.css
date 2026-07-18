@@ -6,7 +6,7 @@ body { margin: 0; font-family: system-ui, sans-serif; }
 .popup__tags { width: 100%; box-sizing: border-box; padding: 6px 8px; margin-bottom: 12px; }
 .popup__actions { display: flex; gap: 8px; }
 .popup__actions button { flex: 1; padding: 8px; cursor: pointer; }
-.popup__status { margin: 12px 0 0; font-size: 13px; min-height: 1.2em; }
+.popup__status { display: block; margin: 12px 0 0; font-size: 13px; min-height: 1.2em; }
 .popup__related { width: 100%; margin-top: 8px; padding: 8px; cursor: pointer; }
 .queue { margin-top: 12px; border-top: 1px solid rgba(128, 128, 128, 0.3); padding-top: 8px; }
 .queue__heading { margin: 0 0 8px; font-size: 12px; font-weight: 600; opacity: 0.8; }

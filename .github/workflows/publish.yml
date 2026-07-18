@@ -2,9 +2,9 @@ name: Publish Web Clipper
 
 # Triggered by tags of the form `v0.1.0`. The tag version is written into
 # package.json before building so the manifest version matches the tag, then a
-# zip per browser target is attached to a GitHub Release. The zips are
-# submission-ready for the Chrome Web Store and AMO (store upload is manual /
-# a follow-on — there are no store secrets here yet).
+# zip per browser target is attached to a GitHub Release. When store credentials
+# are configured (see store/publishing.md) the store-chrome / store-firefox jobs
+# upload the same artifacts to the Chrome Web Store and AMO and submit for review.
 
 on:
   push:
@@ -21,6 +21,10 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      has_cws: ${{ steps.store_flags.outputs.has_cws }}
+      has_amo: ${{ steps.store_flags.outputs.has_amo }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -60,6 +64,7 @@ jobs:
             exit 1
           fi
           echo "version=$tag" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$tag" >> "$GITHUB_ENV"
 
       - name: Stamp package.json with the tag version
         run: npm pkg set version="${{ steps.version.outputs.version }}"
@@ -69,6 +74,9 @@ jobs:
 
       - name: Verify the build invariant
         run: bun run check-build
+
+      - name: Lint the Firefox bundle (addons-linter)
+        run: bunx web-ext lint --source-dir dist/firefox
 
       - name: Package per-target zips
         run: bun run package
@@ -80,3 +88,131 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: Web Clipper ${{ steps.version.outputs.version }}
           generate_release_notes: true
+
+      - name: Build source archive for AMO review
+        # git archive captures the committed tree (baseline version); refresh the
+        # tag-stamped package.json so a reviewer's rebuild matches the signed XPI.
+        run: |
+          git archive --format=zip -o "dist-zip/source-${VERSION}.zip" HEAD
+          zip -q "dist-zip/source-${VERSION}.zip" package.json
+
+      - name: Detect store secrets
+        id: store_flags
+        # Each store gate flips true only when ALL of that store's credentials are
+        # present, so a partially-configured store skips cleanly instead of running
+        # the job and failing at the CLI.
+        env:
+          CWS_CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CWS_CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          CWS_REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+          CWS_PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if [ -n "$CWS_CLIENT_ID" ] && [ -n "$CWS_CLIENT_SECRET" ] && [ -n "$CWS_REFRESH_TOKEN" ] && [ -n "$CWS_EXTENSION_ID" ] && [ -n "$CWS_PUBLISHER_ID" ]; then
+            echo "has_cws=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_cws=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "$AMO_JWT_ISSUER" ] && [ -n "$AMO_JWT_SECRET" ]; then
+            echo "has_amo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_amo=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload build artifacts for the store jobs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: extension-build
+          path: |
+            dist/**
+            dist-zip/**
+          retention-days: 1
+          if-no-files-found: error
+
+  store-chrome:
+    name: Chrome Web Store — upload + publish
+    needs: publish
+    if: needs.publish.outputs.has_cws == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: extension-build
+          path: .
+
+      - name: Upload + publish to the Chrome Web Store
+        env:
+          CLIENT_ID: ${{ secrets.CWS_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CWS_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CWS_REFRESH_TOKEN }}
+          PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}
+          CWS_EXTENSION_ID: ${{ secrets.CWS_EXTENSION_ID }}
+        run: |
+          bunx chrome-webstore-upload \
+            --source "dist-zip/nimbus-web-clipper-chrome-${{ needs.publish.outputs.version }}.zip" \
+            --extension-id "$CWS_EXTENSION_ID"
+
+  store-firefox:
+    name: Firefox AMO — sign (listed) + submit
+    needs: publish
+    if: needs.publish.outputs.has_amo == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: extension-build
+          path: .
+
+      - name: Sign + submit the listed AMO version
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          bunx web-ext sign \
+            --source-dir dist/firefox \
+            --channel listed \
+            --upload-source-code "dist-zip/source-${{ needs.publish.outputs.version }}.zip" \
+            --api-key "$AMO_JWT_ISSUER" \
+            --api-secret "$AMO_JWT_SECRET"

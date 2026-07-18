@@ -39,7 +39,7 @@ describe("enqueue", () => {
     for (let i = 0; i < MAX_QUEUE + 5; i++) {
       q = enqueue(q, entry(`u${i}`));
     }
-    expect(q.length).toBe(MAX_QUEUE);
+    expect(q).toHaveLength(MAX_QUEUE);
     expect(q[0]?.payload.url).toBe("u5");
   });
 });

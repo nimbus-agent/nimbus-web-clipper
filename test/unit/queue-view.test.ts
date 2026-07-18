@@ -50,6 +50,6 @@ describe("renderQueueItem", () => {
 describe("renderQueueList", () => {
   test("renders one item per entry", () => {
     const list = renderQueueList(document, [base, { ...base, url: "https://ex.com/q" }], 0);
-    expect(list.querySelectorAll(".queue__item").length).toBe(2);
+    expect(list.querySelectorAll(".queue__item")).toHaveLength(2);
   });
 });

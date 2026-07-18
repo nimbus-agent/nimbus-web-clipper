@@ -24,7 +24,10 @@
     "test:coverage": "bunx vitest run --coverage",
     "check-build": "bun scripts/check-build.mjs",
     "package": "bun scripts/package.mjs",
-    "clean": "bun scripts/clean.mjs"
+    "clean": "bun scripts/clean.mjs",
+    "mock-gateway": "bun scripts/screenshots/mock-gateway.ts",
+    "screenshots:setup": "playwright install chromium",
+    "screenshots": "node scripts/screenshots/capture.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
@@ -32,9 +35,12 @@
     "@types/chrome": "^0.0.287",
     "@types/node": "^26.0.0",
     "@vitest/coverage-v8": "^4.1.9",
+    "chrome-webstore-upload-cli": "^4.0.1",
     "esbuild": "^0.28.1",
     "jsdom": "^29.1.1",
+    "playwright": "^1.61.1",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.9",
+    "web-ext": "^10.5.0"
   }
 }

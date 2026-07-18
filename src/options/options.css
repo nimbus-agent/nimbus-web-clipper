@@ -4,6 +4,6 @@ body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
 .options label { display: block; font-size: 12px; opacity: 0.8; margin: 12px 0 4px; }
 .options input { width: 100%; box-sizing: border-box; padding: 8px; }
 .options button { margin-top: 16px; padding: 8px 16px; cursor: pointer; }
-.options__status { margin-top: 12px; font-size: 13px; min-height: 1.2em; }
+.options__status { display: block; margin-top: 12px; font-size: 13px; min-height: 1.2em; }
 code { font-family: ui-monospace, monospace; padding: 1px 4px; border-radius: 4px; background: rgba(127,127,127,0.18); }
 #unpair-cancel { margin-left: 8px; }

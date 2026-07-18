@@ -78,11 +78,21 @@
       }
     },
     {
-      "includes": ["scripts/**/*.mjs", "esbuild.mjs"],
+      "includes": ["scripts/**/*.mjs", "scripts/**/*.ts", "esbuild.mjs"],
       "linter": {
         "rules": {
           "suspicious": {
             "noConsole": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["test/unit/publish-workflow.test.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noTemplateCurlyInString": "off"
           }
         }
       }

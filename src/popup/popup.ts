@@ -46,13 +46,15 @@ async function clip(mode: "article" | "selection"): Promise<void> {
     return;
   }
   if (res.ok) {
-    setStatus(
-      res.bookmarked
-        ? "Saved as a bookmark."
-        : res.status === "updated"
-          ? "Updated in Nimbus."
-          : "Saved to Nimbus.",
-    );
+    let savedMessage: string;
+    if (res.bookmarked) {
+      savedMessage = "Saved as a bookmark.";
+    } else if (res.status === "updated") {
+      savedMessage = "Updated in Nimbus.";
+    } else {
+      savedMessage = "Saved to Nimbus.";
+    }
+    setStatus(savedMessage);
   } else {
     setStatus(
       res.queued === true

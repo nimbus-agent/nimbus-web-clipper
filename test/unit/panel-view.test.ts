@@ -60,7 +60,7 @@ describe("renderHits", () => {
   });
   test("renders one node per hit", () => {
     const list = renderHits(document, [base, { ...base, id: "2" }]);
-    expect(list.querySelectorAll(".nimbus-related__item").length).toBe(2);
+    expect(list.querySelectorAll(".nimbus-related__item")).toHaveLength(2);
   });
 });
 

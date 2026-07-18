@@ -22,8 +22,11 @@ no cloud calls.
 > **Status:** dev-loadable in both Chrome and Firefox. Pairing, article/selection
 > capture, and clip ingest (`POST /v1/clips`), the related-items panel
 > (`POST /v1/clips/related`), the offline retry queue, and connection management
-> (pairing status + unpair) are all implemented. Store submission is a follow-on.
-> See the [changelog](./CHANGELOG.md) for the per-slice breakdown.
+> (pairing status + unpair) are all implemented. Store listing assets and
+> tag-driven publishing to the Chrome Web Store and Firefox AMO are in place (see
+> [`store/`](./store/)); the live listings await the one-time bootstrap in
+> [store/publishing.md](./store/publishing.md). See the
+> [changelog](./CHANGELOG.md) for the per-slice breakdown.
 
 ## How it works
 
@@ -49,7 +52,9 @@ monorepo). See <https://nimbus-agent.dev/install>.
 
 ## Install (developer / sideload)
 
-The extension is dev-loadable today; store submission is a follow-on.
+The extension is dev-loadable today; tag-driven store publishing is wired up (see
+[Releasing](#releasing)) and goes live after the one-time
+[store bootstrap](./store/publishing.md).
 
 ```bash
 bun install
@@ -61,6 +66,22 @@ bun run build      # → dist/chrome and dist/firefox
 - **Firefox:** `about:debugging#/runtime/this-firefox` → **Load Temporary
   Add-on** → pick `dist/firefox/manifest.json`.
 
+## Releasing
+
+Releases are tag-driven. Push a semver tag and CI does the rest:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+`publish.yml` stamps the tag version into the manifest, builds and packages a zip
+per browser target, and attaches them to a GitHub Release. Once store credentials
+are configured it also uploads to the Chrome Web Store and Firefox AMO and submits
+each for review. See [store/publishing.md](./store/publishing.md) for the one-time
+store bootstrap (accounts, first manual submission, and the repository secrets the
+automated upload needs).
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). The HTTP wire contract is owned by the
@@ -68,7 +89,9 @@ Nimbus gateway repository; this repo builds against that stable surface.
 
 ## See also
 
-- [Documentation](./docs/) — design spec, architecture, and the implementation plan
+- [Documentation](./docs/) — design specs and architecture reference
+- [Store assets](./store/) — listing copy, privacy policy, screenshots, and the
+  [publishing guide](./store/publishing.md)
 - [Changelog](./CHANGELOG.md) — notable changes per release
 - [Nimbus](https://github.com/nimbus-agent/Nimbus) — the gateway this extension talks to
 - [nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) — the sibling editor client
