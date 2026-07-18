@@ -51,6 +51,13 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   with a clip/bookmark tag on a brand-blue tile), replacing the placeholder
   squares. Generated reproducibly by `scripts/gen-icons.py` (Python stdlib only,
   not part of the extension build).
+- **Automated store publishing.** On a `vX.Y.Z` tag, `publish.yml` now uploads the
+  built extension to the Chrome Web Store and Firefox AMO and submits each for
+  review, in addition to attaching the zips to the GitHub Release. Firefox
+  submissions include a `git archive` source bundle for AMO's source-code policy.
+  Store steps run only when the store credentials are configured (see
+  `store/publishing.md`); until then a tag still cuts a GitHub Release. The store
+  CLIs (`chrome-webstore-upload-cli`, `web-ext`) are pinned devDependencies.
 
 ### Security
 

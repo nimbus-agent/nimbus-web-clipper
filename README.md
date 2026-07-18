@@ -61,6 +61,22 @@ bun run build      # → dist/chrome and dist/firefox
 - **Firefox:** `about:debugging#/runtime/this-firefox` → **Load Temporary
   Add-on** → pick `dist/firefox/manifest.json`.
 
+## Releasing
+
+Releases are tag-driven. Push a semver tag and CI does the rest:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+`publish.yml` stamps the tag version into the manifest, builds and packages a zip
+per browser target, and attaches them to a GitHub Release. Once store credentials
+are configured it also uploads to the Chrome Web Store and Firefox AMO and submits
+each for review. See [store/publishing.md](./store/publishing.md) for the one-time
+store bootstrap (accounts, first manual submission, and the repository secrets the
+automated upload needs).
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). The HTTP wire contract is owned by the
