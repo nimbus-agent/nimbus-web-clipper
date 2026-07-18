@@ -43,6 +43,11 @@ interface GeckoSettings {
   readonly gecko: {
     readonly id: string;
     readonly strict_min_version: string;
+    // AMO requires every add-on to declare its data collection. `none` is the
+    // special keyword for "collects/transmits no user data" — the truth here,
+    // since the extension only ever talks to the loopback gateway. Older Firefox
+    // ignores the key; AMO validation requires it.
+    readonly data_collection_permissions: { readonly required: readonly string[] };
   };
 }
 
@@ -108,7 +113,11 @@ export function composeManifest(target: BrowserTarget, version: string): WebClip
       ...base,
       background: { scripts: ["background.js"] },
       browser_specific_settings: {
-        gecko: { id: FIREFOX_ADDON_ID, strict_min_version: FIREFOX_MIN_VERSION },
+        gecko: {
+          id: FIREFOX_ADDON_ID,
+          strict_min_version: FIREFOX_MIN_VERSION,
+          data_collection_permissions: { required: ["none"] },
+        },
       },
     };
   }

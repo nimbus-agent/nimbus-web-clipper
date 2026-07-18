@@ -26,6 +26,15 @@ describe("composeManifest", () => {
     expect(m.browser_specific_settings?.gecko.id).toBe(FIREFOX_ADDON_ID);
   });
 
+  test("firefox declares no data collection (AMO requires the disclosure)", () => {
+    // The `none` keyword = collects/transmits no user data — matches the
+    // loopback-only posture. AMO rejects a submission that omits this key.
+    const m = composeManifest("firefox", "0.0.1");
+    expect(m.browser_specific_settings?.gecko.data_collection_permissions).toEqual({
+      required: ["none"],
+    });
+  });
+
   test("the two targets differ only in background + gecko settings", () => {
     const chrome = composeManifest("chrome", "9.9.9");
     const firefox = composeManifest("firefox", "9.9.9");
