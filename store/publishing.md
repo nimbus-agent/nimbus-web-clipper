@@ -14,8 +14,8 @@ GitHub Release; the store jobs are skipped.
 
 ### 1. Accounts
 
-- **Chrome Web Store:** register a developer account (one-off USD 5 fee) at
-  <https://chrome.google.com/webstore/devconsole>.
+- **Chrome Web Store:** register a developer account (a one-time registration
+  fee) at <https://chrome.google.com/webstore/devconsole>.
 - **Firefox AMO:** create a developer account at
   <https://addons.mozilla.org/developers/>.
 
@@ -58,6 +58,10 @@ GitHub repository (repo-scoped — this is the org's only browser extension):
 | `CWS_REFRESH_TOKEN` | Google OAuth refresh token |
 | `AMO_JWT_ISSUER` | AMO API key (JWT issuer) |
 | `AMO_JWT_SECRET` | AMO API secret (JWT secret) |
+
+Set **all** of a store's secrets or **none**. The workflow only gates each store
+job on one secret (`CWS_CLIENT_ID` for Chrome, `AMO_JWT_ISSUER` for Firefox), so
+a partial set makes the job run and fail at the CLI instead of skipping cleanly.
 
 ## Steady state — cutting a release
 

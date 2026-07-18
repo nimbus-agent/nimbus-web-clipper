@@ -86,6 +86,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["test/unit/publish-workflow.test.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noTemplateCurlyInString": "off"
+          }
+        }
+      }
     }
   ]
 }

@@ -27,6 +27,15 @@ describe("publish workflow — publish job", () => {
     expect(wf).toContain("actions/upload-artifact@");
     expect(wf).toContain("name: extension-build");
   });
+
+  test("builds the source archive after attaching the Release", () => {
+    const wf = workflow();
+    const attachIdx = wf.indexOf("Attach zips to the GitHub Release");
+    const archiveIdx = wf.indexOf("Build source archive for AMO review");
+    expect(attachIdx).toBeGreaterThan(-1);
+    expect(archiveIdx).toBeGreaterThan(-1);
+    expect(attachIdx).toBeLessThan(archiveIdx);
+  });
 });
 
 describe("publish workflow — store-chrome job", () => {
@@ -34,6 +43,7 @@ describe("publish workflow — store-chrome job", () => {
     const wf = workflow();
     expect(wf).toContain("store-chrome:");
     expect(wf).toContain("if: needs.publish.outputs.has_cws == 'true'");
+    expect(wf).toContain("path: .");
   });
 
   test("uploads + publishes via the chrome-webstore-upload CLI", () => {
@@ -49,6 +59,7 @@ describe("publish workflow — store-firefox job", () => {
     const wf = workflow();
     expect(wf).toContain("store-firefox:");
     expect(wf).toContain("if: needs.publish.outputs.has_amo == 'true'");
+    expect(wf).toContain("path: .");
   });
 
   test("signs + submits a listed version with the source archive", () => {
