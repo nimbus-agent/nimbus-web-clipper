@@ -28,3 +28,18 @@ describe("publish workflow — publish job", () => {
     expect(wf).toContain("name: extension-build");
   });
 });
+
+describe("publish workflow — store-chrome job", () => {
+  test("runs after publish, gated on CWS secrets", () => {
+    const wf = workflow();
+    expect(wf).toContain("store-chrome:");
+    expect(wf).toContain("if: needs.publish.outputs.has_cws == 'true'");
+  });
+
+  test("uploads + publishes via the chrome-webstore-upload CLI", () => {
+    const wf = workflow();
+    expect(wf).toContain("actions/download-artifact@");
+    expect(wf).toContain("bunx chrome-webstore-upload");
+    expect(wf).toContain("--extension-id");
+  });
+});
