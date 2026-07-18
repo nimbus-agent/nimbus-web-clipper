@@ -52,6 +52,25 @@ describe("publish workflow — store-chrome job", () => {
     expect(wf).toContain("bunx chrome-webstore-upload");
     expect(wf).toContain("--extension-id");
   });
+
+  test("passes PUBLISHER_ID (required by chrome-webstore-upload-cli v4)", () => {
+    expect(workflow()).toContain("PUBLISHER_ID: ${{ secrets.CWS_PUBLISHER_ID }}");
+  });
+
+  test("has_cws gates on the COMPLETE Chrome credential set", () => {
+    const wf = workflow();
+    for (const secret of [
+      "CWS_CLIENT_ID",
+      "CWS_CLIENT_SECRET",
+      "CWS_REFRESH_TOKEN",
+      "CWS_EXTENSION_ID",
+      "CWS_PUBLISHER_ID",
+    ]) {
+      // each is both mapped into the detect step's env and checked in the guard
+      expect(wf).toContain(`${secret}: \${{ secrets.${secret} }}`);
+      expect(wf).toContain(`[ -n "$${secret}" ]`);
+    }
+  });
 });
 
 describe("publish workflow — store-firefox job", () => {
@@ -67,5 +86,13 @@ describe("publish workflow — store-firefox job", () => {
     expect(wf).toContain("bunx web-ext sign");
     expect(wf).toContain("--channel listed");
     expect(wf).toContain("--upload-source-code");
+  });
+
+  test("has_amo gates on the COMPLETE AMO credential set", () => {
+    const wf = workflow();
+    for (const secret of ["AMO_JWT_ISSUER", "AMO_JWT_SECRET"]) {
+      expect(wf).toContain(`${secret}: \${{ secrets.${secret} }}`);
+      expect(wf).toContain(`[ -n "$${secret}" ]`);
+    }
   });
 });

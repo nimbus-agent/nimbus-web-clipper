@@ -4,6 +4,12 @@
 **Status:** Approved (brainstorm) — ready for implementation plans
 **Repo:** `nimbus-agent/nimbus-web-clipper` (this repo)
 
+> **Design snapshot.** Operational specifics evolved during implementation; the
+> authoritative live references are
+> [`store/publishing.md`](../../../store/publishing.md) (the operator guide this
+> spec sketches under a planned name) and
+> [`.github/workflows/publish.yml`](../../../.github/workflows/publish.yml).
+
 ## Summary
 
 The extension is feature-complete against the design spec (Slices 1–3 +
@@ -50,7 +56,7 @@ The build is phased into **two implementation plans** under this one spec:
   to `nimbus-agent.dev`, or CI-checking that the hosted copy matches, would
   reintroduce the cross-repo dependency the external-hosting decision avoids, for a
   document that changes a handful of times over the extension's life. Instead,
-  `docs/store-submission.md` documents the manual "republish after editing" step;
+  `store/publishing.md` documents the manual "republish after editing" step;
   this repo stays the source of truth.
 - **Staged / percentage rollouts.** Releases submit for review outright.
 - Safari packaging; store-optimization / A-B of listing copy.
@@ -190,7 +196,7 @@ succeeded, AMO failed on a transient error — can be retried without the
 already-uploaded store erroring the run.
 
 Any new action is pinned by commit SHA, consistent with the repo's
-`harden-runner` posture. `docs/store-submission.md` lists each secret and how to
+`harden-runner` posture. `store/publishing.md` lists each secret and how to
 mint it.
 
 ## Data flow
@@ -274,7 +280,7 @@ No new local coverage thresholds; SonarCloud's gate governs, as elsewhere.
 2. **Plan 2 — CI upload automation:** the secret-gated Chrome Web Store and AMO
    upload steps in `publish.yml` (including the `git archive` source zip and the
    plan-time verification of the AMO source-upload path) and
-   `docs/store-submission.md` (first-time manual checklist, the manual
+   `store/publishing.md` (first-time manual checklist, the manual
    privacy-policy republish step, and the required secrets + how to mint them).
 
 Each plan gets its own implementation plan document and review.

@@ -132,13 +132,13 @@ describe("article mode", () => {
     expect(result.canonicalUrl).toBeUndefined();
   });
 
-  test("does not fall back to the document title when Readability finds its own", () => {
+  test("uses the Readability-extracted title for the article", () => {
     setArticleDocument();
     const result = getCapture()("article");
 
-    // Readability should surface some non-empty title (its own heading extraction
-    // or the <title> tag) rather than an empty string.
-    expect(result.title).not.toBe("");
+    // Readability picks the document's <title> for this fixture; pin the exact
+    // extracted value rather than a bare non-empty check.
+    expect(result.title).toBe("Document Title");
   });
 });
 

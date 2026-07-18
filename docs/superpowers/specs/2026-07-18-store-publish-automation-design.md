@@ -4,6 +4,13 @@
 **Status:** Approved (brainstorming) — revised after design review — ready for
 implementation plan
 
+> **Design snapshot.** This captures the design at brainstorm time. Operational
+> specifics that evolved during implementation/review (e.g. the required Chrome
+> secret set now includes `CWS_PUBLISHER_ID`, and each store gates on its
+> *complete* secret set) are authoritative in
+> [`store/publishing.md`](../../../store/publishing.md) and
+> [`.github/workflows/publish.yml`](../../../.github/workflows/publish.yml).
+
 ## Goal
 
 Make a `vX.Y.Z` tag ship the extension all the way to the stores. Today
@@ -153,7 +160,10 @@ secrets exist, both store jobs are **skipped as whole jobs** — the tag still r
 
 ```yaml
 - name: Build source archive for AMO review
-  run: git archive --format=zip -o "dist-zip/source-${VERSION}.zip" HEAD
+  run: |
+    git archive --format=zip -o "dist-zip/source-${VERSION}.zip" HEAD
+    # refresh the tag-stamped package.json so a reviewer's rebuild matches the signed XPI
+    zip -q "dist-zip/source-${VERSION}.zip" package.json
 ```
 
 `git archive HEAD` = exactly the tracked files (`src/`, `esbuild.mjs`,

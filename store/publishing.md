@@ -40,28 +40,31 @@ is automated.
 - **Chrome (Google OAuth):** follow
   <https://github.com/fregante/chrome-webstore-upload-keys> to obtain a
   `CLIENT_ID`, `CLIENT_SECRET`, and `REFRESH_TOKEN` authorized for the Chrome Web
-  Store API.
+  Store API. The **publisher ID** is on the Chrome Web Store Developer Dashboard
+  account settings page (`chrome-webstore-upload-cli` v4 requires it).
 - **Firefox (AMO API):** generate an API key + secret at
   <https://addons.mozilla.org/developers/addon/api/key/> — these are the JWT
   issuer and JWT secret.
 
 ### 4. Repository secrets
 
-Add these six secrets under **Settings → Secrets and variables → Actions** on the
+Add these secrets under **Settings → Secrets and variables → Actions** on the
 GitHub repository (repo-scoped — this is the org's only browser extension):
 
 | Secret | Source |
 |--------|--------|
 | `CWS_EXTENSION_ID` | Chrome Web Store item ID (from the first submission) |
+| `CWS_PUBLISHER_ID` | Chrome Web Store publisher ID (dashboard account settings) |
 | `CWS_CLIENT_ID` | Google OAuth client ID |
 | `CWS_CLIENT_SECRET` | Google OAuth client secret |
 | `CWS_REFRESH_TOKEN` | Google OAuth refresh token |
 | `AMO_JWT_ISSUER` | AMO API key (JWT issuer) |
 | `AMO_JWT_SECRET` | AMO API secret (JWT secret) |
 
-Set **all** of a store's secrets or **none**. The workflow only gates each store
-job on one secret (`CWS_CLIENT_ID` for Chrome, `AMO_JWT_ISSUER` for Firefox), so
-a partial set makes the job run and fail at the CLI instead of skipping cleanly.
+Set **all** of a store's secrets or **none**. The workflow enables a store's job
+only when that store's *complete* secret set is present, so a partial set is
+treated as "not configured" and the store is skipped cleanly (it never half-runs
+and fails at the CLI).
 
 ## Steady state — cutting a release
 
