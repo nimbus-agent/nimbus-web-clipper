@@ -59,10 +59,8 @@ export function renderQueueItem(doc: Document, item: QueuedClipView, nowMs: numb
       item.lastReason !== undefined
         ? (REASON_LABELS[item.lastReason] ?? "Couldn't save")
         : "Pending";
-    status.textContent =
-      item.attempts > 0
-        ? `${label} · ${item.attempts} ${item.attempts === 1 ? "try" : "tries"}`
-        : label;
+    const unit = item.attempts === 1 ? "try" : "tries";
+    status.textContent = item.attempts > 0 ? `${label} · ${item.attempts} ${unit}` : label;
     li.append(status);
   }
 

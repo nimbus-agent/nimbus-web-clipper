@@ -156,8 +156,10 @@ addAlarmListener((name) => {
 // top-level promises): set the badge color, paint the persisted backlog immediately,
 // then attempt a drain and reconcile once more. Sequencing avoids a race where the
 // initial badge paint could resolve after the post-drain one and show a stale count.
-void (async () => {
+async function runStartupSequence(): Promise<void> {
   await setBadgeBackground("#5b6470").catch(() => undefined);
   await syncQueueState().catch(() => undefined);
   await backgroundFlush().catch(() => undefined);
-})();
+}
+
+void runStartupSequence();
