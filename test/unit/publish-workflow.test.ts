@@ -43,3 +43,18 @@ describe("publish workflow — store-chrome job", () => {
     expect(wf).toContain("--extension-id");
   });
 });
+
+describe("publish workflow — store-firefox job", () => {
+  test("runs after publish, gated on AMO secrets", () => {
+    const wf = workflow();
+    expect(wf).toContain("store-firefox:");
+    expect(wf).toContain("if: needs.publish.outputs.has_amo == 'true'");
+  });
+
+  test("signs + submits a listed version with the source archive", () => {
+    const wf = workflow();
+    expect(wf).toContain("bunx web-ext sign");
+    expect(wf).toContain("--channel listed");
+    expect(wf).toContain("--upload-source-code");
+  });
+});
