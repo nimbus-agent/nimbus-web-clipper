@@ -47,6 +47,10 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   token never enters the Options page). Unpair is local-only (the gateway contract has
   no revoke endpoint); queued offline clips survive an unpair and drain after
   re-pairing. No new permission.
+- **Extension icons.** Real 16/48/128px toolbar and store icons (a Nimbus cloud
+  with a clip/bookmark tag on a brand-blue tile), replacing the placeholder
+  squares. Generated reproducibly by `scripts/gen-icons.py` (Python stdlib only,
+  not part of the extension build).
 
 ### Security
 
