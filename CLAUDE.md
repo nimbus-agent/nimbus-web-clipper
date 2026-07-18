@@ -73,9 +73,11 @@ Reference (in the Nimbus monorepo): the design spec
 - `esbuild.mjs` — build (run via `bun`, imports the TS manifest module)
 - `scripts/` — `clean.mjs`, `check-build.mjs` (guards per-target completeness),
   `package.mjs` (zips each target)
-- `docs/` — design spec + implementation plan (superpowers spec→plan layout);
-  `development.md` is the dev-load + manual-verification checklist for the
-  surfaces that aren't unit-tested (capture-in-page, popup/options DOM, SW glue)
+- `docs/` — per-feature design specs (`specs/`, superpowers spec→plan layout;
+  plans and review notes are pruned once a feature ships and live on in git
+  history); `development.md` is the dev-load + manual-verification checklist for
+  the surfaces that aren't unit-tested (capture-in-page, popup/options DOM, SW
+  glue); `store/` holds the store listing + publishing docs
 
 ## Commands
 
@@ -114,5 +116,9 @@ on release that heading becomes the version.
 
 Tag-driven (`vX.Y.Z`): `publish.yml` builds, packages a zip per target, and
 attaches them to a GitHub Release. The tag version is stamped into the manifest at
-build time; the `version` in `package.json` is only a baseline. Chrome Web Store /
-AMO submission is a deferred follow-on (the release zips are submission-ready).
+build time; the `version` in `package.json` is only a baseline. After the Release
+is cut, the workflow's `store-chrome` / `store-firefox` jobs upload the same build
+to the Chrome Web Store and Firefox AMO and submit each for review — gated on the
+store credentials being configured, so a tag still cuts a Release when they are
+absent. The one-time store bootstrap (accounts, first manual submission, and the
+six repository secrets) is documented in `store/publishing.md`.
