@@ -379,6 +379,7 @@ Add this job to `.github/workflows/publish.yml` under `jobs:`, after the `publis
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: extension-build
+          path: .
 
       - name: Upload + publish to the Chrome Web Store
         env:
@@ -392,7 +393,7 @@ Add this job to `.github/workflows/publish.yml` under `jobs:`, after the `publis
             --extension-id "$CWS_EXTENSION_ID"
 ```
 
-Notes: the CLI reads `CLIENT_ID` / `CLIENT_SECRET` / `REFRESH_TOKEN` from the environment (mapped from the `CWS_*` secrets), so they are not passed as flags. Running with **no subcommand** does upload **and** publish (submit for review, auto-live on approval). If you switched to `npx` in Task 1 Step 5, use `npx chrome-webstore-upload` here.
+Notes: the CLI reads `CLIENT_ID` / `CLIENT_SECRET` / `REFRESH_TOKEN` from the environment (mapped from the `CWS_*` secrets), so they are not passed as flags. Running with **no subcommand** does upload **and** publish (submit for review, auto-live on approval). If you switched to `npx` in Task 1 Step 5, use `npx chrome-webstore-upload` here. A single **named** artifact download extracts directly to the specified path — `path: .` puts `dist/` and `dist-zip/` back at the workspace root (no `extension-build/` prefix; that nesting only occurs when downloading *all* / *multiple* artifacts).
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -478,6 +479,7 @@ Add this job to `.github/workflows/publish.yml` under `jobs:`, after the `store-
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: extension-build
+          path: .
 
       - name: Sign + submit the listed AMO version
         env:
@@ -492,7 +494,7 @@ Add this job to `.github/workflows/publish.yml` under `jobs:`, after the `store-
             --api-secret "$AMO_JWT_SECRET"
 ```
 
-Notes: `--channel listed` adds a version to the public AMO listing and submits it for review; `--upload-source-code` attaches the `git archive` bundle for AMO's source policy. The add-on id (`web-clipper@nimbus-agent.dev`) already lives in the composed Firefox manifest, so no id flag is needed. If you switched to `npx` in Task 1 Step 5, use `npx web-ext sign` here.
+Notes: `--channel listed` adds a version to the public AMO listing and submits it for review; `--upload-source-code` attaches the `git archive` bundle for AMO's source policy. The add-on id (`web-clipper@nimbus-agent.dev`) already lives in the composed Firefox manifest, so no id flag is needed. If you switched to `npx` in Task 1 Step 5, use `npx web-ext sign` here. As in `store-chrome`, `path: .` extracts the single named artifact to the workspace root, so `dist/firefox` and `dist-zip/source-<version>.zip` are at their expected paths.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
