@@ -47,6 +47,15 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Most tests leave the panel mounted; its Escape keydown listener lives on
+  // `document` and only detaches via the host's own teardown hook. Close it
+  // deterministically here, before the next test's beforeEach resets the DOM —
+  // otherwise stale document-level listeners accumulate across tests (the
+  // "Escape closes the panel" test below would then pass partly by luck).
+  // No-op when no panel is mounted.
+  const el = host();
+  const closePanel = (el as unknown as { __nimbusClose?: () => void } | null)?.__nimbusClose;
+  closePanel?.();
   harness.restore();
 });
 

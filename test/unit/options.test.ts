@@ -69,6 +69,14 @@ async function boot(initialConnection: unknown = unpaired): Promise<void> {
 }
 
 afterEach(() => {
+  // options.ts is imported once for the whole file, and unpairArmed is a
+  // module-level singleton — deterministically disarm it so its state doesn't
+  // leak into the next test regardless of whether that test itself confirms
+  // or cancels the unpair flow.
+  const cancel = document.getElementById("unpair-cancel");
+  if (cancel instanceof HTMLButtonElement) {
+    cancel.click();
+  }
   harness.restore();
 });
 
@@ -220,11 +228,6 @@ describe("onUnpairClick() / disarmUnpair()", () => {
     expect(button("unpair").textContent).toBe("Click again to confirm unpair");
     expect(button("unpair-cancel").hidden).toBe(false);
     expect(harness.sendMessage).not.toHaveBeenCalled();
-
-    // Reset the module-level arm state so it doesn't leak into later tests
-    // (options.ts is imported once, and unpairArmed is a module singleton).
-    button("unpair-cancel").click();
-    await flush();
   });
 
   test("second click confirms: sends unpair and re-renders the unpaired panel", async () => {

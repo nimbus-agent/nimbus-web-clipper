@@ -1,10 +1,14 @@
 // test/unit/runtime.test.ts
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { addCommandListener, addMessageListener, sendMessage } from "../../src/browser/runtime.ts";
 import type { ExtensionRequest } from "../../src/shared/messages.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
 let harness: ChromeHarness;
+
+beforeEach(() => {
+  harness = installChromeMock();
+});
 
 afterEach(() => {
   harness.restore();
@@ -12,7 +16,6 @@ afterEach(() => {
 
 describe("browser/runtime seam", () => {
   test("sendMessage forwards the request to chrome.runtime and returns the response", async () => {
-    harness = installChromeMock();
     harness.sendMessage.mockResolvedValue({ ok: true });
     const req = { kind: "clip" } as unknown as ExtensionRequest;
 
@@ -23,7 +26,6 @@ describe("browser/runtime seam", () => {
   });
 
   test("addMessageListener hands the handler the message and a respond callback", async () => {
-    harness = installChromeMock();
     addMessageListener((message, respond) => {
       respond({ echo: message });
       return true;
@@ -35,7 +37,6 @@ describe("browser/runtime seam", () => {
   });
 
   test("addCommandListener forwards keyboard commands", () => {
-    harness = installChromeMock();
     let received = "";
     addCommandListener((command) => {
       received = command;

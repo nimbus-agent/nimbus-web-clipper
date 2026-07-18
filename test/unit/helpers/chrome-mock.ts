@@ -110,13 +110,28 @@ export function installChromeMock(): ChromeHarness {
   (globalThis as unknown as { chrome: unknown }).chrome = fakeChrome;
 
   function emitMessage(message: unknown): Promise<unknown> {
-    const listener = messageListeners[0];
-    if (listener === undefined) {
+    if (messageListeners.length === 0) {
       throw new Error("no runtime.onMessage listener registered");
     }
     return new Promise<unknown>((resolve) => {
-      const keptOpen = listener(message, {}, resolve);
-      if (keptOpen !== true) {
+      // Real Chrome invokes every registered onMessage listener; whichever one
+      // returns `true` first owns the async response (subsequent sendResponse
+      // calls are no-ops once the promise has settled).
+      let settled = false;
+      const sendResponse = (response: unknown): void => {
+        if (!settled) {
+          settled = true;
+          resolve(response);
+        }
+      };
+      let anyKeptOpen = false;
+      for (const listener of messageListeners) {
+        const keptOpen = listener(message, {}, sendResponse);
+        if (keptOpen === true) {
+          anyKeptOpen = true;
+        }
+      }
+      if (!anyKeptOpen) {
         resolve(undefined);
       }
     });
