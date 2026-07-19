@@ -15,7 +15,7 @@ import type {
 import { enqueue, type QueuedClip, removeFromQueue, toView } from "../shared/queue.ts";
 import { buildRelatedQuery, type RelatedQuery } from "../shared/related.ts";
 import type {
-  ClipError,
+  ClipPostResult,
   Connection,
   PairError,
   RelatedError,
@@ -37,7 +37,7 @@ export interface ClipDeps {
     origin: string,
     token: string,
     payload: ReturnType<typeof buildClipPayload>,
-  ) => Promise<{ ok: true; status: "created" | "updated" } | { ok: false; reason: ClipError }>;
+  ) => Promise<ClipPostResult>;
   readonly updateQueue: (mutator: (q: QueuedClip[]) => QueuedClip[]) => Promise<QueuedClip[]>;
   readonly nowMs: () => number;
 }
@@ -71,7 +71,8 @@ export async function handleClip(deps: ClipDeps, req: ClipRequest): Promise<Clip
   if (r.ok) {
     return { kind: "clip", ok: true, status: r.status, bookmarked: !req.capture.readableFound };
   }
-  if (r.reason === "unreachable" || r.reason === "server_error") {
+  // Transient failures are queued and retried; 400/413 are terminal and are not.
+  if (r.reason === "unreachable" || r.reason === "server_error" || r.reason === "rate_limited") {
     await deps.updateQueue((q) => enqueue(q, { payload, queuedAt: deps.nowMs(), attempts: 0 }));
     return { kind: "clip", ok: false, reason: r.reason, queued: true };
   }

@@ -78,6 +78,25 @@ CI stamps the version into the manifest, builds, attaches the zips to a GitHub
 Release, uploads to both stores, and submits each for review. Go-live is gated by
 each store's human review.
 
+## Don't tag while a review is still pending
+
+Wait for a store's current review to finish before tagging the next version. A tag
+still cuts the GitHub Release safely, but the store jobs behave badly against an
+in-flight review:
+
+- **Chrome fails, harmlessly.** The Web Store blocks uploads while an item is
+  pending review (`ITEM_PENDING_REVIEW`; the dashboard's *Upload new package*
+  button is disabled for the same reason), so the job errors with
+  `pending review so can't be edited`. The pending review is unaffected — the only
+  way to force the new version in is to cancel that review, forfeiting its place
+  in the queue.
+- **Firefox succeeds, and that is the problem.** AMO accepts a second queued
+  version, but doing so can reset the add-on's position in the review queue
+  ([bug 717495](https://bugzilla.mozilla.org/show_bug.cgi?id=717495), still open).
+
+Both are recoverable — re-run the Chrome job once the review clears — but the
+cheapest fix is to hold the tag.
+
 ## When one store fails
 
 `store-chrome` and `store-firefox` are independent jobs. If one fails (e.g. store

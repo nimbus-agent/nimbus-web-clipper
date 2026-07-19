@@ -22,6 +22,7 @@ export interface ChromeHarness {
   readonly setBadgeText: ReturnType<typeof vi.fn>;
   readonly setBadgeBackgroundColor: ReturnType<typeof vi.fn>;
   readonly alarmsCreate: ReturnType<typeof vi.fn>;
+  readonly alarmsGet: ReturnType<typeof vi.fn>;
   readonly alarmsClear: ReturnType<typeof vi.fn>;
   readonly tabsQuery: ReturnType<typeof vi.fn>;
   readonly storageGet: ReturnType<typeof vi.fn>;
@@ -64,8 +65,19 @@ export function installChromeMock(): ChromeHarness {
   );
   const setBadgeText = vi.fn(async (): Promise<void> => undefined);
   const setBadgeBackgroundColor = vi.fn(async (): Promise<void> => undefined);
-  const alarmsCreate = vi.fn((): void => undefined);
-  const alarmsClear = vi.fn(async (): Promise<boolean> => true);
+  // Track live alarms so `get` can answer truthfully — ensureAlarm depends on it.
+  const liveAlarms = new Map<string, unknown>();
+  const alarmsCreate = vi.fn((name: string, info: unknown): void => {
+    liveAlarms.set(name, info);
+  });
+  const alarmsGet = vi.fn(async (name: string): Promise<unknown> => {
+    const info = liveAlarms.get(name);
+    return info === undefined ? undefined : { name, ...(info as Record<string, unknown>) };
+  });
+  const alarmsClear = vi.fn(async (name: string): Promise<boolean> => {
+    liveAlarms.delete(name);
+    return true;
+  });
   const tabsQuery = vi.fn(
     async (): Promise<Array<{ id?: number; url?: string; title?: string }>> => [
       { id: 1, url: "https://example.com/", title: "Example" },
@@ -111,6 +123,7 @@ export function installChromeMock(): ChromeHarness {
     action: { setBadgeText, setBadgeBackgroundColor },
     alarms: {
       create: alarmsCreate,
+      get: alarmsGet,
       clear: alarmsClear,
       onAlarm: {
         addListener: (cb: (alarm: { name: string }) => void): void => {
@@ -196,6 +209,7 @@ export function installChromeMock(): ChromeHarness {
     setBadgeText,
     setBadgeBackgroundColor,
     alarmsCreate,
+    alarmsGet,
     alarmsClear,
     tabsQuery,
     storageGet,

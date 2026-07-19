@@ -245,6 +245,22 @@ describe("clip error mapping", () => {
     await vi.waitFor(() => expect(statusText()).toBe("Couldn't save this page."));
   });
 
+  // rate_limited is queued too, but the gateway is UP — it must not claim otherwise.
+  test("rate_limited reports the busy status rather than the offline one", async () => {
+    harness.executeScript
+      .mockResolvedValueOnce([{ result: undefined }])
+      .mockResolvedValueOnce([{ result: ARTICLE_CAPTURE }]);
+    harness.sendMessage
+      .mockResolvedValueOnce({ kind: "clip", ok: false, reason: "rate_limited", queued: true })
+      .mockResolvedValueOnce({ kind: "queue", items: [] });
+
+    click("clip-page");
+
+    await vi.waitFor(() =>
+      expect(statusText()).toBe("Nimbus is busy — queued, will retry shortly."),
+    );
+  });
+
   test("queued:true reports Saved offline — will sync when Nimbus is back.", async () => {
     harness.executeScript
       .mockResolvedValueOnce([{ result: undefined }])

@@ -8,6 +8,8 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-19
+
 ### Added
 
 - **Quick-clip entry points.** Clip the current page or selection without opening
@@ -29,6 +31,22 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   and quick-clip toast report "Too large for Nimbus to save.", the item is not
   queued, and any already-queued entry that hits this on its next attempt stops
   auto-retrying (manual retry from the queue is still available).
+- **The offline queue could stop draining for frequent clippers.** The flush alarm
+  was re-created on every queue change, and `chrome.alarms.create` replaces a
+  same-named alarm and restarts its countdown — so clipping more often than once a
+  minute pushed the next flush out indefinitely and queued clips drained only when
+  the service worker restarted. The alarm is now created once and left alone,
+  except when it is deliberately re-paced for a rate-limit pause.
+- **Clips are no longer hammered when the gateway rate-limits.** The
+  gateway caps `POST /v1/clips` at 20/min and answers `429` with a `Retry-After`;
+  this was previously mapped to the generic `server_error`, so the popup reported a
+  server failure and the offline queue re-POSTed every entry on the next tick. A
+  `429` is now a distinct `rate_limited` reason: the clip is queued (it is
+  transient, not terminal), the popup and quick-clip toast both say "Nimbus is busy
+  — queued, will retry shortly.", the flush stops the round on the first `429`
+  instead of draining into a closed window, and the next flush is paced off the
+  gateway's `Retry-After` rather than the fixed one-minute alarm. A successful clip
+  clears the pause early.
 
 ## [0.1.0] - 2026-07-19
 
@@ -92,4 +110,6 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   extension storage; never logged, never placed in the page or popup/options
   DOM, and never returned to the UI. The pairing code is likewise never logged.
 
-[Unreleased]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/main...HEAD
+[Unreleased]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/nimbus-agent/nimbus-web-clipper/releases/tag/v0.1.0
