@@ -6,3 +6,7 @@ export async function setBadgeCount(n: number): Promise<void> {
 export async function setBadgeBackground(color: string): Promise<void> {
   await chrome.action.setBadgeBackgroundColor({ color });
 }
+
+export async function setBadgeText(text: string): Promise<void> {
+  await chrome.action.setBadgeText({ text });
+}

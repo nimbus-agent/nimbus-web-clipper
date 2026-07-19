@@ -93,6 +93,45 @@ the Options origin at an unused port) so clips fail with "Can't reach Nimbus".
    leaves them queued; after re-pairing they drain on the next flush.
 8. Repeat 1–6 in Firefox.
 
+## Manual verification — Quick clip (context menu + hotkeys)
+
+Prereq: paired (Slice 1), gateway running. Reload the extension after building so
+the context menus are re-registered.
+
+1. **activeTab grant (do this first).** On a normal `https://` article, clip via the
+   **context menu** (right-click → "Clip page to Nimbus") and then via the
+   **hotkey** (`Alt+Shift+C`). Both must show the "Saved to Nimbus." toast. If
+   either shows *"Nimbus can't clip browser system or store pages."* on an ordinary
+   page, the `activeTab` grant did not apply for that entry point and `tab.url` came
+   back empty — the manifest declares `activeTab` but deliberately not `tabs`, so
+   this is the one thing unit tests (which fake `chrome.tabs.query`) cannot catch.
+2. **Context menu — page:** right-click a page (no selection) → only "Clip page to
+   Nimbus" is offered → click it → "Saved to Nimbus." toast; re-clip → "Updated
+   in Nimbus.". Confirm it also lands in Nimbus (`nimbus search`).
+3. **Context menu — selection:** select text → right-click → "Clip selection to
+   Nimbus" → toast; the clipped body is the selection, not the whole article.
+4. **Hotkeys:** `Alt+Shift+C` clips the page; with text selected, `Alt+Shift+S`
+   clips the selection. Both show the same toasts.
+5. **Nothing selected:** press `Alt+Shift+S` with no selection → "Select some text
+   first." — nothing is sent to the gateway.
+6. **Offline:** stop the gateway → quick-clip → "Saved offline — will sync when
+   Nimbus is back." toast; the toolbar badge shows the pending count; restarting the
+   gateway drains it (Slice 3 behaviour is unchanged).
+7. **Unpaired:** unpair in Options → quick-clip → "Pair a browser first (Options)."
+8. **Restricted page:** on `chrome://extensions` (no page script possible) →
+   `Alt+Shift+C` → no toast; the toolbar badge flashes `!` for ~1.5s and then
+   **returns to the queue count** (queue something offline first to see it restore
+   to a number rather than blank).
+9. **Toast lifecycle:** clip twice quickly → a single toast (not two stacked), its
+   dismiss timer reset; the toast never appears in the page's own DOM tree
+   (Shadow DOM) and does not shift page layout.
+10. **No duplicate menus:** reload the extension a few times → still exactly two
+    Nimbus items in the context menu.
+11. **Clicked tab wins:** open two windows; with window B focused, right-click a page
+    in window A → the clip and its toast belong to the page in window A.
+12. Repeat 1–10 in Firefox (`about:debugging` → reload the temporary add-on; check
+    the shortcuts in about:addons → Manage Extension Shortcuts).
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any

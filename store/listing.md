@@ -44,6 +44,7 @@ and is revocable from the gateway with `nimbus clip revoke`.
 Features:
 - Clip an article — extract the readable content of the current page.
 - Clip a selection — highlight text and clip just that, with optional tags.
+- Quick clip — clip the page or a selection without opening the popup: right-click → "Clip page / Clip selection to Nimbus", or press Alt+Shift+C / Alt+Shift+S. A small in-page toast confirms the result.
 - Related items — an on-demand panel of related items already in your index.
 - Offline retry queue — clips made while the gateway is down are saved and retried automatically.
 
@@ -57,8 +58,9 @@ Requires a running Nimbus gateway with the web-clipper surface. See https://nimb
 
 ## Permission justifications
 
-- `activeTab`: Read the current tab's content only when the user clicks Clip or opens the related panel, so the page can be captured without broad host access.
-- `scripting`: Inject the capture and related-panel scripts into the active tab on that user action.
+- `activeTab`: Read the current tab's content only in response to a user action on that tab — clicking Clip in the popup, choosing a "Clip to Nimbus" right-click menu item, or pressing one of the extension's keyboard shortcuts — so the page can be captured without broad host access.
+- `scripting`: Inject the extension's own scripts into that tab on that user action: the page-capture script, the related-items panel, and the small confirmation toast shown after a right-click/shortcut clip.
 - `storage`: Persist the paired gateway origin and bearer token, and the offline clip-retry queue, in local extension storage.
 - `alarms`: Wake the background worker to drain the offline retry queue while it is non-empty.
+- `contextMenus`: Add right-click "Clip page / Clip selection to Nimbus" menu entries so a page can be clipped without opening the popup.
 - `host_permissions`: Talk to the local Nimbus gateway on http://127.0.0.1 and http://localhost only — the extension never contacts any other origin.

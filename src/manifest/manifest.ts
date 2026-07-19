@@ -24,11 +24,15 @@ interface ManifestAction {
   readonly default_title: string;
 }
 
+interface CommandDef {
+  readonly suggested_key: { readonly default: string };
+  readonly description: string;
+}
+
 interface ManifestCommands {
-  readonly show_related: {
-    readonly suggested_key: { readonly default: string };
-    readonly description: string;
-  };
+  readonly show_related: CommandDef;
+  readonly "clip-page": CommandDef;
+  readonly "clip-selection": CommandDef;
 }
 
 interface ChromeBackground {
@@ -79,8 +83,9 @@ export function composeManifest(target: BrowserTarget, version: string): WebClip
       "Clip articles and selections from the browser into your local-first Nimbus index.",
     // Minimal, capability-scoped: storage holds the paired bearer token; activeTab +
     // scripting let the popup capture the current page on user action (no broad host
-    // access); alarms wakes the SW to drain the offline retry queue.
-    permissions: ["activeTab", "scripting", "storage", "alarms"],
+    // access); alarms wakes the SW to drain the offline retry queue; contextMenus
+    // adds the right-click "Clip page / Clip selection" entries.
+    permissions: ["activeTab", "scripting", "storage", "alarms", "contextMenus"],
     // The gateway is loopback-only (invariant I6). The extension never talks to any
     // other origin — no remote host permissions, by design.
     host_permissions: ["http://127.0.0.1/*", "http://localhost/*"],
@@ -95,6 +100,14 @@ export function composeManifest(target: BrowserTarget, version: string): WebClip
       show_related: {
         suggested_key: { default: "Alt+Shift+R" },
         description: "Show related items in Nimbus",
+      },
+      "clip-page": {
+        suggested_key: { default: "Alt+Shift+C" },
+        description: "Clip the current page to Nimbus",
+      },
+      "clip-selection": {
+        suggested_key: { default: "Alt+Shift+S" },
+        description: "Clip the current selection to Nimbus",
       },
     },
     options_ui: {

@@ -8,6 +8,17 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Added
+
+- **Quick-clip entry points.** Clip the current page or selection without opening
+  the popup — via a right-click context menu ("Clip page / selection to Nimbus")
+  or the `Alt+Shift+C` / `Alt+Shift+S` shortcuts (rebindable). The result is
+  confirmed by an in-page toast (saved / offline-queued / error, worded exactly
+  like the popup's status line), with a toolbar-badge flash on pages a script
+  can't be injected into. A right-click always clips the tab that was clicked,
+  even when it isn't the focused window's active tab. Adds the `contextMenus`
+  permission; loopback-only and the locked clip contract are unchanged.
+
 ## [0.1.0] - 2026-07-19
 
 ### Added

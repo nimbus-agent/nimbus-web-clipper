@@ -3,10 +3,15 @@
 // also owns the offline retry queue: it drains on a chrome.alarms tick (the alarm is
 // live only while the queue is non-empty), on startup, and on popup retries, and it
 // keeps the toolbar badge in sync with the pending count.
-import { setBadgeBackground, setBadgeCount } from "../browser/action.ts";
+import { setBadgeBackground, setBadgeCount, setBadgeText } from "../browser/action.ts";
 import { addAlarmListener, clearAlarm, ensureAlarm } from "../browser/alarms.ts";
-import { addCommandListener, addMessageListener } from "../browser/runtime.ts";
-import { injectPanel } from "../browser/scripting.ts";
+import { addMenuClickListener, createMenu, removeAllMenus } from "../browser/context-menus.ts";
+import {
+  addCommandListener,
+  addInstalledListener,
+  addMessageListener,
+} from "../browser/runtime.ts";
+import { injectPanel, runCapture, showToast } from "../browser/scripting.ts";
 import { activeTab } from "../browser/tabs.ts";
 import {
   isClipRequest,
@@ -20,6 +25,7 @@ import {
 } from "../shared/messages.ts";
 import { getQueue, updateQueue } from "./clip-queue-store.ts";
 import { clearConnection, getConnection, setConnection } from "./connection-store.ts";
+import { showFeedback } from "./feedback.ts";
 import { confirmPair, postClip, postRelated } from "./gateway-client.ts";
 import {
   handleClip,
@@ -32,6 +38,7 @@ import {
   handleUnpair,
 } from "./handlers.ts";
 import { flushQueue } from "./queue-flush.ts";
+import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
 import { singleFlight } from "./single-flight.ts";
 
 const FLUSH_ALARM = "flush-clip-queue";
@@ -55,6 +62,56 @@ async function syncQueueState(): Promise<void> {
   }
 }
 
+// One clip pipeline for both entry points: the popup's `clip` message and the
+// quick-clip (context menu / hotkey) route go through the same handler deps.
+const clipDeps = { getConnection, postClip, updateQueue, nowMs: () => Date.now() };
+
+const quickClipDeps: QuickClipDeps = {
+  activeTab,
+  runCapture,
+  // The badge sync runs AFTER the response is settled, never gating it: the clip may
+  // have enqueued (keep the count fresh), but a storage failure while syncing must
+  // not turn a successful clip into a silent no-toast. It is still awaited (a
+  // returned thenable settles `finally`) so the queue count repaints BEFORE any
+  // badge flash — otherwise a late sync would erase the flash.
+  clip: (req) =>
+    handleClip(clipDeps, req).finally(async () => {
+      await syncQueueState().catch(() => undefined);
+    }),
+  showFeedback: (tabId, state, restricted) =>
+    showFeedback(
+      { showToast, setBadgeText, restoreBadge: syncQueueState },
+      tabId,
+      state,
+      restricted,
+    ),
+};
+
+// Menus are re-registered from scratch (removeAll first) so a reload/upgrade can't
+// leave a duplicate id behind — chrome.contextMenus.create throws on a duplicate.
+// Single-flighted because on a fresh install the startup sequence and onInstalled
+// both register: interleaved removeAll/create pairs could otherwise hit a duplicate
+// id and surface an unchecked runtime.lastError.
+const registerContextMenus = singleFlight(async (): Promise<void> => {
+  await removeAllMenus();
+  createMenu({ id: "clip-page", title: "Clip page to Nimbus", contexts: ["page"] });
+  createMenu({ id: "clip-selection", title: "Clip selection to Nimbus", contexts: ["selection"] });
+});
+
+// Both quick-clip routes fail closed like every other listener: the user-visible
+// result is the toast/badge, and a rejection here has nowhere to be reported.
+addInstalledListener(() => {
+  registerContextMenus().catch(() => undefined);
+});
+
+addMenuClickListener((menuItemId, tabId) => {
+  // Clip the tab that was RIGHT-CLICKED (it may not be the active tab of the focused
+  // window, and the activeTab grant belongs to it).
+  quickClip(quickClipDeps, menuItemId === "clip-selection" ? "selection" : "article", tabId).catch(
+    () => undefined,
+  );
+});
+
 addMessageListener((message, respond) => {
   if (isPairRequest(message)) {
     handlePair({ confirmPair, setConnection, nowMs: () => Date.now() }, message)
@@ -65,7 +122,7 @@ addMessageListener((message, respond) => {
     return true;
   }
   if (isClipRequest(message)) {
-    handleClip({ getConnection, postClip, updateQueue, nowMs: () => Date.now() }, message)
+    handleClip(clipDeps, message)
       .then(async (res) => {
         await syncQueueState();
         respond(res);
@@ -142,6 +199,14 @@ addCommandListener((command) => {
     activeTab()
       .then((tab) => injectPanel(tab.id))
       .catch(() => undefined);
+    return;
+  }
+  if (command === "clip-page") {
+    quickClip(quickClipDeps, "article").catch(() => undefined);
+    return;
+  }
+  if (command === "clip-selection") {
+    quickClip(quickClipDeps, "selection").catch(() => undefined);
   }
 });
 
@@ -158,6 +223,7 @@ addAlarmListener((name) => {
 // initial badge paint could resolve after the post-drain one and show a stale count.
 async function runStartupSequence(): Promise<void> {
   await setBadgeBackground("#5b6470").catch(() => undefined);
+  await registerContextMenus().catch(() => undefined);
   await syncQueueState().catch(() => undefined);
   await backgroundFlush().catch(() => undefined);
 }

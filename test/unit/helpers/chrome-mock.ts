@@ -32,12 +32,18 @@ export interface ChromeHarness {
   readonly messageListeners: MessageListener[];
   readonly commandListeners: Array<(command: string) => void>;
   readonly alarmListeners: Array<(alarm: { name: string }) => void>;
+  readonly contextMenusCreate: ReturnType<typeof vi.fn>;
+  readonly contextMenusRemoveAll: ReturnType<typeof vi.fn>;
   /** Fire a runtime message through the first listener; resolves its response. */
   emitMessage(message: unknown): Promise<unknown>;
   /** Fire a keyboard command through every registered command listener. */
   emitCommand(command: string): void;
   /** Fire an alarm through every registered alarm listener. */
   emitAlarm(name: string): void;
+  /** Fire a context-menu click. */
+  emitMenuClick(menuItemId: string, tabId?: number): void;
+  /** Fire runtime.onInstalled. */
+  emitInstalled(): void;
   /** Remove the fake from `globalThis.chrome`. */
   restore(): void;
 }
@@ -48,6 +54,9 @@ export function installChromeMock(): ChromeHarness {
   const messageListeners: MessageListener[] = [];
   const commandListeners: Array<(command: string) => void> = [];
   const alarmListeners: Array<(alarm: { name: string }) => void> = [];
+  const menuClickListeners: Array<(info: { menuItemId: string }, tab?: { id?: number }) => void> =
+    [];
+  const installedListeners: Array<() => void> = [];
 
   const sendMessage = vi.fn(async (): Promise<unknown> => undefined);
   const executeScript = vi.fn(
@@ -75,6 +84,8 @@ export function installChromeMock(): ChromeHarness {
   const storageRemove = vi.fn(async (key: string): Promise<void> => {
     storage.delete(key);
   });
+  const contextMenusCreate = vi.fn();
+  const contextMenusRemoveAll = vi.fn(async (): Promise<void> => undefined);
 
   const fakeChrome = {
     runtime: {
@@ -82,6 +93,11 @@ export function installChromeMock(): ChromeHarness {
       onMessage: {
         addListener: (cb: MessageListener): void => {
           messageListeners.push(cb);
+        },
+      },
+      onInstalled: {
+        addListener: (cb: () => void): void => {
+          installedListeners.push(cb);
         },
       },
     },
@@ -105,6 +121,15 @@ export function installChromeMock(): ChromeHarness {
     scripting: { executeScript },
     tabs: { query: tabsQuery },
     storage: { local: { get: storageGet, set: storageSet, remove: storageRemove } },
+    contextMenus: {
+      create: contextMenusCreate,
+      removeAll: contextMenusRemoveAll,
+      onClicked: {
+        addListener: (cb: (info: { menuItemId: string }, tab?: { id?: number }) => void): void => {
+          menuClickListeners.push(cb);
+        },
+      },
+    },
   };
 
   (globalThis as unknown as { chrome: unknown }).chrome = fakeChrome;
@@ -149,6 +174,18 @@ export function installChromeMock(): ChromeHarness {
     }
   }
 
+  function emitMenuClick(menuItemId: string, tabId?: number): void {
+    for (const cb of menuClickListeners) {
+      cb({ menuItemId }, tabId === undefined ? undefined : { id: tabId });
+    }
+  }
+
+  function emitInstalled(): void {
+    for (const cb of installedListeners) {
+      cb();
+    }
+  }
+
   function restore(): void {
     (globalThis as unknown as { chrome?: unknown }).chrome = undefined;
   }
@@ -168,9 +205,13 @@ export function installChromeMock(): ChromeHarness {
     messageListeners,
     commandListeners,
     alarmListeners,
+    contextMenusCreate,
+    contextMenusRemoveAll,
     emitMessage,
     emitCommand,
     emitAlarm,
+    emitMenuClick,
+    emitInstalled,
     restore,
   };
 }
