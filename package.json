@@ -27,7 +27,8 @@
     "clean": "bun scripts/clean.mjs",
     "mock-gateway": "bun scripts/screenshots/mock-gateway.ts",
     "screenshots:setup": "playwright install chromium",
-    "screenshots": "node scripts/screenshots/capture.ts"
+    "screenshots": "node scripts/screenshots/capture.ts",
+    "promo": "node scripts/gen-promo.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
