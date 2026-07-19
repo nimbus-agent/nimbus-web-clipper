@@ -73,8 +73,11 @@ quickClip(mode):                         # runs in the service worker
 
 ### Context menu (`contextMenus` permission)
 
-Registered idempotently by the SW on `runtime.onInstalled` (and re-created on
-startup to survive SW restarts):
+Registered by the SW on `runtime.onInstalled` **and** on SW startup (so the menus
+survive a service-worker restart). Registration is idempotent: call
+`removeAllMenus()` **then** `createMenu(...)`, so an update/reload never leaves
+duplicate items. (Chrome/Firefox auto-remove an extension's context menus on
+disable/uninstall — no manual teardown is needed for that path.)
 
 - **`clip-page`** — title "Clip page to Nimbus", `contexts: ["page"]`.
 - **`clip-selection`** — title "Clip selection to Nimbus", `contexts: ["selection"]`
@@ -100,13 +103,25 @@ routes the command name to `quickClip`.
 A tiny injected toast, mirroring the related-panel injection pattern:
 
 - **`capture/toast-in-page.ts`** (new injected entry, bundled to `toast.js`) —
-  self-contained script that exposes `globalThis.__nimbusToast(state)`; mounts a
-  shadow-root host in the corner, renders the toast via a pure view, and
-  auto-dismisses after ~2.5s (removing the host).
+  self-contained script that exposes `globalThis.__nimbusToast(state)`. It is
+  **idempotent on re-injection**: it guards its own setup (defines
+  `__nimbusToast` once), so re-injecting `toast.js` on a later quick-clip is safe
+  and cheap — no duplicate listeners or hosts (same self-toggle discipline as
+  `panel.js`). No "check before inject" probe round-trip is needed.
+- **Singleton toast, no stacking.** There is exactly one shadow-root host. A
+  repeat trigger while a toast is visible **replaces its content and resets the
+  ~2.5s dismiss timer** rather than spawning a second host or queueing. The host
+  is removed on dismiss.
 - **`capture/toast-view.ts`** (new pure module) — `renderToast(doc, state)` builds
   the toast DOM with **`textContent` only**; unit-tested in jsdom for all states.
+  The container carries `role="status"` + `aria-live="polite"` so screen readers
+  announce the result. Styles are a **compact inline `<style>`** inside the shadow
+  root (page CSS can't reach it, and the shadow root can't leak out) — same
+  approach as the panel.
 - The SW shows it with the same two-step `executeScript` pattern as `runCapture`:
   inject `toast.js`, then `executeScript(func: (s) => __nimbusToast(s), args: [state])`.
+  Because `toast.js` guards its setup, the re-inject is a no-op past the first
+  time.
 
 **States** (`FeedbackState`):
 - **saved** → "Clipped to Nimbus ✓" + the clip's title (truncated).
@@ -116,10 +131,21 @@ A tiny injected toast, mirroring the related-panel injection pattern:
 - **empty-selection** (a client-side guard, not a clip result) → "Select some text
   first."
 
-**Badge fallback.** On restricted pages where injection fails (`chrome://`, the
-Chrome Web Store, the PDF viewer) — where capture also can't run — `showFeedback`
-catches the inject error and flashes the toolbar badge (`✓` on success, `!` on
-error) for ~1.5s, then restores the offline-queue count badge via the existing
+**Badge fallback.** Some pages can't host an injected script — where capture
+also can't run — so `quickClip` handles them two ways:
+- **Scheme pre-check (up front).** Before attempting capture/injection, check the
+  active tab's URL scheme; `chrome://`, `chrome-extension://`, `about:`,
+  `view-source:`, `edge://`, and (Firefox) `moz-extension:` / `about:` are known
+  non-injectable — short-circuit straight to the badge fallback with a "can't clip
+  here" result, avoiding a guaranteed-to-fail `executeScript` (and its noisy
+  extension-console error).
+- **`try/catch` backstop.** Not every restricted page is detectable by scheme —
+  the Chrome Web Store and AMO listing pages are `https://` but block injection —
+  so an `executeScript` that still throws is caught and routed to the same badge
+  fallback.
+
+The badge fallback flashes the toolbar badge (`✓` on success, `!` on error) for
+~1.5s, then restores the offline-queue count badge via the existing
 `syncQueueState`.
 
 ## Manifest / permissions
@@ -166,14 +192,20 @@ error) for ~1.5s, then restores the offline-queue count badge via the existing
 
 **Unit (Vitest + the chrome-mock harness):**
 - `quick-clip.ts` — `quickClip` with injected deps: saved, offline-enqueue,
-  not-paired, empty-selection, and inject-fails→badge paths; asserts it calls
-  `handleClip` with the right payload and `showFeedback` with the mapped state.
+  not-paired, empty-selection, restricted-scheme (pre-check → badge without
+  attempting capture), and inject-fails→badge paths; asserts it calls `handleClip`
+  with the right payload and `showFeedback` with the mapped state.
 - `toast-view.ts` — `renderToast` in jsdom for each state: correct text, no
-  `innerHTML`/anchors (XSS backstop), markup-in-title stays inert.
+  `innerHTML`/anchors (XSS backstop), markup-in-title stays inert, and the
+  container has `role="status"` + `aria-live="polite"`.
+- `toast-in-page.ts` — jsdom + fake timers: `__nimbusToast` mounts a **single**
+  shadow-root host; a second call replaces content and **resets** the ~2.5s timer
+  (no second host); auto-dismiss removes the host; a re-run of the module (mimicking
+  re-injection) does not duplicate setup.
 - SW wiring — `commands.onCommand` routing (`emitCommand`) and
   `contextMenus.onClicked` routing map ids/commands → the right `quickClip(mode)`;
-  menu registration on install is idempotent (via a `contextMenus` mock added to
-  the harness).
+  menu registration is idempotent — `removeAllMenus()` is called before
+  `createMenu()` (via a `contextMenus` mock added to the harness).
 - `browser/context-menus.ts` seam — registers/forwards the real `chrome.*` calls.
 - `manifest.test.ts` — `contextMenus` permission present; `clip-page` /
   `clip-selection` commands present with keys; both targets.
