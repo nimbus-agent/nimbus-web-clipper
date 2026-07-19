@@ -56,7 +56,7 @@ async function syncQueueState(): Promise<void> {
   const n = (await getQueue()).length;
   await setBadgeCount(n);
   if (n > 0) {
-    ensureAlarm(FLUSH_ALARM, 1);
+    await ensureAlarm(FLUSH_ALARM, 1);
   } else {
     await clearAlarm(FLUSH_ALARM);
   }

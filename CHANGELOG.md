@@ -29,6 +29,11 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   and quick-clip toast report "Too large for Nimbus to save.", the item is not
   queued, and any already-queued entry that hits this on its next attempt stops
   auto-retrying (manual retry from the queue is still available).
+- **The offline queue could stop draining for frequent clippers.** The flush alarm
+  was re-created on every queue change, and `chrome.alarms.create` replaces a
+  same-named alarm and restarts its countdown — so clipping more often than once a
+  minute pushed the next flush out indefinitely and queued clips drained only when
+  the service worker restarted. The alarm is now created once and left alone.
 
 ## [0.1.0] - 2026-07-19
 

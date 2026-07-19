@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { setBadgeCount } from "../../src/browser/action.ts";
-import { clearAlarm, ensureAlarm } from "../../src/browser/alarms.ts";
+import { clearAlarm, ensureAlarm, rearmAlarm } from "../../src/browser/alarms.ts";
 import { injectPanel, runCapture } from "../../src/browser/scripting.ts";
 import { storageGet, storageRemove, storageSet } from "../../src/browser/storage.ts";
 import { activeTab } from "../../src/browser/tabs.ts";
@@ -56,11 +56,40 @@ describe("injectPanel", () => {
 describe("alarms seam", () => {
   test("ensureAlarm creates a periodic alarm; clearAlarm clears it", async () => {
     const { alarmCalls } = installChromeStub();
-    ensureAlarm("flush-clip-queue", 1);
+    await ensureAlarm("flush-clip-queue", 1);
     await clearAlarm("flush-clip-queue");
     expect(alarmCalls).toEqual([
       { create: "flush-clip-queue", info: { periodInMinutes: 1 } },
       { clear: "flush-clip-queue" },
+    ]);
+  });
+
+  // Regression: chrome.alarms.create REPLACES a same-named alarm, restarting its
+  // countdown. syncQueueState runs after every clip, so a re-create on each call
+  // would push the flush alarm out forever and the queue would never drain.
+  test("ensureAlarm does not re-create an alarm that already exists", async () => {
+    const { alarmCalls } = installChromeStub();
+    await ensureAlarm("flush-clip-queue", 1);
+    await ensureAlarm("flush-clip-queue", 1);
+    await ensureAlarm("flush-clip-queue", 1);
+    expect(alarmCalls).toEqual([{ create: "flush-clip-queue", info: { periodInMinutes: 1 } }]);
+  });
+
+  test("ensureAlarm creates again after the alarm is cleared", async () => {
+    const { alarmCalls } = installChromeStub();
+    await ensureAlarm("flush-clip-queue", 1);
+    await clearAlarm("flush-clip-queue");
+    await ensureAlarm("flush-clip-queue", 1);
+    expect(alarmCalls.filter((c) => "create" in (c as object))).toHaveLength(2);
+  });
+
+  test("rearmAlarm always replaces, with a delay and a period", () => {
+    const { alarmCalls } = installChromeStub();
+    rearmAlarm("flush-clip-queue", 0.75, 1);
+    rearmAlarm("flush-clip-queue", 0.5, 1);
+    expect(alarmCalls).toEqual([
+      { create: "flush-clip-queue", info: { delayInMinutes: 0.75, periodInMinutes: 1 } },
+      { create: "flush-clip-queue", info: { delayInMinutes: 0.5, periodInMinutes: 1 } },
     ]);
   });
 });
