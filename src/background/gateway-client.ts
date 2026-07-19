@@ -99,6 +99,9 @@ export async function postClip(
   if (res.status === 400) {
     return { ok: false, reason: "invalid_request" };
   }
+  if (res.status === 413) {
+    return { ok: false, reason: "payload_too_large" };
+  }
   return { ok: false, reason: "server_error" };
 }
 

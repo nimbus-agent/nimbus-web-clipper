@@ -33,9 +33,13 @@ export async function flushQueue(
     if (opts.url !== undefined) {
       return e.payload.url === opts.url;
     }
-    // An automatic flush skips entries that already failed with invalid_request —
-    // a 400 won't self-fix, so only an explicit user retry (manual) attempts them.
-    if (opts.manual !== true && e.lastReason === "invalid_request") {
+    // An automatic flush skips entries that already failed with invalid_request or
+    // payload_too_large — a 400/413 won't self-fix, so only an explicit user retry
+    // (manual) attempts them.
+    if (
+      opts.manual !== true &&
+      (e.lastReason === "invalid_request" || e.lastReason === "payload_too_large")
+    ) {
       return false;
     }
     return true;

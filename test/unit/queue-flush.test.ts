@@ -119,6 +119,38 @@ describe("flushQueue", () => {
     expect(tried).toEqual(["a"]); // attempted on manual
   });
 
+  test("auto flush skips a payload_too_large entry; manual attempts it", async () => {
+    const tried: string[] = [];
+    const post = async (
+      _o: string,
+      _t: string,
+      p: ClipPayload,
+    ): Promise<{ ok: true; status: "created" } | { ok: false; reason: ClipError }> => {
+      tried.push(p.url);
+      return { ok: true, status: "created" };
+    };
+    const s1 = store([entry("a", "payload_too_large")]);
+    await flushQueue({
+      getConnection: async () => conn,
+      getQueue: s1.getQueue,
+      updateQueue: s1.updateQueue,
+      postClip: post,
+    });
+    expect(tried).toEqual([]); // skipped on auto
+
+    const s2 = store([entry("a", "payload_too_large")]);
+    await flushQueue(
+      {
+        getConnection: async () => conn,
+        getQueue: s2.getQueue,
+        updateQueue: s2.updateQueue,
+        postClip: post,
+      },
+      { manual: true },
+    );
+    expect(tried).toEqual(["a"]); // attempted on manual
+  });
+
   test("opts.url retries just that entry", async () => {
     const s = store([entry("a"), entry("b")]);
     const tried: string[] = [];

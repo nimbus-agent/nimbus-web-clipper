@@ -237,6 +237,23 @@ describe("handleClip — offline queue", () => {
     expect(res).toEqual({ kind: "clip", ok: false, reason: "unauthorized" });
     expect(called).toBe(false);
   });
+  test("does NOT enqueue a payload_too_large failure (it's permanently too big, not offline)", async () => {
+    let called = false;
+    const res = await handleClip(
+      {
+        getConnection: async () => conn,
+        postClip: async () => ({ ok: false, reason: "payload_too_large" }),
+        updateQueue: async (m) => {
+          called = true;
+          return m([]);
+        },
+        nowMs: () => 1,
+      },
+      { kind: "clip", capture, tags: [] },
+    );
+    expect(res).toEqual({ kind: "clip", ok: false, reason: "payload_too_large" });
+    expect(called).toBe(false);
+  });
 });
 
 describe("handleQueue* handlers", () => {

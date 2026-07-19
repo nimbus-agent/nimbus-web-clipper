@@ -26,6 +26,7 @@ const ERROR_TEXT: Record<string, string> = {
   not_paired: "Pair a browser first (Options).",
   unauthorized: "Pairing expired — re-pair in Options.",
   invalid_request: "Couldn't save this page.",
+  payload_too_large: "Too large for Nimbus to save.",
   // handleClip queues `unreachable` / `server_error`, so those normally surface as
   // the offline toast below. They are kept as a defensive fallback: quickClip also
   // synthesises a bare (un-queued) server_error when the clip call itself rejects,
