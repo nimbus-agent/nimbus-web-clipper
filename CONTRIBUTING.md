@@ -6,7 +6,7 @@ Thanks for helping improve the Nimbus Web Clipper!
 
 - [Bun](https://bun.sh) v1.2+
 - Chrome 110+ and/or Firefox 121+ (for loading the extension)
-- A running [Nimbus gateway](https://nimbus-agent.dev/install) with the
+- A running [Nimbus gateway](https://nimbus-agent.dev/user-guide/install/) with the
   web-clipper surface, for manual testing
 
 ## Setup

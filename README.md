@@ -48,7 +48,7 @@ revocable from the gateway with `nimbus clip revoke`.
 ## Requires
 
 A running Nimbus gateway with the web-clipper surface (shipped in the Nimbus
-monorepo). See <https://nimbus-agent.dev/install>.
+monorepo). See <https://nimbus-agent.dev/user-guide/install/>.
 
 ## Install (developer / sideload)
 
