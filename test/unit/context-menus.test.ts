@@ -37,4 +37,14 @@ describe("browser/context-menus seam", () => {
     harness.emitMenuClick("clip-selection", 7);
     expect(seen).toEqual({ id: "clip-selection", tab: 7 });
   });
+
+  test("addMenuClickListener forwards tabId as undefined when the click has no tab", () => {
+    harness = installChromeMock();
+    let seenTabId: number | undefined = 0;
+    addMenuClickListener((_menuItemId, tabId) => {
+      seenTabId = tabId;
+    });
+    harness.emitMenuClick("clip-page");
+    expect(seenTabId).toBeUndefined();
+  });
 });
