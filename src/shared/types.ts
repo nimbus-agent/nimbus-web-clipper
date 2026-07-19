@@ -31,3 +31,11 @@ export interface RelatedHit {
 }
 
 export type RelatedError = "not_paired" | "unauthorized" | "unreachable" | "server_error";
+
+/** The three feedback states a quick-clip toast can show. */
+export type ToastVariant = "success" | "offline" | "error";
+
+export interface ToastState {
+  readonly variant: ToastVariant;
+  readonly text: string;
+}
