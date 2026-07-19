@@ -15,7 +15,7 @@ import type {
 import { enqueue, type QueuedClip, removeFromQueue, toView } from "../shared/queue.ts";
 import { buildRelatedQuery, type RelatedQuery } from "../shared/related.ts";
 import type {
-  ClipError,
+  ClipPostResult,
   Connection,
   PairError,
   RelatedError,
@@ -37,7 +37,7 @@ export interface ClipDeps {
     origin: string,
     token: string,
     payload: ReturnType<typeof buildClipPayload>,
-  ) => Promise<{ ok: true; status: "created" | "updated" } | { ok: false; reason: ClipError }>;
+  ) => Promise<ClipPostResult>;
   readonly updateQueue: (mutator: (q: QueuedClip[]) => QueuedClip[]) => Promise<QueuedClip[]>;
   readonly nowMs: () => number;
 }

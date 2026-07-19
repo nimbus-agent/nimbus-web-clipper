@@ -20,8 +20,18 @@ export type ClipError =
   | "unauthorized"
   | "invalid_request"
   | "payload_too_large"
+  | "rate_limited"
   | "unreachable"
   | "server_error";
+
+/**
+ * The result of a clip POST. Shared by the fetch seam, the clip handler and the
+ * queue flush so the optional `retryAfterMs` cannot drift between three copies.
+ * Only ever set alongside `reason: "rate_limited"`.
+ */
+export type ClipPostResult =
+  | { readonly ok: true; readonly status: "created" | "updated" }
+  | { readonly ok: false; readonly reason: ClipError; readonly retryAfterMs?: number };
 
 export interface RelatedHit {
   readonly id: string;

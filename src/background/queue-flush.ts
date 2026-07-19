@@ -6,7 +6,7 @@
 // popup remove is never clobbered by the flush's own write.
 import type { ClipPayload } from "../shared/clip.ts";
 import { markAttempt, type QueuedClip, removeFromQueue } from "../shared/queue.ts";
-import type { ClipError, Connection } from "../shared/types.ts";
+import type { ClipPostResult, Connection } from "../shared/types.ts";
 
 export interface FlushDeps {
   readonly getConnection: () => Promise<Connection | null>;
@@ -16,7 +16,7 @@ export interface FlushDeps {
     origin: string,
     token: string,
     payload: ClipPayload,
-  ) => Promise<{ ok: true; status: "created" | "updated" } | { ok: false; reason: ClipError }>;
+  ) => Promise<ClipPostResult>;
 }
 
 export async function flushQueue(

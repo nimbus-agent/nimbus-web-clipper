@@ -1,7 +1,7 @@
 import type { ClipPayload } from "../shared/clip.ts";
 import { type ClipEndpoint, endpointUrl } from "../shared/gateway.ts";
 import { isRelatedHit, type RelatedQuery } from "../shared/related.ts";
-import type { ClipError, PairError, RelatedError, RelatedHit } from "../shared/types.ts";
+import type { ClipPostResult, PairError, RelatedError, RelatedHit } from "../shared/types.ts";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -72,7 +72,7 @@ export async function postClip(
   token: string,
   payload: ClipPayload,
   doFetch: FetchLike = fetch,
-): Promise<{ ok: true; status: "created" | "updated" } | { ok: false; reason: ClipError }> {
+): Promise<ClipPostResult> {
   let res: Response;
   try {
     res = await postJson(
