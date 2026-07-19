@@ -505,7 +505,7 @@ const STYLES = `
 :host { all: initial; }
 .nimbus-toast {
   position: fixed;
-  bottom: 16px;
+  top: 16px;
   right: 16px;
   z-index: 2147483647;
   display: flex;
