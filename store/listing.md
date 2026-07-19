@@ -61,4 +61,5 @@ Requires a running Nimbus gateway with the web-clipper surface. See https://nimb
 - `scripting`: Inject the capture and related-panel scripts into the active tab on that user action.
 - `storage`: Persist the paired gateway origin and bearer token, and the offline clip-retry queue, in local extension storage.
 - `alarms`: Wake the background worker to drain the offline retry queue while it is non-empty.
+- `contextMenus`: Add right-click "Clip page / Clip selection to Nimbus" menu entries so a page can be clipped without opening the popup.
 - `host_permissions`: Talk to the local Nimbus gateway on http://127.0.0.1 and http://localhost only — the extension never contacts any other origin.
