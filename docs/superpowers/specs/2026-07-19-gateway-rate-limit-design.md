@@ -45,6 +45,14 @@ against prose:
   `RelatedError` variant for it is speculative.
 - **Surfacing the remaining wait to the user** ("retry in 45s"). The pause is at
   most 60s and the queue drains itself; a live countdown is UI churn.
+- **HTTP-date `Retry-After` parsing.** `host_permissions` is loopback-only, so no
+  CDN or proxy can interpose a differently-formatted header; the only writer is
+  the gateway's `String(Math.ceil(...))`. Parsing a date would also reintroduce
+  the clock-skew dependence this design rejects `X-RateLimit-Reset` for. A
+  non-numeric value already falls back to 60s.
+- **Syncing pause state to the popup via `storage.onChanged`.** Nothing renders
+  the pause; the queue list already refreshes on open and after each action. This
+  becomes real only if a "retrying in Ns" affordance is ever added.
 - **Changing the gateway HTTP contract.** Client-only.
 
 ## Constraints (non-negotiable)
@@ -89,8 +97,20 @@ The service worker wraps the shared `postClip` dependency exactly once:
 postClipPaced(origin, token, payload):
   r = postClip(origin, token, payload)
   if r is rate_limited:  setPauseUntil(now() + r.retryAfterMs)
+  if r is ok:            clearPause()          # a 200 proves a slot was free
   return r
 ```
+
+A success **clears** the pause rather than letting it expire: a 200 is direct
+evidence the window has room, so waiting out the remainder would be dead time.
+This covers the popup's manual retry (which bypasses the gate and may well
+succeed) without special-casing it. `clearPause` reads before writing, so the
+common case — a successful clip with no pause set — costs no storage write.
+
+On a fresh 429 the **newest** `Retry-After` wins, even when it is shorter than a
+pause already stored. The value is computed from the gateway's live sliding
+window, so the latest response is the authoritative one; taking the maximum would
+idle longer than the gateway asked for.
 
 Both the interactive clip path (`clipDeps`) and the flush path (`flushDeps`) are
 built on that one wrapper, so a 429 from *either* arms the pause, and
@@ -115,11 +135,36 @@ when it matters.
 
 ### 5. Alarm — `browser/alarms.ts` + `service-worker.ts`
 
-`ensureAlarm(name, periodInMinutes, delayInMinutes?)` gains the optional delay.
-`syncQueueState` reads the pause and, while one is active, arms the flush alarm
-with `{ delayInMinutes: remainingMs / 60000, periodInMinutes: 1 }` so the next
-tick lands at the gateway's own reset time instead of an arbitrary point in the
-fixed one-minute cadence.
+While a pause is active, `syncQueueState` arms the flush alarm with
+`{ delayInMinutes: max(0.5, remainingMs / 60000), periodInMinutes: 1 }`, so the
+next tick lands at the gateway's own reset time instead of an arbitrary point in
+the fixed one-minute cadence.
+
+**Alarm granularity.** Chrome honours a 30-second floor: values below `0.5` are
+"not honored and cause a warning" ([alarms
+reference](https://developer.chrome.com/docs/extensions/reference/api/alarms)),
+lowered from one minute in Chrome 120. Firefox documents no floor. Hence the
+`0.5` clamp — a `Retry-After` under 30s is rounded up rather than tripping a
+console warning, and a packed Chrome build may therefore resume up to ~30s late.
+That is harmless: the pause gate makes an early or late tick a no-op, and the
+periodic alarm re-arms it. Note that an **unpacked** extension has no floor at
+all, so sub-30s timing looks exact under `bun run watch` and silently degrades in
+the shipped zip — never tune this against a dev load.
+
+**Pre-existing bug fixed here.** `chrome.alarms.create` with an existing name
+"will be cancelled and replaced by this alarm", and `ensureAlarm(FLUSH_ALARM, 1)`
+passes only `periodInMinutes`, whose first fire is one whole period out. Because
+`syncQueueState` runs after every clip and every queue mutation, a user clipping
+more often than once a minute resets the countdown each time and the flush alarm
+can **never fire** — the offline queue would then drain only on service-worker
+startup. This is independent of rate limiting (it dates from Slice 3), but the
+pacing work re-arms the alarm more often and would worsen it, so it is fixed as
+part of this change:
+
+- `ensureAlarm(name, periodInMinutes)` becomes genuinely idempotent — it consults
+  `chrome.alarms.get(name)` and creates only when the alarm is absent.
+- `rearmAlarm(name, delayInMinutes, periodInMinutes)` (new) is the explicit
+  replace, used only for the deliberate pause re-arm.
 
 ## User-facing wording
 
@@ -149,7 +194,8 @@ blaming the user would often be wrong.
 - **Absurd `Retry-After`** (e.g. `999999`) → clamped to 120s.
 - **Gateway restarted during a pause** → the bucket is cleared server-side but the
   client still waits out its pause; worst case is one wasted minute, and the
-  popup's manual Retry bypasses it immediately.
+  popup's manual Retry bypasses it immediately — and its success then clears the
+  pause for the automatic path too.
 - **Queue larger than the budget** (e.g. 40 entries, 20/min) → the round posts
   until the first 429, breaks, and paces; successive rounds drain the rest.
 - **A 413 consumes a slot** — already terminal and auto-skipped after `#17`, so an
@@ -168,12 +214,16 @@ blaming the user would often be wrong.
   (call count, mirroring the `unreachable` test); the pause gate no-ops an
   automatic flush and is **bypassed** by `manual: true`; a `rate_limited` entry is
   **not** auto-skipped on the next round once the pause expires.
-- `rate-limit-pause.test.ts` (new) — get/set round-trip, absent key → `0`.
+- `rate-limit-pause.test.ts` (new) — get/set round-trip, absent key → `0`, and
+  `clearPause` performs no write when no pause is stored.
+- `browser-seam.test.ts` — `ensureAlarm` does **not** re-create an alarm that
+  already exists (the countdown-reset starvation guard), and `rearmAlarm` does.
 - `popup.test.ts` / `quick-clip.test.ts` — the busy wording wins over the generic
   queued text on both surfaces, and the two strings are identical.
 - `queue-view.test.ts` — the `Nimbus is busy` row label.
-- `service-worker.test.ts` — a `rate_limited` post arms the pause via the wrapper,
-  and the flush alarm is re-armed with the delay.
+- `service-worker.test.ts` — a `rate_limited` post arms the pause via the wrapper
+  and re-arms the flush alarm with the delay (clamped to `0.5`); a successful post
+  clears the pause.
 
 **Green gate:** `bun run typecheck && bun run lint && bun run test && bun run
 build && bun run check-build`.
@@ -187,6 +237,6 @@ build && bun run check-build`.
   `src/background/handlers.ts` (queue on `rate_limited`, use `ClipPostResult`),
   `src/background/queue-flush.ts` (gate + break, use `ClipPostResult`),
   `src/background/service-worker.ts` (paced `postClip` wrapper, alarm delay),
-  `src/browser/alarms.ts` (optional `delayInMinutes`),
+  `src/browser/alarms.ts` (idempotent `ensureAlarm` + new `rearmAlarm`),
   `src/popup/popup.ts`, `src/background/quick-clip.ts`,
   `src/popup/queue-view.ts` (wording), `CHANGELOG.md`.
