@@ -71,10 +71,12 @@ const quickClipDeps: QuickClipDeps = {
   runCapture,
   // The badge sync runs AFTER the response is settled, never gating it: the clip may
   // have enqueued (keep the count fresh), but a storage failure while syncing must
-  // not turn a successful clip into a silent no-toast.
+  // not turn a successful clip into a silent no-toast. It is still awaited (a
+  // returned thenable settles `finally`) so the queue count repaints BEFORE any
+  // badge flash — otherwise a late sync would erase the flash.
   clip: (req) =>
-    handleClip(clipDeps, req).finally(() => {
-      syncQueueState().catch(() => undefined);
+    handleClip(clipDeps, req).finally(async () => {
+      await syncQueueState().catch(() => undefined);
     }),
   showFeedback: (tabId, state, restricted) =>
     showFeedback(
