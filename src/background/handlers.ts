@@ -71,7 +71,7 @@ export async function handleClip(deps: ClipDeps, req: ClipRequest): Promise<Clip
   if (r.ok) {
     return { kind: "clip", ok: true, status: r.status, bookmarked: !req.capture.readableFound };
   }
-  if (r.reason === "unreachable" || r.reason === "server_error") {
+  if (r.reason === "unreachable" || r.reason === "server_error" || r.reason === "rate_limited") {
     await deps.updateQueue((q) => enqueue(q, { payload, queuedAt: deps.nowMs(), attempts: 0 }));
     return { kind: "clip", ok: false, reason: r.reason, queued: true };
   }
