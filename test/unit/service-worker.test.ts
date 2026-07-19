@@ -441,3 +441,98 @@ describe("command route", () => {
     expect(harness.tabsQuery).not.toHaveBeenCalled();
   });
 });
+
+describe("quick clip — context menu + shortcut routes", () => {
+  /** Seed the harness so a quick clip on a normal page runs end to end: a paired
+   * connection, an active tab, a capture.js result, and a 201 from the gateway.
+   * The executeScript queue is: capture.js file inject → the capture func (whose
+   * result is read) → toast.js inject → the toast func. */
+  function seedQuickClip(h: ChromeHarness, mode: "article" | "selection" = "article"): void {
+    h.storage.set(CONNECTION_KEY, conn);
+    h.tabsQuery.mockResolvedValue([{ id: 5, url: "https://ex.com/a", title: "A" }]);
+    h.executeScript
+      .mockResolvedValueOnce([{ result: undefined }])
+      .mockResolvedValueOnce([
+        {
+          result: {
+            url: "https://ex.com/a",
+            title: "A",
+            mode,
+            body: "b",
+            readableFound: true,
+          },
+        },
+      ])
+      .mockResolvedValue([{ result: undefined }]);
+  }
+
+  test("registers the two context menus on startup (removeAll before create)", async () => {
+    await load();
+
+    expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(2);
+    const ids = harness.contextMenusCreate.mock.calls.map((c) => (c[0] as { id: string }).id);
+    expect(ids).toEqual(["clip-page", "clip-selection"]);
+  });
+
+  test("onInstalled re-registers the menus (removeAll first, no duplicate ids)", async () => {
+    await load();
+    harness.contextMenusCreate.mockClear();
+    harness.contextMenusRemoveAll.mockClear();
+
+    harness.emitInstalled();
+    await settle();
+
+    expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(2);
+  });
+
+  test("clip-page command captures the active tab and posts a clip", async () => {
+    await load();
+    seedQuickClip(harness);
+    globalThis.fetch = vi.fn(async () => jsonRes(201, { id: "1", status: "created" }));
+
+    harness.emitCommand("clip-page");
+    await settle();
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:8765/v1/clips",
+      expect.objectContaining({ method: "POST" }),
+    );
+    // Confirmed in page: toast.js injected into the same tab, then invoked.
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 5 },
+      files: ["toast.js"],
+    });
+  });
+
+  test("the clip-selection menu item captures in selection mode", async () => {
+    await load();
+    seedQuickClip(harness, "selection");
+    globalThis.fetch = vi.fn(async () => jsonRes(201, { id: "1", status: "created" }));
+
+    harness.emitMenuClick("clip-selection", 5);
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenCalledWith(
+      expect.objectContaining({ target: { tabId: 5 }, args: ["selection"] }),
+    );
+    expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  test("a restricted page flashes the badge instead of injecting a toast", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.tabsQuery.mockResolvedValue([{ id: 5, url: "chrome://extensions", title: "X" }]);
+    harness.executeScript.mockClear();
+    harness.setBadgeText.mockClear();
+    globalThis.fetch = vi.fn();
+
+    harness.emitCommand("clip-page");
+    await settle();
+
+    expect(harness.executeScript).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(harness.setBadgeText).toHaveBeenCalledWith({ text: "!" });
+  });
+});

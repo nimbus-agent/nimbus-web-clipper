@@ -1,4 +1,4 @@
-import type { CaptureResult } from "../shared/types.ts";
+import type { CaptureResult, ToastState } from "../shared/types.ts";
 
 function isCaptureResult(v: unknown): v is CaptureResult {
   if (typeof v !== "object" || v === null) {
@@ -41,4 +41,15 @@ export async function runCapture(
 /** Inject the bundled panel.js into a tab. The script self-toggles on re-injection. */
 export async function injectPanel(tabId: number): Promise<void> {
   await chrome.scripting.executeScript({ target: { tabId }, files: ["panel.js"] });
+}
+
+/** Inject toast.js then call its global with the state (two-step, like runCapture). */
+export async function showToast(tabId: number, state: ToastState): Promise<void> {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["toast.js"] });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (s: ToastState) =>
+      (globalThis as unknown as { __nimbusToast: (x: ToastState) => void }).__nimbusToast(s),
+    args: [state],
+  });
 }
