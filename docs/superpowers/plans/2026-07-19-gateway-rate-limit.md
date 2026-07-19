@@ -74,6 +74,8 @@ In `test/unit/chrome-stub.ts`, replace the `alarms` block with one that tracks l
         liveAlarms.set(name, info);
         alarmCalls.push({ create: name, info });
       },
+      // Presence-only by design: ensureAlarm just tests `=== undefined`, so this
+      // deliberately does NOT model chrome.alarms.Alarm (no scheduledTime).
       get: async (name: string) => {
         const info = liveAlarms.get(name);
         return info === undefined ? undefined : { name, ...(info as Record<string, unknown>) };
@@ -463,7 +465,9 @@ git commit -m "feat(gateway): map 429 to rate_limited and parse Retry-After"
 - Produces:
   - `getPauseUntil(): Promise<number>` — epoch ms; `0` when unset or malformed.
   - `setPauseUntil(untilMs: number): Promise<void>`
-  - `clearPause(): Promise<void>` — no write when nothing is stored.
+  - `clearPause(): Promise<boolean>` — `true` when it actually cleared an active
+    pause, `false` when there was nothing to clear (and no write was made). The
+    caller uses that transition signal to drop the stale delayed flush alarm.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -497,17 +501,18 @@ describe("rate-limit pause store", () => {
     expect(await getPauseUntil()).toBe(0);
   });
 
-  test("clearPause resets an active pause", async () => {
+  test("clearPause resets an active pause and reports that it did", async () => {
     installChromeStub();
     await setPauseUntil(1_700_000_000_000);
-    await clearPause();
+    expect(await clearPause()).toBe(true);
     expect(await getPauseUntil()).toBe(0);
   });
 
-  // clearPause runs after EVERY successful clip; it must not write when idle.
-  test("clearPause writes nothing when no pause is stored", async () => {
+  // clearPause runs after EVERY successful clip; it must not write when idle. The
+  // false return is also the signal the caller uses to leave the alarm alone.
+  test("clearPause writes nothing and reports false when no pause is stored", async () => {
     const { storage } = installChromeStub();
-    await clearPause();
+    expect(await clearPause()).toBe(false);
     expect(storage.has("clipRateLimitPauseUntil")).toBe(false);
   });
 });
@@ -546,11 +551,17 @@ export async function setPauseUntil(untilMs: number): Promise<void> {
  * Drop the pause — a successful clip proves a slot was free, so there is no reason
  * to wait out the remainder. Reads first: this runs after every successful clip and
  * the common case (no pause set) should cost no write.
+ *
+ * Returns whether a pause was actually cleared. The caller needs that edge, not the
+ * state: on the paused → not-paused transition the flush alarm is still armed on
+ * the delayed schedule, and it has to be dropped explicitly.
  */
-export async function clearPause(): Promise<void> {
-  if ((await getPauseUntil()) !== 0) {
-    await setPauseUntil(0);
+export async function clearPause(): Promise<boolean> {
+  if ((await getPauseUntil()) === 0) {
+    return false;
   }
+  await setPauseUntil(0);
+  return true;
 }
 ```
 
@@ -1026,6 +1037,37 @@ describe("rate-limit pacing", () => {
     expect(harness.storage.get(PAUSE_KEY)).toBe(0);
   });
 
+  // Regression: clearing the pause alone would leave the alarm on the delayed
+  // schedule, and the (correctly) idempotent ensureAlarm won't replace it — so the
+  // queue would keep waiting out a delay that no longer applies.
+  test("ending a pause drops the delayed alarm so a plain periodic one replaces it", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(QUEUE_KEY, [queued("https://ex.com/a")]);
+    harness.storage.set(PAUSE_KEY, Date.now() + 45_000);
+    harness.alarmsCreate.mockClear();
+    harness.alarmsClear.mockClear();
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+
+    await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(harness.alarmsClear).toHaveBeenCalledWith(FLUSH_ALARM);
+    expect(harness.alarmsCreate).toHaveBeenCalledWith(FLUSH_ALARM, { periodInMinutes: 1 });
+  });
+
+  // The no-op path must not churn the alarm on every ordinary clip.
+  test("a successful clip with no pause set leaves the alarm alone", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(QUEUE_KEY, [queued("https://ex.com/a")]);
+    harness.alarmsClear.mockClear();
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+
+    await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(harness.alarmsClear).not.toHaveBeenCalled();
+  });
+
   test("an alarm flush during an active pause posts nothing", async () => {
     await load();
     harness.storage.set(CONNECTION_KEY, conn);
@@ -1082,12 +1124,22 @@ const FLUSH_ALARM = "flush-clip-queue";
 const postClipPaced: typeof postClip = async (origin, token, payload) => {
   const r = await postClip(origin, token, payload);
   if (r.ok) {
-    await clearPause().catch(() => undefined);
+    await endPause().catch(() => undefined);
   } else if (r.reason === "rate_limited") {
     await setPauseUntil(Date.now() + (r.retryAfterMs ?? 60_000)).catch(() => undefined);
   }
   return r;
 };
+
+// Clearing the stored pause is not enough on its own: the flush alarm is still on
+// the delayed schedule armed for that pause, and ensureAlarm deliberately won't
+// touch an alarm that already exists. Drop it on the transition so the next
+// syncQueueState re-creates the plain periodic one.
+async function endPause(): Promise<void> {
+  if (await clearPause()) {
+    await clearAlarm(FLUSH_ALARM);
+  }
+}
 
 const flushDeps = {
   getConnection,
@@ -1112,6 +1164,12 @@ Replace `syncQueueState` with:
 // the alarm exists only while there is work to do (no idle wakeups). While a
 // rate-limit pause is active the alarm is re-armed to fire at the gateway's own
 // reset time instead of an arbitrary point in the fixed one-minute cadence.
+//
+// Invariant: the pause gate in flushQueue is the AUTHORITY; this alarm is only a
+// wakeup hint. Concurrent callers can therefore race here harmlessly — an alarm
+// armed from slightly stale state at worst fires early, and the gate no-ops it.
+// (While paused, the re-armed delay also shrinks monotonically, so repeated calls
+// cannot push the alarm out indefinitely.)
 async function syncQueueState(): Promise<void> {
   const n = (await getQueue()).length;
   await setBadgeCount(n);
