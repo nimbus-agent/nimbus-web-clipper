@@ -9,6 +9,25 @@ const PAIR_TIMEOUT_MS = 5_000;
 const CLIP_TIMEOUT_MS = 10_000;
 const RELATED_TIMEOUT_MS = 8_000;
 
+const DEFAULT_RETRY_AFTER_MS = 60_000; // the gateway's full rate-limit window
+const MAX_RETRY_AFTER_MS = 120_000;
+
+/**
+ * Parse a `Retry-After` delta-seconds header into ms.
+ *
+ * Strict digits only. We deliberately do NOT accept the HTTP-date form: the only
+ * writer is the loopback gateway (no proxy or CDN can interpose), and resolving a
+ * date would depend on the browser and gateway clocks agreeing — the very thing
+ * that makes `X-RateLimit-Reset` unusable here. Anything unparseable waits out the
+ * full window; anything absurd is clamped so a bad header cannot wedge the queue.
+ */
+export function parseRetryAfterMs(header: string | null): number {
+  if (header === null || !/^\d+$/.test(header.trim())) {
+    return DEFAULT_RETRY_AFTER_MS;
+  }
+  return Math.min(Number(header.trim()) * 1000, MAX_RETRY_AFTER_MS);
+}
+
 async function postJson(
   doFetch: FetchLike,
   origin: string,
@@ -101,6 +120,13 @@ export async function postClip(
   }
   if (res.status === 413) {
     return { ok: false, reason: "payload_too_large" };
+  }
+  if (res.status === 429) {
+    return {
+      ok: false,
+      reason: "rate_limited",
+      retryAfterMs: parseRetryAfterMs(res.headers.get("retry-after")),
+    };
   }
   return { ok: false, reason: "server_error" };
 }

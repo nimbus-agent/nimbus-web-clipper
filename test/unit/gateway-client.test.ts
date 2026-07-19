@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { confirmPair, postClip, postRelated } from "../../src/background/gateway-client.ts";
+import {
+  confirmPair,
+  parseRetryAfterMs,
+  postClip,
+  postRelated,
+} from "../../src/background/gateway-client.ts";
 import type { ClipPayload } from "../../src/shared/clip.ts";
 import type { RelatedQuery } from "../../src/shared/related.ts";
 
@@ -121,6 +126,50 @@ describe("postClip", () => {
       ok: false,
       reason: "unreachable",
     });
+  });
+  test("429 → rate_limited with Retry-After parsed to ms", async () => {
+    const res = new Response(JSON.stringify({ error: "rate_limited" }), {
+      status: 429,
+      headers: { "content-type": "application/json", "retry-after": "45" },
+    });
+    expect(await postClip(ORIGIN, "tok", payload, async () => res)).toEqual({
+      ok: false,
+      reason: "rate_limited",
+      retryAfterMs: 45_000,
+    });
+  });
+
+  test("429 without Retry-After → the full 60s window", async () => {
+    const res = new Response(JSON.stringify({ error: "rate_limited" }), { status: 429 });
+    expect(await postClip(ORIGIN, "tok", payload, async () => res)).toEqual({
+      ok: false,
+      reason: "rate_limited",
+      retryAfterMs: 60_000,
+    });
+  });
+});
+
+describe("parseRetryAfterMs", () => {
+  test("plain delta-seconds", () => {
+    expect(parseRetryAfterMs("45")).toBe(45_000);
+    expect(parseRetryAfterMs(" 45 ")).toBe(45_000);
+    expect(parseRetryAfterMs("0")).toBe(0);
+  });
+
+  // The gateway is loopback-only and emits String(Math.ceil(seconds)); anything
+  // else is untrustworthy, so fall back rather than guess. An HTTP-date would also
+  // reintroduce the clock skew this design deliberately avoids.
+  test("missing, non-numeric, or negative → the 60s default", () => {
+    expect(parseRetryAfterMs(null)).toBe(60_000);
+    expect(parseRetryAfterMs("")).toBe(60_000);
+    expect(parseRetryAfterMs("soon")).toBe(60_000);
+    expect(parseRetryAfterMs("Wed, 21 Oct 2015 07:28:00 GMT")).toBe(60_000);
+    expect(parseRetryAfterMs("-5")).toBe(60_000);
+    expect(parseRetryAfterMs("45abc")).toBe(60_000);
+  });
+
+  test("an absurd value is clamped so it cannot wedge the queue", () => {
+    expect(parseRetryAfterMs("999999")).toBe(120_000);
   });
 });
 
