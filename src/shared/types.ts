@@ -19,6 +19,7 @@ export type ClipError =
   | "not_paired"
   | "unauthorized"
   | "invalid_request"
+  | "payload_too_large"
   | "unreachable"
   | "server_error";
 

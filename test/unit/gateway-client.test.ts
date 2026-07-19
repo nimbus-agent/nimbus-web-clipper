@@ -102,6 +102,16 @@ describe("postClip", () => {
       reason: "invalid_request",
     });
   });
+  test("413 → payload_too_large", async () => {
+    expect(
+      await postClip(ORIGIN, "t", payload, async () =>
+        jsonRes(413, { error: "payload_too_large" }),
+      ),
+    ).toEqual({
+      ok: false,
+      reason: "payload_too_large",
+    });
+  });
   test("fetch throw → unreachable", async () => {
     expect(
       await postClip(ORIGIN, "t", payload, async () => {

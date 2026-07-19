@@ -19,6 +19,17 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   even when it isn't the focused window's active tab. Adds the `contextMenus`
   permission; loopback-only and the locked clip contract are unchanged.
 
+### Fixed
+
+- **Oversized clips no longer retry forever.** The gateway rejects clip bodies
+  over its size cap with `413 payload_too_large`; this was previously mapped to
+  the generic `server_error` and treated as a transient/offline failure, so the
+  clip was queued and silently retried on every flush — a retry that can never
+  succeed. It's now a distinct, terminal `payload_too_large` reason: the popup
+  and quick-clip toast report "Too large for Nimbus to save.", the item is not
+  queued, and any already-queued entry that hits this on its next attempt stops
+  auto-retrying (manual retry from the queue is still available).
+
 ## [0.1.0] - 2026-07-19
 
 ### Added
