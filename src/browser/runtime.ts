@@ -15,3 +15,7 @@ export function addMessageListener(
 export function addCommandListener(fn: (command: string) => void): void {
   chrome.commands.onCommand.addListener(fn);
 }
+
+export function addInstalledListener(fn: () => void): void {
+  chrome.runtime.onInstalled.addListener(() => fn());
+}
