@@ -55,7 +55,8 @@ export async function flushQueue(
     if (r.reason === "unreachable" || r.reason === "unauthorized") {
       break; // gateway down or token dead — no point trying the rest this round
     }
-    // server_error / invalid_request: keep the entry, continue to the next
+    // server_error / invalid_request / payload_too_large: keep the entry, continue
+    // to the next (the last two are skipped by the next automatic flush)
   }
 
   return { remaining: (await deps.getQueue()).length };
