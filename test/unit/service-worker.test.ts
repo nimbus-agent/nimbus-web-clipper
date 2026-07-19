@@ -600,3 +600,125 @@ describe("quick clip — context menu + shortcut routes", () => {
     expect(harness.setBadgeText).toHaveBeenCalledWith({ text: "!" });
   });
 });
+
+describe("rate-limit pacing", () => {
+  const PAUSE_KEY = "clipRateLimitPauseUntil";
+  const NOW = 1_700_000_000_000;
+
+  function rateLimitedRes(retryAfter: string): Response {
+    return new Response(JSON.stringify({ error: "rate_limited" }), {
+      status: 429,
+      headers: { "content-type": "application/json", "retry-after": retryAfter },
+    });
+  }
+
+  test("a 429 clip queues it, arms the pause, and re-arms the alarm with the delay", async () => {
+    // Fake ONLY Date — `settle()` relies on real setTimeout to drain the SW's
+    // fire-and-forget promise chains.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.alarmsCreate.mockClear();
+    globalThis.fetch = vi.fn().mockResolvedValue(rateLimitedRes("45"));
+
+    const res = await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(res).toEqual({ kind: "clip", ok: false, reason: "rate_limited", queued: true });
+    expect(harness.storage.get(PAUSE_KEY)).toBe(NOW + 45_000);
+    expect(harness.alarmsCreate).toHaveBeenCalledWith(FLUSH_ALARM, {
+      delayInMinutes: 0.75,
+      periodInMinutes: 1,
+    });
+    vi.useRealTimers();
+  });
+
+  // Chrome ignores a delay under 0.5 and logs a warning, so short waits round up.
+  test("a sub-30s Retry-After is clamped to the 0.5-minute alarm floor", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.alarmsCreate.mockClear();
+    globalThis.fetch = vi.fn().mockResolvedValue(rateLimitedRes("5"));
+
+    await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(harness.alarmsCreate).toHaveBeenCalledWith(FLUSH_ALARM, {
+      delayInMinutes: 0.5,
+      periodInMinutes: 1,
+    });
+    vi.useRealTimers();
+  });
+
+  test("a successful clip clears an existing pause", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(PAUSE_KEY, Date.now() + 45_000);
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+
+    const res = await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(res).toEqual({ kind: "clip", ok: true, status: "created", bookmarked: false });
+    expect(harness.storage.get(PAUSE_KEY)).toBe(0);
+  });
+
+  // Regression: clearing the pause alone would leave the alarm on the delayed
+  // schedule, and the (correctly) idempotent ensureAlarm won't replace it — so the
+  // queue would keep waiting out a delay that no longer applies.
+  test("ending a pause drops the delayed alarm so a plain periodic one replaces it", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(QUEUE_KEY, [queued("https://ex.com/a")]);
+    harness.storage.set(PAUSE_KEY, Date.now() + 45_000);
+    harness.alarmsCreate.mockClear();
+    harness.alarmsClear.mockClear();
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+
+    await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(harness.alarmsClear).toHaveBeenCalledWith(FLUSH_ALARM);
+    expect(harness.alarmsCreate).toHaveBeenCalledWith(FLUSH_ALARM, { periodInMinutes: 1 });
+  });
+
+  // The no-op path must not churn the alarm on every ordinary clip.
+  test("a successful clip with no pause set leaves the alarm alone", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(QUEUE_KEY, [queued("https://ex.com/a")]);
+    harness.alarmsClear.mockClear();
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+
+    await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(harness.alarmsClear).not.toHaveBeenCalled();
+  });
+
+  test("an alarm flush during an active pause posts nothing", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(QUEUE_KEY, [queued("https://ex.com/a")]);
+    harness.storage.set(PAUSE_KEY, Date.now() + 45_000);
+    const fetchMock = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+    globalThis.fetch = fetchMock;
+
+    harness.emitAlarm(FLUSH_ALARM);
+    await settle();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(harness.storage.get(QUEUE_KEY)).toHaveLength(1);
+  });
+
+  test("an alarm flush after the pause expires drains the queue", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(QUEUE_KEY, [queued("https://ex.com/a")]);
+    harness.storage.set(PAUSE_KEY, Date.now() - 1000);
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+
+    harness.emitAlarm(FLUSH_ALARM);
+    await settle();
+
+    expect(harness.storage.get(QUEUE_KEY)).toEqual([]);
+  });
+});

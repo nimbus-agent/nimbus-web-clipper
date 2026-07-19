@@ -4,7 +4,7 @@
 // live only while the queue is non-empty), on startup, and on popup retries, and it
 // keeps the toolbar badge in sync with the pending count.
 import { setBadgeBackground, setBadgeCount, setBadgeText } from "../browser/action.ts";
-import { addAlarmListener, clearAlarm, ensureAlarm } from "../browser/alarms.ts";
+import { addAlarmListener, clearAlarm, ensureAlarm, rearmAlarm } from "../browser/alarms.ts";
 import { addMenuClickListener, createMenu, removeAllMenus } from "../browser/context-menus.ts";
 import {
   addCommandListener,
@@ -39,15 +39,40 @@ import {
 } from "./handlers.ts";
 import { flushQueue } from "./queue-flush.ts";
 import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
-import { getPauseUntil } from "./rate-limit-pause.ts";
+import { clearPause, getPauseUntil, setPauseUntil } from "./rate-limit-pause.ts";
 import { singleFlight } from "./single-flight.ts";
 
 const FLUSH_ALARM = "flush-clip-queue";
+
+// The one place the rate-limit pause is written. Wrapping the seam — rather than
+// threading a dependency through handleClip and flushQueue — keeps both of those
+// pure and means a 429 from EITHER path (interactive clip or queue drain) paces the
+// next drain. A storage failure here must never fail the clip itself.
+const postClipPaced: typeof postClip = async (origin, token, payload) => {
+  const r = await postClip(origin, token, payload);
+  if (r.ok) {
+    await endPause().catch(() => undefined);
+  } else if (r.reason === "rate_limited") {
+    await setPauseUntil(Date.now() + (r.retryAfterMs ?? 60_000)).catch(() => undefined);
+  }
+  return r;
+};
+
+// Clearing the stored pause is not enough on its own: the flush alarm is still on
+// the delayed schedule armed for that pause, and ensureAlarm deliberately won't
+// touch an alarm that already exists. Drop it on the transition so the next
+// syncQueueState re-creates the plain periodic one.
+async function endPause(): Promise<void> {
+  if (await clearPause()) {
+    await clearAlarm(FLUSH_ALARM);
+  }
+}
+
 const flushDeps = {
   getConnection,
   getQueue,
   updateQueue,
-  postClip,
+  postClip: postClipPaced,
   pausedUntilMs: getPauseUntil,
   nowMs: () => Date.now(),
 };
@@ -59,20 +84,36 @@ const flushDeps = {
 const backgroundFlush = singleFlight(() => flushQueue(flushDeps).then(syncQueueState));
 
 // Reconcile the toolbar badge and the flush alarm with the current queue length:
-// the alarm exists only while there is work to do (no idle wakeups).
+// the alarm exists only while there is work to do (no idle wakeups). While a
+// rate-limit pause is active the alarm is re-armed to fire at the gateway's own
+// reset time instead of an arbitrary point in the fixed one-minute cadence.
+//
+// Invariant: the pause gate in flushQueue is the AUTHORITY; this alarm is only a
+// wakeup hint. Concurrent callers can therefore race here harmlessly — an alarm
+// armed from slightly stale state at worst fires early, and the gate no-ops it.
+// (While paused, the re-armed delay also shrinks monotonically, so repeated calls
+// cannot push the alarm out indefinitely.)
 async function syncQueueState(): Promise<void> {
   const n = (await getQueue()).length;
   await setBadgeCount(n);
-  if (n > 0) {
-    await ensureAlarm(FLUSH_ALARM, 1);
-  } else {
+  if (n === 0) {
     await clearAlarm(FLUSH_ALARM);
+    return;
   }
+  const remainingMs = (await getPauseUntil()) - Date.now();
+  if (remainingMs > 0) {
+    // Chrome honours a 30s floor (values under 0.5 are ignored and warn), so a
+    // shorter Retry-After rounds up. An early or late tick is harmless — the pause
+    // gate in flushQueue no-ops it.
+    rearmAlarm(FLUSH_ALARM, Math.max(0.5, remainingMs / 60_000), 1);
+    return;
+  }
+  await ensureAlarm(FLUSH_ALARM, 1);
 }
 
 // One clip pipeline for both entry points: the popup's `clip` message and the
 // quick-clip (context menu / hotkey) route go through the same handler deps.
-const clipDeps = { getConnection, postClip, updateQueue, nowMs: () => Date.now() };
+const clipDeps = { getConnection, postClip: postClipPaced, updateQueue, nowMs: () => Date.now() };
 
 const quickClipDeps: QuickClipDeps = {
   activeTab,

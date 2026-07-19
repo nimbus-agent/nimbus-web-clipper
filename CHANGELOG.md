@@ -34,6 +34,16 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   same-named alarm and restarts its countdown — so clipping more often than once a
   minute pushed the next flush out indefinitely and queued clips drained only when
   the service worker restarted. The alarm is now created once and left alone.
+- **Clips are no longer lost or hammered when the gateway rate-limits.** The
+  gateway caps `POST /v1/clips` at 20/min and answers `429` with a `Retry-After`;
+  this was previously mapped to the generic `server_error`, so the popup reported a
+  server failure and the offline queue re-POSTed every entry on the next tick. A
+  `429` is now a distinct `rate_limited` reason: the clip is queued (it is
+  transient, not terminal), the popup and quick-clip toast both say "Nimbus is busy
+  — queued, will retry shortly.", the flush stops the round on the first `429`
+  instead of draining into a closed window, and the next flush is paced off the
+  gateway's `Retry-After` rather than the fixed one-minute alarm. A successful clip
+  clears the pause early.
 
 ## [0.1.0] - 2026-07-19
 
