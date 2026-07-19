@@ -17,6 +17,9 @@ export interface FlushDeps {
     token: string,
     payload: ClipPayload,
   ) => Promise<ClipPostResult>;
+  /** Epoch ms until which automatic flushes are paused (0 = not paused). */
+  readonly pausedUntilMs: () => Promise<number>;
+  readonly nowMs: () => number;
 }
 
 export async function flushQueue(
@@ -26,6 +29,13 @@ export async function flushQueue(
   const conn = await deps.getConnection();
   const queue = await deps.getQueue();
   if (conn === null) {
+    return { remaining: queue.length };
+  }
+
+  // The gateway rate-limited us recently; posting again before its Retry-After has
+  // elapsed just earns another 429. A manual retry is a deliberate user action and
+  // is allowed to spend a slot.
+  if (opts.manual !== true && deps.nowMs() < (await deps.pausedUntilMs())) {
     return { remaining: queue.length };
   }
 
@@ -52,8 +62,8 @@ export async function flushQueue(
       continue;
     }
     await deps.updateQueue((q) => markAttempt(q, entry.payload.url, r.reason));
-    if (r.reason === "unreachable" || r.reason === "unauthorized") {
-      break; // gateway down or token dead — no point trying the rest this round
+    if (r.reason === "unreachable" || r.reason === "unauthorized" || r.reason === "rate_limited") {
+      break; // gateway down, token dead, or window closed — stop this round
     }
     // server_error / invalid_request / payload_too_large: keep the entry, continue
     // to the next (the last two are skipped by the next automatic flush)

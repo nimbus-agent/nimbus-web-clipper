@@ -29,6 +29,8 @@ function store(initial: QueuedClip[]) {
   };
 }
 
+const noPause = { pausedUntilMs: async () => 0, nowMs: () => 1000 };
+
 describe("flushQueue", () => {
   test("unpaired → no-op, queue intact", async () => {
     const s = store([entry("a")]);
@@ -36,6 +38,7 @@ describe("flushQueue", () => {
       getConnection: async () => null,
       getQueue: s.getQueue,
       updateQueue: s.updateQueue,
+      ...noPause,
       postClip: async () => ({ ok: true, status: "created" }),
     });
     expect(out).toEqual({ remaining: 1 });
@@ -48,6 +51,7 @@ describe("flushQueue", () => {
       getConnection: async () => conn,
       getQueue: s.getQueue,
       updateQueue: s.updateQueue,
+      ...noPause,
       postClip: async () => ({ ok: true, status: "updated" }),
     });
     expect(out).toEqual({ remaining: 0 });
@@ -61,6 +65,7 @@ describe("flushQueue", () => {
       getConnection: async () => conn,
       getQueue: s.getQueue,
       updateQueue: s.updateQueue,
+      ...noPause,
       postClip: async () => {
         calls++;
         return { ok: false, reason: "unreachable" };
@@ -78,6 +83,7 @@ describe("flushQueue", () => {
       getConnection: async () => conn,
       getQueue: s.getQueue,
       updateQueue: s.updateQueue,
+      ...noPause,
       postClip: async () => {
         calls++;
         return { ok: false, reason: "server_error" };
@@ -102,6 +108,7 @@ describe("flushQueue", () => {
       getConnection: async () => conn,
       getQueue: s1.getQueue,
       updateQueue: s1.updateQueue,
+      ...noPause,
       postClip: post,
     });
     expect(tried).toEqual([]); // skipped on auto
@@ -112,6 +119,7 @@ describe("flushQueue", () => {
         getConnection: async () => conn,
         getQueue: s2.getQueue,
         updateQueue: s2.updateQueue,
+        ...noPause,
         postClip: post,
       },
       { manual: true },
@@ -134,6 +142,7 @@ describe("flushQueue", () => {
       getConnection: async () => conn,
       getQueue: s1.getQueue,
       updateQueue: s1.updateQueue,
+      ...noPause,
       postClip: post,
     });
     expect(tried).toEqual([]); // skipped on auto
@@ -144,6 +153,7 @@ describe("flushQueue", () => {
         getConnection: async () => conn,
         getQueue: s2.getQueue,
         updateQueue: s2.updateQueue,
+        ...noPause,
         postClip: post,
       },
       { manual: true },
@@ -159,6 +169,7 @@ describe("flushQueue", () => {
         getConnection: async () => conn,
         getQueue: s.getQueue,
         updateQueue: s.updateQueue,
+        ...noPause,
         postClip: async (_o, _t, p) => {
           tried.push(p.url);
           return { ok: true, status: "created" };
@@ -168,5 +179,98 @@ describe("flushQueue", () => {
     );
     expect(tried).toEqual(["b"]);
     expect(s.current().map((e) => e.payload.url)).toEqual(["a"]);
+  });
+
+  test("rate_limited marks the entry and stops the round", async () => {
+    const s = store([entry("a"), entry("b")]);
+    let calls = 0;
+    await flushQueue({
+      getConnection: async () => conn,
+      getQueue: s.getQueue,
+      updateQueue: s.updateQueue,
+      ...noPause,
+      postClip: async () => {
+        calls++;
+        return { ok: false, reason: "rate_limited", retryAfterMs: 45_000 };
+      },
+    });
+    expect(calls).toBe(1); // no point posting the rest into a closed window
+    expect(s.current().map((e) => e.payload.url)).toEqual(["a", "b"]);
+    expect(s.current()[0]?.attempts).toBe(1);
+    expect(s.current()[0]?.lastReason).toBe("rate_limited");
+  });
+
+  test("an active pause makes an automatic flush a no-op", async () => {
+    const s = store([entry("a")]);
+    let calls = 0;
+    const out = await flushQueue({
+      getConnection: async () => conn,
+      getQueue: s.getQueue,
+      updateQueue: s.updateQueue,
+      pausedUntilMs: async () => 5000,
+      nowMs: () => 1000,
+      postClip: async () => {
+        calls++;
+        return { ok: true, status: "created" };
+      },
+    });
+    expect(calls).toBe(0);
+    expect(out).toEqual({ remaining: 1 });
+  });
+
+  test("a manual retry bypasses the pause", async () => {
+    const s = store([entry("a")]);
+    let calls = 0;
+    await flushQueue(
+      {
+        getConnection: async () => conn,
+        getQueue: s.getQueue,
+        updateQueue: s.updateQueue,
+        pausedUntilMs: async () => 5000,
+        nowMs: () => 1000,
+        postClip: async () => {
+          calls++;
+          return { ok: true, status: "created" };
+        },
+      },
+      { manual: true },
+    );
+    expect(calls).toBe(1);
+    expect(s.current()).toEqual([]);
+  });
+
+  test("an expired pause does not block", async () => {
+    const s = store([entry("a")]);
+    let calls = 0;
+    await flushQueue({
+      getConnection: async () => conn,
+      getQueue: s.getQueue,
+      updateQueue: s.updateQueue,
+      pausedUntilMs: async () => 500,
+      nowMs: () => 1000,
+      postClip: async () => {
+        calls++;
+        return { ok: true, status: "created" };
+      },
+    });
+    expect(calls).toBe(1);
+  });
+
+  // rate_limited is transient, so unlike invalid_request / payload_too_large it is
+  // NOT skipped by the next automatic flush.
+  test("auto flush retries a rate_limited entry once the pause expires", async () => {
+    const s = store([entry("a", "rate_limited")]);
+    const tried: string[] = [];
+    await flushQueue({
+      getConnection: async () => conn,
+      getQueue: s.getQueue,
+      updateQueue: s.updateQueue,
+      ...noPause,
+      postClip: async (_o, _t, p) => {
+        tried.push(p.url);
+        return { ok: true, status: "created" };
+      },
+    });
+    expect(tried).toEqual(["a"]);
   });
 });

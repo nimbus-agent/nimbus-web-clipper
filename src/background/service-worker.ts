@@ -39,10 +39,18 @@ import {
 } from "./handlers.ts";
 import { flushQueue } from "./queue-flush.ts";
 import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
+import { getPauseUntil } from "./rate-limit-pause.ts";
 import { singleFlight } from "./single-flight.ts";
 
 const FLUSH_ALARM = "flush-clip-queue";
-const flushDeps = { getConnection, getQueue, updateQueue, postClip };
+const flushDeps = {
+  getConnection,
+  getQueue,
+  updateQueue,
+  postClip,
+  pausedUntilMs: getPauseUntil,
+  nowMs: () => Date.now(),
+};
 
 // Background drains (the periodic alarm and the cold-start drain) can fire together on
 // a fresh wake; coalescing them through one in-flight guard stops the same clips being
