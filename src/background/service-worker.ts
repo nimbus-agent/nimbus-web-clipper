@@ -37,7 +37,7 @@ import {
   handleRelated,
   handleUnpair,
 } from "./handlers.ts";
-import { flushQueue } from "./queue-flush.ts";
+import { type FlushDeps, flushQueue } from "./queue-flush.ts";
 import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
 import { clearPause, getPauseUntil, setPauseUntil } from "./rate-limit-pause.ts";
 import { singleFlight } from "./single-flight.ts";
@@ -48,7 +48,7 @@ const FLUSH_ALARM = "flush-clip-queue";
 // threading a dependency through handleClip and flushQueue — keeps both of those
 // pure and means a 429 from EITHER path (interactive clip or queue drain) paces the
 // next drain. A storage failure here must never fail the clip itself.
-const postClipPaced: typeof postClip = async (origin, token, payload) => {
+const postClipPaced: FlushDeps["postClip"] = async (origin, token, payload) => {
   const r = await postClip(origin, token, payload);
   if (r.ok) {
     await endPause().catch(() => undefined);

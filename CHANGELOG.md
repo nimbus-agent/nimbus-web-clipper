@@ -33,8 +33,9 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   was re-created on every queue change, and `chrome.alarms.create` replaces a
   same-named alarm and restarts its countdown — so clipping more often than once a
   minute pushed the next flush out indefinitely and queued clips drained only when
-  the service worker restarted. The alarm is now created once and left alone.
-- **Clips are no longer lost or hammered when the gateway rate-limits.** The
+  the service worker restarted. The alarm is now created once and left alone,
+  except when it is deliberately re-paced for a rate-limit pause.
+- **Clips are no longer hammered when the gateway rate-limits.** The
   gateway caps `POST /v1/clips` at 20/min and answers `429` with a `Retry-After`;
   this was previously mapped to the generic `server_error`, so the popup reported a
   server failure and the offline queue re-POSTed every entry on the next tick. A

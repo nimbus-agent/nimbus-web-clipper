@@ -39,4 +39,23 @@ describe("rate-limit pause store", () => {
     expect(await clearPause()).toBe(false);
     expect(storage.has("clipRateLimitPauseUntil")).toBe(false);
   });
+
+  // A backwards system-clock correction (NTP jump, VM resume, dual-boot) can leave a
+  // stored deadline arbitrarily far in the future; the gateway's own maximum
+  // Retry-After is 120s, so nothing legitimate can exceed that from now.
+  test("a negative stored value reads as 0", async () => {
+    installChromeStub({ storage: { clipRateLimitPauseUntil: -1 } });
+    expect(await getPauseUntil()).toBe(0);
+  });
+
+  test("a far-future stored value is clamped to at most 120s from now", async () => {
+    const farFuture = Date.now() + 10 * 365 * 24 * 3600 * 1000;
+    installChromeStub({ storage: { clipRateLimitPauseUntil: farFuture } });
+    const before = Date.now();
+    const result = await getPauseUntil();
+    const after = Date.now();
+    expect(result).toBeLessThanOrEqual(before + 120_000);
+    expect(result).toBeLessThanOrEqual(after + 120_000);
+    expect(result).toBeGreaterThan(before);
+  });
 });

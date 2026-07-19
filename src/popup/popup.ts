@@ -12,7 +12,6 @@ const CLIP_MESSAGES: Record<string, string> = {
   unauthorized: "Pairing expired — re-pair in Options.",
   invalid_request: "Couldn't save this page.",
   payload_too_large: "Too large for Nimbus to save.",
-  rate_limited: RATE_LIMITED_MESSAGE,
   unreachable: "Can't reach Nimbus — is the gateway running?",
   server_error: "Nimbus had an error saving this.",
 };

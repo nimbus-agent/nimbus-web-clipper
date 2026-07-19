@@ -7,10 +7,18 @@ import { storageGet, storageSet } from "../browser/storage.ts";
 
 const PAUSE_KEY = "clipRateLimitPauseUntil";
 
+/** No legitimate pause can exceed the gateway's own maximum Retry-After. */
+const MAX_PAUSE_MS = 120_000;
+
 /** Epoch ms until which automatic flushes are paused; 0 = not paused. */
 export async function getPauseUntil(): Promise<number> {
   const value = await storageGet(PAUSE_KEY);
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+  // Clamp rather than trust: a backwards system-clock correction would otherwise
+  // leave a deadline far in the future and stall the automatic drain entirely.
+  return Math.min(Math.max(value, 0), Date.now() + MAX_PAUSE_MS);
 }
 
 export async function setPauseUntil(untilMs: number): Promise<void> {
