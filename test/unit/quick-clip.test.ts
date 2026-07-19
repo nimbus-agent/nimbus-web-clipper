@@ -91,6 +91,13 @@ describe("toToastState", () => {
       toToastState({ kind: "clip", ok: false, reason: "not_a_reason" as "not_paired" }).text,
     ).toBe("Couldn't save this page.");
   });
+
+  // Queued, but NOT the offline wording — the gateway is up, just throttling.
+  test("rate_limited is the busy toast, not the offline one", () => {
+    expect(toToastState({ kind: "clip", ok: false, reason: "rate_limited", queued: true })).toEqual(
+      { variant: "offline", text: "Nimbus is busy — queued, will retry shortly." },
+    );
+  });
 });
 
 describe("quickClip", () => {

@@ -5,11 +5,14 @@ import { parseTags } from "../shared/clip.ts";
 import { type ClipResponse, isQueueResponse } from "../shared/messages.ts";
 import { renderQueueList } from "./queue-view.ts";
 
+const RATE_LIMITED_MESSAGE = "Nimbus is busy — queued, will retry shortly.";
+
 const CLIP_MESSAGES: Record<string, string> = {
   not_paired: "Pair a browser first (Options).",
   unauthorized: "Pairing expired — re-pair in Options.",
   invalid_request: "Couldn't save this page.",
   payload_too_large: "Too large for Nimbus to save.",
+  rate_limited: RATE_LIMITED_MESSAGE,
   unreachable: "Can't reach Nimbus — is the gateway running?",
   server_error: "Nimbus had an error saving this.",
 };
@@ -57,11 +60,17 @@ async function clip(mode: "article" | "selection"): Promise<void> {
     }
     setStatus(savedMessage);
   } else {
-    setStatus(
-      res.queued === true
-        ? "Saved offline — will sync when Nimbus is back."
-        : (CLIP_MESSAGES[res.reason] ?? "Couldn't save this page."),
-    );
+    // rate_limited is queued too, but it must not read as "Nimbus is down" — so it
+    // is checked BEFORE the generic queued wording.
+    let message: string;
+    if (res.reason === "rate_limited") {
+      message = RATE_LIMITED_MESSAGE;
+    } else if (res.queued === true) {
+      message = "Saved offline — will sync when Nimbus is back.";
+    } else {
+      message = CLIP_MESSAGES[res.reason] ?? "Couldn't save this page.";
+    }
+    setStatus(message);
     await refreshQueue();
   }
 }

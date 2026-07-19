@@ -19,6 +19,8 @@ export function isRestrictedUrl(url: string): boolean {
   }
 }
 
+const RATE_LIMITED_TEXT = "Nimbus is busy — queued, will retry shortly.";
+
 // Deliberately the popup's vocabulary (src/popup/popup.ts CLIP_MESSAGES): the quick
 // clip is the same operation from a different entry point, so it must not invent a
 // second set of words for the same outcomes.
@@ -46,6 +48,10 @@ export function toToastState(res: ClipResponse): ToastState {
       variant: "success",
       text: res.status === "updated" ? "Updated in Nimbus." : "Saved to Nimbus.",
     };
+  }
+  // Queued like the offline case, but the gateway is up — say so.
+  if (res.reason === "rate_limited") {
+    return { variant: "offline", text: RATE_LIMITED_TEXT };
   }
   if (res.queued === true) {
     return { variant: "offline", text: "Saved offline — will sync when Nimbus is back." };
