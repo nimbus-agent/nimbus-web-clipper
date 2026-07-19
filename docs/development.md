@@ -132,6 +132,17 @@ the context menus are re-registered.
 12. Repeat 1–10 in Firefox (`about:debugging` → reload the temporary add-on; check
     the shortcuts in about:addons → Manage Extension Shortcuts).
 
+## Manual verification — Gateway rate limiting
+
+Prereq: paired (Slice 1), gateway running. The gateway caps `POST /v1/clips` at 20 requests/min on a sliding window; the rate bucket is global across all paired devices.
+
+1. **Burst clip:** clip 25 distinct pages in under a minute.
+2. **Queued responses:** the first ~20 save normally ("Saved to Nimbus"); the rest show "Nimbus is busy — queued, will retry shortly." in the popup status line and quick-clip toast; the popup queue section shows "Nimbus is busy" above those entries.
+3. **Auto-drain:** the badge stops growing; the queue drains on its own within ~1–2 minutes, with no burst of failures in the gateway's audit log.
+4. **Manual retry during pause:** with the queue paused (popup shows "Nimbus is busy"), press **Retry all** → it attempts immediately rather than waiting for the rate-limit pause to expire.
+
+Note: When dev-loading the unpacked extension (not a store-shipped zip), Chrome's 30-second minimum on alarm delays does not apply; retry timing observed in dev mode will differ from the computed Retry-After. Verify pacing with a shipped extension or configured interval for production accuracy.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any
