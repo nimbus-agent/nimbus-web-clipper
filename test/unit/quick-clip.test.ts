@@ -37,7 +37,14 @@ function deps(over: Partial<QuickClipDeps> = {}): {
     showFeedback: feedback,
     ...over,
   };
-  return { d, clip, feedback };
+  // Return the mocks actually ON d — an override must be what the caller asserts,
+  // otherwise a test could assert a default mock that was never called and pass
+  // vacuously.
+  return {
+    d,
+    clip: d.clip as ReturnType<typeof vi.fn>,
+    feedback: d.showFeedback as ReturnType<typeof vi.fn>,
+  };
 }
 
 describe("isRestrictedUrl", () => {
@@ -54,7 +61,7 @@ describe("toToastState", () => {
   test("maps clip responses to toast states", () => {
     expect(
       toToastState({ kind: "clip", ok: true, status: "created", bookmarked: false }).text,
-    ).toBe("Clipped to Nimbus.");
+    ).toBe("Saved to Nimbus.");
     expect(
       toToastState({ kind: "clip", ok: true, status: "updated", bookmarked: false }).text,
     ).toBe("Updated in Nimbus.");
@@ -63,12 +70,26 @@ describe("toToastState", () => {
     );
     expect(toToastState({ kind: "clip", ok: false, reason: "unreachable", queued: true })).toEqual({
       variant: "offline",
-      text: "Offline — saved to retry queue.",
+      text: "Saved offline — will sync when Nimbus is back.",
     });
     expect(toToastState({ kind: "clip", ok: false, reason: "not_paired" })).toEqual({
       variant: "error",
       text: "Pair a browser first (Options).",
     });
+  });
+
+  test("wording matches the popup's shipped vocabulary", () => {
+    // The popup is the reference surface (src/popup/popup.ts) — same words, one
+    // mental model, whichever entry point the user reached for.
+    expect(toToastState({ kind: "clip", ok: false, reason: "invalid_request" }).text).toBe(
+      "Couldn't save this page.",
+    );
+    expect(toToastState({ kind: "clip", ok: false, reason: "server_error" }).text).toBe(
+      "Nimbus had an error saving this.",
+    );
+    expect(
+      toToastState({ kind: "clip", ok: false, reason: "not_a_reason" as "not_paired" }).text,
+    ).toBe("Couldn't save this page.");
   });
 });
 
@@ -77,7 +98,7 @@ describe("quickClip", () => {
     const { d, clip, feedback } = deps();
     await quickClip(d, "article");
     expect(clip).toHaveBeenCalledWith({ kind: "clip", capture: CAPTURE, tags: [] });
-    expect(feedback).toHaveBeenCalledWith(1, { variant: "success", text: "Clipped to Nimbus." });
+    expect(feedback).toHaveBeenCalledWith(1, { variant: "success", text: "Saved to Nimbus." });
   });
 
   test("restricted page → error feedback, no capture", async () => {
@@ -128,7 +149,60 @@ describe("quickClip", () => {
     await quickClip(d, "article");
     expect(feedback).toHaveBeenCalledWith(1, {
       variant: "offline",
-      text: "Offline — saved to retry queue.",
+      text: "Saved offline — will sync when Nimbus is back.",
     });
+  });
+
+  test("a rejecting clip still shows an error toast (never a silent no-op)", async () => {
+    const { d, feedback } = deps({
+      clip: vi.fn(async (): Promise<never> => {
+        throw new Error("storage exploded");
+      }),
+    });
+
+    await expect(quickClip(d, "article")).resolves.toBeUndefined();
+
+    expect(feedback).toHaveBeenCalledWith(1, {
+      variant: "error",
+      text: "Nimbus had an error saving this.",
+    });
+  });
+
+  test("a clicked tab id wins over the active tab", async () => {
+    const { d, feedback } = deps({
+      activeTab: vi.fn(async () => ({ id: 1, url: "https://ex.com/a", title: "An Article" })),
+    });
+
+    await quickClip(d, "article", 42);
+
+    expect(d.runCapture).toHaveBeenCalledWith(42, "article");
+    expect(feedback).toHaveBeenCalledWith(42, { variant: "success", text: "Saved to Nimbus." });
+  });
+
+  test("a clicked tab id is used even when there is no active tab", async () => {
+    const { d, clip } = deps({
+      activeTab: vi.fn(async (): Promise<never> => {
+        throw new Error("no active tab");
+      }),
+    });
+
+    await quickClip(d, "article", 42);
+
+    expect(d.runCapture).toHaveBeenCalledWith(42, "article");
+    expect(clip).toHaveBeenCalled();
+  });
+
+  test("no clicked tab and no active tab → nothing happens", async () => {
+    const { d, clip, feedback } = deps({
+      activeTab: vi.fn(async (): Promise<never> => {
+        throw new Error("no active tab");
+      }),
+    });
+
+    await quickClip(d, "article");
+
+    expect(d.runCapture).not.toHaveBeenCalled();
+    expect(clip).not.toHaveBeenCalled();
+    expect(feedback).not.toHaveBeenCalled();
   });
 });

@@ -69,10 +69,12 @@ const clipDeps = { getConnection, postClip, updateQueue, nowMs: () => Date.now()
 const quickClipDeps: QuickClipDeps = {
   activeTab,
   runCapture,
+  // The badge sync runs AFTER the response is settled, never gating it: the clip may
+  // have enqueued (keep the count fresh), but a storage failure while syncing must
+  // not turn a successful clip into a silent no-toast.
   clip: (req) =>
-    handleClip(clipDeps, req).then(async (res) => {
-      await syncQueueState(); // the clip may have enqueued — keep the badge count fresh
-      return res;
+    handleClip(clipDeps, req).finally(() => {
+      syncQueueState().catch(() => undefined);
     }),
   showFeedback: (tabId, state, restricted) =>
     showFeedback(
@@ -85,11 +87,14 @@ const quickClipDeps: QuickClipDeps = {
 
 // Menus are re-registered from scratch (removeAll first) so a reload/upgrade can't
 // leave a duplicate id behind — chrome.contextMenus.create throws on a duplicate.
-async function registerContextMenus(): Promise<void> {
+// Single-flighted because on a fresh install the startup sequence and onInstalled
+// both register: interleaved removeAll/create pairs could otherwise hit a duplicate
+// id and surface an unchecked runtime.lastError.
+const registerContextMenus = singleFlight(async (): Promise<void> => {
   await removeAllMenus();
   createMenu({ id: "clip-page", title: "Clip page to Nimbus", contexts: ["page"] });
   createMenu({ id: "clip-selection", title: "Clip selection to Nimbus", contexts: ["selection"] });
-}
+});
 
 // Both quick-clip routes fail closed like every other listener: the user-visible
 // result is the toast/badge, and a rejection here has nowhere to be reported.
@@ -97,8 +102,10 @@ addInstalledListener(() => {
   registerContextMenus().catch(() => undefined);
 });
 
-addMenuClickListener((menuItemId) => {
-  quickClip(quickClipDeps, menuItemId === "clip-selection" ? "selection" : "article").catch(
+addMenuClickListener((menuItemId, tabId) => {
+  // Clip the tab that was RIGHT-CLICKED (it may not be the active tab of the focused
+  // window, and the activeTab grant belongs to it).
+  quickClip(quickClipDeps, menuItemId === "clip-selection" ? "selection" : "article", tabId).catch(
     () => undefined,
   );
 });

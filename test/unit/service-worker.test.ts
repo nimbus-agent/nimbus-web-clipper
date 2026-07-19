@@ -444,7 +444,7 @@ describe("command route", () => {
 
 describe("quick clip — context menu + shortcut routes", () => {
   /** Seed the harness so a quick clip on a normal page runs end to end: a paired
-   * connection, an active tab, a capture.js result, and a 201 from the gateway.
+   * connection, an active tab, a capture.js result, and a 200 from the gateway.
    * The executeScript queue is: capture.js file inject → the capture func (whose
    * result is read) → toast.js inject → the toast func. */
   function seedQuickClip(h: ChromeHarness, mode: "article" | "selection" = "article"): void {
@@ -490,7 +490,7 @@ describe("quick clip — context menu + shortcut routes", () => {
   test("clip-page command captures the active tab and posts a clip", async () => {
     await load();
     seedQuickClip(harness);
-    globalThis.fetch = vi.fn(async () => jsonRes(201, { id: "1", status: "created" }));
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
 
     harness.emitCommand("clip-page");
     await settle();
@@ -504,12 +504,76 @@ describe("quick clip — context menu + shortcut routes", () => {
       target: { tabId: 5 },
       files: ["toast.js"],
     });
+    // …and the state actually handed to the page is the success toast, worded like
+    // the popup. This is the user-visible contract of the whole feature.
+    expect(harness.executeScript).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        target: { tabId: 5 },
+        args: [{ variant: "success", text: "Saved to Nimbus." }],
+      }),
+    );
+  });
+
+  test("a badge-sync failure does not swallow the success toast", async () => {
+    await load();
+    seedQuickClip(harness);
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+    // syncQueueState()'s badge write blows up right after the clip succeeds.
+    harness.setBadgeText.mockRejectedValueOnce(new Error("badge boom"));
+
+    harness.emitCommand("clip-page");
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        args: [{ variant: "success", text: "Saved to Nimbus." }],
+      }),
+    );
+  });
+
+  test("a rejecting clip pipeline still confirms with an error toast", async () => {
+    await load();
+    seedQuickClip(harness);
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+    // The connection read inside handleClip fails → the clip promise rejects.
+    harness.storageGet.mockRejectedValueOnce(new Error("storage boom"));
+
+    harness.emitCommand("clip-page");
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        args: [{ variant: "error", text: "Nimbus had an error saving this." }],
+      }),
+    );
+  });
+
+  test("a context-menu click clips the CLICKED tab, not the active one", async () => {
+    await load();
+    seedQuickClip(harness); // active tab is id 5
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+
+    harness.emitMenuClick("clip-page", 9);
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 9 },
+      files: ["capture.js"],
+    });
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 9 },
+      files: ["toast.js"],
+    });
+    const targets = harness.executeScript.mock.calls.map(
+      (c) => (c[0] as { target: { tabId: number } }).target.tabId,
+    );
+    expect(targets).not.toContain(5);
   });
 
   test("the clip-selection menu item captures in selection mode", async () => {
     await load();
     seedQuickClip(harness, "selection");
-    globalThis.fetch = vi.fn(async () => jsonRes(201, { id: "1", status: "created" }));
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
 
     harness.emitMenuClick("clip-selection", 5);
     await settle();
