@@ -277,4 +277,11 @@ async function runStartupSequence(): Promise<void> {
   await backgroundFlush().catch(() => undefined);
 }
 
+// NOSONAR S7785 — deliberate fire-and-forget, not a forgotten top-level await.
+// This is an MV3 service worker: a pending top-level await leaves module
+// evaluation unresolved, and runStartupSequence ends in a network-bound
+// backgroundFlush(), so awaiting here would gate worker startup — and event
+// dispatch — on a gateway round-trip that may hang or fail. Every listener
+// above is already registered synchronously during evaluation, which is what
+// MV3 actually requires; the startup work is deliberately detached from it.
 void runStartupSequence();
