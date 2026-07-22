@@ -97,7 +97,13 @@ export function installChromeMock(): ChromeHarness {
     storage.delete(key);
   });
   const contextMenusCreate = vi.fn();
-  const contextMenusRemoveAll = vi.fn(async (): Promise<void> => undefined);
+  // Real chrome.contextMenus.removeAll honours BOTH shapes: it invokes the
+  // callback when one is supplied, and returns a promise when one is not. This
+  // double previously modelled only the promise half, so a callback-style
+  // caller would hang against it forever.
+  const contextMenusRemoveAll = vi.fn(async (cb?: () => void): Promise<void> => {
+    cb?.();
+  });
 
   const fakeChrome = {
     runtime: {

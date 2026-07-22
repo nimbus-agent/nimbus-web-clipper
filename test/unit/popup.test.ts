@@ -400,7 +400,7 @@ describe("onQueueClick", () => {
 
     // Give any (incorrect) async handling a chance to run before asserting nothing changed.
     await Promise.resolve();
-    expect(harness.sendMessage.mock.calls.length).toBe(callsBefore);
+    expect(harness.sendMessage.mock.calls).toHaveLength(callsBefore);
   });
 
   test("retry-all sends queue-retry without a url", async () => {

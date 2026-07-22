@@ -11,7 +11,15 @@ export function createMenu(item: MenuItem): void {
 }
 
 export async function removeAllMenus(): Promise<void> {
-  await chrome.contextMenus.removeAll();
+  // removeAll is callback-style and returns void, so `await`ing it directly
+  // resolved immediately — before the removal had actually completed, letting a
+  // subsequent createMenu race a still-pending teardown into duplicate ids.
+  // Promisify the callback so the await means what it says. Passing an explicit
+  // callback (rather than relying on Chrome 91+ returning a promise) also keeps
+  // this working on Firefox MV3.
+  await new Promise<void>((resolve) => {
+    chrome.contextMenus.removeAll(() => resolve());
+  });
 }
 
 export function addMenuClickListener(
