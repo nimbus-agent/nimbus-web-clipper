@@ -54,7 +54,10 @@ describe("rate-limit pause store", () => {
     const before = Date.now();
     const result = await getPauseUntil();
     const after = Date.now();
-    expect(result).toBeLessThanOrEqual(before + 120_000);
+    // The clamp samples Date.now() INSIDE getPauseUntil, so its ceiling is that
+    // inner now + 120s — which sits between `before` and `after`. The only sound
+    // upper bound is therefore after + 120s; a before-based bound is flaky (it
+    // fails whenever a millisecond ticks over during the call).
     expect(result).toBeLessThanOrEqual(after + 120_000);
     expect(result).toBeGreaterThan(before);
   });
