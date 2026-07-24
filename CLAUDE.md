@@ -73,20 +73,25 @@ Reference (in the Nimbus monorepo): the design spec
 - `esbuild.mjs` — build (run via `bun`, imports the TS manifest module)
 - `scripts/` — `clean.mjs`, `check-build.mjs` (guards per-target completeness),
   `package.mjs` (zips each target)
-- `docs/` — per-feature design specs (`specs/`, superpowers spec→plan layout;
-  plans and review notes are pruned once a feature ships and live on in git
-  history); `development.md` is the dev-load + manual-verification checklist for
-  the surfaces that aren't unit-tested (capture-in-page, popup/options DOM, SW
-  glue); `store/` holds the store listing + publishing docs; `sdk-roadmap.md` is
-  the proposed shared Nimbus SDK (see Direction below)
+- `docs/` — `architecture.md` is the how-it's-built reference (load-bearing
+  decisions, layer map, clip pipeline, the offline-queue + rate-limit-pause state
+  machines); per-feature design specs live in `specs/` (superpowers spec→plan
+  layout; plans and review notes are pruned once a feature ships and live on in
+  git history); `development.md` is the dev-load + manual-verification checklist
+  for the surfaces that aren't unit-tested (capture-in-page, popup/options DOM, SW
+  glue); `store/` holds the store listing + publishing docs
+- `ROADMAP.md` (repo root) — the vision-first roadmap: north star, the four
+  pillars, and contributor-ready phases (each feature a brief with touches +
+  done-when) ordered client-buildable-first → needs-gateway → ecosystem
 
 ## Direction
 
 The gateway client, pairing orchestration, token store, and 429/413/offline
 handling in `src/background/` are currently hand-rolled here — and duplicated in
-`nimbus-vscode`. The proposed **Nimbus SDK** (`docs/sdk-roadmap.md`) extracts
-that into one spec-driven, multi-language package that every surface consumes via
-small per-runtime adapters. This repo is a Phase 1 consumer and proof surface:
+`nimbus-vscode`. The proposed **Nimbus SDK** (roadmapped in the SDK repo, not
+here) extracts that into one spec-driven, multi-language package that every
+surface consumes via small per-runtime adapters. This repo is a Phase 1 consumer
+and proof surface:
 once the SDK lands, `gateway-client.ts` / `handlers.ts` / `connection-store.ts`
 get replaced by SDK calls, keeping identical behavior and invariants. Until then,
 this repo's local implementation is the reference the SDK generalizes from — so
