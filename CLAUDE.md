@@ -77,7 +77,20 @@ Reference (in the Nimbus monorepo): the design spec
   plans and review notes are pruned once a feature ships and live on in git
   history); `development.md` is the dev-load + manual-verification checklist for
   the surfaces that aren't unit-tested (capture-in-page, popup/options DOM, SW
-  glue); `store/` holds the store listing + publishing docs
+  glue); `store/` holds the store listing + publishing docs; `sdk-roadmap.md` is
+  the proposed shared Nimbus SDK (see Direction below)
+
+## Direction
+
+The gateway client, pairing orchestration, token store, and 429/413/offline
+handling in `src/background/` are currently hand-rolled here — and duplicated in
+`nimbus-vscode`. The proposed **Nimbus SDK** (`docs/sdk-roadmap.md`) extracts
+that into one spec-driven, multi-language package that every surface consumes via
+small per-runtime adapters. This repo is a Phase 1 consumer and proof surface:
+once the SDK lands, `gateway-client.ts` / `handlers.ts` / `connection-store.ts`
+get replaced by SDK calls, keeping identical behavior and invariants. Until then,
+this repo's local implementation is the reference the SDK generalizes from — so
+treat changes to it as potential contributions upstream.
 
 ## Commands
 
