@@ -89,9 +89,9 @@ Nimbus gateway repository; this repo builds against that stable surface.
 
 ## See also
 
+- [Roadmap](./ROADMAP.md) — where this extension is going and why it wins
+- [Architecture](./docs/architecture.md) — how it's built today
 - [Documentation](./docs/) — design specs and architecture reference
-- [Nimbus SDK roadmap](./docs/sdk-roadmap.md) — the proposed shared client SDK
-  this extension will consume instead of hand-rolling its gateway client
 - [Store assets](./store/) — listing copy, privacy policy, screenshots, and the
   [publishing guide](./store/publishing.md)
 - [Changelog](./CHANGELOG.md) — notable changes per release

@@ -2,6 +2,10 @@
 
 Design reference for the Nimbus Web Clipper.
 
+- **[`architecture.md`](./architecture.md)** — how the extension is built today:
+  the load-bearing decisions, the layer map, the clip pipeline, and the two state
+  machines (offline retry queue + rate-limit pause). Start here to understand the
+  code. The forward-looking counterpart is [`../ROADMAP.md`](../ROADMAP.md).
 - **`specs/`** — the per-feature design specs (brainstormed and reviewed before
   implementation): the original extension design (capture modes, pairing UX,
   related-items panel, storage, Chrome/Firefox differences, error/offline
