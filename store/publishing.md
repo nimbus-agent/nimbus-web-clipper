@@ -7,8 +7,8 @@ credentials below are configured — uploads to the Chrome Web Store and Firefox
 AMO and submits each for review.
 
 The automated upload requires a **one-time manual bootstrap** (accounts, first
-submission, and repository secrets). Until the secrets exist, a tag still cuts a
-GitHub Release; the store jobs are skipped.
+submission, and the `release` environment secrets). Until the secrets exist, a
+tag still cuts a GitHub Release; the store jobs are skipped.
 
 ## One-time bootstrap
 
@@ -46,10 +46,17 @@ is automated.
   <https://addons.mozilla.org/developers/addon/api/key/> — these are the JWT
   issuer and JWT secret.
 
-### 4. Repository secrets
+### 4. Environment secrets
 
-Add these secrets under **Settings → Secrets and variables → Actions** on the
-GitHub repository (repo-scoped — this is the org's only browser extension):
+Add these under **Settings → Environments → `release` → Environment secrets**.
+
+They belong to the `release` environment, **not** to repo scope. A repo-scoped
+secret is readable by every job in every workflow in the repository; a leaked
+`CWS_REFRESH_TOKEN` lets an attacker push an arbitrary extension update to every
+installed browser. Environment scope means only a job that declares
+`environment: release` can read them, and the environment's deployment branch
+policy admits only `main` and `v*` tags — so a workflow added on a feature
+branch cannot reach these credentials.
 
 | Secret | Source |
 |--------|--------|
@@ -60,6 +67,11 @@ GitHub repository (repo-scoped — this is the org's only browser extension):
 | `CWS_REFRESH_TOKEN` | Google OAuth refresh token |
 | `AMO_JWT_ISSUER` | AMO API key (JWT issuer) |
 | `AMO_JWT_SECRET` | AMO API secret (JWT secret) |
+
+The jobs cleared to read them are `publish`, `store-chrome` and `store-firefox`
+in [`publish.yml`](../.github/workflows/publish.yml) plus `check` in
+[`store-credential-check.yml`](../.github/workflows/store-credential-check.yml).
+A regression test asserts every store-secret reader declares the environment.
 
 Set **all** of a store's secrets or **none**. The workflow enables a store's job
 only when that store's *complete* secret set is present, so a partial set is
