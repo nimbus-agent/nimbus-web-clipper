@@ -27,8 +27,9 @@ The only network destination is the gateway on `127.0.0.1` / `localhost`.
 `host_permissions` is restricted to those origins — never `<all_urls>`, never a
 remote host. Origin validation lives in [`src/shared/gateway.ts`](../src/shared/gateway.ts)
 and rejects anything else, so a mistyped or malicious gateway URL fails closed
-rather than exfiltrating a clip. This is invariant **I6**; it is *why* the tool
-can call itself private.
+rather than exfiltrating a clip. This is the client-side counterpart to the
+gateway's invariant **I6** (the gateway binds `127.0.0.1` only) — not an
+implementation of it; it is *why* the tool can call itself private.
 
 ### 2. The bearer token is the only secret
 
@@ -275,7 +276,7 @@ changes here are potential upstream contributions.
 
 | # | Invariant | Enforced by |
 | --- | --- | --- |
-| **I6** | Loopback only — one destination, no `<all_urls>`, no remote host | `shared/gateway.ts` origin validation + restricted `host_permissions` |
+| **I6** | Loopback only — one destination, no `<all_urls>`, no remote host | Client-side, mirrors gateway I6: `shared/gateway.ts` origin validation + restricted `host_permissions` |
 | **I30** | Pairing is fail-closed — token minted only in an owner-opened window | Gateway; extension redeems, never assumes |
 | — | The bearer token / pairing code is never logged, never in a page DOM | `noConsole` in `src/` (Biome); token held only in the SW + storage |
 | — | No `console.*` in `src/`; strict TypeScript, no `any` | `biome.json` (`noConsole`, `noExplicitAny`) + `tsc --noEmit` |

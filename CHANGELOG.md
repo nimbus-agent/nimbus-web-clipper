@@ -8,7 +8,7 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-07-19
+## [0.2.0] - 2026-07-28
 
 ### Added
 
@@ -47,6 +47,12 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   instead of draining into a closed window, and the next flush is paced off the
   gateway's `Retry-After` rather than the fixed one-minute alarm. A successful clip
   clears the pause early.
+- **Duplicate "Clip to Nimbus" context-menu entries after an extension reload.**
+  `removeAllMenus()` awaited `chrome.contextMenus.removeAll()`, which is not
+  thenable per the pinned `@types/chrome`, so teardown resolved before the removal
+  actually completed and a following create could race it into duplicate menu ids.
+  The removal is now promisified via its callback (which also works on Firefox
+  MV3). (#19)
 
 ## [0.1.0] - 2026-07-19
 

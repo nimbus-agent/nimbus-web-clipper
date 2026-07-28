@@ -13,7 +13,7 @@
   "bugs": {
     "url": "https://github.com/nimbus-agent/nimbus-web-clipper/issues"
   },
-  "homepage": "https://nimbus-agent.dev/web-clipper",
+  "homepage": "https://nimbus-agent.dev/user-guide/web-clipper/",
   "scripts": {
     "build": "bun esbuild.mjs",
     "watch": "bun esbuild.mjs --watch",
