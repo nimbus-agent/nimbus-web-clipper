@@ -276,7 +276,7 @@ changes here are potential upstream contributions.
 
 | # | Invariant | Enforced by |
 | --- | --- | --- |
-| **I6** | Loopback only — one destination, no `<all_urls>`, no remote host | Client-side, mirrors gateway I6: `shared/gateway.ts` origin validation + restricted `host_permissions` |
+| **I6** | Loopback only — one destination, no `<all_urls>`, no remote host | Client-side, mirrors gateway I6: `src/shared/gateway.ts` origin validation + restricted `host_permissions` |
 | **I30** | Pairing is fail-closed — token minted only in an owner-opened window | Gateway; extension redeems, never assumes |
 | — | The bearer token / pairing code is never logged, never in a page DOM | `noConsole` in `src/` (Biome); token held only in the SW + storage |
 | — | No `console.*` in `src/`; strict TypeScript, no `any` | `biome.json` (`noConsole`, `noExplicitAny`) + `tsc --noEmit` |

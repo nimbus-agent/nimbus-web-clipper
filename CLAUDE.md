@@ -90,7 +90,7 @@ monorepo's git history.)
   driven against `mock-gateway.ts`)
 - `docs/` — `architecture.md` is the how-it's-built reference (load-bearing
   decisions, layer map, clip pipeline, the offline-queue + rate-limit-pause state
-  machines); per-feature design specs live in `specs/` (superpowers spec→plan
+  machines); per-feature design specs live in `docs/superpowers/specs/` (spec→plan
   layout; plans and review notes are pruned once a feature ships and live on in
   git history); `development.md` is the dev-load + manual-verification checklist
   for the surfaces that aren't unit-tested (capture-in-page, popup/options DOM, SW
