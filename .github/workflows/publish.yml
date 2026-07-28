@@ -5,6 +5,10 @@ name: Publish Web Clipper
 # zip per browser target is attached to a GitHub Release. When store credentials
 # are configured (see store/publishing.md) the store-chrome / store-firefox jobs
 # upload the same artifacts to the Chrome Web Store and AMO and submit for review.
+#
+# Every job that touches a store credential declares `environment: release`. That
+# environment's deployment branch policy admits only `v*` tags and `main`, so a
+# workflow added on a feature branch cannot reach the publishing credentials.
 
 on:
   push:
@@ -19,6 +23,12 @@ jobs:
     name: Build + attach browser zips to the GitHub Release
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # The store credentials are environment-scoped so that only the release
+    # pipeline — not every job in the repo — can read them. This job needs the
+    # environment because its `Detect store secrets` step reads the credentials
+    # to compute the has_cws / has_amo gates; without it those gates would
+    # silently evaluate false and the store jobs would skip on every release.
+    environment: release
     permissions:
       contents: write
     outputs:
@@ -137,6 +147,7 @@ jobs:
     if: needs.publish.outputs.has_cws == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    environment: release
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -180,6 +191,7 @@ jobs:
     if: needs.publish.outputs.has_amo == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    environment: release
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
