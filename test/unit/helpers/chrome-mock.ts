@@ -22,6 +22,7 @@ export interface ChromeHarness {
   readonly setBadgeText: ReturnType<typeof vi.fn>;
   readonly setBadgeBackgroundColor: ReturnType<typeof vi.fn>;
   readonly alarmsCreate: ReturnType<typeof vi.fn>;
+  readonly alarmsGet: ReturnType<typeof vi.fn>;
   readonly alarmsClear: ReturnType<typeof vi.fn>;
   readonly tabsQuery: ReturnType<typeof vi.fn>;
   readonly storageGet: ReturnType<typeof vi.fn>;
@@ -32,12 +33,18 @@ export interface ChromeHarness {
   readonly messageListeners: MessageListener[];
   readonly commandListeners: Array<(command: string) => void>;
   readonly alarmListeners: Array<(alarm: { name: string }) => void>;
+  readonly contextMenusCreate: ReturnType<typeof vi.fn>;
+  readonly contextMenusRemoveAll: ReturnType<typeof vi.fn>;
   /** Fire a runtime message through the first listener; resolves its response. */
   emitMessage(message: unknown): Promise<unknown>;
   /** Fire a keyboard command through every registered command listener. */
   emitCommand(command: string): void;
   /** Fire an alarm through every registered alarm listener. */
   emitAlarm(name: string): void;
+  /** Fire a context-menu click. */
+  emitMenuClick(menuItemId: string, tabId?: number): void;
+  /** Fire runtime.onInstalled. */
+  emitInstalled(): void;
   /** Remove the fake from `globalThis.chrome`. */
   restore(): void;
 }
@@ -48,6 +55,9 @@ export function installChromeMock(): ChromeHarness {
   const messageListeners: MessageListener[] = [];
   const commandListeners: Array<(command: string) => void> = [];
   const alarmListeners: Array<(alarm: { name: string }) => void> = [];
+  const menuClickListeners: Array<(info: { menuItemId: string }, tab?: { id?: number }) => void> =
+    [];
+  const installedListeners: Array<() => void> = [];
 
   const sendMessage = vi.fn(async (): Promise<unknown> => undefined);
   const executeScript = vi.fn(
@@ -55,8 +65,19 @@ export function installChromeMock(): ChromeHarness {
   );
   const setBadgeText = vi.fn(async (): Promise<void> => undefined);
   const setBadgeBackgroundColor = vi.fn(async (): Promise<void> => undefined);
-  const alarmsCreate = vi.fn((): void => undefined);
-  const alarmsClear = vi.fn(async (): Promise<boolean> => true);
+  // Track live alarms so `get` can answer truthfully — ensureAlarm depends on it.
+  const liveAlarms = new Map<string, unknown>();
+  const alarmsCreate = vi.fn((name: string, info: unknown): void => {
+    liveAlarms.set(name, info);
+  });
+  const alarmsGet = vi.fn(async (name: string): Promise<unknown> => {
+    const info = liveAlarms.get(name);
+    return info === undefined ? undefined : { name, ...(info as Record<string, unknown>) };
+  });
+  const alarmsClear = vi.fn(async (name: string): Promise<boolean> => {
+    liveAlarms.delete(name);
+    return true;
+  });
   const tabsQuery = vi.fn(
     async (): Promise<Array<{ id?: number; url?: string; title?: string }>> => [
       { id: 1, url: "https://example.com/", title: "Example" },
@@ -75,6 +96,14 @@ export function installChromeMock(): ChromeHarness {
   const storageRemove = vi.fn(async (key: string): Promise<void> => {
     storage.delete(key);
   });
+  const contextMenusCreate = vi.fn();
+  // Real chrome.contextMenus.removeAll honours BOTH shapes: it invokes the
+  // callback when one is supplied, and returns a promise when one is not. This
+  // double previously modelled only the promise half, so a callback-style
+  // caller would hang against it forever.
+  const contextMenusRemoveAll = vi.fn(async (cb?: () => void): Promise<void> => {
+    cb?.();
+  });
 
   const fakeChrome = {
     runtime: {
@@ -82,6 +111,11 @@ export function installChromeMock(): ChromeHarness {
       onMessage: {
         addListener: (cb: MessageListener): void => {
           messageListeners.push(cb);
+        },
+      },
+      onInstalled: {
+        addListener: (cb: () => void): void => {
+          installedListeners.push(cb);
         },
       },
     },
@@ -95,6 +129,7 @@ export function installChromeMock(): ChromeHarness {
     action: { setBadgeText, setBadgeBackgroundColor },
     alarms: {
       create: alarmsCreate,
+      get: alarmsGet,
       clear: alarmsClear,
       onAlarm: {
         addListener: (cb: (alarm: { name: string }) => void): void => {
@@ -105,6 +140,15 @@ export function installChromeMock(): ChromeHarness {
     scripting: { executeScript },
     tabs: { query: tabsQuery },
     storage: { local: { get: storageGet, set: storageSet, remove: storageRemove } },
+    contextMenus: {
+      create: contextMenusCreate,
+      removeAll: contextMenusRemoveAll,
+      onClicked: {
+        addListener: (cb: (info: { menuItemId: string }, tab?: { id?: number }) => void): void => {
+          menuClickListeners.push(cb);
+        },
+      },
+    },
   };
 
   (globalThis as unknown as { chrome: unknown }).chrome = fakeChrome;
@@ -149,6 +193,18 @@ export function installChromeMock(): ChromeHarness {
     }
   }
 
+  function emitMenuClick(menuItemId: string, tabId?: number): void {
+    for (const cb of menuClickListeners) {
+      cb({ menuItemId }, tabId === undefined ? undefined : { id: tabId });
+    }
+  }
+
+  function emitInstalled(): void {
+    for (const cb of installedListeners) {
+      cb();
+    }
+  }
+
   function restore(): void {
     (globalThis as unknown as { chrome?: unknown }).chrome = undefined;
   }
@@ -159,6 +215,7 @@ export function installChromeMock(): ChromeHarness {
     setBadgeText,
     setBadgeBackgroundColor,
     alarmsCreate,
+    alarmsGet,
     alarmsClear,
     tabsQuery,
     storageGet,
@@ -168,9 +225,13 @@ export function installChromeMock(): ChromeHarness {
     messageListeners,
     commandListeners,
     alarmListeners,
+    contextMenusCreate,
+    contextMenusRemoveAll,
     emitMessage,
     emitCommand,
     emitAlarm,
+    emitMenuClick,
+    emitInstalled,
     restore,
   };
 }

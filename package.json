@@ -2,7 +2,7 @@
   "name": "nimbus-web-clipper",
   "displayName": "Nimbus Web Clipper",
   "description": "Clip articles and selections from the browser into your local-first Nimbus index.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "private": false,
   "type": "module",
@@ -13,7 +13,7 @@
   "bugs": {
     "url": "https://github.com/nimbus-agent/nimbus-web-clipper/issues"
   },
-  "homepage": "https://nimbus-agent.dev/web-clipper",
+  "homepage": "https://nimbus-agent.dev/user-guide/web-clipper/",
   "scripts": {
     "build": "bun esbuild.mjs",
     "watch": "bun esbuild.mjs --watch",

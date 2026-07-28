@@ -441,3 +441,284 @@ describe("command route", () => {
     expect(harness.tabsQuery).not.toHaveBeenCalled();
   });
 });
+
+describe("quick clip — context menu + shortcut routes", () => {
+  /** Seed the harness so a quick clip on a normal page runs end to end: a paired
+   * connection, an active tab, a capture.js result, and a 200 from the gateway.
+   * The executeScript queue is: capture.js file inject → the capture func (whose
+   * result is read) → toast.js inject → the toast func. */
+  function seedQuickClip(h: ChromeHarness, mode: "article" | "selection" = "article"): void {
+    h.storage.set(CONNECTION_KEY, conn);
+    h.tabsQuery.mockResolvedValue([{ id: 5, url: "https://ex.com/a", title: "A" }]);
+    h.executeScript
+      .mockResolvedValueOnce([{ result: undefined }])
+      .mockResolvedValueOnce([
+        {
+          result: {
+            url: "https://ex.com/a",
+            title: "A",
+            mode,
+            body: "b",
+            readableFound: true,
+          },
+        },
+      ])
+      .mockResolvedValue([{ result: undefined }]);
+  }
+
+  test("registers the two context menus on startup (removeAll before create)", async () => {
+    await load();
+
+    expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(2);
+    const ids = harness.contextMenusCreate.mock.calls.map((c) => (c[0] as { id: string }).id);
+    expect(ids).toEqual(["clip-page", "clip-selection"]);
+  });
+
+  test("onInstalled re-registers the menus (removeAll first, no duplicate ids)", async () => {
+    await load();
+    harness.contextMenusCreate.mockClear();
+    harness.contextMenusRemoveAll.mockClear();
+
+    harness.emitInstalled();
+    await settle();
+
+    expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(2);
+  });
+
+  test("clip-page command captures the active tab and posts a clip", async () => {
+    await load();
+    seedQuickClip(harness);
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+
+    harness.emitCommand("clip-page");
+    await settle();
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:8765/v1/clips",
+      expect.objectContaining({ method: "POST" }),
+    );
+    // Confirmed in page: toast.js injected into the same tab, then invoked.
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 5 },
+      files: ["toast.js"],
+    });
+    // …and the state actually handed to the page is the success toast, worded like
+    // the popup. This is the user-visible contract of the whole feature.
+    expect(harness.executeScript).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        target: { tabId: 5 },
+        args: [{ variant: "success", text: "Saved to Nimbus." }],
+      }),
+    );
+  });
+
+  test("a badge-sync failure does not swallow the success toast", async () => {
+    await load();
+    seedQuickClip(harness);
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+    // syncQueueState()'s badge write blows up right after the clip succeeds.
+    harness.setBadgeText.mockRejectedValueOnce(new Error("badge boom"));
+
+    harness.emitCommand("clip-page");
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        args: [{ variant: "success", text: "Saved to Nimbus." }],
+      }),
+    );
+  });
+
+  test("a rejecting clip pipeline still confirms with an error toast", async () => {
+    await load();
+    seedQuickClip(harness);
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+    // The connection read inside handleClip fails → the clip promise rejects.
+    harness.storageGet.mockRejectedValueOnce(new Error("storage boom"));
+
+    harness.emitCommand("clip-page");
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        args: [{ variant: "error", text: "Nimbus had an error saving this." }],
+      }),
+    );
+  });
+
+  test("a context-menu click clips the CLICKED tab, not the active one", async () => {
+    await load();
+    seedQuickClip(harness); // active tab is id 5
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+
+    harness.emitMenuClick("clip-page", 9);
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 9 },
+      files: ["capture.js"],
+    });
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 9 },
+      files: ["toast.js"],
+    });
+    const targets = harness.executeScript.mock.calls.map(
+      (c) => (c[0] as { target: { tabId: number } }).target.tabId,
+    );
+    expect(targets).not.toContain(5);
+  });
+
+  test("the clip-selection menu item captures in selection mode", async () => {
+    await load();
+    seedQuickClip(harness, "selection");
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+
+    harness.emitMenuClick("clip-selection", 5);
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenCalledWith(
+      expect.objectContaining({ target: { tabId: 5 }, args: ["selection"] }),
+    );
+    expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  test("a restricted page flashes the badge instead of injecting a toast", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.tabsQuery.mockResolvedValue([{ id: 5, url: "chrome://extensions", title: "X" }]);
+    harness.executeScript.mockClear();
+    harness.setBadgeText.mockClear();
+    globalThis.fetch = vi.fn();
+
+    harness.emitCommand("clip-page");
+    await settle();
+
+    expect(harness.executeScript).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(harness.setBadgeText).toHaveBeenCalledWith({ text: "!" });
+  });
+});
+
+describe("rate-limit pacing", () => {
+  const PAUSE_KEY = "clipRateLimitPauseUntil";
+  const NOW = 1_700_000_000_000;
+
+  function rateLimitedRes(retryAfter: string): Response {
+    return new Response(JSON.stringify({ error: "rate_limited" }), {
+      status: 429,
+      headers: { "content-type": "application/json", "retry-after": retryAfter },
+    });
+  }
+
+  test("a 429 clip queues it, arms the pause, and re-arms the alarm with the delay", async () => {
+    // Fake ONLY Date — `settle()` relies on real setTimeout to drain the SW's
+    // fire-and-forget promise chains.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.alarmsCreate.mockClear();
+    globalThis.fetch = vi.fn().mockResolvedValue(rateLimitedRes("45"));
+
+    const res = await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(res).toEqual({ kind: "clip", ok: false, reason: "rate_limited", queued: true });
+    expect(harness.storage.get(PAUSE_KEY)).toBe(NOW + 45_000);
+    expect(harness.alarmsCreate).toHaveBeenCalledWith(FLUSH_ALARM, {
+      delayInMinutes: 0.75,
+      periodInMinutes: 1,
+    });
+    vi.useRealTimers();
+  });
+
+  // Chrome ignores a delay under 0.5 and logs a warning, so short waits round up.
+  test("a sub-30s Retry-After is clamped to the 0.5-minute alarm floor", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.alarmsCreate.mockClear();
+    globalThis.fetch = vi.fn().mockResolvedValue(rateLimitedRes("5"));
+
+    await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(harness.alarmsCreate).toHaveBeenCalledWith(FLUSH_ALARM, {
+      delayInMinutes: 0.5,
+      periodInMinutes: 1,
+    });
+    vi.useRealTimers();
+  });
+
+  test("a successful clip clears an existing pause", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(PAUSE_KEY, Date.now() + 45_000);
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+
+    const res = await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(res).toEqual({ kind: "clip", ok: true, status: "created", bookmarked: false });
+    expect(harness.storage.get(PAUSE_KEY)).toBe(0);
+  });
+
+  // Regression: clearing the pause alone would leave the alarm on the delayed
+  // schedule, and the (correctly) idempotent ensureAlarm won't replace it — so the
+  // queue would keep waiting out a delay that no longer applies.
+  test("ending a pause drops the delayed alarm so a plain periodic one replaces it", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(QUEUE_KEY, [queued("https://ex.com/a")]);
+    harness.storage.set(PAUSE_KEY, Date.now() + 45_000);
+    harness.alarmsCreate.mockClear();
+    harness.alarmsClear.mockClear();
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+
+    await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(harness.alarmsClear).toHaveBeenCalledWith(FLUSH_ALARM);
+    expect(harness.alarmsCreate).toHaveBeenCalledWith(FLUSH_ALARM, { periodInMinutes: 1 });
+  });
+
+  // The no-op path must not churn the alarm on every ordinary clip.
+  test("a successful clip with no pause set leaves the alarm alone", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(QUEUE_KEY, [queued("https://ex.com/a")]);
+    harness.alarmsClear.mockClear();
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+
+    await harness.emitMessage({ kind: "clip", capture, tags: [] });
+
+    expect(harness.alarmsClear).not.toHaveBeenCalled();
+  });
+
+  test("an alarm flush during an active pause posts nothing", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(QUEUE_KEY, [queued("https://ex.com/a")]);
+    harness.storage.set(PAUSE_KEY, Date.now() + 45_000);
+    const fetchMock = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+    globalThis.fetch = fetchMock;
+
+    harness.emitAlarm(FLUSH_ALARM);
+    await settle();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(harness.storage.get(QUEUE_KEY)).toHaveLength(1);
+  });
+
+  test("an alarm flush after the pause expires drains the queue", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(QUEUE_KEY, [queued("https://ex.com/a")]);
+    harness.storage.set(PAUSE_KEY, Date.now() - 1000);
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+
+    harness.emitAlarm(FLUSH_ALARM);
+    await settle();
+
+    expect(harness.storage.get(QUEUE_KEY)).toEqual([]);
+  });
+});

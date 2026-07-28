@@ -1,6 +1,11 @@
 // test/unit/runtime.test.ts
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { addCommandListener, addMessageListener, sendMessage } from "../../src/browser/runtime.ts";
+import {
+  addCommandListener,
+  addInstalledListener,
+  addMessageListener,
+  sendMessage,
+} from "../../src/browser/runtime.ts";
 import type { ExtensionRequest } from "../../src/shared/messages.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
@@ -45,5 +50,16 @@ describe("browser/runtime seam", () => {
     harness.emitCommand("clip-page");
 
     expect(received).toBe("clip-page");
+  });
+
+  test("addInstalledListener is invoked on runtime.onInstalled", () => {
+    let installedCount = 0;
+    addInstalledListener(() => {
+      installedCount += 1;
+    });
+
+    harness.emitInstalled();
+
+    expect(installedCount).toBe(1);
   });
 });

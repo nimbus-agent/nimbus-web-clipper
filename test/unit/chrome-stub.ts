@@ -16,6 +16,7 @@ export function installChromeStub(opts: StubOptions = {}): {
   const executeCalls: unknown[] = [];
   const alarmCalls: unknown[] = [];
   const badgeTexts: string[] = [];
+  const liveAlarms = new Map<string, unknown>();
   let failsLeft = opts.failFirstSet ? 1 : 0;
   const fake = {
     storage: {
@@ -52,9 +53,17 @@ export function installChromeStub(opts: StubOptions = {}): {
     },
     alarms: {
       create: (name: string, info: unknown) => {
+        liveAlarms.set(name, info);
         alarmCalls.push({ create: name, info });
       },
+      // Presence-only by design: ensureAlarm just tests `=== undefined`, so this
+      // deliberately does NOT model chrome.alarms.Alarm (no scheduledTime).
+      get: async (name: string) => {
+        const info = liveAlarms.get(name);
+        return info === undefined ? undefined : { name, ...(info as Record<string, unknown>) };
+      },
       clear: async (name: string) => {
+        liveAlarms.delete(name);
         alarmCalls.push({ clear: name });
         return true;
       },

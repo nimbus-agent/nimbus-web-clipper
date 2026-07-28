@@ -42,6 +42,18 @@ describe("composeManifest", () => {
     const { background: _fb, browser_specific_settings: _gecko, ...firefoxRest } = firefox;
     expect(chromeRest).toEqual(firefoxRest);
   });
+
+  test("declares the contextMenus permission (for right-click clipping)", () => {
+    for (const target of BROWSER_TARGETS) {
+      expect(composeManifest(target, "1.2.3").permissions).toContain("contextMenus");
+    }
+  });
+
+  test("declares clip-page and clip-selection commands with default keys", () => {
+    const m = composeManifest("chrome", "1.2.3");
+    expect(m.commands["clip-page"]?.suggested_key.default).toBe("Alt+Shift+C");
+    expect(m.commands["clip-selection"]?.suggested_key.default).toBe("Alt+Shift+S");
+  });
 });
 
 describe("composeManifest — commands", () => {

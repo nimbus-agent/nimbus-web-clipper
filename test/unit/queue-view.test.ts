@@ -45,6 +45,14 @@ describe("renderQueueItem", () => {
       "<img src=x onerror=alert(1)>",
     );
   });
+  test("a rate-limited entry reads as busy, not as an error", () => {
+    const li = renderQueueItem(
+      document,
+      { url: "https://ex.com/p", title: "T", queuedAt: 0, attempts: 2, lastReason: "rate_limited" },
+      0,
+    );
+    expect(li.querySelector(".queue__item-status")?.textContent).toBe("Nimbus is busy · 2 tries");
+  });
 });
 
 describe("renderQueueList", () => {

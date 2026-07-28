@@ -220,6 +220,25 @@ describe("handleClip — offline queue", () => {
     expect(enqueued[0]?.payload.url).toBe("https://ex.com/p");
     expect(enqueued[0]?.queuedAt).toBe(42);
   });
+  // 429 is transient — the window reopens within a minute — so the clip is queued
+  // and auto-retried, unlike the terminal 400/413 reasons.
+  test("rate_limited enqueues and reports queued", async () => {
+    let queue: QueuedClip[] = [];
+    const res = await handleClip(
+      {
+        getConnection: async () => conn,
+        postClip: async () => ({ ok: false, reason: "rate_limited", retryAfterMs: 45_000 }),
+        updateQueue: async (m) => {
+          queue = m(queue);
+          return queue;
+        },
+        nowMs: () => 1,
+      },
+      { kind: "clip", capture, tags: [] },
+    );
+    expect(res).toEqual({ kind: "clip", ok: false, reason: "rate_limited", queued: true });
+    expect(queue).toHaveLength(1);
+  });
   test("does NOT enqueue a non-transient failure (unauthorized)", async () => {
     let called = false;
     const res = await handleClip(
@@ -235,6 +254,23 @@ describe("handleClip — offline queue", () => {
       { kind: "clip", capture, tags: [] },
     );
     expect(res).toEqual({ kind: "clip", ok: false, reason: "unauthorized" });
+    expect(called).toBe(false);
+  });
+  test("does NOT enqueue a payload_too_large failure (it's permanently too big, not offline)", async () => {
+    let called = false;
+    const res = await handleClip(
+      {
+        getConnection: async () => conn,
+        postClip: async () => ({ ok: false, reason: "payload_too_large" }),
+        updateQueue: async (m) => {
+          called = true;
+          return m([]);
+        },
+        nowMs: () => 1,
+      },
+      { kind: "clip", capture, tags: [] },
+    );
+    expect(res).toEqual({ kind: "clip", ok: false, reason: "payload_too_large" });
     expect(called).toBe(false);
   });
 });

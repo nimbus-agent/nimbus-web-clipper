@@ -209,10 +209,16 @@ jobs:
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        # --approval-timeout 0 disables the wait for approval. A listed version is
+        # gated on human review that takes days, while web-ext's default is a
+        # 15-minute poll — so without this the job reports failure on every release
+        # even though the submission succeeded. The version is still submitted; we
+        # simply do not block CI on the review.
         run: |
           bunx web-ext sign \
             --source-dir dist/firefox \
             --channel listed \
+            --approval-timeout 0 \
             --upload-source-code "dist-zip/source-${{ needs.publish.outputs.version }}.zip" \
             --api-key "$AMO_JWT_ISSUER" \
             --api-secret "$AMO_JWT_SECRET"

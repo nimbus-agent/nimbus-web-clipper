@@ -3,7 +3,7 @@
 [![CI](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/ci.yml/badge.svg)](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/codeql.yml/badge.svg)](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/kkfdgphcalcdbnpgknplfbflffalbcnk?label=Chrome%20Web%20Store&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/kkfdgphcalcdbnpgknplfbflffalbcnk)
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/kkfdgphcalcdbnpgknplfbflffalbcnk?label=Chrome%20Web%20Store&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/nimbus-web-clipper/kkfdgphcalcdbnpgknplfbflffalbcnk)
 [![Firefox Add-on](https://img.shields.io/amo/v/nimbus-web-clipper?label=Firefox%20Add-on&logo=firefoxbrowser&logoColor=white)](https://addons.mozilla.org/firefox/addon/nimbus-web-clipper/)
 
 Save what you read into your private, local-first [Nimbus](https://github.com/nimbus-agent/Nimbus)
@@ -22,12 +22,16 @@ gateway running on `127.0.0.1`. There are no remote servers, no telemetry, and
 no cloud calls.
 
 > **Status:** available on the
-> [Chrome Web Store](https://chromewebstore.google.com/detail/kkfdgphcalcdbnpgknplfbflffalbcnk)
+> [Chrome Web Store](https://chromewebstore.google.com/detail/nimbus-web-clipper/kkfdgphcalcdbnpgknplfbflffalbcnk)
 > and [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/nimbus-web-clipper/),
 > and dev-loadable from source. Pairing, article/selection capture and clip ingest
 > (`POST /v1/clips`), the related-items panel (`POST /v1/clips/related`), the
-> offline retry queue, and connection management (pairing status + unpair) are all
-> implemented; tagged releases publish to both stores automatically. See the
+> offline retry queue, connection management (pairing status + unpair), quick-clip
+> entry points (right-click context menu + `Alt+Shift+C` / `Alt+Shift+S`, confirmed
+> by an in-page toast), and terminal-413 / rate-limited-429 handling are all
+> implemented. Tagging `vX.Y.Z` builds, signs and submits to both stores
+> ([store/publishing.md](./store/publishing.md)); each store's own review then
+> gates the public rollout. See the
 > [changelog](./CHANGELOG.md) for the per-slice breakdown.
 
 ## How it works
@@ -56,7 +60,7 @@ monorepo). See <https://nimbus-agent.dev/user-guide/install/>.
 
 **From the stores** (recommended):
 
-- **Chrome / Edge / Brave** — [Chrome Web Store](https://chromewebstore.google.com/detail/kkfdgphcalcdbnpgknplfbflffalbcnk)
+- **Chrome / Edge / Brave** — [Chrome Web Store](https://chromewebstore.google.com/detail/nimbus-web-clipper/kkfdgphcalcdbnpgknplfbflffalbcnk)
 - **Firefox** — [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/nimbus-web-clipper/)
 
 The extension is a thin client — you also need a running
@@ -100,6 +104,8 @@ Nimbus gateway repository; this repo builds against that stable surface.
 
 ## See also
 
+- [Roadmap](./ROADMAP.md) — where this extension is going and why it wins
+- [Architecture](./docs/architecture.md) — how it's built today
 - [Documentation](./docs/) — design specs and architecture reference
 - [Store assets](./store/) — listing copy, privacy policy, screenshots, and the
   [publishing guide](./store/publishing.md)

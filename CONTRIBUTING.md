@@ -2,6 +2,16 @@
 
 Thanks for helping improve the Nimbus Web Clipper!
 
+## Where to start
+
+The [roadmap](./ROADMAP.md) lays out where the extension is going, phase by phase.
+Each feature is a self-contained brief — what it is, the files it touches, and how
+you know it's done. New contributors: start with
+[**Good first clips**](./ROADMAP.md#good-first-clips) (small, high-value, needs
+nothing from another repo), and read the non-negotiable
+[**guardrails**](./ROADMAP.md#contributor-guardrails) before you open a PR. For how
+the code fits together, see [`docs/architecture.md`](./docs/architecture.md).
+
 ## Prerequisites
 
 - [Bun](https://bun.sh) v1.2+
@@ -19,7 +29,7 @@ bun install
 
 ```bash
 bun run typecheck   # tsc --noEmit (strict)
-bun run lint        # biome check src/
+bun run lint        # biome check . (src + test + scripts)
 bun run test        # vitest run
 bun run build       # esbuild → dist/chrome + dist/firefox
 bun run watch       # rebuild on save

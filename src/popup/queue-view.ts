@@ -11,7 +11,9 @@ const REASON_LABELS: Record<string, string> = {
   server_error: "Nimbus had an error",
   unauthorized: "Pairing expired",
   invalid_request: "Couldn't save — won't retry automatically",
+  payload_too_large: "Too large — won't retry automatically",
   not_paired: "Not paired",
+  rate_limited: "Nimbus is busy",
 };
 
 export function hostOf(url: string): string {

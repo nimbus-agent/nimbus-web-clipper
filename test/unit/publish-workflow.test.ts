@@ -88,6 +88,13 @@ describe("publish workflow — store-firefox job", () => {
     expect(wf).toContain("--upload-source-code");
   });
 
+  // Listed review is human-gated and takes days; web-ext's default is a 15-minute
+  // poll, so without this the job goes red on every release despite a successful
+  // submission. Regression guard: dropping the flag reintroduces that false failure.
+  test("does not block CI on AMO's human review", () => {
+    expect(workflow()).toContain("--approval-timeout 0");
+  });
+
   test("has_amo gates on the COMPLETE AMO credential set", () => {
     const wf = workflow();
     for (const secret of ["AMO_JWT_ISSUER", "AMO_JWT_SECRET"]) {
