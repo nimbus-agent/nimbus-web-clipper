@@ -29,7 +29,7 @@ bun install
 
 ```bash
 bun run typecheck   # tsc --noEmit (strict)
-bun run lint        # biome check src/
+bun run lint        # biome check . (src + test + scripts)
 bun run test        # vitest run
 bun run build       # esbuild → dist/chrome + dist/firefox
 bun run watch       # rebuild on save

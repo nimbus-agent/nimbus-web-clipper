@@ -29,6 +29,8 @@ into the submitted zip).
   (`src/capture/capture-in-page.ts`); `@mozilla/readability` is inlined here.
 - `panel.js` — the related-items panel injected on demand
   (`src/panel/panel-in-page.ts`).
+- `toast.js` — the in-page confirmation toast shown after a context-menu /
+  keyboard-shortcut clip (`src/capture/toast-in-page.ts`).
 
 `manifest.json` is generated from `src/manifest/manifest.ts` at build time.
 

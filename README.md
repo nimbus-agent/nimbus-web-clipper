@@ -21,11 +21,14 @@ no cloud calls.
 
 > **Status:** dev-loadable in both Chrome and Firefox. Pairing, article/selection
 > capture, and clip ingest (`POST /v1/clips`), the related-items panel
-> (`POST /v1/clips/related`), the offline retry queue, and connection management
-> (pairing status + unpair) are all implemented. Store listing assets and
+> (`POST /v1/clips/related`), the offline retry queue, connection management
+> (pairing status + unpair), quick-clip entry points (right-click context menu +
+> `Alt+Shift+C` / `Alt+Shift+S`, confirmed by an in-page toast), and terminal-413 /
+> rate-limited-429 handling are all implemented. Store listing assets and
 > tag-driven publishing to the Chrome Web Store and Firefox AMO are in place (see
-> [`store/`](./store/)); the live listings await the one-time bootstrap in
-> [store/publishing.md](./store/publishing.md). See the
+> [`store/`](./store/)): the store accounts, first submissions, and all seven
+> repository secrets are configured, so the next `vX.Y.Z` tag uploads to both
+> stores automatically ([store/publishing.md](./store/publishing.md)). See the
 > [changelog](./CHANGELOG.md) for the per-slice breakdown.
 
 ## How it works
@@ -53,8 +56,9 @@ monorepo). See <https://nimbus-agent.dev/user-guide/install/>.
 ## Install (developer / sideload)
 
 The extension is dev-loadable today; tag-driven store publishing is wired up (see
-[Releasing](#releasing)) and goes live after the one-time
-[store bootstrap](./store/publishing.md).
+[Releasing](#releasing)) and its one-time
+[store bootstrap](./store/publishing.md) — accounts, first submissions, and the
+seven repository secrets — is done, so the next tag uploads to both stores.
 
 ```bash
 bun install

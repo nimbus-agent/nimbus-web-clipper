@@ -439,9 +439,9 @@ Every PR runs `typecheck`, `lint`, `test`, `build`, and `check-build` (see
 A 🟡 item is blocked on the Nimbus gateway growing a new surface. The client work
 can be *designed* and even *stubbed* here, but the contract is decided upstream:
 
-1. Write the client-side brief here (or in a `docs/specs/` design) — including the
-   **shape** of the endpoint you'd need (request/response), tagged clearly as
-   *proposed, not yet contracted*.
+1. Write the client-side brief here (or in a `docs/superpowers/specs/` design) —
+   including the **shape** of the endpoint you'd need (request/response), tagged
+   clearly as *proposed, not yet contracted*.
 2. Open the contract proposal in the [Nimbus gateway repo](https://github.com/nimbus-agent/Nimbus).
    The gateway is the authority; it decides the versioned shape.
 3. Once the surface ships and is versioned, the item flips 🟡 → 🟢 and the client
