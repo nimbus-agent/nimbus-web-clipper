@@ -3,6 +3,8 @@
 [![CI](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/ci.yml/badge.svg)](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/codeql.yml/badge.svg)](https://github.com/nimbus-agent/nimbus-web-clipper/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/kkfdgphcalcdbnpgknplfbflffalbcnk?label=Chrome%20Web%20Store&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/nimbus-web-clipper/kkfdgphcalcdbnpgknplfbflffalbcnk)
+[![Firefox Add-on](https://img.shields.io/amo/v/nimbus-web-clipper?label=Firefox%20Add-on&logo=firefoxbrowser&logoColor=white)](https://addons.mozilla.org/firefox/addon/nimbus-web-clipper/)
 
 Save what you read into your private, local-first [Nimbus](https://github.com/nimbus-agent/Nimbus)
 index — straight from the browser. A Chrome + Firefox (MV3) extension that clips
@@ -19,16 +21,17 @@ Everything stays on your machine: the extension talks **only** to a Nimbus
 gateway running on `127.0.0.1`. There are no remote servers, no telemetry, and
 no cloud calls.
 
-> **Status:** dev-loadable in both Chrome and Firefox. Pairing, article/selection
-> capture, and clip ingest (`POST /v1/clips`), the related-items panel
-> (`POST /v1/clips/related`), the offline retry queue, connection management
-> (pairing status + unpair), quick-clip entry points (right-click context menu +
-> `Alt+Shift+C` / `Alt+Shift+S`, confirmed by an in-page toast), and terminal-413 /
-> rate-limited-429 handling are all implemented. Store listing assets and
-> tag-driven publishing to the Chrome Web Store and Firefox AMO are in place (see
-> [`store/`](./store/)): the store accounts, first submissions, and all seven
-> repository secrets are configured, so the next `vX.Y.Z` tag uploads to both
-> stores automatically ([store/publishing.md](./store/publishing.md)). See the
+> **Status:** available on the
+> [Chrome Web Store](https://chromewebstore.google.com/detail/nimbus-web-clipper/kkfdgphcalcdbnpgknplfbflffalbcnk)
+> and [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/nimbus-web-clipper/),
+> and dev-loadable from source. Pairing, article/selection capture and clip ingest
+> (`POST /v1/clips`), the related-items panel (`POST /v1/clips/related`), the
+> offline retry queue, connection management (pairing status + unpair), quick-clip
+> entry points (right-click context menu + `Alt+Shift+C` / `Alt+Shift+S`, confirmed
+> by an in-page toast), and terminal-413 / rate-limited-429 handling are all
+> implemented. Tagging `vX.Y.Z` builds, signs and submits to both stores
+> ([store/publishing.md](./store/publishing.md)); each store's own review then
+> gates the public rollout. See the
 > [changelog](./CHANGELOG.md) for the per-slice breakdown.
 
 ## How it works
@@ -53,12 +56,20 @@ revocable from the gateway with `nimbus clip revoke`.
 A running Nimbus gateway with the web-clipper surface (shipped in the Nimbus
 monorepo). See <https://nimbus-agent.dev/user-guide/install/>.
 
-## Install (developer / sideload)
+## Install
 
-The extension is dev-loadable today; tag-driven store publishing is wired up (see
-[Releasing](#releasing)) and its one-time
-[store bootstrap](./store/publishing.md) — accounts, first submissions, and the
-seven repository secrets — is done, so the next tag uploads to both stores.
+**From the stores** (recommended):
+
+- **Chrome / Edge / Brave** — [Chrome Web Store](https://chromewebstore.google.com/detail/nimbus-web-clipper/kkfdgphcalcdbnpgknplfbflffalbcnk)
+- **Firefox** — [Firefox Add-ons](https://addons.mozilla.org/firefox/addon/nimbus-web-clipper/)
+
+The extension is a thin client — you also need a running
+[Nimbus gateway](https://nimbus-agent.dev/user-guide/install/) with the web-clipper
+surface. After installing, open the extension's **Options** page and pair it with your
+local gateway (run `nimbus clip pair`, enter the 6-digit code). See the
+[web clipper guide](https://nimbus-agent.dev/user-guide/web-clipper/) for the full flow.
+
+### From source (developer / sideload)
 
 ```bash
 bun install
