@@ -4,9 +4,11 @@ import type { CaptureResult } from "../shared/types.ts";
 import { fallbackBody } from "./fallback.ts";
 
 function metaDescription(doc: Document): string | undefined {
-  const el = doc.querySelector('meta[name="description"]');
-  const content = el?.getAttribute("content") ?? undefined;
-  return content !== undefined && content.trim() !== "" ? content : undefined;
+  for (const selector of ['meta[name="description"]', 'meta[property="og:description"]']) {
+    const content = doc.querySelector(selector)?.getAttribute("content") ?? undefined;
+    if (content !== undefined && content.trim() !== "") return content;
+  }
+  return undefined;
 }
 
 function canonicalUrl(doc: Document): string | undefined {
