@@ -181,6 +181,16 @@ describe("fallback (no readable article)", () => {
     expect(result.body).toBe("Standard description.");
   });
 
+  test("falls back to an og:description when the standard description is blank", () => {
+    setSparseDocument();
+    addMetaDescription("   ");
+    addOgDescription("Open Graph description.");
+    const result = getCapture()("article");
+
+    expect(result.readableFound).toBe(false);
+    expect(result.body).toBe("Open Graph description.");
+  });
+
   test("a blank og:description is treated as absent", () => {
     setSparseDocument();
     addOgDescription("   ");
