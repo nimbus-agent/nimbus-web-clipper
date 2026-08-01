@@ -112,6 +112,8 @@ Nimbus gateway repository; this repo builds against that stable surface.
 - [Changelog](./CHANGELOG.md) — notable changes per release
 - [Nimbus](https://github.com/nimbus-agent/Nimbus) — the gateway this extension talks to
 - [nimbus-vscode](https://github.com/nimbus-agent/nimbus-vscode) — the sibling editor client
+- [Discussions](https://github.com/nimbus-agent/Nimbus/discussions) — ask a question
+  about the clipper or Nimbus; bugs in the extension belong in this repo's issues
 
 ## License
 
