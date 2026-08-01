@@ -13,6 +13,33 @@
 
 ## North star
 
+**One gateway, N contextual surfaces — your agents where the work already is.**
+
+Nimbus is one local gateway with N contextual surfaces. **The agents are the
+product; a surface is only how you reach them without leaving where you already
+are.** Every surface talks to the same gateway over the same contract and runs
+the same agents — no surface owns an agent, and no agent is reimplemented per
+surface; what differs is *context*. Today the terminal is the one first-class
+surface, and the editor and the browser are treated as accessories — a
+historical accident of build order, not a design decision. That is what this
+roadmap changes.
+
+This extension stops being a web clipper and becomes the **browser-side client
+for the Nimbus gateway**. On a Bitbucket pull request or a Jenkins build, an
+ambient panel recognises the page, resolves it to an item already in your index,
+and runs the agents that already exist against it — *why does this change
+exist*, *what breaks if it lands*, *who should review it* — with no context
+switch to a terminal. The VS Code extension gets the same treatment from the
+editor side, in its own repo.
+
+Capture does not go away; it stops being the product. It becomes **one
+capability of the client**: the fallback for surfaces the gateway has no
+connector for, and for the pages a targeted sync can't fetch.
+
+### The original north star still holds
+
+The reframe widens the promise below; it does not retire it.
+
 **Everything you read, made findable, connected, and private — on your own
 machine, forever.**
 
@@ -26,6 +53,99 @@ you read tomorrow smarter: the moment you land on a page, the extension can tell
 you *you've read three things about this before*, surface them in-context, and let
 you pull the thread — without a single byte leaving `127.0.0.1`.
 
+What the reframe changes is the scope of *what you read*: pull requests, builds,
+issues and docs are reading too, and the connectors already index them. Findable,
+connected, private, on your own machine — same promise, wider corpus.
+
+### Why the reframe — plainly
+
+The clipper is a decent clipper. It is also in a fight it cannot win:
+
+- **Nobody is using it.** AMO reports `average_daily_users: 0` after two weeks
+  on the store.
+- **The category is occupied.** Obsidian Web Clipper has ~900k users at 4.8
+  stars and already ships local Ollama. Karakeep has ~28k stars, the same
+  AGPL licence, plus OCR, PDFs, mobile and an MCP server. Being a slightly
+  better clipper than those two is not a plan.
+- **The name is already taken.** "Web Clipper (Nimbus)" by Nimbus Web Inc has
+  roughly 50,000 users, so we collide with it in every store search. What this
+  extension should be *called* after the reframe is an **open question**, not a
+  decision taken here.
+- **The cross-corpus idea isn't unique either.** SurfSense (~15.7k stars) has a
+  comparable architecture — Gmail/Slack/Jira/Confluence/Linear/GitHub
+  connectors and an MCP server. Execution and the local-first guarantee are the
+  difference, not the idea.
+
+What is *not* commodity is what sits behind the gateway: eleven working agents
+over an index that already spans your pull requests, builds, issues and docs.
+No clipper has that. Reaching it from the page you are already on is the
+product.
+
+### The name — proposed, not decided
+
+**Status: a proposal. This roadmap renames nothing.** It records the option and
+its constraints so the decision is taken deliberately rather than by drift.
+
+The collision is real and it is not ours to win by argument. "Web Clipper
+(Nimbus)" is published by **Nimbus Web Inc**, a Delaware company: roughly 50,000
+users, 154 ratings, 3.4 stars, last updated 2026-04-30. They hold the name in
+this category.
+
+Under consideration: **"Nimbus — Change Impact Agent"** — the job, not the
+mechanism. That is the shipped precedent from the editor side, where
+[`nimbus-vscode`](https://github.com/nimbus-agent/nimbus-vscode) publishes as
+*Nimbus — On-Call & Incident Agent*; two surfaces of one gateway should read as
+siblings. Alternatives considered and not discarded: "PR & Build Context Agent",
+"Merge Readiness Agent", "Blast Radius".
+
+Two things constrain any rename:
+
+- **`FIREFOX_ADDON_ID` must not change.** `src/manifest/manifest.ts:17` pins it
+  to the literal `web-clipper@nimbus-agent.dev`, and Firefox keys an install to
+  that gecko id — changing it orphans every existing Firefox install. A rename
+  is therefore a `name` change plus store-listing copy, and nothing deeper: the
+  Chrome item id is derived from the publisher's public key, not from `name`, so
+  it survives a rename untouched.
+- **Sequencing: Nimbus#1006 resolves first.** A rename fixes positioning, not
+  adoption — it will not by itself move `average_daily_users` off zero. And
+  relaunching under a new name while **Nimbus#1006** is live (the store listings
+  claim clips stay local while `web_clip` routes to OpenAI embeddings when a key
+  is set) *increases* exposure: a fresh listing invites fresh scrutiny of a
+  privacy claim we currently cannot back.
+
+### Why this is credible, not aspirational
+
+Most of this is wiring existing capability to a new surface. Verified in the
+[Nimbus gateway repo](https://github.com/nimbus-agent/Nimbus):
+
+- **Eleven agents ship today** — catchup, conflicts, expert, ghost, glossary,
+  huddle, impact, janitor, preflight, why and why-peek, in
+  `packages/gateway/src/agents/`.
+- **An `agents.*` IPC namespace is already dispatched** — `agents.why`,
+  `agents.impact`, `agents.expert`, `agents.whyPeek` and the rest, in
+  `packages/gateway/src/ipc/agents-rpc.ts`.
+- **Bitbucket, Jenkins, Jira, GitHub and GitLab are indexed connectors** with
+  sync handlers (`packages/gateway/src/connectors/*-sync.ts`).
+- **URL→item resolution has the data it needs** — `bitbucket-sync.ts` indexes
+  `type: "pr"` with a `canonicalUrl`, `jenkins-sync.ts` indexes `type:
+  "ci_run"`, and `canonical_url` is a real column on `item`
+  (`packages/gateway/src/index/unified-item-v3-sql.ts`).
+
+And what is honestly **not** built: nothing in the browser can reach `agents.*`
+today — the gateway's HTTP surface has no agents route — and there is no
+resolve-by-URL read (`GET /v1/items` filters by service/type/time only, and
+`/v1/items/<id>` matches `id` or `external_id`, never `canonical_url`, which
+also carries no SQL index, so the read brings a migration with it). Those are
+new gateway surfaces, owned upstream; every item that needs one is tagged 🟡
+below and names it. "Mostly wiring" is true of the *answers*, not of the two
+routes that let a browser ask for them.
+
+The design spec for this client is planned in the gateway repo at
+`docs/superpowers/specs/2026-08-01-browser-gateway-client-design.md`; it is not
+written yet, so the briefs below are the current authority.
+
+### The local-first bet is unchanged
+
 The bet underneath this is deliberate. The read-it-later graveyard is real —
 Pocket sunset, Omnivore acquired and shut down, and everyone's carefully-clipped
 libraries went with them. Every one of those was a cloud service that owned your
@@ -33,9 +153,14 @@ reading. **Local-first is the only durable answer**, and it is also the only one
 that can make privacy a *feature you can see* rather than a promise you have to
 trust. We turn the constraint into the pitch.
 
-To be the best clipper in this space, we win on four axes at once. Not one — all
-four. That combination is the moat: no cloud clipper can be this private, and no
-private tool has this kind of on-device recall.
+It matters *more* now, not less. A clipper only ever pushed what you chose to
+send. A client asks the gateway to **fetch things on your behalf**, so "where
+does my data go?" gains a second half — "and what did it go and get?" — that we
+have to answer just as visibly.
+
+To be the best client in this space, we win on four axes at once. Not one — all
+four. That combination is the moat: no cloud tool can be this private, and no
+private tool has this much of your working context already indexed.
 
 ## The four pillars
 
@@ -44,33 +169,65 @@ scope.
 
 ### 1. AI-native retrieval — the moat
 
-The Nimbus index is a semantic engine, not a bookmark list. The clipper's job is
-to make that power feel like magic *while you browse*: ambient related-items,
-never-clip-twice detection, asking questions of your own reading, and
-auto-understanding every clip on arrival. This is the axis no cloud clipper can
-match privately, and no private tool can match on recall.
+The Nimbus index is a semantic engine, not a bookmark list — and eleven agents
+already run on top of it. The client's job is to make that power feel like magic
+*where you already are*: recognise the page, resolve it to the indexed item, and
+put the agent lanes (why · impact · expert) one glance away. Related-items,
+never-save-twice detection, asking questions of your own reading, and
+auto-understanding every clip on arrival are the shallow end of the same
+capability. This is the axis no cloud tool can match privately, and no private
+tool can match on context.
 
-### 2. Capture quality & coverage — clip *anything*, cleanly
+### 2. Capture quality & coverage — reach what the connectors can't
 
-A clip is only as good as what it captured. The widest coverage and highest
-fidelity of any extension: beyond the readable article to PDFs, video transcripts,
-and the hard cases (SPAs, infinite scroll), captured the way you read — full-page
-or readable, region or highlight-stitched — with faithful author/date/canonical
+A capture is only as good as what it captured — and capture is now the **last
+resort, not the first move**. On a resolve miss the client asks the gateway to
+sync that one item; capture is what's left for the surfaces with no connector at
+all (an internal wiki, a vendor console) and for pages a sync can't reach. That
+keeps the coverage and fidelity work valuable, but re-aims it: the pages worth
+being excellent at are the ones your working day runs through, not the ones a
+read-it-later app is judged on.
+
+The bar for that work is unchanged — the widest coverage and highest fidelity of
+any extension: beyond the readable article to PDFs, video transcripts, and the
+hard cases (SPAs, infinite scroll), captured the way you read — full-page or
+readable, region or highlight-stitched — with faithful author/date/canonical
 metadata and preserved figures.
 
-### 3. Frictionless UX — capture at the speed of thought
+Two open defects gate this pillar and should be cleared before it grows:
+**Nimbus#1005** (clip bodies truncated to 512 characters while `wordCount`
+reports the full length) and **Nimbus#1006** (`web_clip` routes to OpenAI
+embeddings when a key is set, contradicting the store listings' local-only
+claim). **#1006 must be resolved before or with #1005** — widening capture on
+top of a body that is silently truncated, or an embedding path that leaves the
+machine, makes both problems bigger.
 
-The best capture is the one you don't have to think about. Keyboard-first,
-one-gesture paths that all land in the same place, honest instant feedback, smart
-tag suggestions, a command palette, one-press undo, and a queue that heals itself
-offline. Organization is a keystroke, not a chore.
+### 3. Frictionless UX — no context switch
+
+The best answer is the one you didn't have to go and fetch. The gesture we are
+optimising is no longer "clip this" but "*don't make me open a terminal*": the
+panel recognises where you are and offers what makes sense there, keyboard-first,
+with honest instant feedback and a queue that heals itself offline. A generic ask
+box is explicitly not the shape — the surface should already know what page it's
+looking at.
+
+The best capture is still the one you don't have to think about, and none of that
+work is retired: one-gesture paths that all land in the same place, smart tag
+suggestions, a command palette and one-press undo. Organization is a keystroke,
+not a chore — and now so is getting an answer.
 
 ### 4. Privacy & trust as a feature — provable, not promised
 
-Local-first is worth nothing if the user can't *see* it. A visible trust surface
-that answers "where does my data go?", a preview of exactly what gets sent, a
-connection panel that names the single origin it talks to, a secret that never
-touches a page, and an open, reproducible, dependency-free build.
+Local-first is worth nothing if the user can't *see* it, and the bar rises the
+moment the client can ask the gateway to fetch something. Keep everything that
+exists — a visible trust surface that answers "where does my data go?", a
+connection panel that names the single origin it talks to, a preview of exactly
+what gets sent, a secret that never touches a page, an open, reproducible,
+dependency-free build — and add the second half:
+what the gateway went and did on your behalf, visibly, after the fact. The
+fetch-and-index route is deliberately allowlisted as an **I13** write rather
+than reclassified as a read, precisely so it stays on the surface that gets
+audited.
 
 ---
 
@@ -80,6 +237,13 @@ Phases are ordered on one principle: **ship what we can build today first** — 
 needs no other repo and delivers value now — then the work that needs the Nimbus
 gateway/engine to grow a new surface, then the ecosystem bets. Within a phase,
 highest value first.
+
+The reframe adds a second, superseding lens: **the client phases come first.**
+They are lettered **C1–C4** so nothing below has to be renumbered. The numbered
+phases **1–10** are all still here and most are still wanted — they were written
+for a clipper, so where the reframe changes an item's priority or shape it now
+carries a `**Reframe**` line saying so, with the reason. Nothing was dropped
+silently.
 
 Every item carries three tags so you can pick work that fits:
 
@@ -126,6 +290,186 @@ the load-bearing decisions and the two state machines are documented there.
 
 ---
 
+## Phase C1 — Know where you are 🟢/🟡
+
+*Theme: the panel's first job is recognition. Turn "a tab is open" into "this is
+a Bitbucket PR in repo X, and here is the indexed item for it". Everything in C2
+is worthless without this — and half of C1 is buildable today.*
+
+### C1.1 Page → indexed item resolution · 🟡 · M
+> **What** Resolve the current page's canonical URL to a single indexed item
+> (service, type, id) — or an honest miss.
+> **Why it wows** The panel stops guessing. Naming the item it resolved to is
+> the whole difference between a search box and a client that knows the page.
+> **Touches** `src/shared/related.ts`, `src/background/gateway-client.ts`,
+> `src/shared/messages.ts` (a new request/response pair + guard).
+> **Approach** Send the canonical URL, get back at most one item or a miss —
+> resolution, not ranking. The client must not fall back to fuzzy hits and
+> pretend they are the page.
+> **Depends** **a resolve-by-URL read on the gateway.** Today's contract cannot
+> do it: `/v1/clips/related` uses `canonicalUrl` only to *exclude* the current
+> host from FTS hits (`clips/clip-related.ts`, `buildRelatedQuery`), and
+> `GET /v1/items/<id>` matches `id` or `external_id`, never `canonical_url`.
+> **Propose in the gateway repo first.**
+> **Done when** On an indexed PR/build/issue the client names the exact item it
+> resolved to; on a miss it says "not indexed" instead of showing loose hits.
+
+### C1.2 Surface recognisers · 🟢 · M
+> **What** Pure modules that classify the current page — Bitbucket PR, Jenkins
+> build, Jira issue, GitHub/GitLab PR/MR — and extract the canonical URL for
+> C1.1.
+> **Why it wows** The panel is right about where you are before it says
+> anything, and being wrong is cheap to fix in one pure file.
+> **Touches** a new `src/shared/recognise.ts` (pure, unit-tested), consumed by
+> `src/panel/` and `src/popup/`; `src/options/` for the origin list.
+> **Approach** Origin + path patterns → a `SurfaceKind`. Bitbucket, Jenkins and
+> Jira are routinely self-hosted, so hostnames cannot be hardcoded — the user's
+> origins come from settings, and an unknown host is simply unrecognised.
+> **Done when** A fixture set of real URLs per surface classifies correctly,
+> ambiguous pages classify as unknown, and adding a surface is one pure module
+> plus tests.
+
+### C1.3 The ambient panel shell · 🟢 · M
+> **What** Grow the injected related-items panel into a lane-based shell: a
+> header naming the resolved item, then one collapsed lane per available action.
+> **Why it wows** It reads as *a client for this page*, not a results list that
+> happens to be docked.
+> **Touches** `src/panel/panel-view.ts` (pure render), `src/panel/panel-in-page.ts`.
+> **Approach** Keep the render pure and lane-agnostic so C2 adds lanes without
+> touching the shell. Related-items (4.1) becomes the first lane.
+> **Done when** Resolved / unresolved / loading / error states all render from
+> pure view code under unit tests, with no lane content yet.
+
+### C1.4 Per-origin, opt-in recognition · 🟢 · S
+> **What** Recognition needs to see the URL of pages that are not the gateway —
+> a permission the clipper never held (capture rides an `activeTab` gesture).
+> Ask for it per origin, at runtime, only for the sites the user names.
+> **Why it wows** The one genuinely new privacy cost of the reframe, handled in
+> the open instead of buried in a manifest diff.
+> **Touches** `src/manifest/manifest.ts` (`optional_host_permissions`), a
+> permissions module in `src/browser/`, `src/options/`.
+> **Approach** Never a static `<all_urls>`. The *network destination* stays
+> loopback-only — this is page access, a different axis, and the UI and store
+> listing must not blur the two.
+> **Done when** A user grants recognition for exactly the hosts they choose,
+> revoking one silences the panel there, and the shipped manifest still requests
+> no broad host permission up front.
+
+## Phase C2 — Run the agents from the page 🟡
+
+*Theme: the payoff. Three questions on a code-review page, answered by agents
+that already exist, without leaving the tab.*
+
+### C2.1 The code-review lanes — why · impact · expert · 🟡 · L
+> **What** On a resolved pull request: *why does this change exist*
+> (`agents.why` / `agents.whyPeek`), *what breaks if it lands* (`agents.impact`),
+> *who should review it* (`agents.expert`).
+> **Why it wows** This is the demo. The answers already exist behind the
+> gateway; today you must stop reviewing and open a terminal to get them.
+> **Touches** `src/panel/`, `src/background/gateway-client.ts` +
+> `handlers.ts`, `src/shared/messages.ts`.
+> **Depends** **a browser-reachable agent-invocation surface.** `agents.*` is
+> JSON-RPC over the local IPC socket; the extension can only speak the
+> bearer-authed HTTP surface, which has no agents route. Shape, scoping and
+> auth are the gateway's to design. **Propose there first.**
+> **Done when** Each lane returns a cited brief for the resolved item, or a
+> plain "couldn't answer, and here's why" — never a silent empty lane.
+
+### C2.2 Progress, abort and delivery under MV3 · 🟢/🟡 · M
+> **What** Agent runs that outlive the service worker: start, poll, show
+> progress, abort.
+> **Why it wows** Invisible when it works; the whole feature feels broken when
+> it doesn't.
+> **Touches** `src/browser/alarms.ts`, `src/background/service-worker.ts`,
+> `src/background/single-flight.ts`, the persistence pattern in
+> `src/background/clip-queue-store.ts`.
+> **Approach** **Polling plus `chrome.alarms` — not SSE.** A decision, not a
+> preference: MV3 terminates idle service workers and a hanging stream dies with
+> them. A job id, persisted run state, a poll cadence, and an abort that is
+> honoured upstream rather than just hidden in the UI.
+> **Done when** A run started before a service-worker eviction still delivers
+> its result; abort actually cancels; nothing is lost by closing the panel.
+
+### C2.3 The remaining lanes, surface by surface · 🟡 · M
+> **What** Map the other agents onto the pages they belong on —
+> `agents.catchup` for a repo or board you have been away from,
+> `agents.conflicts` and `agents.ghost` where ownership is unclear,
+> `agents.preflight` on a deploy/build page, `agents.glossary` on an unfamiliar
+> term, plus `agents.huddle` and `agents.janitor`.
+> **Why it wows** Each surface grows its own reason to keep the panel open.
+> **Approach** One lane at a time, each earning its place on a real page. A lane
+> that fires everywhere is noise, and noise is how ambient UI dies.
+> **Depends** C2.1's invocation surface.
+> **Done when** Every shipped lane appears only where it is useful, and the
+> rule that put it there is written down.
+
+## Phase C3 — On a miss, sync — don't scrape 🟡
+
+*Theme: what to do when the page is real but the index has never seen it. The
+answer is to ask the gateway to go and get it, not to shred the DOM.*
+
+### C3.1 Targeted sync of a single item · 🟡 · L
+> **What** On a resolve miss, ask the gateway to fetch and index *that one item*
+> through the connector that owns it, then answer against it.
+> **Why it wows** The client is never stuck on "I don't know that page" for a
+> service you have already connected — and the answer comes from the connector's
+> real data, not from whatever the page happened to render.
+> **Touches** `src/background/gateway-client.ts`, `src/shared/messages.ts`,
+> `src/panel/` (a miss → sync → answer state).
+> **Approach** Recorded decision: this is a **fetch-and-index write**, added
+> explicitly to the **I13** write allowlist rather than reclassified as a read,
+> and scoped to the single resolved item. A DOM fallback was considered and
+> rejected — it produces a second, lower-fidelity copy of data the connector
+> already models.
+> **Depends** the gateway surface above. **Propose there first.**
+> **Done when** A PR the index has never seen resolves after a bounded sync and
+> the lanes answer; an unconfigured connector says so plainly instead of
+> retrying.
+
+### C3.2 Capture as the last resort · 🟢 · M
+> **What** For a surface with no connector at all — an internal wiki, a vendor
+> console — capture the page and ingest it so the agents have *something*.
+> **Why it wows** The reframe doesn't abandon the long tail; it just stops
+> pretending capture is the main road.
+> **Touches** `src/capture/`, `src/shared/clip.ts`, `src/panel/` (offer capture
+> only after resolution and sync have both missed).
+> **Depends** **Nimbus#1005** and **Nimbus#1006** (see pillar 2) — a truncated
+> body or a non-local embedding path makes this worse, not better.
+> **Done when** An unconnectored page can be turned into an indexed item in one
+> gesture, and the panel is honest that this is a captured copy, not connector
+> data.
+
+## Phase C4 — Trust for a client that fetches 🟢/🟡
+
+*Theme: the extension can now cause the gateway to reach out. Pillar 4 has to
+grow a second half to match.*
+
+### C4.1 "What did the gateway do for me?" · 🟡 · M
+> **What** A browser-side record of the actions this extension caused: what was
+> fetched, when, for which page, and how it ended.
+> **Why it wows** "Nothing leaves without you seeing it" stops being only about
+> outbound clips and starts covering everything done on your behalf.
+> **Touches** `src/options/` (a log view), `src/background/gateway-client.ts`.
+> **Approach** The gateway already has the primitive — an append-only egress
+> ledger with `nimbus prove` (**I29**). Whether a targeted sync lands in that
+> ledger is a question for the upstream design, not something to assume here;
+> the client should read the gateway's record rather than keep a private one it
+> could quietly disagree with.
+> **Depends** a read surface over that record. **Propose in the gateway repo.**
+> **Done when** Every gateway-side fetch the panel triggered is listed with
+> time, target and outcome, and the list does not contradict the gateway's own.
+
+### C4.2 Preview before a fetch · 🟢 · S
+> **What** Extend the pre-send preview (1.3) to cover fetch requests: show
+> exactly which item you are asking the gateway to go and get, before it goes.
+> **Why it wows** Same promise as 1.3, applied to the new direction of travel.
+> **Touches** `src/popup/popup.ts`, `src/panel/panel-view.ts` — folds directly
+> into 1.3's preview component.
+> **Done when** No gateway-side fetch happens without the user having seen what
+> it will fetch, or having turned the confirmation off deliberately.
+
+---
+
 ## Phase 1 — Trust you can see 🟢
 
 *Theme: turn the invisible privacy guarantee into a visible, provable feature —
@@ -143,6 +487,10 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > endpoint already returns as the post-clip confirmation.
 > **Done when** Opening the popup on an indexed page shows an "Already in Nimbus"
 > state with a jump action; clipping it reports "updated," not "created."
+> **Reframe** Same feature, different plumbing: the approach above does not
+> actually work against today's contract — `/v1/clips/related` uses
+> `canonicalUrl` to *exclude* the current host, not to match it. This is the
+> shallow case of **C1.1** and should be built on the resolve read, not before it.
 
 ### 1.2 "Where does my data go?" trust panel · 🟢 · S
 > **What** A plain, always-reachable panel stating: one destination
@@ -190,6 +538,9 @@ endpoint.*
 > PDF text extractor, keeping the no-runtime-deps rule) → `CaptureResult`.
 > **Done when** Clipping a PDF produces a text clip with title + source URL and a
 > graceful fallback when text can't be extracted (e.g. scanned/image PDFs).
+> **Reframe** Lower priority. Still wanted for the long tail (**C3.2**), but it
+> is a read-it-later strength where the incumbents are already strong — it wins
+> us nothing on the surfaces the client is being built for.
 
 ### 2.2 Video transcript capture · 🟢 · M
 > **What** Clip the transcript of a YouTube (and similar) video.
@@ -199,6 +550,9 @@ endpoint.*
 > channel + URL as metadata; `mode: "article"`.
 > **Done when** On a video with a transcript, the clip contains the transcript and
 > source metadata; no transcript degrades to the bookmark fallback.
+> **Reframe** Lower priority — a reading-library feature, not a working-surface
+> one. Kept because it is cheap and self-contained, not because it moves the
+> north star.
 
 ### 2.3 Highlight-stitching · 🟢 · M
 > **What** Collect several selections across a page into one coherent clip.
@@ -210,6 +564,9 @@ endpoint.*
 > selection order into one body with light separators.
 > **Done when** Multiple highlights on a page become a single clip preserving order
 > and source; clearing/committing the collection is obvious.
+> **Reframe** Lower priority, and it now competes with **C1.3** for the same
+> in-page real estate — if both ship, the collect UI has to live as a panel lane,
+> not as a second overlay.
 
 ### 2.4 Full-page vs. readable toggle · 🟢 · S
 > **What** Let the user choose readable extraction or the full page content.
@@ -227,6 +584,9 @@ endpoint.*
 > sync).
 > **Done when** Clips carry structured metadata where the page exposes it, within
 > the existing ingest body shape.
+> **Reframe** Higher priority. The canonical URL is now the *resolution key* the
+> whole client turns on (**C1.1**/**C1.2**) — getting it right on redirecting,
+> tracking-parameter-laden and self-hosted URLs is load-bearing, not cosmetic.
 
 ### 2.6 Hard-page robustness · 🟢 · M
 > **What** Reliable capture on SPAs, infinite-scroll, and lazy-rendered content.
@@ -236,6 +596,9 @@ endpoint.*
 > chain (Readability → main-content heuristic → meta/bookmark).
 > **Done when** A documented set of previously-failing pages capture correctly;
 > the fallback never produces an empty clip.
+> **Reframe** Narrowed, not demoted. The hard pages that matter are now the
+> unconnectored internal tools of **C3.2**; a connectored page should be synced,
+> never scraped harder.
 
 ## Phase 3 — Capture at the speed of thought 🟢
 
@@ -250,6 +613,9 @@ organizing after.*
 > (a `commands` entry + message).
 > **Done when** A single shortcut opens the palette on any injectable page and runs
 > each action; restricted pages fail closed with a toast.
+> **Reframe** Retained and re-aimed: the palette becomes the keyboard route into
+> the **C2** lanes for the resolved item, not a list of capture verbs. Still not
+> a generic ask box.
 
 ### 3.2 One-press undo · 🟢 · S
 > **What** Undo the last clip immediately after it lands.
@@ -262,6 +628,8 @@ organizing after.*
 > the window; after it, undo is unavailable and says so.
 > **Depends** may need a delete affordance on the gateway if none exists → if so,
 > re-tag 🟡 and propose it (see [gateway proposals](#proposing-a-gateway-dependent-feature)).
+> **Reframe** Lower priority — it protects the capture gesture, which is no
+> longer the primary one. Still a good first contribution.
 
 ### 3.3 Smart tag suggestions + tag memory · 🟢 · M
 > **What** Suggest tags as you clip — from your recently-used tags and from tags on
@@ -273,6 +641,8 @@ organizing after.*
 > `/v1/clips/related` hits. Purely additive to the current free-text tag input.
 > **Done when** The tag field offers relevant suggestions; accepting one is a
 > single interaction; suggestions improve with use.
+> **Reframe** Lower priority — tagging is a filing behaviour, and filing is not
+> what the client is for. Connector-sourced items arrive with their own metadata.
 
 ### 3.4 Proactive related-on-landing · 🟢 · M
 > **What** An unobtrusive ambient signal when you land on a page you have context
@@ -284,6 +654,9 @@ organizing after.*
 > that never blocks the page. Respect activeTab/permission boundaries.
 > **Done when** On pages with related context, a dismissible ambient cue appears;
 > it is off by default or clearly opt-in and never noisy.
+> **Reframe** Superseded, not dropped — this is the ancestor of the ambient
+> panel. Build it as the related lane of **C1.3**, on **C1.4**'s per-origin
+> permission, rather than as a standalone cue with its own opt-in.
 
 ### 3.5 Zero-config gateway discovery · 🟢 · S
 > **What** Find the local gateway automatically so pairing is the only setup step.
@@ -293,6 +666,8 @@ organizing after.*
 > permissions; never widen beyond loopback.
 > **Done when** A running local gateway is detected without the user typing a URL;
 > manual override remains available.
+> **Reframe** Higher priority. A client you have to configure before it can
+> recognise anything is a client nobody keeps installed.
 
 ## Phase 4 — Ambient intelligence 🟢/🟡
 
@@ -305,6 +680,8 @@ engine to grow.*
 > open-in-Nimbus.
 > **Touches** `src/panel/panel-view.ts`, `src/shared/related.ts`.
 > **Done when** Related items are scannable at a glance and openable in one click.
+> **Reframe** Retained as the first lane of the **C1.3** shell — same content,
+> rendered inside the panel's lane contract instead of alongside it.
 
 ### 4.2 Related-on-selection · 🟢 · S
 > **What** Highlight text → see what's related to *that*, not just the page.
@@ -334,6 +711,11 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 > consumes it. **Propose there first.**
 > **Done when** A user asks a natural-language question and gets an answer grounded
 > in citeable local clips, entirely over loopback.
+> **Reframe** Reshaped and sequenced after **C2**. A generic ask box is
+> explicitly *not* the direction — the recognised page is the better prompt, and
+> the agents are better answers than a bare QA endpoint. Keep this as the escape
+> hatch for "I have a question this page's lanes don't cover", built on whatever
+> invocation surface **C2.1** lands.
 
 ## Phase 6 — Understand on clip 🟡
 
@@ -347,6 +729,8 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 > tags + summary.** Design in the gateway repo. **Propose there first.**
 > **Done when** After a clip, engine-suggested tags/summary are shown and one-tap
 > acceptable; absent the surface, the client degrades to local suggestions (3.3).
+> **Reframe** Lower priority — it rides on the capture path (**C3.2**) and
+> inherits its gating defects (**Nimbus#1005**/**#1006**).
 
 ## Phase 7 — Search & resurface 🟡
 
@@ -358,6 +742,8 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 ### 7.2 Resurfacing ("on this day", "continue reading") · 🟡 · M
 > **What** Gentle resurfacing of past clips worth revisiting.
 > **Depends** a browse/query surface (shares 7.1's dependency).
+> **Reframe** Lower priority — a reading-library ritual. The client's version of
+> resurfacing is `agents.catchup` on a surface you have been away from (**C2.3**).
 
 ## Phase 8 — Adopt the Nimbus SDK 🔵
 
@@ -374,6 +760,9 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 > **Depends** the Nimbus SDK reaching its Phase 1 (roadmapped in the SDK repo).
 > **Done when** The bespoke gateway code is gone, the test suite is green against
 > the SDK's `MockNimbusGateway`, and behavior is unchanged.
+> **Reframe** Higher priority. Once the browser and the editor are both clients
+> of the same gateway running the same agents, the duplicated client spine stops
+> being tidiness and starts being the thing that keeps two surfaces in step.
 
 ## Phase 9 — Extend the engine 🔵
 
@@ -382,6 +771,9 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 > calling it.
 > **Depends** the engine's plugin/registration story (SDK Phase 3). **Propose /
 > track in the gateway + SDK repos.**
+> **Reframe** Broadened: the interesting registration is as a *surface* — a
+> client the engine can address and notify — with capture as one of the things
+> it can offer. Unbuilt and unspecified on either side; this is a bet, not a plan.
 
 ## Phase 10 — Reach 🔵
 
@@ -400,6 +792,8 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 New here? These are small, self-contained, high-value, and need nothing from
 another repo — ideal first contributions:
 
+- **C1.2 Surface recognisers** — one pure module plus fixtures; the cleanest
+  entry point into the reframe.
 - **1.2 Trust panel** — static, honest copy driven by the real origin. Pure UI.
 - **1.4 Connection health at a glance** — extend an existing handler + view.
 - **2.4 Full-page vs. readable toggle** — one setting, one capture branch.
@@ -419,6 +813,10 @@ of these will not be accepted, no matter how good the feature.
 - **Loopback only.** The one network destination is the gateway on `127.0.0.1` /
   `localhost`. Never add `<all_urls>` or a remote origin. Origin validation lives
   in `src/shared/gateway.ts` (**I6**).
+- **Page access is a separate axis from network access, and it is opt-in.**
+  Recognition needs to see the URL of pages that aren't the gateway; that is
+  granted per origin at runtime (**C1.4**), never as a static broad host
+  permission, and it never changes where the client can *send* anything.
 - **The token is the only secret, and it stays invisible.** Never in a page DOM,
   never logged, never displayed. The pairing code is treated the same. `noConsole`
   in `src/` is enforced by Biome.
@@ -456,8 +854,15 @@ can be *designed* and even *stubbed* here, but the contract is decided upstream:
   telemetry).
 - **Time-to-clip** — from gesture to confirmation, kept sub-second on the happy
   path.
+- **Resolve rate** — the fraction of recognised work pages that resolve to an
+  indexed item without a targeted sync. This is the number that says whether the
+  client knows where you are.
+- **Time-to-answer** — from landing on a page to a lane's first useful line, with
+  the sync path measured separately and honestly (it is slower, and saying so is
+  part of the design).
 - **Related usefulness** — related items a user actually opens; the panel earns its
-  place or it's noise.
+  place or it's noise. The same bar applies per agent lane: a lane nobody expands
+  is removed, not tuned forever.
 - **Zero-leak** — provably one destination, no telemetry, verifiable by the trust
   surface and the source. Non-negotiable, not a metric to trade off.
 
@@ -472,3 +877,9 @@ The vision is bold, but the boundaries are not. These keep us honest:
 - **The token is the only secret, and it stays invisible.**
 - **Not another read-it-later silo.** No competing cloud library, no social layer.
   The value is private recall, not a walled garden.
+- **Not a generic ask box.** The surface should know what page it is on. If a
+  feature only works by asking the user to type what they are looking at, it is
+  the wrong feature for this client.
+- **We don't scrape what a connector already models.** On a resolve miss the
+  client asks the gateway to sync that item; shredding the DOM for a second,
+  lower-fidelity copy was considered and rejected (**C3.1**).
