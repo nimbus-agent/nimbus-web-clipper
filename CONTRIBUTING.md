@@ -12,6 +12,16 @@ nothing from another repo), and read the non-negotiable
 [**guardrails**](./ROADMAP.md#contributor-guardrails) before you open a PR. For how
 the code fits together, see [`docs/architecture.md`](./docs/architecture.md).
 
+## Questions
+
+Wondering how something works, or whether a change would be welcome before you build
+it? Ask in [Nimbus Discussions](https://github.com/nimbus-agent/Nimbus/discussions) —
+one board for Nimbus and all its clients, this extension included. A bug in the
+extension, or a concrete change to the code here, is still an
+[issue in this repo](https://github.com/nimbus-agent/nimbus-web-clipper/issues).
+Anything that looks like a security problem goes to [SECURITY.md](./SECURITY.md)
+instead — please don't post it publicly.
+
 ## Prerequisites
 
 - [Bun](https://bun.sh) v1.2+
