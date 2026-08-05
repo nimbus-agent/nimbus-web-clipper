@@ -323,7 +323,7 @@ addendum / plan before implementation.
 
 ## Deferred (design review, 2026-06-23)
 
-Raised in [the design review](./2026-06-23-web-clipper-extension-design-review.md)
+Raised in the design review (pruned once the feature shipped; see git history)
 and consciously deferred:
 
 - **Clip-status pre-fetch ("Already clipped" + pre-filled tags).** Showing whether

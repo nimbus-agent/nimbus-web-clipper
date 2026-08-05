@@ -328,7 +328,7 @@ governs.
 
 ## Design review resolutions (2026-06-23)
 
-From [the Slice 2 design review](./2026-06-23-web-clipper-extension-slice2-design-review.md):
+From the Slice 2 design review (pruned once the feature shipped; see git history):
 
 1. **Snippet/title DOM-XSS (fixed).** All gateway fields render via `textContent`,
    never `innerHTML`; `snippet` is a plain string per the contract. Added to
