@@ -222,9 +222,15 @@ a host carries more than one.
 
 ## Proposed gateway contract
 
-> **Status: proposed, not yet contracted.** The Nimbus gateway repo owns the
-> shape. This section is the client-side brief to open there; nothing in it is
-> authoritative until it ships and is versioned.
+> **⚠️ SUPERSEDED. Do not build against this shape.** It was written as a brief
+> to open upstream, believing the route was undesigned there. It was already
+> designed: the Nimbus repo's
+> `2026-08-06-http-agents-route-and-resolve-by-url-design.md` §4 specifies
+> `GET /v1/items/resolve?url=`, gated on a `resolve` scope, returning a
+> `found`-discriminated shape with an `ambiguous` arm. The differences and the
+> order to close them are in
+> [`2026-08-07-c1-upstream-reconciliation.md`](./2026-08-07-c1-upstream-reconciliation.md).
+> Kept verbatim below as the record of what C1 was built against.
 
 ```
 POST /v1/clips/resolve
@@ -419,14 +425,24 @@ that depends on the proposed contract, and it ships in its degraded state.
 
 ## Resolved and deferred questions
 
+> **⚠️ Superseded in part.** This section, and *Proposed gateway contract* above,
+> were written believing the resolve route was undesigned upstream. It was not —
+> see [`2026-08-07-c1-upstream-reconciliation.md`](./2026-08-07-c1-upstream-reconciliation.md).
+> The route, its auth scope and its response shape are decided in the Nimbus repo
+> and differ from what is written here. The client's behaviour as shipped is
+> unaffected (an absent route still 404s); the adaptation is scheduled against the
+> upstream PR that lands the route.
+
 Settled during design review. The first three are **positions this repo takes into
 the upstream proposal**, not decisions it can make — the gateway owns the contract.
 
-- **Token scope — decided (client position).** `POST /v1/clips/resolve` reuses the
-  clip bearer token. The pairing model mints one long-lived token per browser and
-  the contract has no scope concept today, so a separate read scope would be a new
-  gateway capability rather than a choice we can exercise. If upstream introduces
-  scopes, this client consumes them.
+- **Token scope — ~~decided (client position)~~ WRONG, corrected upstream.** This
+  claimed `POST /v1/clips/resolve` reuses the clip bearer token, on the reasoning
+  that the contract had no scope concept. It has one: `api-scopes.ts` shipped in
+  Nimbus #1062 with a `resolve` scope, and `LEGACY_SCOPES` — what an
+  already-paired token gets — is `["clip", "briefs"]`, deliberately excluding it.
+  Every browser paired today will therefore be **rejected** by the resolve route
+  until it re-pairs, and this client currently maps that `403` to `server_error`.
 - **Canonical-URL normalisation — deferred upstream, assumption stated here.** How
   the gateway indexes and queries `canonical_url` is its own design. What the
   client codes against is **byte-equality**: it sends the canonicalised
