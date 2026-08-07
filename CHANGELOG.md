@@ -8,6 +8,35 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Added
+
+- **The panel knows what page you're on.** On a Bitbucket, GitHub or GitLab pull
+  request, a Jenkins build or a Jira issue, the related-items panel now leads with
+  what the page is — *"GitHub PR · acme/web #482"* — and, where the gateway
+  supports it, the exact indexed item it resolves to. Resolution is at most one
+  item: on a miss the panel says "Not indexed" rather than passing loose search
+  hits off as the page. Related items move into a collapsible lane below the
+  header, which is where the planned agent lanes will join them. The panel is
+  still opened by you (`Alt+Shift+R` or the popup button) — nothing appears on its
+  own, and the Related lane keeps working in every header state.
+- **Self-hosted instances are configurable.** Bitbucket Cloud, GitHub, GitLab and
+  Jira Cloud are recognised with no setup. Self-hosted Bitbucket, Jenkins and Jira
+  are added under **Recognised surfaces** in Options as a URL plus which product it
+  is — including instances behind a reverse proxy on a sub-path, e.g.
+  `https://corp.example/jira`, and several products on one host. The product is
+  never guessed from the URL shape, so the panel cannot be confidently wrong about
+  where you are.
+- **Opt-in page access, per host.** Options can grant Nimbus permission to
+  recognise pages on a site without you opening the panel first, and revoke it
+  again. Nothing is granted at install. This is page access only — it does not
+  change where Nimbus can send data, which remains your local gateway on
+  `127.0.0.1` and nothing else.
+
+Resolution needs a gateway route (`POST /v1/clips/resolve`) that is still being
+proposed upstream. Until it ships, the panel says so plainly — *"This Nimbus
+gateway can't resolve pages yet."* — and everything else, including recognition
+and related items, works as described.
+
 ## [0.2.0] - 2026-07-28
 
 ### Added

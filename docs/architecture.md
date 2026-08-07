@@ -114,7 +114,8 @@ in a node environment.
 - **`src/shared/`** — pure modules shared across every entry: `types.ts`
   (cross-module types), `clip.ts` (tag parsing + payload builder), `gateway.ts`
   (endpoints + loopback origin validation), `messages.ts` (typed envelope +
-  guards), `queue.ts`, `related.ts`.
+  guards), `queue.ts`, `related.ts`, `origins.ts` + `recognise.ts` (page
+  recognition — see below).
 
 ## The message envelope
 
@@ -169,6 +170,77 @@ The gateway's status codes are mapped to a small, closed set of typed reasons in
 `invalid_request` (400), `server_error`. **The distinction between transient and
 terminal is the whole game** — it decides whether a failed clip is queued for
 retry or reported and dropped.
+
+## The recognition pipeline
+
+Capture pushes a page *into* the index. Recognition asks the opposite question —
+**what is this page, and is it already in the index?** — and it is the foundation
+the roadmap's Phase C2 agent lanes hang off.
+
+```
+Alt+Shift+R / popup button
+      │
+      ▼
+panel-in-page.ts  ──{ kind:"resolve", pageUrl: location.href }──►  service worker
+                                                                        │
+                            getOrigins()  ◄── the user's self-hosted instances (storage)
+                                   │
+                            recognise(url, origins)   shared/recognise.ts — PURE
+                                   │
+                    ┌──────────────┴───────────────┐
+                    │                              │
+              not recognised                  recognised
+              (no gateway call)         { product, kind, ref, resolveUrl }
+                    │                              │
+                    │                    postResolve(resolveUrl)
+                    │                    POST /v1/clips/resolve
+                    │                              │
+                    │              ┌───────────────┼──────────────┐
+                    │           200 item        200 null        404
+                    │              │               │              │
+                    ▼              ▼               ▼              ▼
+              "unrecognised"   "resolved"    "not indexed"   "can't resolve
+                                                              pages yet"
+```
+
+Four decisions worth knowing before you change any of it:
+
+- **Recognition runs in the service worker, not the injected panel.** The
+  configured origins live in extension storage and the bearer token lives in the
+  SW; putting classification in the page would drag both into an injected script
+  for no gain. The panel is a dumb renderer that sends one message and renders
+  the state it gets back.
+- **`location.href` is the recognition input, not the DOM's canonical link.** On
+  a self-hosted Jenkins build or a Bitbucket PR the URL *is* the identity, and a
+  canonical link is usually absent. The related-items query still reads the DOM
+  canonical — a different question, kept separate.
+- **The product is declared per origin, never inferred from the path.** Bitbucket,
+  Jenkins and Jira are routinely self-hosted, often behind a reverse proxy on a
+  sub-path, so origins are matched longest-prefix-wins and the prefix is stripped
+  before the product's path pattern is applied — then preserved in `resolveUrl`,
+  which must stay byte-identical to the `canonical_url` the connector indexed.
+  Path matching is case-sensitive for the same reason.
+- **`POST /v1/clips/resolve` is proposed, not contracted.** It does not exist on
+  the shipped gateway, which is why it lives in `PROPOSED_PATHS` rather than the
+  locked `CLIP_PATHS`. A **404 means the route is absent** and surfaces as an
+  honest "this gateway can't resolve pages yet"; a **200 with `item: null` is a
+  real miss**. Keeping those distinct is what lets the client ship today and flip
+  to live with no code change. Resolution is at most one item — the panel never
+  passes ranked related hits off as "the page".
+
+### Page access is a different axis from network access
+
+Recognition needs to see the URL of pages that are not the gateway. That is
+**page access**, and it is opt-in per origin at runtime
+(`optional_host_permissions` + `src/browser/permissions.ts`), granted from the
+Options page. It is inert at install, and it never changes where the extension
+can *send* anything — that remains loopback-only (**I6**). Grants are host-scoped
+(`https://corp.example/*`) even when the configured origin carries a path prefix,
+because the browser's permission warning is per-host either way.
+
+Today the panel works without any grant at all: `Alt+Shift+R` and the popup
+button are user gestures, which give `activeTab`. The grant buys gesture-free
+recognition, which Phase C2 is the first to need.
 
 ## Two state machines worth understanding
 
@@ -277,6 +349,7 @@ changes here are potential upstream contributions.
 | # | Invariant | Enforced by |
 | --- | --- | --- |
 | **I6** | Loopback only — one destination, no `<all_urls>`, no remote host | Client-side, mirrors gateway I6: `src/shared/gateway.ts` origin validation + restricted `host_permissions` |
+| — | Page access is opt-in per origin and never widens the network destination | `optional_host_permissions` (inert at install) + `src/browser/permissions.ts`; `shared/origins.ts` is deliberately a separate validator from `shared/gateway.ts` |
 | **I30** | Pairing is fail-closed — token minted only in an owner-opened window | Gateway; extension redeems, never assumes |
 | — | The bearer token / pairing code is never logged, never in a page DOM | `noConsole` in `src/` (Biome); token held only in the SW + storage |
 | — | No `console.*` in `src/`; strict TypeScript, no `any` | `biome.json` (`noConsole`, `noExplicitAny`) + `tsc --noEmit` |

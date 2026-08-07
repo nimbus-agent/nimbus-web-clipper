@@ -33,9 +33,17 @@ describe("store/listing.md ↔ manifest permission parity", () => {
     const manifest = composeManifest("chrome", "0.0.0");
     // Host access is justified as ONE group under the literal `host_permissions`
     // key (the Chrome Web Store's model), not enumerated per URL pattern — so we
-    // expect the four API permissions plus the single "host_permissions" token.
+    // expect the API permissions plus the two host-access tokens. The optional
+    // group is justified separately because the store shows it separately, and
+    // because "granted per site at runtime, never at install" is the whole point
+    // a reviewer needs to read.
     expect(manifest.host_permissions.length).toBeGreaterThan(0);
-    const expected = new Set<string>([...manifest.permissions, "host_permissions"]);
+    expect(manifest.optional_host_permissions.length).toBeGreaterThan(0);
+    const expected = new Set<string>([
+      ...manifest.permissions,
+      "host_permissions",
+      "optional_host_permissions",
+    ]);
     expect(justified).toEqual(expected);
   });
 });

@@ -282,6 +282,12 @@ end-to-end core works in both Chrome and Firefox:
 - **Resilience** — 429 rate-limit pausing (persisted across SW eviction) and 413
   payload-too-large as a terminal reason.
 - **Connection management** — pairing status + unpair.
+- **Page recognition (Phase C1)** — pure surface recognisers for Bitbucket /
+  GitHub / GitLab PRs, Jenkins builds and Jira issues (SaaS built in, self-hosted
+  configured per origin with optional path prefixes); a lane-based panel shell
+  that leads with the recognised surface and the resolved item; opt-in per-host
+  page access. The resolve read itself is built and degrades honestly until the
+  gateway route lands — see C1.1.
 - **Release** — tag-driven build/package + Chrome Web Store / Firefox AMO publish
   automation.
 
@@ -296,7 +302,7 @@ the load-bearing decisions and the two state machines are documented there.
 a Bitbucket PR in repo X, and here is the indexed item for it". Everything in C2
 is worthless without this — and half of C1 is buildable today.*
 
-### C1.1 Page → indexed item resolution · 🟡 · M
+### C1.1 Page → indexed item resolution · 🟡 · M — *client shipped, awaiting the gateway*
 > **What** Resolve the current page's canonical URL to a single indexed item
 > (service, type, id) — or an honest miss.
 > **Why it wows** The panel stops guessing. Naming the item it resolved to is
@@ -313,8 +319,15 @@ is worthless without this — and half of C1 is buildable today.*
 > **Propose in the gateway repo first.**
 > **Done when** On an indexed PR/build/issue the client names the exact item it
 > resolved to; on a miss it says "not indexed" instead of showing loose hits.
+> **Status** The whole client path is built and shipped: `POST /v1/clips/resolve`
+> is proposed in
+> [`docs/superpowers/specs/2026-08-07-phase-c1-know-where-you-are-design.md`](./docs/superpowers/specs/2026-08-07-phase-c1-know-where-you-are-design.md),
+> the client codes against it, and a **404 (route absent) is a first-class "this
+> gateway can't resolve pages yet"** — distinct from a 200 `item: null` miss. It
+> flips to live with no code change once the route ships. **The upstream proposal
+> still has to be opened in the gateway repo.**
 
-### C1.2 Surface recognisers · 🟢 · M
+### C1.2 Surface recognisers · 🟢 · M — ✅ shipped
 > **What** Pure modules that classify the current page — Bitbucket PR, Jenkins
 > build, Jira issue, GitHub/GitLab PR/MR — and extract the canonical URL for
 > C1.1.
@@ -329,7 +342,7 @@ is worthless without this — and half of C1 is buildable today.*
 > ambiguous pages classify as unknown, and adding a surface is one pure module
 > plus tests.
 
-### C1.3 The ambient panel shell · 🟢 · M
+### C1.3 The ambient panel shell · 🟢 · M — ✅ shipped (user-summoned)
 > **What** Grow the injected related-items panel into a lane-based shell: a
 > header naming the resolved item, then one collapsed lane per available action.
 > **Why it wows** It reads as *a client for this page*, not a results list that
@@ -339,8 +352,14 @@ is worthless without this — and half of C1 is buildable today.*
 > touching the shell. Related-items (4.1) becomes the first lane.
 > **Done when** Resolved / unresolved / loading / error states all render from
 > pure view code under unit tests, with no lane content yet.
+> **Status** Shipped with related-items as the first lane. The panel stays
+> **user-summoned** (`Alt+Shift+R` / popup button) — ambient auto-surfacing waits
+> until C2 gives the lanes real answers. Known gap: recognition does not follow
+> client-side (SPA) navigation, so an open panel keeps describing the page it was
+> opened on; that needs C1.4's gesture-free access and is the first candidate for
+> the C2 slice.
 
-### C1.4 Per-origin, opt-in recognition · 🟢 · S
+### C1.4 Per-origin, opt-in recognition · 🟢 · S — ✅ shipped
 > **What** Recognition needs to see the URL of pages that are not the gateway —
 > a permission the clipper never held (capture rides an `activeTab` gesture).
 > Ask for it per origin, at runtime, only for the sites the user names.
@@ -354,6 +373,11 @@ is worthless without this — and half of C1 is buildable today.*
 > **Done when** A user grants recognition for exactly the hosts they choose,
 > revoking one silences the panel there, and the shipped manifest still requests
 > no broad host permission up front.
+> **Status** Shipped: `optional_host_permissions` is inert at install, and Options
+> grants/revokes **per host** from a user click. Recorded honestly — the panel
+> works on `activeTab` alone today, so the grant currently buys only gesture-free
+> recognition, which **C2** is the first to need. The store listing explains why
+> the optional pattern is broad (self-hosted hostnames are not enumerable).
 
 ## Phase C2 — Run the agents from the page 🟡
 
@@ -792,8 +816,9 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 New here? These are small, self-contained, high-value, and need nothing from
 another repo — ideal first contributions:
 
-- **C1.2 Surface recognisers** — one pure module plus fixtures; the cleanest
-  entry point into the reframe.
+- **Add a surface recogniser** — `src/shared/recognise.ts` is one table entry plus
+  fixtures per product; the cleanest entry point into the reframe now that C1.2
+  has shipped the scaffolding.
 - **1.2 Trust panel** — static, honest copy driven by the real origin. Pure UI.
 - **1.4 Connection health at a glance** — extend an existing handler + view.
 - **2.4 Full-page vs. readable toggle** — one setting, one capture branch.
