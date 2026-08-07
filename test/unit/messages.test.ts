@@ -11,6 +11,8 @@ import {
   isQueueRetryRequest,
   isRelatedRequest,
   isRelatedResponse,
+  isResolveRequest,
+  isResolveResponse,
   isUnpairRequest,
 } from "../../src/shared/messages.ts";
 
@@ -145,5 +147,51 @@ describe("isConnectionResponse", () => {
     expect(isConnectionResponse({ kind: "connection", paired: true, label: "c" })).toBe(false);
     expect(isConnectionResponse({ kind: "clip", paired: false })).toBe(false);
     expect(isConnectionResponse({ kind: "connection" })).toBe(false);
+  });
+});
+
+describe("resolve guards", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #1",
+    resolveUrl: "https://github.com/acme/web/pull/1",
+  } as const;
+  const item = {
+    id: "i1",
+    service: "github",
+    type: "pr",
+    title: "Add thing",
+    canonicalUrl: "https://github.com/acme/web/pull/1",
+    url: "https://github.com/acme/web/pull/1",
+  } as const;
+
+  test("isResolveRequest accepts a well-formed request", () => {
+    expect(isResolveRequest({ kind: "resolve", pageUrl: "https://x/y" })).toBe(true);
+  });
+  test("isResolveRequest rejects a missing pageUrl", () => {
+    expect(isResolveRequest({ kind: "resolve" })).toBe(false);
+  });
+  test("isResolveResponse accepts a resolved item", () => {
+    expect(isResolveResponse({ kind: "resolve", ok: true, recognition, item })).toBe(true);
+  });
+  test("isResolveResponse accepts an explicit miss", () => {
+    expect(isResolveResponse({ kind: "resolve", ok: true, recognition, item: null })).toBe(true);
+  });
+  test("isResolveResponse accepts a failure that still carries the recognition", () => {
+    expect(
+      isResolveResponse({ kind: "resolve", ok: false, recognition, reason: "unsupported" }),
+    ).toBe(true);
+  });
+  test("isResolveResponse rejects an item missing a field", () => {
+    const { title: _title, ...partial } = item;
+    expect(isResolveResponse({ kind: "resolve", ok: true, recognition, item: partial })).toBe(
+      false,
+    );
+  });
+  test("isResolveResponse rejects a response with no recognition", () => {
+    expect(isResolveResponse({ kind: "resolve", ok: true, item: null })).toBe(false);
   });
 });

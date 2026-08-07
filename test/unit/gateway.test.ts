@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { CLIP_PATHS, endpointUrl, isLoopbackOrigin } from "../../src/shared/gateway.ts";
+import {
+  CLIP_PATHS,
+  endpointUrl,
+  isLoopbackOrigin,
+  PROPOSED_PATHS,
+} from "../../src/shared/gateway.ts";
 
 describe("gateway endpoints", () => {
   test("the locked contract paths are exactly the three shipped routes (PR #718)", () => {
@@ -14,6 +19,17 @@ describe("gateway endpoints", () => {
     expect(endpointUrl("http://127.0.0.1:8765", "ingest")).toBe("http://127.0.0.1:8765/v1/clips");
     expect(endpointUrl("http://127.0.0.1:8765", "related")).toBe(
       "http://127.0.0.1:8765/v1/clips/related",
+    );
+  });
+
+  test("the proposed resolve path is kept OUT of the locked three", () => {
+    expect(Object.keys(CLIP_PATHS).sort()).toEqual(["ingest", "pairConfirm", "related"]);
+    expect(PROPOSED_PATHS).toEqual({ resolve: "/v1/clips/resolve" });
+  });
+
+  test("endpointUrl builds the proposed resolve URL like the locked ones", () => {
+    expect(endpointUrl("http://127.0.0.1:7474/", "resolve")).toBe(
+      "http://127.0.0.1:7474/v1/clips/resolve",
     );
   });
 

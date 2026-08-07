@@ -4,6 +4,7 @@ import {
   parseRetryAfterMs,
   postClip,
   postRelated,
+  postResolve,
 } from "../../src/background/gateway-client.ts";
 import type { ClipPayload } from "../../src/shared/clip.ts";
 import type { RelatedQuery } from "../../src/shared/related.ts";
@@ -302,5 +303,67 @@ describe("postRelated", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("postResolve", () => {
+  const item = {
+    id: "i1",
+    service: "github",
+    type: "pr",
+    title: "Add thing",
+    canonicalUrl: "https://github.com/acme/web/pull/1",
+    url: "https://github.com/acme/web/pull/1",
+  };
+
+  test("200 with an item resolves it", async () => {
+    expect(await postResolve(ORIGIN, "t", "u", async () => jsonRes(200, { item }))).toEqual({
+      ok: true,
+      item,
+    });
+  });
+  test("200 with item:null is a miss, not an error", async () => {
+    expect(await postResolve(ORIGIN, "t", "u", async () => jsonRes(200, { item: null }))).toEqual({
+      ok: true,
+      item: null,
+    });
+  });
+  test("404 means this gateway has no resolve route — distinct from a miss", async () => {
+    expect(await postResolve(ORIGIN, "t", "u", async () => jsonRes(404, {}))).toEqual({
+      ok: false,
+      reason: "unsupported",
+    });
+  });
+  test("401 → unauthorized", async () => {
+    expect(await postResolve(ORIGIN, "t", "u", async () => jsonRes(401, {}))).toEqual({
+      ok: false,
+      reason: "unauthorized",
+    });
+  });
+  test("fetch throw → unreachable", async () => {
+    expect(
+      await postResolve(ORIGIN, "t", "u", async () => {
+        throw new Error("net");
+      }),
+    ).toEqual({ ok: false, reason: "unreachable" });
+  });
+  test("a malformed item is a server_error, never rendered as an item", async () => {
+    expect(
+      await postResolve(ORIGIN, "t", "u", async () => jsonRes(200, { item: { id: 1 } })),
+    ).toEqual({ ok: false, reason: "server_error" });
+  });
+  test("sends the bearer token and the canonical URL to the resolve path", async () => {
+    let seenUrl = "";
+    let seenBody: unknown;
+    let seenAuth: unknown;
+    await postResolve(ORIGIN, "tok", "https://github.com/a/b/pull/1", async (url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init?.body));
+      seenAuth = (init?.headers as Record<string, string> | undefined)?.["authorization"];
+      return jsonRes(200, { item: null });
+    });
+    expect(seenUrl).toBe("http://127.0.0.1:8765/v1/clips/resolve");
+    expect(seenBody).toEqual({ canonicalUrl: "https://github.com/a/b/pull/1" });
+    expect(seenAuth).toBe("Bearer tok");
   });
 });

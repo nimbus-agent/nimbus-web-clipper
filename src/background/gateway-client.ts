@@ -1,13 +1,22 @@
 import type { ClipPayload } from "../shared/clip.ts";
-import { type ClipEndpoint, endpointUrl } from "../shared/gateway.ts";
+import { endpointUrl, type GatewayEndpoint } from "../shared/gateway.ts";
+import { isResolvedItem } from "../shared/messages.ts";
 import { isRelatedHit, type RelatedQuery } from "../shared/related.ts";
-import type { ClipPostResult, PairError, RelatedError, RelatedHit } from "../shared/types.ts";
+import type {
+  ClipPostResult,
+  PairError,
+  RelatedError,
+  RelatedHit,
+  ResolvedItem,
+  ResolveError,
+} from "../shared/types.ts";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 const PAIR_TIMEOUT_MS = 5_000;
 const CLIP_TIMEOUT_MS = 10_000;
 const RELATED_TIMEOUT_MS = 8_000;
+const RESOLVE_TIMEOUT_MS = 8_000;
 
 const DEFAULT_RETRY_AFTER_MS = 60_000; // the gateway's full rate-limit window
 const MAX_RETRY_AFTER_MS = 120_000;
@@ -31,7 +40,7 @@ export function parseRetryAfterMs(header: string | null): number {
 async function postJson(
   doFetch: FetchLike,
   origin: string,
-  endpoint: ClipEndpoint,
+  endpoint: GatewayEndpoint,
   body: unknown,
   headers: Record<string, string>,
   timeoutMs: number,
@@ -159,6 +168,55 @@ export async function postRelated(
   }
   if (res.status === 401) {
     return { ok: false, reason: "unauthorized" };
+  }
+  return { ok: false, reason: "server_error" };
+}
+
+/**
+ * Resolve a canonical URL to at most one indexed item.
+ *
+ * PROPOSED route — see shared/gateway.ts#PROPOSED_PATHS. The 404 mapping is
+ * load-bearing: a MISS is a 200 with `item: null`, while an ABSENT ROUTE is a
+ * 404. Keeping them distinct is what lets this ship before the gateway has the
+ * route and flip to live with no code change.
+ */
+export async function postResolve(
+  origin: string,
+  token: string,
+  canonicalUrl: string,
+  doFetch: FetchLike = fetch,
+): Promise<{ ok: true; item: ResolvedItem | null } | { ok: false; reason: ResolveError }> {
+  let res: Response;
+  try {
+    res = await postJson(
+      doFetch,
+      origin,
+      "resolve",
+      { canonicalUrl },
+      { authorization: `Bearer ${token}` },
+      RESOLVE_TIMEOUT_MS,
+    );
+  } catch {
+    return { ok: false, reason: "unreachable" };
+  }
+  if (res.status === 200) {
+    const data = await readJson(res);
+    if (!isObject(data)) {
+      return { ok: false, reason: "server_error" };
+    }
+    if (data["item"] === null) {
+      return { ok: true, item: null };
+    }
+    if (isResolvedItem(data["item"])) {
+      return { ok: true, item: data["item"] };
+    }
+    return { ok: false, reason: "server_error" };
+  }
+  if (res.status === 401) {
+    return { ok: false, reason: "unauthorized" };
+  }
+  if (res.status === 404) {
+    return { ok: false, reason: "unsupported" };
   }
   return { ok: false, reason: "server_error" };
 }
