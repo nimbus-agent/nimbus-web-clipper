@@ -95,7 +95,20 @@ export function composeManifest(target: BrowserTarget, version: string): WebClip
     // install — nothing is granted until the user grants a specific origin in
     // Options. Broad patterns are unavoidable because self-hosted Bitbucket /
     // Jenkins / Jira hostnames cannot be enumerated in advance.
-    optional_host_permissions: ["http://*/*", "https://*/*"],
+    //
+    // The `http` pattern is deliberate, and the S5332 suppression below is not a
+    // rubber stamp. That rule targets clear-text TRANSMISSION; this is a
+    // page-access match pattern for sites the user's browser has already loaded
+    // over http, and it opens no channel of our own — the extension's only
+    // network destination remains the loopback gateway (I6, asserted in
+    // manifest.test.ts). Dropping `http` would exclude exactly the instances this
+    // feature exists for: self-hosted Jenkins/Jira/Bitbucket on internal networks
+    // are routinely served over plain http. Nothing is granted until the user
+    // picks a specific origin.
+    //
+    // The marker must stay a TRAILING comment on the reported line — Sonar anchors
+    // NOSONAR to the issue's own line (see #20, where a block comment was ignored).
+    optional_host_permissions: ["http://*/*", "https://*/*"], // NOSONAR
     action: {
       default_popup: "popup.html",
       default_title: "Clip to Nimbus",

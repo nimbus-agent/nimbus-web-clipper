@@ -8,10 +8,10 @@
 // change that quietly relaxes one by editing the other.
 import type { ConfiguredOrigin, Product } from "./types.ts";
 
-const PRODUCTS: readonly string[] = ["bitbucket", "github", "gitlab", "jenkins", "jira"];
+const PRODUCTS: ReadonlySet<string> = new Set(["bitbucket", "github", "gitlab", "jenkins", "jira"]);
 
 export function isProduct(v: unknown): v is Product {
-  return typeof v === "string" && PRODUCTS.includes(v);
+  return typeof v === "string" && PRODUCTS.has(v);
 }
 
 export function isConfiguredOrigin(v: unknown): v is ConfiguredOrigin {
@@ -83,7 +83,7 @@ export function matchOrigin(list: readonly ConfiguredOrigin[], url: URL): Config
   let bestLength = -1;
   for (const entry of list) {
     const split = splitOrigin(entry.origin);
-    if (split === null || split.base !== url.origin) {
+    if (split?.base !== url.origin) {
       continue;
     }
     const path = url.pathname;

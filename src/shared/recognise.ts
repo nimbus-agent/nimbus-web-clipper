@@ -33,7 +33,7 @@ const KIND_NAMES: Record<SurfaceKind, string> = {
 };
 
 const NUMBER = /^\d+$/;
-const JIRA_KEY = /^[A-Za-z][A-Za-z0-9_]*-\d+$/;
+const JIRA_KEY = /^[A-Za-z]\w*-\d+$/;
 
 interface Match {
   readonly kind: SurfaceKind;
