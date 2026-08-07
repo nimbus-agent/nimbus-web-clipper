@@ -18,6 +18,16 @@ const FIXTURE = `
     <button id="unpair" type="button">Unpair this browser</button>
     <button id="unpair-cancel" type="button" hidden>Cancel</button>
   </section>
+  <section id="surfaces-section">
+    <input id="surface-origin" type="text" />
+    <select id="surface-product">
+      <option value="jenkins">Jenkins</option>
+      <option value="jira">Jira</option>
+    </select>
+    <button id="surface-add" type="button">Add surface</button>
+    <output id="surface-status"></output>
+    <div id="surface-list"></div>
+  </section>
 `;
 
 const unpaired: ConnectionResponse = { kind: "connection", paired: false };
@@ -55,6 +65,14 @@ function button(id: string): HTMLButtonElement {
   const found = el(id);
   if (!(found instanceof HTMLButtonElement)) {
     throw new Error(`#${id} is not a button`);
+  }
+  return found;
+}
+
+function select(id: string): HTMLSelectElement {
+  const found = el(id);
+  if (!(found instanceof HTMLSelectElement)) {
+    throw new Error(`#${id} is not a select`);
   }
   return found;
 }
@@ -277,5 +295,58 @@ describe("onUnpairClick() / disarmUnpair()", () => {
     expect(button("unpair-cancel").disabled).toBe(false);
     // renderConnection was never reached — the paired panel is untouched.
     expect(el("connection-section").hidden).toBe(false);
+  });
+});
+
+describe("recognised surfaces", () => {
+  test("adding a valid origin stores it and renders a row", async () => {
+    await boot();
+    input("surface-origin").value = "https://corp.example/jenkins";
+    select("surface-product").value = "jenkins";
+
+    button("surface-add").click();
+    await flush();
+
+    expect(harness.storage.get("origins")).toEqual([
+      { origin: "https://corp.example/jenkins", product: "jenkins" },
+    ]);
+    expect(el("surface-list").textContent).toContain("https://corp.example/jenkins");
+  });
+
+  test("an origin with no scheme is rejected with guidance, and nothing is stored", async () => {
+    await boot();
+    input("surface-origin").value = "corp.example/jenkins";
+
+    button("surface-add").click();
+    await flush();
+
+    expect(el("surface-status").textContent).toContain("full URL");
+    expect(harness.storage.get("origins")).toBeUndefined();
+  });
+
+  test("Grant requests the HOST pattern, not the path-scoped one", async () => {
+    await boot();
+    input("surface-origin").value = "https://corp.example/jenkins";
+    button("surface-add").click();
+    await flush();
+
+    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='grant']")?.click();
+    await flush();
+
+    expect(harness.permissionsRequest).toHaveBeenCalledWith({
+      origins: ["https://corp.example/*"],
+    });
+  });
+
+  test("Remove drops the entry from storage", async () => {
+    await boot();
+    input("surface-origin").value = "https://corp.example/jenkins";
+    button("surface-add").click();
+    await flush();
+
+    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='remove']")?.click();
+    await flush();
+
+    expect(harness.storage.get("origins")).toEqual([]);
   });
 });
