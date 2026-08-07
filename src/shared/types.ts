@@ -50,3 +50,56 @@ export interface ToastState {
   readonly variant: ToastVariant;
   readonly text: string;
 }
+
+/** A product whose pages the client can recognise. */
+export type Product = "bitbucket" | "github" | "gitlab" | "jenkins" | "jira";
+
+/** What kind of item a recognised page is. */
+export type SurfaceKind = "pr" | "build" | "issue";
+
+/**
+ * An origin whose pages may be recognised, declared by the user (or built in for
+ * the SaaS hosts). `origin` is scheme + host [+ port] plus an OPTIONAL path
+ * prefix — "https://bitbucket.org" or "https://corp.example/jenkins" — because
+ * self-hosted instances commonly sit behind a reverse proxy on a sub-path.
+ *
+ * NOTE: this is a PAGE origin, unrelated to the loopback gateway origin validated
+ * by shared/gateway.ts. The two must never share a validator.
+ */
+export interface ConfiguredOrigin {
+  readonly origin: string;
+  readonly product: Product;
+}
+
+/** The result of classifying a page URL. Resolution is at most one item. */
+export type Recognition =
+  | {
+      readonly ok: true;
+      readonly product: Product;
+      readonly kind: SurfaceKind;
+      /** Human header text, e.g. "Bitbucket PR". */
+      readonly label: string;
+      /** Short identity for the header, e.g. "acme/web #482". */
+      readonly ref: string;
+      /** The canonicalised URL sent to the gateway as the resolution key. */
+      readonly resolveUrl: string;
+    }
+  | { readonly ok: false; readonly reason: "unknown-host" | "unrecognised-path" };
+
+/** The gateway's resolved item. PROPOSED shape — see the C1 design spec. */
+export interface ResolvedItem {
+  readonly id: string;
+  readonly service: string;
+  readonly type: string;
+  readonly title: string;
+  readonly canonicalUrl: string;
+  readonly url: string | null;
+}
+
+/** `unsupported` is a 404 — this gateway has no resolve route yet. */
+export type ResolveError =
+  | "not_paired"
+  | "unauthorized"
+  | "unsupported"
+  | "unreachable"
+  | "server_error";
