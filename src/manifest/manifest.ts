@@ -62,6 +62,7 @@ export interface WebClipperManifest {
   readonly description: string;
   readonly permissions: readonly string[];
   readonly host_permissions: readonly string[];
+  readonly optional_host_permissions: readonly string[];
   readonly action: ManifestAction;
   readonly commands: ManifestCommands;
   readonly options_ui: { readonly page: string; readonly open_in_tab: boolean };
@@ -89,6 +90,12 @@ export function composeManifest(target: BrowserTarget, version: string): WebClip
     // The gateway is loopback-only (invariant I6). The extension never talks to any
     // other origin — no remote host permissions, by design.
     host_permissions: ["http://127.0.0.1/*", "http://localhost/*"],
+    // PAGE access, a different axis from the network destination above: it lets
+    // recognition read a tab's URL without a user gesture (Phase C2). Inert at
+    // install — nothing is granted until the user grants a specific origin in
+    // Options. Broad patterns are unavoidable because self-hosted Bitbucket /
+    // Jenkins / Jira hostnames cannot be enumerated in advance.
+    optional_host_permissions: ["http://*/*", "https://*/*"],
     action: {
       default_popup: "popup.html",
       default_title: "Clip to Nimbus",
