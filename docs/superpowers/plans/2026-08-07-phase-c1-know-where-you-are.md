@@ -377,7 +377,15 @@ export function matchOrigin(
  */
 export function hostPermissionPattern(origin: string): string | null {
   const split = splitOrigin(origin);
-  return split === null ? null : `${split.base}/*`;
+  if (split === null) {
+    return null;
+  }
+  // The PORT must be dropped: a match pattern's host component may not contain
+  // one, so `https://stash.corp.example:8443/*` is invalid and
+  // permissions.request fails on it. Self-hosted Bitbucket Server (:8443) and
+  // Jenkins (:8080) make that the normal case here, not an edge case.
+  const url = new URL(split.base);
+  return `${url.protocol}//${url.hostname}/*`;
 }
 ```
 
