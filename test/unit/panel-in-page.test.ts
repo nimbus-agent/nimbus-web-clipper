@@ -351,3 +351,44 @@ describe("panel-in-page recognition header", () => {
     });
   });
 });
+
+describe("panel-in-page lane state", () => {
+  test("a lane the user collapsed stays collapsed across the next repaint", async () => {
+    // resolve and related settle at different times and each repaints the shell.
+    let settleResolve: (value: unknown) => void = () => {};
+    harness.sendMessage.mockImplementation((message: unknown) => {
+      const kind = (message as { kind?: string }).kind;
+      if (kind === "related") {
+        return Promise.resolve({ kind: "related", ok: true, items: [hit] });
+      }
+      return new Promise((r) => {
+        settleResolve = r;
+      });
+    });
+
+    await loadPanel();
+    const lane = (): HTMLDetailsElement | null | undefined =>
+      shadow()?.querySelector<HTMLDetailsElement>('[data-lane="related"]');
+    await vi.waitFor(() => {
+      expect(lane()?.open).toBe(true);
+    });
+
+    // The user collapses the lane while the resolve request is still in flight.
+    const details = lane();
+    if (details) {
+      details.open = false;
+    }
+
+    settleResolve({
+      kind: "resolve",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+      item: null,
+    });
+
+    await vi.waitFor(() => {
+      expect(shadow()?.textContent).toContain("Not a recognised Nimbus surface");
+    });
+    expect(lane()?.open).toBe(false);
+  });
+});

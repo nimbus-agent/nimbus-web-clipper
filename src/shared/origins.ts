@@ -44,7 +44,11 @@ export function splitOrigin(origin: string): { base: string; prefix: string } | 
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     return null;
   }
-  const path = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname;
+  // Strip EVERY trailing slash, not just one: "/jira//" must normalise to the
+  // same "/jira" a user who typed it cleanly gets, or the two spellings become
+  // two entries that dedupe can't see are the same, and which of them wins a
+  // match then depends on insertion order.
+  const path = url.pathname.replace(/\/+$/, "");
   return { base: url.origin, prefix: path };
 }
 
@@ -101,8 +105,20 @@ export function matchOrigin(list: readonly ConfiguredOrigin[], url: URL): Config
  * even when the origin carries a path prefix: the browser's permission warning is
  * per-host either way, so a path-scoped pattern buys no privacy while costing
  * exact-pattern bookkeeping in `permissions.contains` and revocation.
+ *
+ * The PORT IS DROPPED because a WebExtension match pattern's host component may
+ * not contain one — `https://stash.corp.example:8443/*` is not a valid pattern,
+ * and passing it to permissions.request fails. Self-hosted Bitbucket Server and
+ * Jenkins commonly run on :8443 / :8080, so this is the normal case here, not an
+ * edge case. A portless pattern is also the only thing expressible: it matches
+ * the host on every port, which is what the browser gives us either way.
  */
 export function hostPermissionPattern(origin: string): string | null {
   const split = splitOrigin(origin);
-  return split === null ? null : `${split.base}/*`;
+  if (split === null) {
+    return null;
+  }
+  // `split.base` is a valid absolute origin, so this parse cannot throw.
+  const url = new URL(split.base);
+  return `${url.protocol}//${url.hostname}/*`;
 }

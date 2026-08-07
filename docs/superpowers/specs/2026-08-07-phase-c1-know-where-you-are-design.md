@@ -406,7 +406,8 @@ offline queue — resolve is a read.
    "Recognised surfaces" UI + the manifest change.
 3. The resolve path: `messages.ts` types and guards, `gateway-client.postResolve`,
    `handleResolve`, SW routing, plus a `/v1/clips/resolve` route on
-   `scripts/mock-gateway.ts` so the screenshot/manual harness can exercise it.
+   `scripts/screenshots/mock-gateway.ts` so the screenshot/manual harness can
+   exercise it.
 4. The panel shell: `panel-view.ts` header + lanes, `panel-in-page.ts` wiring,
    related items as lane one.
 5. Docs: `docs/architecture.md` (the recognition layer and the resolve flow),

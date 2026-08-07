@@ -156,10 +156,18 @@ function createPanel(body: HTMLElement): {
 } {
   let header: HeaderState = { kind: "loading" };
   let relatedBody: (doc: Document) => HTMLElement = (doc) => renderError(doc, "Loading…");
+  // Resolve and related land at different times and each triggers a full repaint,
+  // so a lane the user collapsed in between would spring back open. Read the live
+  // <details> state before replacing it and carry it into the next render.
+  let relatedExpanded = true;
 
   function paint(): void {
+    const open = body.querySelector<HTMLDetailsElement>('[data-lane="related"]');
+    if (open !== null) {
+      relatedExpanded = open.open;
+    }
     const lanes: Lane[] = [
-      { id: "related", title: "Related", expanded: true, render: relatedBody },
+      { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
     ];
     body.replaceChildren(renderShell(document, { header, lanes }));
   }

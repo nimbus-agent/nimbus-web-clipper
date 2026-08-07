@@ -283,10 +283,10 @@ end-to-end core works in both Chrome and Firefox:
   payload-too-large as a terminal reason.
 - **Connection management** — pairing status + unpair.
 - **Page recognition (Phase C1)** — pure surface recognisers for Bitbucket /
-  GitHub / GitLab PRs, Jenkins builds and Jira issues (SaaS built in, self-hosted
-  configured per origin with optional path prefixes); a lane-based panel shell
-  that leads with the recognised surface and the resolved item; opt-in per-host
-  page access. The resolve read itself is built and degrades honestly until the
+  GitHub / GitLab PRs, Jenkins builds and Jira issues (SaaS hosts are built in;
+  self-hosted instances are configured per origin, with optional path prefixes);
+  a lane-based panel shell that leads with the recognised surface and the
+  resolved item; opt-in page access, granted per host. The resolve read itself is built and degrades honestly until the
   gateway route lands — see C1.1.
 - **Release** — tag-driven build/package + Chrome Web Store / Firefox AMO publish
   automation.

@@ -9,6 +9,7 @@ import {
   removeConfiguredOrigin,
   upsertOrigin,
 } from "../shared/origins.ts";
+import type { ConfiguredOrigin } from "../shared/types.ts";
 import { formatPairedSince } from "./connection-view.ts";
 import { renderSurfaceList, type SurfaceRow, sharedHostNote } from "./surfaces-view.ts";
 
@@ -150,6 +151,27 @@ function setSurfaceStatus(text: string): void {
   }
 }
 
+/**
+ * Serialize read-modify-write cycles on the origin list.
+ *
+ * Every mutation below is `getOrigins()` → transform → `setOrigins()`, and the
+ * store only writes the whole list. Two handlers that interleave (a fast
+ * double-click, or Remove while Add is still awaiting storage) would both read
+ * the pre-change list and the second write would silently drop the first one's
+ * edit. Chaining them onto one promise makes each cycle see the previous one's
+ * result — the same lost-update guard clip-queue-store.ts applies to the queue.
+ */
+let originWrites: Promise<void> = Promise.resolve();
+
+function mutateOrigins(transform: (list: ConfiguredOrigin[]) => ConfiguredOrigin[]): Promise<void> {
+  originWrites = originWrites
+    .catch(() => undefined)
+    .then(async () => {
+      await setOrigins(transform(await getOrigins()));
+    });
+  return originWrites;
+}
+
 /** Storage is the source of truth for entries; the browser is for grants. */
 async function surfaceRows(): Promise<SurfaceRow[]> {
   const stored = await getOrigins();
@@ -188,7 +210,7 @@ async function addSurface(): Promise<void> {
     setSurfaceStatus("Enter the full URL, including https://");
     return;
   }
-  await setOrigins(upsertOrigin(await getOrigins(), entry));
+  await mutateOrigins((list) => upsertOrigin(list, entry));
   originEl.value = "";
   setSurfaceStatus("");
   await refreshSurfaces();
@@ -206,15 +228,21 @@ async function onSurfaceClick(event: Event): Promise<void> {
   }
   const pattern = hostPermissionPattern(origin);
   if (action === "remove") {
-    await setOrigins(removeConfiguredOrigin(await getOrigins(), origin));
+    await mutateOrigins((list) => removeConfiguredOrigin(list, origin));
     setSurfaceStatus("");
   } else if (action === "grant" && pattern !== null) {
     // Must run inside this click handler — chrome.permissions.request needs the gesture.
     const granted = await requestOrigin(pattern);
     setSurfaceStatus(granted ? "" : "Page access was not granted.");
   } else if (action === "revoke" && pattern !== null) {
-    await removeOrigin(pattern);
-    setSurfaceStatus(sharedHostNote(await surfaceRows(), origin) ?? "");
+    // Only claim the sibling entries were affected if the revoke actually
+    // happened — otherwise the note would say access was withdrawn from a host
+    // that still has it.
+    if (await removeOrigin(pattern)) {
+      setSurfaceStatus(sharedHostNote(await surfaceRows(), origin) ?? "");
+    } else {
+      setSurfaceStatus("Page access could not be revoked.");
+    }
   }
   await refreshSurfaces();
 }

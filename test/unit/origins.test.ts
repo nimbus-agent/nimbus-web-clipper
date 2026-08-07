@@ -34,6 +34,16 @@ describe("parseConfiguredOrigin", () => {
       "https://corp.example/Jenkins",
     );
   });
+  test("collapses repeated trailing slashes to one canonical entry", () => {
+    // Otherwise "/jira//" and "/jira" become two entries dedupe can't reconcile,
+    // and which one wins a match depends on insertion order.
+    expect(parseConfiguredOrigin("https://corp.example/jira//", "jira")?.origin).toBe(
+      "https://corp.example/jira",
+    );
+    expect(parseConfiguredOrigin("https://corp.example///", "jira")?.origin).toBe(
+      "https://corp.example",
+    );
+  });
   test("rejects a non-http(s) scheme", () => {
     expect(parseConfiguredOrigin("ftp://corp.example", "jira")).toBeNull();
   });
@@ -107,6 +117,16 @@ describe("matchOrigin", () => {
 describe("hostPermissionPattern", () => {
   test("the grant is host-scoped even when the origin carries a prefix", () => {
     expect(hostPermissionPattern("https://corp.example/jira")).toBe("https://corp.example/*");
+  });
+  test("drops the port — a match pattern's host may not contain one", () => {
+    // Self-hosted Bitbucket Server / Jenkins on :8443 / :8080 is the normal case
+    // here. A pattern carrying the port is invalid and permissions.request fails.
+    expect(hostPermissionPattern("https://stash.corp.example:8443")).toBe(
+      "https://stash.corp.example/*",
+    );
+    expect(hostPermissionPattern("http://jenkins.corp.example:8080/jenkins")).toBe(
+      "http://jenkins.corp.example/*",
+    );
   });
   test("invalid input has no pattern", () => {
     expect(hostPermissionPattern("not a url")).toBeNull();

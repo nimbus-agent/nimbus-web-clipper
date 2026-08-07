@@ -231,9 +231,19 @@ Four decisions worth knowing before you change any of it:
 ### Page access is a different axis from network access
 
 Recognition needs to see the URL of pages that are not the gateway. That is
-**page access**, and it is opt-in per origin at runtime
-(`optional_host_permissions` + `src/browser/permissions.ts`), granted from the
-Options page. It is inert at install, and it never changes where the extension
+**page access**, and it is opt-in at runtime (`optional_host_permissions` +
+`src/browser/permissions.ts`), granted from the Options page.
+
+Two scopes that are easy to conflate, and deliberately are not the same:
+
+- **Recognition is configured per origin** — scheme + host + port, plus an
+  optional path prefix. `https://corp.example/jira` and
+  `https://corp.example/jenkins` are two independent entries.
+- **The browser permission is granted per host** — `https://corp.example/*`.
+  Match patterns carry neither a path constraint we'd want nor a port at all, so
+  one grant covers every configured prefix on that host, and revoking it
+  withdraws access from all of them. The Options UI says so when a host carries
+  more than one entry (`sharedHostNote`). It is inert at install, and it never changes where the extension
 can *send* anything — that remains loopback-only (**I6**). Grants are host-scoped
 (`https://corp.example/*`) even when the configured origin carries a path prefix,
 because the browser's permission warning is per-host either way.
@@ -349,7 +359,7 @@ changes here are potential upstream contributions.
 | # | Invariant | Enforced by |
 | --- | --- | --- |
 | **I6** | Loopback only — one destination, no `<all_urls>`, no remote host | Client-side, mirrors gateway I6: `src/shared/gateway.ts` origin validation + restricted `host_permissions` |
-| — | Page access is opt-in per origin and never widens the network destination | `optional_host_permissions` (inert at install) + `src/browser/permissions.ts`; `shared/origins.ts` is deliberately a separate validator from `shared/gateway.ts` |
+| — | Page access is opt-in (configured per origin, granted per host) and never widens the network destination | `optional_host_permissions` (inert at install) + `src/browser/permissions.ts`; `shared/origins.ts` is deliberately a separate validator from `shared/gateway.ts` |
 | **I30** | Pairing is fail-closed — token minted only in an owner-opened window | Gateway; extension redeems, never assumes |
 | — | The bearer token / pairing code is never logged, never in a page DOM | `noConsole` in `src/` (Biome); token held only in the SW + storage |
 | — | No `console.*` in `src/`; strict TypeScript, no `any` | `biome.json` (`noConsole`, `noExplicitAny`) + `tsc --noEmit` |

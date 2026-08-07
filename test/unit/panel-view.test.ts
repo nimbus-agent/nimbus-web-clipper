@@ -162,6 +162,9 @@ describe("renderLane", () => {
     expect(el.querySelector("summary")?.textContent).toBe("Related");
     expect(el.textContent).toContain("lane body");
   });
+  test("expanded:true renders open", () => {
+    expect((renderLane(document, lane) as HTMLDetailsElement).open).toBe(true);
+  });
   test("expanded:false renders collapsed", () => {
     const el = renderLane(document, { ...lane, expanded: false });
     expect((el as HTMLDetailsElement).open).toBe(false);
