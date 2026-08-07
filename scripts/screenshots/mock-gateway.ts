@@ -3,8 +3,8 @@
 // bundled into dist/. Run directly: `bun run mock-gateway`.
 import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
-import { CLIP_PATHS } from "../../src/shared/gateway.ts";
-import { CLIP_INGEST, PAIR_CONFIRM, RELATED } from "./gateway-fixtures.ts";
+import { CLIP_PATHS, PROPOSED_PATHS } from "../../src/shared/gateway.ts";
+import { CLIP_INGEST, PAIR_CONFIRM, RELATED, RESOLVE } from "./gateway-fixtures.ts";
 
 export const DEFAULT_PORT = 8765;
 
@@ -50,6 +50,12 @@ export function startMockGateway(port: number = DEFAULT_PORT): Server {
         return;
       case CLIP_PATHS.related:
         json(RELATED);
+        return;
+      // PROPOSED route — the real gateway 404s here today, which the client maps
+      // to "this gateway can't resolve pages yet". Serving it lets the dev and
+      // screenshot harness exercise the resolved path.
+      case PROPOSED_PATHS.resolve:
+        json(RESOLVE);
         return;
       default:
         res.writeHead(404).end();

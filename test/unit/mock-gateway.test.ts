@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { CLIP_INGEST, PAIR_CONFIRM, RELATED } from "../../scripts/screenshots/gateway-fixtures.ts";
+import {
+  CLIP_INGEST,
+  PAIR_CONFIRM,
+  RELATED,
+  RESOLVE,
+} from "../../scripts/screenshots/gateway-fixtures.ts";
 
 describe("mock gateway fixtures — locked contract shape", () => {
   test("pair/confirm returns a non-empty token and label", () => {
@@ -24,5 +29,15 @@ describe("mock gateway fixtures — locked contract shape", () => {
       expect(hit.url === null || typeof hit.url === "string").toBe(true);
     }
     expect(RELATED.items.some((h) => h.url === null)).toBe(true);
+  });
+
+  // PROPOSED route, not part of the locked contract — see shared/gateway.ts.
+  test("resolve returns a single item carrying every field the panel header needs", () => {
+    expect(typeof RESOLVE.item.id).toBe("string");
+    expect(typeof RESOLVE.item.service).toBe("string");
+    expect(typeof RESOLVE.item.type).toBe("string");
+    expect(typeof RESOLVE.item.title).toBe("string");
+    expect(typeof RESOLVE.item.canonicalUrl).toBe("string");
+    expect(RESOLVE.item.url === null || typeof RESOLVE.item.url === "string").toBe(true);
   });
 });
