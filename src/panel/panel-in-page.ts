@@ -3,8 +3,10 @@
 // panel. Mounts a Shadow-DOM overlay (inlined styles — no web_accessible_resources),
 // reads the page context, asks the SW for related items, and renders them.
 import { sendMessage } from "../browser/runtime.ts";
-import { isRelatedResponse } from "../shared/messages.ts";
-import { renderError, renderHits } from "./panel-view.ts";
+import { isRelatedResponse, isResolveResponse } from "../shared/messages.ts";
+import { surfaceLine } from "../shared/recognise.ts";
+import type { RelatedHit } from "../shared/types.ts";
+import { type HeaderState, type Lane, renderError, renderHits, renderShell } from "./panel-view.ts";
 
 const HOST_ID = "nimbus-related-host";
 
@@ -13,6 +15,14 @@ const RELATED_MESSAGES: Record<string, string> = {
   unauthorized: "Pairing expired — re-pair in Options.",
   unreachable: "Can't reach Nimbus — is the gateway running?",
   server_error: "Nimbus had an error fetching related items.",
+};
+
+const RESOLVE_MESSAGES: Record<string, string> = {
+  not_paired: "Pair a browser first (Options).",
+  unauthorized: "Pairing expired — re-pair in Options.",
+  unsupported: "This Nimbus gateway can't resolve pages yet.",
+  unreachable: "Can't reach Nimbus — is the gateway running?",
+  server_error: "Nimbus had an error resolving this page.",
 };
 
 // Inlined so the panel is fully self-contained. `:host { all: initial }` drops
@@ -84,6 +94,14 @@ const STYLES = `
 }
 .nimbus-related__snippet { margin: 4px 0 0; color: var(--nimbus-muted); }
 .nimbus-related__status { padding: 16px; color: var(--nimbus-muted); }
+.nimbus-related__shell { display: flex; flex-direction: column; }
+.nimbus-related__header-state { padding: 12px 16px; border-bottom: 1px solid var(--nimbus-border); }
+.nimbus-related__header-state .nimbus-related__status { padding: 4px 0 0; }
+.nimbus-related__surface { margin: 0; font-weight: 600; }
+.nimbus-related__header-item { margin: 4px 0 0; }
+.nimbus-related__header-item a { color: var(--nimbus-accent); text-decoration: none; }
+.nimbus-related__lane { border-bottom: 1px solid var(--nimbus-border); }
+.nimbus-related__lane-title { cursor: pointer; padding: 10px 16px; font-weight: 600; }
 `;
 
 interface NimbusHost extends HTMLElement {
@@ -101,27 +119,98 @@ function readContext(): { title: string; canonicalUrl?: string; selection: strin
   };
 }
 
-async function query(body: HTMLElement): Promise<void> {
-  let res: unknown;
-  try {
-    res = await sendMessage({ kind: "related", ...readContext() });
-  } catch {
-    body.replaceChildren();
-    body.append(renderError(document, "Couldn't connect to Nimbus."));
-    return;
+function headerFrom(res: unknown): HeaderState {
+  if (!isResolveResponse(res)) {
+    return { kind: "error", surface: null, message: "Unexpected response." };
   }
-  body.replaceChildren();
-  if (!isRelatedResponse(res)) {
-    body.append(renderError(document, "Unexpected response."));
-    return;
+  const surface = surfaceLine(res.recognition);
+  if (surface === null) {
+    return { kind: "unrecognised" };
   }
-  if (res.ok) {
-    body.append(renderHits(document, res.items));
-  } else {
-    body.append(
-      renderError(document, RELATED_MESSAGES[res.reason] ?? "Couldn't fetch related items."),
-    );
+  if (!res.ok) {
+    return {
+      kind: "error",
+      surface,
+      message: RESOLVE_MESSAGES[res.reason] ?? "Couldn't resolve this page.",
+    };
   }
+  return res.item === null
+    ? { kind: "not-indexed", surface }
+    : { kind: "resolved", surface, item: res.item };
+}
+
+/**
+ * One panel's state and the two loads that fill it. Resolve and related are
+ * fetched in PARALLEL and land independently: a slow or failing resolve must
+ * never keep the related lane from appearing.
+ *
+ * State lives in this closure rather than at module level. Each injection of
+ * panel.js re-evaluates the bundle in a fresh scope, so module-level `let` would
+ * not actually leak between mounts — but a closure needs no reset step, and it
+ * makes "this response belongs to that panel" structural instead of incidental.
+ */
+function createPanel(body: HTMLElement): {
+  paint: () => void;
+  loadHeader: () => Promise<void>;
+  loadRelated: () => Promise<void>;
+} {
+  let header: HeaderState = { kind: "loading" };
+  let relatedBody: (doc: Document) => HTMLElement = (doc) => renderError(doc, "Loading…");
+  // Resolve and related land at different times and each triggers a full repaint,
+  // so a lane the user collapsed in between would spring back open. Read the live
+  // <details> state before replacing it and carry it into the next render.
+  let relatedExpanded = true;
+
+  function paint(): void {
+    const open = body.querySelector<HTMLDetailsElement>('[data-lane="related"]');
+    if (open !== null) {
+      relatedExpanded = open.open;
+    }
+    const lanes: Lane[] = [
+      { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
+    ];
+    body.replaceChildren(renderShell(document, { header, lanes }));
+  }
+
+  async function loadHeader(): Promise<void> {
+    let res: unknown;
+    try {
+      res = await sendMessage({
+        kind: "resolve",
+        pageUrl: window.location.href,
+        title: document.title,
+      });
+    } catch {
+      header = { kind: "error", surface: null, message: "Couldn't connect to Nimbus." };
+      paint();
+      return;
+    }
+    header = headerFrom(res);
+    paint();
+  }
+
+  async function loadRelated(): Promise<void> {
+    let res: unknown;
+    try {
+      res = await sendMessage({ kind: "related", ...readContext() });
+    } catch {
+      relatedBody = (doc) => renderError(doc, "Couldn't connect to Nimbus.");
+      paint();
+      return;
+    }
+    if (!isRelatedResponse(res)) {
+      relatedBody = (doc) => renderError(doc, "Unexpected response.");
+    } else if (res.ok) {
+      const items: RelatedHit[] = res.items;
+      relatedBody = (doc) => renderHits(doc, items);
+    } else {
+      const message = RELATED_MESSAGES[res.reason] ?? "Couldn't fetch related items.";
+      relatedBody = (doc) => renderError(doc, message);
+    }
+    paint();
+  }
+
+  return { paint, loadHeader, loadRelated };
 }
 
 function mount(): void {
@@ -153,7 +242,8 @@ function mount(): void {
 
   const body = document.createElement("div");
   body.className = "nimbus-related__body";
-  body.append(renderError(document, "Loading…"));
+  const view = createPanel(body);
+  view.paint();
 
   panel.append(header, body);
   root.append(style, panel);
@@ -183,7 +273,12 @@ function mount(): void {
 
   // Land keyboard/screen-reader users inside the panel (focus only — no trap).
   close.focus();
-  void query(body);
+  // Parallel on purpose — neither request gates the other. Fail closed like every
+  // other detached call in this codebase (see service-worker.ts): there is no
+  // console in src/ and nowhere to report an unexpected rejection, so swallowing
+  // it beats an unhandled rejection in the host page.
+  view.loadHeader().catch(() => undefined);
+  view.loadRelated().catch(() => undefined);
 }
 
 // Self-toggle entry: an existing panel closes via its own teardown (aborting its

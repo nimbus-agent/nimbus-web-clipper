@@ -2,7 +2,7 @@
 // deterministic store screenshots. Not shipped in dist/. The RelatedHit typing
 // keeps these in lockstep with the locked /v1/clips/related contract; a unit test
 // re-asserts the shape at runtime.
-import type { RelatedHit } from "../../src/shared/types.ts";
+import type { RelatedHit, ResolvedItem } from "../../src/shared/types.ts";
 
 export interface PairConfirmResponse {
   readonly token: string;
@@ -27,6 +27,22 @@ export const PAIR_CONFIRM: PairConfirmResponse = {
 export const CLIP_INGEST: ClipIngestResponse = {
   id: "clip_mock_0001",
   status: "created",
+};
+
+/** The PROPOSED resolve route (not part of the locked contract — see the C1 spec). */
+export interface ResolveResponse {
+  readonly item: ResolvedItem;
+}
+
+export const RESOLVE: ResolveResponse = {
+  item: {
+    id: "pr-482",
+    service: "bitbucket",
+    type: "pr",
+    title: "Cache the index between runs",
+    canonicalUrl: "https://bitbucket.org/acme/web/pull-requests/482",
+    url: "https://bitbucket.org/acme/web/pull-requests/482",
+  },
 };
 
 export const RELATED: RelatedResponse = {

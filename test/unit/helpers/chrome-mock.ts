@@ -35,6 +35,11 @@ export interface ChromeHarness {
   readonly alarmListeners: Array<(alarm: { name: string }) => void>;
   readonly contextMenusCreate: ReturnType<typeof vi.fn>;
   readonly contextMenusRemoveAll: ReturnType<typeof vi.fn>;
+  readonly permissionsContains: ReturnType<typeof vi.fn>;
+  readonly permissionsRequest: ReturnType<typeof vi.fn>;
+  readonly permissionsRemove: ReturnType<typeof vi.fn>;
+  /** Backing set of granted origin patterns; seed or inspect it directly. */
+  readonly grantedOrigins: Set<string>;
   /** Fire a runtime message through the first listener; resolves its response. */
   emitMessage(message: unknown): Promise<unknown>;
   /** Fire a keyboard command through every registered command listener. */
@@ -105,6 +110,26 @@ export function installChromeMock(): ChromeHarness {
     cb?.();
   });
 
+  // Optional host permissions: nothing is granted until requested, mirroring the
+  // real surface where `optional_host_permissions` is inert at install.
+  const grantedOrigins = new Set<string>();
+  const permissionsContains = vi.fn(
+    async (p: { origins?: string[] }): Promise<boolean> =>
+      (p.origins ?? []).every((o) => grantedOrigins.has(o)),
+  );
+  const permissionsRequest = vi.fn(async (p: { origins?: string[] }): Promise<boolean> => {
+    for (const o of p.origins ?? []) {
+      grantedOrigins.add(o);
+    }
+    return true;
+  });
+  const permissionsRemove = vi.fn(async (p: { origins?: string[] }): Promise<boolean> => {
+    for (const o of p.origins ?? []) {
+      grantedOrigins.delete(o);
+    }
+    return true;
+  });
+
   const fakeChrome = {
     runtime: {
       sendMessage,
@@ -140,6 +165,11 @@ export function installChromeMock(): ChromeHarness {
     scripting: { executeScript },
     tabs: { query: tabsQuery },
     storage: { local: { get: storageGet, set: storageSet, remove: storageRemove } },
+    permissions: {
+      contains: permissionsContains,
+      request: permissionsRequest,
+      remove: permissionsRemove,
+    },
     contextMenus: {
       create: contextMenusCreate,
       removeAll: contextMenusRemoveAll,
@@ -227,6 +257,10 @@ export function installChromeMock(): ChromeHarness {
     alarmListeners,
     contextMenusCreate,
     contextMenusRemoveAll,
+    permissionsContains,
+    permissionsRequest,
+    permissionsRemove,
+    grantedOrigins,
     emitMessage,
     emitCommand,
     emitAlarm,

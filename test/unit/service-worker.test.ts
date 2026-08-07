@@ -141,6 +141,68 @@ describe("message routing — success shapes", () => {
     expect(res).toEqual({ kind: "related", ok: true, items: [hit] });
   });
 
+  test("resolve: an unrecognised page answers without a fetch", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn();
+
+    const res = await harness.emitMessage({
+      kind: "resolve",
+      pageUrl: "https://example.com/nope",
+    });
+
+    expect(res).toEqual({
+      kind: "resolve",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+      item: null,
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("resolve: a recognised page posts the canonical URL and returns the item", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const item = {
+      id: "i1",
+      service: "github",
+      type: "pr",
+      title: "Add thing",
+      canonicalUrl: "https://github.com/acme/web/pull/1",
+      url: "https://github.com/acme/web/pull/1",
+    };
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { item }));
+
+    const res = await harness.emitMessage({
+      kind: "resolve",
+      pageUrl: "https://github.com/acme/web/pull/1/files",
+    });
+
+    expect(res).toMatchObject({ kind: "resolve", ok: true, item });
+    const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("http://127.0.0.1:8765/v1/clips/resolve");
+    expect(JSON.parse(String(init.body))).toEqual({
+      canonicalUrl: "https://github.com/acme/web/pull/1",
+    });
+  });
+
+  test("resolve: a gateway 404 is unsupported, and the recognition survives", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(404, {}));
+
+    const res = await harness.emitMessage({
+      kind: "resolve",
+      pageUrl: "https://github.com/acme/web/pull/1",
+    });
+
+    expect(res).toMatchObject({ kind: "resolve", ok: false, reason: "unsupported" });
+    expect((res as { recognition: { ok: boolean } }).recognition.ok).toBe(true);
+  });
+
   test("queue-list: reads storage only, projects to views", async () => {
     await load();
     harness.storage.set(QUEUE_KEY, [queued("a"), queued("b")]);

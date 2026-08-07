@@ -11,15 +11,21 @@ import type {
   QueueRetryRequest,
   RelatedRequest,
   RelatedResponse,
+  ResolveRequest,
+  ResolveResponse,
 } from "../shared/messages.ts";
 import { enqueue, type QueuedClip, removeFromQueue, toView } from "../shared/queue.ts";
+import { recognise } from "../shared/recognise.ts";
 import { buildRelatedQuery, type RelatedQuery } from "../shared/related.ts";
 import type {
   ClipPostResult,
+  ConfiguredOrigin,
   Connection,
   PairError,
   RelatedError,
   RelatedHit,
+  ResolvedItem,
+  ResolveError,
 } from "../shared/types.ts";
 
 export interface PairDeps {
@@ -101,6 +107,43 @@ export async function handleRelated(
     return { kind: "related", ok: false, reason: r.reason };
   }
   return { kind: "related", ok: true, items: r.items };
+}
+
+export interface ResolveDeps {
+  readonly getConnection: () => Promise<Connection | null>;
+  readonly getOrigins: () => Promise<ConfiguredOrigin[]>;
+  readonly postResolve: (
+    origin: string,
+    token: string,
+    canonicalUrl: string,
+  ) => Promise<{ ok: true; item: ResolvedItem | null } | { ok: false; reason: ResolveError }>;
+}
+
+/**
+ * Recognise the page, then resolve it to at most one indexed item.
+ *
+ * The recognition rides on BOTH arms of the response on purpose: a gateway
+ * failure must not erase the fact that we know what page this is, or the panel
+ * would drop back to "unrecognised" the moment the gateway hiccups.
+ */
+export async function handleResolve(
+  deps: ResolveDeps,
+  req: ResolveRequest,
+): Promise<ResolveResponse> {
+  const recognition = recognise(req.pageUrl, await deps.getOrigins());
+  if (!recognition.ok) {
+    // Nothing to ask the gateway about — and no request is made.
+    return { kind: "resolve", ok: true, recognition, item: null };
+  }
+  const conn = await deps.getConnection();
+  if (conn === null) {
+    return { kind: "resolve", ok: false, recognition, reason: "not_paired" };
+  }
+  const r = await deps.postResolve(conn.origin, conn.token, recognition.resolveUrl);
+  if (!r.ok) {
+    return { kind: "resolve", ok: false, recognition, reason: r.reason };
+  }
+  return { kind: "resolve", ok: true, recognition, item: r.item };
 }
 
 export interface QueueListDeps {

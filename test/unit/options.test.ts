@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // test/unit/options.test.ts
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import "../../src/options/options.ts";
 import type { ConnectionResponse, PairResponse } from "../../src/shared/messages.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
@@ -17,6 +17,16 @@ const FIXTURE = `
     <output id="connection-status"></output>
     <button id="unpair" type="button">Unpair this browser</button>
     <button id="unpair-cancel" type="button" hidden>Cancel</button>
+  </section>
+  <section id="surfaces-section">
+    <input id="surface-origin" type="text" />
+    <select id="surface-product">
+      <option value="jenkins">Jenkins</option>
+      <option value="jira">Jira</option>
+    </select>
+    <button id="surface-add" type="button">Add surface</button>
+    <output id="surface-status"></output>
+    <div id="surface-list"></div>
   </section>
 `;
 
@@ -55,6 +65,14 @@ function button(id: string): HTMLButtonElement {
   const found = el(id);
   if (!(found instanceof HTMLButtonElement)) {
     throw new Error(`#${id} is not a button`);
+  }
+  return found;
+}
+
+function select(id: string): HTMLSelectElement {
+  const found = el(id);
+  if (!(found instanceof HTMLSelectElement)) {
+    throw new Error(`#${id} is not a select`);
   }
   return found;
 }
@@ -277,5 +295,101 @@ describe("onUnpairClick() / disarmUnpair()", () => {
     expect(button("unpair-cancel").disabled).toBe(false);
     // renderConnection was never reached — the paired panel is untouched.
     expect(el("connection-section").hidden).toBe(false);
+  });
+});
+
+describe("recognised surfaces", () => {
+  test("adding a valid origin stores it and renders a row", async () => {
+    await boot();
+    input("surface-origin").value = "https://corp.example/jenkins";
+    select("surface-product").value = "jenkins";
+
+    button("surface-add").click();
+    await flush();
+
+    expect(harness.storage.get("origins")).toEqual([
+      { origin: "https://corp.example/jenkins", product: "jenkins" },
+    ]);
+    expect(el("surface-list").textContent).toContain("https://corp.example/jenkins");
+  });
+
+  test("an origin with no scheme is rejected with guidance, and nothing is stored", async () => {
+    await boot();
+    input("surface-origin").value = "corp.example/jenkins";
+
+    button("surface-add").click();
+    await flush();
+
+    expect(el("surface-status").textContent).toContain("full URL");
+    expect(harness.storage.get("origins")).toBeUndefined();
+  });
+
+  test("Grant requests the HOST pattern, not the path-scoped one", async () => {
+    await boot();
+    input("surface-origin").value = "https://corp.example/jenkins";
+    button("surface-add").click();
+    await flush();
+
+    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='grant']")?.click();
+    await flush();
+
+    expect(harness.permissionsRequest).toHaveBeenCalledWith({
+      origins: ["https://corp.example/*"],
+    });
+  });
+
+  test("interleaved mutations do not lose an update", async () => {
+    await boot();
+    // Delay the storage READ so a second click can start before the first write
+    // lands — the interleaving that would otherwise drop one of the two edits.
+    // Snapshot the value at REQUEST time and hand it back later. Two handlers
+    // that both read before either writes then see the same list — which is
+    // exactly the interleaving that drops one of the two edits.
+    harness.storageGet.mockImplementation((key: string) => {
+      const snapshot = harness.storage.get(key);
+      return new Promise((r) => setTimeout(() => r({ [key]: snapshot }), 5));
+    });
+
+    input("surface-origin").value = "https://a.example/jira";
+    select("surface-product").value = "jira";
+    button("surface-add").click();
+    input("surface-origin").value = "https://b.example/jenkins";
+    select("surface-product").value = "jenkins";
+    button("surface-add").click();
+
+    await vi.waitFor(() => {
+      expect(harness.storage.get("origins")).toHaveLength(2);
+    });
+    expect(harness.storage.get("origins")).toEqual([
+      { origin: "https://a.example/jira", product: "jira" },
+      { origin: "https://b.example/jenkins", product: "jenkins" },
+    ]);
+  });
+
+  test("a failed revoke is reported, and does not claim siblings were affected", async () => {
+    await boot();
+    input("surface-origin").value = "https://corp.example/jenkins";
+    button("surface-add").click();
+    await flush();
+    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='grant']")?.click();
+    await flush();
+
+    harness.permissionsRemove.mockResolvedValueOnce(false);
+    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='revoke']")?.click();
+    await flush();
+
+    expect(el("surface-status").textContent).toBe("Page access could not be revoked.");
+  });
+
+  test("Remove drops the entry from storage", async () => {
+    await boot();
+    input("surface-origin").value = "https://corp.example/jenkins";
+    button("surface-add").click();
+    await flush();
+
+    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='remove']")?.click();
+    await flush();
+
+    expect(harness.storage.get("origins")).toEqual([]);
   });
 });

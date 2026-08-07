@@ -21,12 +21,13 @@ import {
   isQueueRemoveRequest,
   isQueueRetryRequest,
   isRelatedRequest,
+  isResolveRequest,
   isUnpairRequest,
 } from "../shared/messages.ts";
 import { getQueue, updateQueue } from "./clip-queue-store.ts";
 import { clearConnection, getConnection, setConnection } from "./connection-store.ts";
 import { showFeedback } from "./feedback.ts";
-import { confirmPair, postClip, postRelated } from "./gateway-client.ts";
+import { confirmPair, postClip, postRelated, postResolve } from "./gateway-client.ts";
 import {
   handleClip,
   handleConnectionStatus,
@@ -35,8 +36,10 @@ import {
   handleQueueRemove,
   handleQueueRetry,
   handleRelated,
+  handleResolve,
   handleUnpair,
 } from "./handlers.ts";
+import { getOrigins } from "./origin-store.ts";
 import { type FlushDeps, flushQueue } from "./queue-flush.ts";
 import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
 import { clearPause, getPauseUntil, setPauseUntil } from "./rate-limit-pause.ts";
@@ -186,6 +189,19 @@ addMessageListener((message, respond) => {
       .then(respond)
       .catch(() => {
         respond({ kind: "related", ok: false, reason: "server_error" });
+      });
+    return true;
+  }
+  if (isResolveRequest(message)) {
+    handleResolve({ getConnection, getOrigins, postResolve }, message)
+      .then(respond)
+      .catch(() => {
+        respond({
+          kind: "resolve",
+          ok: false,
+          recognition: { ok: false, reason: "unknown-host" },
+          reason: "server_error",
+        });
       });
     return true;
   }

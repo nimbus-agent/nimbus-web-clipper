@@ -26,8 +26,16 @@ function shadow(): ShadowRoot | null {
   return host()?.shadowRoot ?? null;
 }
 
+/** The RELATED lane's status line. Scoped to the lane on purpose: since the panel
+ *  grew a recognition header, that header carries its own `__status` element and
+ *  an unscoped query would return it instead. */
 function status(): string | null | undefined {
-  return shadow()?.querySelector(".nimbus-related__status")?.textContent;
+  return shadow()?.querySelector(".nimbus-related__lane .nimbus-related__status")?.textContent;
+}
+
+/** The recognition header's text — surface line plus item/status. */
+function headerText(): string | null | undefined {
+  return shadow()?.querySelector(".nimbus-related__header-state")?.textContent;
 }
 
 const hit: RelatedHit = {
@@ -246,5 +254,141 @@ describe("panel-in-page teardown / self-toggle", () => {
     expect(host()).toBeNull();
     // The fallback path never mounts a fresh panel in the same pass.
     expect(harness.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("panel-in-page recognition header", () => {
+  const item = {
+    id: "i1",
+    service: "github",
+    type: "pr",
+    title: "Add thing",
+    canonicalUrl: "https://github.com/acme/web/pull/1",
+    url: "https://github.com/acme/web/pull/1",
+  };
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #1",
+    resolveUrl: "https://github.com/acme/web/pull/1",
+  } as const;
+
+  /** Answer both messages the panel sends, by kind. */
+  function respond(resolveResponse: unknown, relatedItems: RelatedHit[] = [hit]): void {
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const kind = (message as { kind?: string }).kind;
+      if (kind === "resolve") {
+        return resolveResponse;
+      }
+      return { kind: "related", ok: true, items: relatedItems };
+    });
+  }
+
+  test("sends the page url for resolution", async () => {
+    respond({ kind: "resolve", ok: true, recognition, item });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(harness.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "resolve", pageUrl: window.location.href }),
+      );
+    });
+  });
+
+  test("a resolved item is named in the header", async () => {
+    respond({ kind: "resolve", ok: true, recognition, item });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).toContain("GitHub PR · acme/web #1");
+      expect(headerText()).toContain("Add thing");
+    });
+  });
+
+  test("a miss says not indexed, and does NOT imply the related hits are the page", async () => {
+    respond({ kind: "resolve", ok: true, recognition, item: null });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(shadow()?.textContent).toContain("Not indexed");
+    });
+  });
+
+  test("an unsupported gateway is a first-class state, not an error", async () => {
+    respond({ kind: "resolve", ok: false, recognition, reason: "unsupported" });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(shadow()?.textContent).toContain("can't resolve pages yet");
+    });
+  });
+
+  test("the related lane still renders when resolve fails", async () => {
+    respond({ kind: "resolve", ok: false, recognition, reason: "unreachable" });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(shadow()?.querySelectorAll(".nimbus-related__item")).toHaveLength(1);
+    });
+  });
+
+  test("an unrecognised page still renders the related lane", async () => {
+    respond({
+      kind: "resolve",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+      item: null,
+    });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(shadow()?.textContent).toContain("Not a recognised Nimbus surface");
+      expect(shadow()?.querySelectorAll(".nimbus-related__item")).toHaveLength(1);
+    });
+  });
+
+  test("a malformed resolve response degrades to an error header, never a crash", async () => {
+    respond({ kind: "resolve", ok: true });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(shadow()?.textContent).toContain("Unexpected response");
+    });
+  });
+});
+
+describe("panel-in-page lane state", () => {
+  test("a lane the user collapsed stays collapsed across the next repaint", async () => {
+    // resolve and related settle at different times and each repaints the shell.
+    let settleResolve: (value: unknown) => void = () => {};
+    harness.sendMessage.mockImplementation((message: unknown) => {
+      const kind = (message as { kind?: string }).kind;
+      if (kind === "related") {
+        return Promise.resolve({ kind: "related", ok: true, items: [hit] });
+      }
+      return new Promise((r) => {
+        settleResolve = r;
+      });
+    });
+
+    await loadPanel();
+    const lane = (): HTMLDetailsElement | null | undefined =>
+      shadow()?.querySelector<HTMLDetailsElement>('[data-lane="related"]');
+    await vi.waitFor(() => {
+      expect(lane()?.open).toBe(true);
+    });
+
+    // The user collapses the lane while the resolve request is still in flight.
+    const details = lane();
+    if (details) {
+      details.open = false;
+    }
+
+    settleResolve({
+      kind: "resolve",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+      item: null,
+    });
+
+    await vi.waitFor(() => {
+      expect(shadow()?.textContent).toContain("Not a recognised Nimbus surface");
+    });
+    expect(lane()?.open).toBe(false);
   });
 });

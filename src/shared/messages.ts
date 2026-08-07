@@ -4,7 +4,16 @@
 
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
-import type { CaptureResult, ClipError, PairError, RelatedError, RelatedHit } from "./types.ts";
+import type {
+  CaptureResult,
+  ClipError,
+  PairError,
+  Recognition,
+  RelatedError,
+  RelatedHit,
+  ResolvedItem,
+  ResolveError,
+} from "./types.ts";
 
 /** A liveness probe the popup sends to confirm the service worker is responsive. */
 export interface PingMessage {
@@ -42,6 +51,12 @@ export interface RelatedRequest {
   readonly selection?: string;
 }
 
+export interface ResolveRequest {
+  readonly kind: "resolve";
+  readonly pageUrl: string;
+  readonly title?: string;
+}
+
 export interface QueueListRequest {
   readonly kind: "queue-list";
 }
@@ -68,6 +83,7 @@ export type ExtensionRequest =
   | PairRequest
   | ClipRequest
   | RelatedRequest
+  | ResolveRequest
   | QueueListRequest
   | QueueRetryRequest
   | QueueRemoveRequest
@@ -96,6 +112,20 @@ export type RelatedResponse =
   | { readonly kind: "related"; readonly ok: true; readonly items: RelatedHit[] }
   | { readonly kind: "related"; readonly ok: false; readonly reason: RelatedError };
 
+export type ResolveResponse =
+  | {
+      readonly kind: "resolve";
+      readonly ok: true;
+      readonly recognition: Recognition;
+      readonly item: ResolvedItem | null;
+    }
+  | {
+      readonly kind: "resolve";
+      readonly ok: false;
+      readonly recognition: Recognition;
+      readonly reason: ResolveError;
+    };
+
 export type QueueResponse = { readonly kind: "queue"; readonly items: QueuedClipView[] };
 
 export type ConnectionResponse =
@@ -112,6 +142,7 @@ export type ExtensionResponse =
   | PairResponse
   | ClipResponse
   | RelatedResponse
+  | ResolveResponse
   | QueueResponse
   | ConnectionResponse;
 
@@ -171,6 +202,55 @@ export function isRelatedResponse(v: unknown): v is RelatedResponse {
     return typeof v["reason"] === "string";
   }
   return false;
+}
+
+export function isResolveRequest(v: unknown): v is ResolveRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "resolve" &&
+    typeof v["pageUrl"] === "string" &&
+    (v["title"] === undefined || typeof v["title"] === "string")
+  );
+}
+
+export function isResolvedItem(v: unknown): v is ResolvedItem {
+  return (
+    isObject(v) &&
+    typeof v["id"] === "string" &&
+    typeof v["service"] === "string" &&
+    typeof v["type"] === "string" &&
+    typeof v["title"] === "string" &&
+    typeof v["canonicalUrl"] === "string" &&
+    (v["url"] === null || typeof v["url"] === "string")
+  );
+}
+
+function isRecognition(v: unknown): v is Recognition {
+  if (!isObject(v)) {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return (
+      typeof v["product"] === "string" &&
+      typeof v["kind"] === "string" &&
+      typeof v["label"] === "string" &&
+      typeof v["ref"] === "string" &&
+      typeof v["resolveUrl"] === "string"
+    );
+  }
+  return v["ok"] === false && typeof v["reason"] === "string";
+}
+
+/** The recognition is required on BOTH arms: a gateway failure must not erase
+ *  the fact that the client knows what page this is. */
+export function isResolveResponse(v: unknown): v is ResolveResponse {
+  if (!isObject(v) || v["kind"] !== "resolve" || !isRecognition(v["recognition"])) {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return v["item"] === null || isResolvedItem(v["item"]);
+  }
+  return v["ok"] === false && typeof v["reason"] === "string";
 }
 
 export function isQueueListRequest(v: unknown): v is QueueListRequest {

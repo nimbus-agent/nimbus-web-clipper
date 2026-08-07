@@ -1,6 +1,17 @@
+import { getOrigins, setOrigins } from "../background/origin-store.ts";
+import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.ts";
 import { sendMessage } from "../browser/runtime.ts";
 import { isConnectionResponse, type PairResponse } from "../shared/messages.ts";
+import {
+  hostPermissionPattern,
+  isProduct,
+  parseConfiguredOrigin,
+  removeConfiguredOrigin,
+  upsertOrigin,
+} from "../shared/origins.ts";
+import type { ConfiguredOrigin } from "../shared/types.ts";
 import { formatPairedSince } from "./connection-view.ts";
+import { renderSurfaceList, type SurfaceRow, sharedHostNote } from "./surfaces-view.ts";
 
 const PAIR_MESSAGES: Record<string, string> = {
   bad_origin: "Enter a 127.0.0.1 / localhost URL.",
@@ -133,9 +144,117 @@ async function onUnpairClick(): Promise<void> {
   }
 }
 
+function setSurfaceStatus(text: string): void {
+  const el = document.getElementById("surface-status");
+  if (el !== null) {
+    el.textContent = text;
+  }
+}
+
+/**
+ * Serialize read-modify-write cycles on the origin list.
+ *
+ * Every mutation below is `getOrigins()` → transform → `setOrigins()`, and the
+ * store only writes the whole list. Two handlers that interleave (a fast
+ * double-click, or Remove while Add is still awaiting storage) would both read
+ * the pre-change list and the second write would silently drop the first one's
+ * edit. Chaining them onto one promise makes each cycle see the previous one's
+ * result — the same lost-update guard clip-queue-store.ts applies to the queue.
+ */
+let originWrites: Promise<void> = Promise.resolve();
+
+function mutateOrigins(transform: (list: ConfiguredOrigin[]) => ConfiguredOrigin[]): Promise<void> {
+  originWrites = originWrites
+    .catch(() => undefined)
+    .then(async () => {
+      await setOrigins(transform(await getOrigins()));
+    });
+  return originWrites;
+}
+
+/** Storage is the source of truth for entries; the browser is for grants. */
+async function surfaceRows(): Promise<SurfaceRow[]> {
+  const stored = await getOrigins();
+  const rows: SurfaceRow[] = [];
+  for (const entry of stored) {
+    const pattern = hostPermissionPattern(entry.origin);
+    rows.push({
+      origin: entry.origin,
+      product: entry.product,
+      granted: pattern !== null && (await hasOrigin(pattern)),
+    });
+  }
+  return rows;
+}
+
+async function refreshSurfaces(): Promise<void> {
+  const list = document.getElementById("surface-list");
+  if (list === null) {
+    return;
+  }
+  list.replaceChildren(renderSurfaceList(document, await surfaceRows()));
+}
+
+async function addSurface(): Promise<void> {
+  const originEl = document.getElementById("surface-origin");
+  const productEl = document.getElementById("surface-product");
+  if (!(originEl instanceof HTMLInputElement) || !(productEl instanceof HTMLSelectElement)) {
+    return;
+  }
+  if (!isProduct(productEl.value)) {
+    setSurfaceStatus("Pick what this instance is running.");
+    return;
+  }
+  const entry = parseConfiguredOrigin(originEl.value, productEl.value);
+  if (entry === null) {
+    setSurfaceStatus("Enter the full URL, including https://");
+    return;
+  }
+  await mutateOrigins((list) => upsertOrigin(list, entry));
+  originEl.value = "";
+  setSurfaceStatus("");
+  await refreshSurfaces();
+}
+
+async function onSurfaceClick(event: Event): Promise<void> {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) {
+    return;
+  }
+  const action = target.dataset["action"];
+  const origin = target.dataset["origin"];
+  if (action === undefined || origin === undefined) {
+    return;
+  }
+  const pattern = hostPermissionPattern(origin);
+  if (action === "remove") {
+    await mutateOrigins((list) => removeConfiguredOrigin(list, origin));
+    setSurfaceStatus("");
+  } else if (action === "grant" && pattern !== null) {
+    // Must run inside this click handler — chrome.permissions.request needs the gesture.
+    const granted = await requestOrigin(pattern);
+    setSurfaceStatus(granted ? "" : "Page access was not granted.");
+  } else if (action === "revoke" && pattern !== null) {
+    // Only claim the sibling entries were affected if the revoke actually
+    // happened — otherwise the note would say access was withdrawn from a host
+    // that still has it.
+    if (await removeOrigin(pattern)) {
+      setSurfaceStatus(sharedHostNote(await surfaceRows(), origin) ?? "");
+    } else {
+      setSurfaceStatus("Page access could not be revoked.");
+    }
+  }
+  await refreshSurfaces();
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("pair")?.addEventListener("click", () => void pair());
   document.getElementById("unpair")?.addEventListener("click", () => void onUnpairClick());
   document.getElementById("unpair-cancel")?.addEventListener("click", () => disarmUnpair());
+  document.getElementById("surface-add")?.addEventListener("click", () => void addSurface());
+  document
+    .getElementById("surface-list")
+    ?.addEventListener("click", (event) => void onSurfaceClick(event));
   void refreshConnection();
+  void refreshSurfaces();
 });

@@ -7,3 +7,15 @@ body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
 .options__status { display: block; margin-top: 12px; font-size: 13px; min-height: 1.2em; }
 code { font-family: ui-monospace, monospace; padding: 1px 4px; border-radius: 4px; background: rgba(127,127,127,0.18); }
 #unpair-cancel { margin-left: 8px; }
+.options select { width: 100%; box-sizing: border-box; padding: 8px; }
+.surfaces__list { list-style: none; margin: 0; padding: 0; }
+.surfaces__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.24);
+}
+.surfaces__origin { flex: 1; font-family: ui-monospace, monospace; font-size: 13px; }
+.surfaces__product { font-size: 12px; opacity: 0.75; }
+.surfaces__row button { margin-top: 0; }

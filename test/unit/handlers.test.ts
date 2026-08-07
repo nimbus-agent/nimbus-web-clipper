@@ -7,6 +7,7 @@ import {
   handleQueueRemove,
   handleQueueRetry,
   handleRelated,
+  handleResolve,
   handleUnpair,
 } from "../../src/background/handlers.ts";
 import type { QueuedClip } from "../../src/shared/queue.ts";
@@ -341,5 +342,123 @@ describe("handleUnpair", () => {
     });
     expect(cleared).toBe(true);
     expect(res).toEqual({ kind: "connection", paired: false });
+  });
+});
+
+describe("handleResolve", () => {
+  const conn = {
+    origin: "http://127.0.0.1:7474",
+    token: "tok",
+    label: "MacBook",
+    pairedAt: 0,
+  };
+  const item = {
+    id: "i1",
+    service: "github",
+    type: "pr",
+    title: "Add thing",
+    canonicalUrl: "https://github.com/acme/web/pull/1",
+    url: "https://github.com/acme/web/pull/1",
+  };
+  const PR = "https://github.com/acme/web/pull/1/files";
+
+  test("an unrecognised page never touches the gateway", async () => {
+    let called = false;
+    const res = await handleResolve(
+      {
+        getConnection: async () => conn,
+        getOrigins: async () => [],
+        postResolve: async () => {
+          called = true;
+          return { ok: true, item: null };
+        },
+      },
+      { kind: "resolve", pageUrl: "https://example.com/whatever" },
+    );
+    expect(called).toBe(false);
+    expect(res).toEqual({
+      kind: "resolve",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+      item: null,
+    });
+  });
+
+  test("sends the CANONICALISED url, not the page url", async () => {
+    let sent: string | null = null;
+    await handleResolve(
+      {
+        getConnection: async () => conn,
+        getOrigins: async () => [],
+        postResolve: async (_o, _t, url) => {
+          sent = url;
+          return { ok: true, item };
+        },
+      },
+      { kind: "resolve", pageUrl: PR },
+    );
+    expect(sent).toBe("https://github.com/acme/web/pull/1");
+  });
+
+  test("a resolved item comes back with its recognition", async () => {
+    const res = await handleResolve(
+      {
+        getConnection: async () => conn,
+        getOrigins: async () => [],
+        postResolve: async () => ({ ok: true, item }),
+      },
+      { kind: "resolve", pageUrl: PR },
+    );
+    expect(res.ok).toBe(true);
+    expect(res.recognition.ok).toBe(true);
+    if (res.ok) {
+      expect(res.item).toEqual(item);
+    }
+  });
+
+  test("not paired short-circuits before the gateway call", async () => {
+    let called = false;
+    const res = await handleResolve(
+      {
+        getConnection: async () => null,
+        getOrigins: async () => [],
+        postResolve: async () => {
+          called = true;
+          return { ok: true, item: null };
+        },
+      },
+      { kind: "resolve", pageUrl: PR },
+    );
+    expect(called).toBe(false);
+    expect(res).toMatchObject({ ok: false, reason: "not_paired" });
+  });
+
+  test("a gateway failure still carries the recognition — we know the page", async () => {
+    const res = await handleResolve(
+      {
+        getConnection: async () => conn,
+        getOrigins: async () => [],
+        postResolve: async () => ({ ok: false, reason: "unsupported" as const }),
+      },
+      { kind: "resolve", pageUrl: PR },
+    );
+    expect(res).toMatchObject({ ok: false, reason: "unsupported" });
+    expect(res.recognition.ok).toBe(true);
+  });
+
+  test("a configured self-hosted origin is used for recognition", async () => {
+    let sent: string | null = null;
+    await handleResolve(
+      {
+        getConnection: async () => conn,
+        getOrigins: async () => [{ origin: "https://corp.example/jira", product: "jira" as const }],
+        postResolve: async (_o, _t, url) => {
+          sent = url;
+          return { ok: true, item: null };
+        },
+      },
+      { kind: "resolve", pageUrl: "https://corp.example/jira/browse/plat-9?x=1" },
+    );
+    expect(sent).toBe("https://corp.example/jira/browse/PLAT-9");
   });
 });

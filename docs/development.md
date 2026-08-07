@@ -154,6 +154,50 @@ Chrome's 30-second minimum on alarm delays does not apply; retry timing
 observed in dev mode will differ from the computed Retry-After. Verify pacing
 with a shipped extension or configured interval for production accuracy.
 
+## Manual verification — Page recognition (Phase C1)
+
+Prereq: paired, gateway running. Note the shipped gateway has **no**
+`/v1/clips/resolve` route yet, so against a real gateway the header will
+correctly say *"This Nimbus gateway can't resolve pages yet."* To exercise the
+resolved path, run `bun run mock-gateway` and pair against
+`http://127.0.0.1:8765` — its mock resolve route always returns an item.
+
+1. **Recognised, resolved:** open any GitHub PR (e.g.
+   `https://github.com/acme/web/pull/482`) and press `Alt+Shift+R`.
+   → The header reads `GitHub PR · acme/web #482` and names the resolved item.
+   The Related lane is below it, collapsed/expandable.
+2. **Sub-tabs collapse:** navigate to the PR's *Files changed* tab and reopen the
+   panel. → The header is unchanged; the resolve request carried the bare PR URL.
+3. **Unrecognised:** open any news article and press `Alt+Shift+R`.
+   → *"Not a recognised Nimbus surface"*, and **the Related lane still renders**.
+4. **Gateway down:** stop the gateway and repeat step 1. → The surface line still
+   shows (recognition is local); the header reports it can't reach Nimbus.
+5. **Self-hosted with a path prefix:** in Options → **Recognised surfaces**, add
+   `https://corp.example/jira` as *Jira*. → A page at `/jira/browse/PLAT-9` is
+   recognised as `Jira issue · PLAT-9`; a page at `/wiki/Home` on the same host
+   is not.
+6. **Case sensitivity:** add the same instance as `/Jira` instead. → Pages under
+   `/jira` are **not** recognised. This is deliberate: the prefix is carried
+   verbatim into the resolve key.
+7. **Recognition works before any grant:** with no origin granted, steps 1–5 all
+   still work — the `Alt+Shift+R` gesture supplies `activeTab`.
+8. **Grant / revoke, in BOTH Chrome and Firefox:** click **Grant page access** on
+   a row. → The browser's permission prompt appears; accepting flips the row to
+   **Revoke page access**; declining leaves it on **Grant** with the status
+   *"Page access was not granted."*; **Revoke** flips it back. Run this on both
+   targets — the prompt and its gesture rules are the browser's, not ours, and a
+   grant that silently resolved `false` on one would otherwise only show up in
+   the wild.
+9. **Shared-host note:** add two prefixed entries on one host (`/jira` and
+   `/jenkins`), grant, then revoke one. → The status names the sibling origin the
+   revoke also affects (grants are per host, not per prefix).
+
+**Known limitation, confirm rather than fix:** on a client-side (SPA) navigation
+— clicking from one PR to another without a page load — an open panel keeps
+describing the page it was opened on. Close and reopen to correct it.
+Recognition does not follow navigation in this phase; doing so needs the
+gesture-free access Phase C2 is the first to require.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any
