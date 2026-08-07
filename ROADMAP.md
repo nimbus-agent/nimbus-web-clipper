@@ -316,16 +316,16 @@ is worthless without this — and half of C1 is buildable today.*
 > do it: `/v1/clips/related` uses `canonicalUrl` only to *exclude* the current
 > host from FTS hits (`clips/clip-related.ts`, `buildRelatedQuery`), and
 > `GET /v1/items/<id>` matches `id` or `external_id`, never `canonical_url`.
-> **Propose in the gateway repo first.**
 > **Done when** On an indexed PR/build/issue the client names the exact item it
 > resolved to; on a miss it says "not indexed" instead of showing loose hits.
-> **Status** The whole client path is built and shipped: `POST /v1/clips/resolve`
-> is proposed in
-> [`docs/superpowers/specs/2026-08-07-phase-c1-know-where-you-are-design.md`](./docs/superpowers/specs/2026-08-07-phase-c1-know-where-you-are-design.md),
-> the client codes against it, and a **404 (route absent) is a first-class "this
-> gateway can't resolve pages yet"** — distinct from a 200 `item: null` miss. It
-> flips to live with no code change once the route ships. **The upstream proposal
-> still has to be opened in the gateway repo.**
+> **Status** The client path is built and shipped, and degrades honestly: an
+> absent route 404s and the panel says "this gateway can't resolve pages yet".
+> **The gateway route is already designed upstream** — `GET /v1/items/resolve?url=`
+> in the Nimbus repo's `2026-08-06-http-agents-route-and-resolve-by-url-design.md`,
+> whose token-scopes PR has landed (#1062) and whose resolve PR has not. Nothing
+> needs proposing. What the client shipped differs from that design in route,
+> auth scope and response shape — the gaps and the order to close them are in
+> [`docs/superpowers/specs/2026-08-07-c1-upstream-reconciliation.md`](./docs/superpowers/specs/2026-08-07-c1-upstream-reconciliation.md).
 
 ### C1.2 Surface recognisers · 🟢 · M — ✅ shipped
 > **What** Pure modules that classify the current page — Bitbucket PR, Jenkins
