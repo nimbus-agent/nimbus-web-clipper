@@ -1,7 +1,7 @@
 # Phase C1 — Know Where You Are — Design
 
 **Date:** 2026-08-07
-**Status:** Approved (brainstorming) — ready for implementation plan
+**Status:** Approved — review notes integrated
 **Roadmap:** [C1.1–C1.4](../../../ROADMAP.md#phase-c1--know-where-you-are-)
 
 ## Goal
@@ -141,8 +141,17 @@ path-prefixed self-hosted instance would produce a confidently wrong header, and
 a wrong header is worse than no header on a surface whose whole job is
 recognition. An unknown host is `{ ok: false, reason: "unknown-host" }`.
 
-**Path patterns**, per product (each also matching the sub-tabs that are still the
-same item):
+**Matching a configured origin.** Entries may carry a path prefix
+(`https://corp.example/jira`), so matching is **longest-prefix-wins**: pick the
+entry whose origin and prefix are the longest match for the page URL, strip that
+prefix, and apply the product's pattern to the remainder. This is what lets one
+host carry several products — `https://corp.example/jira` and
+`https://corp.example/jenkins` are distinct entries — and it settles the case
+where a bare `https://corp.example` entry sits alongside a prefixed one. Built-in
+SaaS entries have an empty prefix, so they fall out of the same rule.
+
+**Path patterns**, per product, applied to the path *after* the configured prefix
+is stripped (each also matching the sub-tabs that are still the same item):
 
 | Product | Pattern | Also matches |
 | --- | --- | --- |
@@ -159,7 +168,9 @@ case — folder-organised Jenkins is the norm at any size.
 **Canonicalisation** produces `resolveUrl`: lowercase scheme and host, strip the
 default port, strip the fragment, strip **all** query parameters (none of the
 patterns above carry identity in the query), drop the trailing slash, and collapse
-sub-tab paths onto the item itself. Two URLs a human would call "the same PR" must
+sub-tab paths onto the item itself. The configured path prefix is **preserved** —
+`https://corp.example/jira/browse/ABC-1` is what the connector indexed, so it is
+what the gateway is asked about. Two URLs a human would call "the same PR" must
 produce byte-identical `resolveUrl` strings — this is the join key, so drift here
 shows up as an unexplained resolve miss.
 
@@ -169,14 +180,24 @@ Adding a surface is one table entry plus fixtures. No other file changes.
 
 ```ts
 export interface ConfiguredOrigin {
-  readonly origin: string;   // "https://jenkins.corp.example" — scheme + host [+ port], no path
+  /** Scheme + host [+ port] and an optional path prefix, e.g.
+   *  "https://jenkins.corp.example" or "https://corp.example/jenkins". */
+  readonly origin: string;
   readonly product: Product;
 }
 ```
 
-Validation: parseable as a URL, `http:`/`https:` only, no path/query/fragment,
-normalised to lowercase, deduped by origin (one product per origin — re-adding an
-existing origin replaces its product rather than creating a second entry).
+Validation: parseable as a URL, `http:`/`https:` only, query and fragment
+stripped, host lowercased, trailing slash dropped. An **optional path prefix** is
+allowed, so self-hosted instances behind a reverse proxy or on a sub-path
+(`/jira`, `/jenkins`) are configurable.
+
+Entries are **deduped by origin *and* prefix**, not by host: one product per
+`origin + prefix`, so `https://corp.example/jira` and `https://corp.example/jenkins`
+are two legitimate entries on one host. Re-adding an existing `origin + prefix`
+replaces its product rather than creating a second entry. Lookup is
+longest-prefix-wins (see `recognise.ts` above).
+
 
 This module is **deliberately separate from `shared/gateway.ts`**. That module
 validates the one origin the extension may *talk to* and its loopback rule is a
@@ -190,6 +211,14 @@ A thin promise-wrapped seam over `chrome.permissions`: `hasOrigin(pattern)`,
 `requestOrigin(pattern)`, `removeOrigin(pattern)`, and a change subscription.
 `chrome.permissions.request` must run inside a user-gesture handler, so it is
 called from the Options page's click handler — never from the service worker.
+
+**The grant is host-scoped, even when the configured origin carries a prefix.**
+A match pattern may include a path (`https://corp.example/jira/*`), but the
+browser's permission warning is per-host either way, so a path-scoped grant buys
+no privacy and costs exact-pattern bookkeeping in `permissions.contains` and in
+revocation. One entry per host: `https://corp.example/*`. Revoking it therefore
+silences every configured prefix on that host — the Options UI must say so where
+a host carries more than one.
 
 ## Proposed gateway contract
 
@@ -350,12 +379,15 @@ offline queue — resolve is a read.
 ## Testing
 
 - **`recognise.ts`** — a fixture table of real URLs per product (SaaS and
-  self-hosted, with ports, nested Jenkins folders, sub-tabs, tracking parameters,
-  trailing slashes), each asserting product, kind, ref and the exact `resolveUrl`.
-  Plus negative fixtures: unknown hosts, near-miss paths, `file:`/`chrome:` URLs.
+  self-hosted, with ports, **path prefixes**, nested Jenkins folders, sub-tabs,
+  tracking parameters, trailing slashes), each asserting product, kind, ref and
+  the exact `resolveUrl` — including that the prefix survives canonicalisation.
+  Plus negative fixtures: unknown hosts, near-miss paths, `file:`/`chrome:` URLs,
+  and a prefixed entry that must **not** match a sibling path on the same host.
   Canonicalisation gets its own idempotence assertion (`f(f(x)) === f(x)`).
-- **`origins.ts`** — validation and dedupe, including rejecting an origin with a
-  path and re-adding an origin with a different product.
+- **`origins.ts`** — validation and dedupe: two prefixed entries coexisting on one
+  host, longest-prefix-wins against a bare host entry, and re-adding the same
+  `origin + prefix` with a different product replacing rather than duplicating it.
 - **`handleResolve`** — injected deps, no `chrome`: the unrecognised short-circuit,
   each gateway status mapping, and the rule that `recognition` survives failure.
 - **`gateway-client.postResolve`** — status mapping via a stubbed `fetch`, with
@@ -384,15 +416,32 @@ offline queue — resolve is a read.
 Steps 1–4 are each independently shippable and reviewable; step 3 is the only one
 that depends on the proposed contract, and it ships in its degraded state.
 
-## Open questions for upstream
+## Resolved and deferred questions
 
-These block nothing in this phase — the client degrades — but they are the
-substance of the gateway proposal:
+Settled during design review. The first three are **positions this repo takes into
+the upstream proposal**, not decisions it can make — the gateway owns the contract.
 
-- Does `POST /v1/clips/resolve` reuse the clip bearer token, or does a read route
-  want its own scope?
-- Does the gateway normalise `canonicalUrl` on its side, or is byte-equality with
-  the indexed `canonical_url` the contract? (The client canonicalises either way;
-  the answer decides who owns the drift.)
-- Should the response carry enough to render a header without a second call —
-  title and type are proposed above for exactly that reason.
+- **Token scope — decided (client position).** `POST /v1/clips/resolve` reuses the
+  clip bearer token. The pairing model mints one long-lived token per browser and
+  the contract has no scope concept today, so a separate read scope would be a new
+  gateway capability rather than a choice we can exercise. If upstream introduces
+  scopes, this client consumes them.
+- **Canonical-URL normalisation — deferred upstream, assumption stated here.** How
+  the gateway indexes and queries `canonical_url` is its own design. What the
+  client codes against is **byte-equality**: it sends the canonicalised
+  `resolveUrl` and expects a match against the stored `canonical_url` as-is. This
+  is the likeliest source of a silent miss — a connector may have written a URL
+  our canonicalisation would have reshaped — so the proposal must say plainly
+  whether the gateway normalises on its side, and a mismatch has to be
+  distinguishable from a genuine "not indexed" during upstream bring-up.
+- **Response payload — decided (client position).** The proposal asks for the
+  identity fields (`id`, `service`, `type`, `title`, `canonicalUrl`, `url`) in the
+  resolve response itself, so the header renders from one round trip. A shape that
+  returned only an id would force a second read before the panel could say
+  anything, which is latency the recognition surface can't absorb.
+- **Path prefixes for self-hosted instances — decided (client-side).** Configured
+  origins may carry a path prefix (`https://corp.example/jira`), matched
+  longest-prefix-wins and stripped before the product's path pattern is applied,
+  then preserved in `resolveUrl`. This is entirely a client concern and needs
+  nothing from upstream.
+
