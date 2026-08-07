@@ -160,6 +160,11 @@ describe("parseConfiguredOrigin", () => {
       "https://corp.example/jira",
     );
   });
+  test("lowercases the host but PRESERVES path case", () => {
+    expect(parseConfiguredOrigin("https://Corp.Example/Jenkins", "jenkins")?.origin).toBe(
+      "https://corp.example/Jenkins",
+    );
+  });
   test("rejects a non-http(s) scheme", () => {
     expect(parseConfiguredOrigin("ftp://corp.example", "jira")).toBeNull();
   });
@@ -223,6 +228,11 @@ describe("matchOrigin", () => {
   test("a different port is a different origin", () => {
     expect(matchOrigin([bare], new URL("https://corp.example:8443/x"))).toBeNull();
   });
+  test("path prefixes are case-SENSITIVE — /Jenkins is not /jenkins", () => {
+    const upper: ConfiguredOrigin = { origin: "https://corp.example/Jenkins", product: "jenkins" };
+    expect(matchOrigin([upper], new URL("https://corp.example/jenkins/job/web/1"))).toBeNull();
+    expect(matchOrigin([upper], new URL("https://corp.example/Jenkins/job/web/1"))).not.toBeNull();
+  });
 });
 
 describe("hostPermissionPattern", () => {
@@ -285,6 +295,13 @@ export function isConfiguredOrigin(v: unknown): v is ConfiguredOrigin {
  * Split a stored origin into its URL origin and its path prefix ("" when none).
  * The URL parser does the normalising: it lowercases scheme and host and drops a
  * default port, so two spellings of the same origin cannot diverge here.
+ *
+ * The PATH is deliberately left case-sensitive. URL paths are case-sensitive per
+ * RFC 3986 and on the servers these instances run on, so "/Jenkins" and
+ * "/jenkins" really are different context paths. More importantly, the prefix is
+ * carried verbatim into `resolveUrl`, which must be byte-identical to the
+ * `canonical_url` the connector indexed — case-folding it here would silently
+ * turn a resolvable page into a permanent miss.
  */
 export function splitOrigin(origin: string): { base: string; prefix: string } | null {
   let url: URL;
@@ -367,7 +384,7 @@ export function hostPermissionPattern(origin: string): string | null {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `bunx vitest run test/unit/origins.test.ts`
-Expected: PASS, 20 tests.
+Expected: PASS, 22 tests.
 
 - [ ] **Step 6: Typecheck and lint**
 
@@ -2621,22 +2638,11 @@ Add these styles to the `STYLES` template literal:
 .nimbus-related__lane-title { cursor: pointer; padding: 10px 16px; font-weight: 600; }
 ```
 
-Replace the `query` function with the state-plus-rerender pair below, and keep `readContext` as it is (the related query still uses the DOM canonical link — a different question from recognition):
+Replace the `query` function with `headerFrom` (pure, top-level) plus the mount-scoped controller below, and keep `readContext` as it is (the related query still uses the DOM canonical link — a different question from recognition).
+
+**State is scoped to the mount, not the module.** Each injection of `panel.js` re-evaluates the bundle in a fresh IIFE scope, so module-level `let` would not actually leak between mounts — but a closure per mount is simpler (no reset step to forget), and it makes "this response belongs to that panel" structural instead of incidental.
 
 ```ts
-// The panel holds one state and re-renders it. Resolve and related are fetched in
-// PARALLEL and land independently: a slow or failing resolve must never keep the
-// related lane from appearing.
-let header: HeaderState = { kind: "loading" };
-let relatedBody: (doc: Document) => HTMLElement = (doc) => renderError(doc, "Loading…");
-
-function paint(body: HTMLElement): void {
-  const lanes: Lane[] = [
-    { id: "related", title: "Related", expanded: true, render: relatedBody },
-  ];
-  body.replaceChildren(renderShell(document, { header, lanes }));
-}
-
 function headerFrom(res: unknown): HeaderState {
   if (!isResolveResponse(res)) {
     return { kind: "error", surface: null, message: "Unexpected response." };
@@ -2657,62 +2663,86 @@ function headerFrom(res: unknown): HeaderState {
     : { kind: "resolved", surface, item: res.item };
 }
 
-async function loadHeader(body: HTMLElement): Promise<void> {
-  let res: unknown;
-  try {
-    res = await sendMessage({ kind: "resolve", pageUrl: window.location.href, title: document.title });
-  } catch {
-    header = { kind: "error", surface: null, message: "Couldn't connect to Nimbus." };
-    paint(body);
-    return;
-  }
-  header = headerFrom(res);
-  paint(body);
-}
+/**
+ * One panel's state and the two loads that fill it. Resolve and related are
+ * fetched in PARALLEL and land independently: a slow or failing resolve must
+ * never keep the related lane from appearing.
+ */
+function createPanel(body: HTMLElement): {
+  paint: () => void;
+  loadHeader: () => Promise<void>;
+  loadRelated: () => Promise<void>;
+} {
+  let header: HeaderState = { kind: "loading" };
+  let relatedBody: (doc: Document) => HTMLElement = (doc) => renderError(doc, "Loading…");
 
-async function loadRelated(body: HTMLElement): Promise<void> {
-  let res: unknown;
-  try {
-    res = await sendMessage({ kind: "related", ...readContext() });
-  } catch {
-    relatedBody = (doc) => renderError(doc, "Couldn't connect to Nimbus.");
-    paint(body);
-    return;
+  function paint(): void {
+    const lanes: Lane[] = [
+      { id: "related", title: "Related", expanded: true, render: relatedBody },
+    ];
+    body.replaceChildren(renderShell(document, { header, lanes }));
   }
-  if (!isRelatedResponse(res)) {
-    relatedBody = (doc) => renderError(doc, "Unexpected response.");
-  } else if (res.ok) {
-    const items: RelatedHit[] = res.items;
-    relatedBody = (doc) => renderHits(doc, items);
-  } else {
-    const message = RELATED_MESSAGES[res.reason] ?? "Couldn't fetch related items.";
-    relatedBody = (doc) => renderError(doc, message);
+
+  async function loadHeader(): Promise<void> {
+    let res: unknown;
+    try {
+      res = await sendMessage({
+        kind: "resolve",
+        pageUrl: window.location.href,
+        title: document.title,
+      });
+    } catch {
+      header = { kind: "error", surface: null, message: "Couldn't connect to Nimbus." };
+      paint();
+      return;
+    }
+    header = headerFrom(res);
+    paint();
   }
-  paint(body);
+
+  async function loadRelated(): Promise<void> {
+    let res: unknown;
+    try {
+      res = await sendMessage({ kind: "related", ...readContext() });
+    } catch {
+      relatedBody = (doc) => renderError(doc, "Couldn't connect to Nimbus.");
+      paint();
+      return;
+    }
+    if (!isRelatedResponse(res)) {
+      relatedBody = (doc) => renderError(doc, "Unexpected response.");
+    } else if (res.ok) {
+      const items: RelatedHit[] = res.items;
+      relatedBody = (doc) => renderHits(doc, items);
+    } else {
+      const message = RELATED_MESSAGES[res.reason] ?? "Couldn't fetch related items.";
+      relatedBody = (doc) => renderError(doc, message);
+    }
+    paint();
+  }
+
+  return { paint, loadHeader, loadRelated };
 }
 ```
 
-In `mount()`, replace the initial body content and the single `void query(body)` call with:
+In `mount()`, replace the initial body content with a controller and its first paint:
 
 ```ts
   const body = document.createElement("div");
   body.className = "nimbus-related__body";
-  paint(body);
+  const panel = createPanel(body);
+  panel.paint();
 ```
 
 and, at the end of `mount()` where `void query(body)` used to be:
 
 ```ts
-  // Parallel on purpose — neither request gates the other.
-  void loadHeader(body);
-  void loadRelated(body);
-```
-
-Reset the module state at the **top** of `mount()` — before the `paint(body)` call above — so a re-injection starts clean rather than flashing the previous page's header:
-
-```ts
-  header = { kind: "loading" };
-  relatedBody = (doc) => renderError(doc, "Loading…");
+  // Parallel on purpose — neither request gates the other. Fail closed like every
+  // other detached call in this codebase (see service-worker.ts): there is no
+  // console in src/ and nowhere to report an unexpected rejection, so swallowing
+  // it beats an unhandled rejection in the host page.
+  panel.loadHeader().catch(() => undefined);
+  panel.loadRelated().catch(() => undefined);
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -2735,6 +2765,9 @@ In one terminal: `bun run mock-gateway`. Load `dist/chrome` via `chrome://extens
    Expected: "Not a recognised Nimbus surface", and the Related lane still renders.
 3. Stop the mock gateway and repeat step 1.
    Expected: the surface line still shows; the header says the gateway is unreachable.
+4. Repeat step 1 in Firefox (`about:debugging` → Load Temporary Add-on → `dist/firefox/manifest.json`).
+
+**Deferred, deliberately: recognition does not follow client-side navigation.** Bitbucket, Jira and GitHub are SPAs, so clicking from one PR to another changes the URL without a page load, and an open panel keeps showing the header for the page it was summoned on. This phase does not fix that: the panel is user-summoned, reopening it re-resolves, and following navigation properly means listening for URL changes on pages the user has granted — which is exactly the gesture-free access **C1.4** grants and **C2** is the first to need. Adding a listener here would either need the grant this phase deliberately leaves optional, or a stale-response guard that only covers the ~1s a request is in flight while leaving the real staleness untouched. Record it as the first candidate for the C2 slice.
 
 - [ ] **Step 7: Commit**
 
@@ -2770,9 +2803,12 @@ Add a section after the clip-pipeline section, matching the file's existing tone
 Append to the manual-verification checklist:
 
 - Add a self-hosted surface with a path prefix in Options; confirm a matching page is recognised and a sibling path on the same host is not.
+- Confirm the path prefix is matched case-sensitively: an entry added as `/Jenkins` does not recognise pages under `/jenkins`.
 - Confirm the panel recognises pages **before** any grant (the `Alt+Shift+R` gesture supplies `activeTab`).
+- **Run the grant/revoke flow in both Chrome and Firefox.** `chrome.permissions.request` resolves a `Promise<boolean>` on both, but the prompt is rendered by the browser and Firefox has its own dialog and its own gesture rules; a grant that silently resolves `false` on one target and `true` on the other would otherwise only surface in the wild. Confirm on each: the prompt appears, granting flips the row to "Revoke page access", declining leaves it on "Grant" with the "Page access was not granted." status, and revoking flips it back.
 - Grant page access for a host, then revoke it; confirm the shared-host note appears when the host carries more than one prefix.
 - Confirm the panel's Related lane renders in every header state, including with the gateway stopped.
+- **Known C1 limitation to confirm, not fix:** on a client-side (SPA) navigation — clicking from one PR to another without a page load — the panel header keeps describing the page it was opened on. Closing and reopening the panel corrects it. Recognition does not follow navigation in this phase; see the note in Task 9.
 
 - [ ] **Step 3: Add the CHANGELOG entry**
 
