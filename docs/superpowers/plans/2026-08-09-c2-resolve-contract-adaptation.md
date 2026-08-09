@@ -1897,6 +1897,20 @@ Expected: all five PASS. Fix any Biome findings (`bun run format` applies the sa
 
 In `docs/architecture.md`, update the resolve section: the route, the four outcomes, who owns canonicalisation (the gateway), and why `chosen` is a separate header state from `resolved`.
 
+**Specifics found during Task 5 — this file is more stale than "update the resolve
+section" implies. Grep it, do not skim it:**
+
+- It still documents the pre-C2 endpoint `POST /v1/clips/resolve`, which no longer
+  exists anywhere in the code. The route is `GET /v1/items/resolve?url=`.
+- It still describes the **old canonicalisation model**, in which the client strips
+  query params and sub-tab segments before sending. That is now exactly backwards:
+  the client sends the address-bar URL with identity normalisation only (Jira key
+  upper-casing), and the gateway owns canonicalisation via `canonicalizeUrl` plus a
+  bounded match ladder. A reader following the current text would reintroduce the
+  duplicate-canonicalisation bug this plan removed.
+- Also grep `CHANGELOG.md` and `docs/development.md` for `/v1/clips/resolve` — Task 1's
+  review noted the stale literal survives in docs even though it is gone from source.
+
 In `ROADMAP.md`, mark C1.1's contract adaptation done and note that `fetchable` is now carried through for C3.1.
 
 - [ ] **Step 6: Commit**
