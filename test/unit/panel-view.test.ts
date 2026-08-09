@@ -456,6 +456,28 @@ describe("renderHeader — fetch outcomes", () => {
     expect(el.textContent).not.toContain("<label>");
   });
 
+  // SECURITY end-to-end, mirroring the `needs-scope` case: full 403 detail is
+  // present, but the label is unsafe to paste into a shell. Falls back to the
+  // same generic guidance, leaking neither the label nor a `--set` list.
+  it("falls back to generic guidance, and leaks neither label nor --set, when the label is unsafe", () => {
+    const el = renderHeader(document, {
+      kind: "fetch-blocked",
+      surface: "S",
+      product: "github",
+      reason: "needs-fetch-scope",
+      scopeGap: {
+        label: "chrome; rm -rf ~",
+        required: "fetch",
+        granted: ["clip", "briefs", "resolve"],
+      },
+    });
+    expect(el.textContent).toContain(
+      "Grant it on the gateway: run nimbus clip status to find this device, then nimbus clip scopes.",
+    );
+    expect(el.textContent).not.toContain("chrome; rm -rf ~");
+    expect(el.textContent).not.toContain("--set");
+  });
+
   it("offers a fetch retry on a rate limit", () => {
     const seen: string[] = [];
     const el = renderHeader(

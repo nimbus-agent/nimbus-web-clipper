@@ -171,17 +171,26 @@ function headerFrom(res: unknown, nowMs: number): HeaderState {
   // bug, not a user-facing distinction. It reads as "not indexed" either way.
   //
   // TYPE-COMPAT NOTE (Task 6, C3.1): `not-indexed` now also carries `product` and
-  // `fetchable`, added so the header can offer a targeted-fetch button. Nothing
-  // here decides fetchability yet — that's Task 7's job, wiring the fetch state
-  // machine — so `fetchable` stays hardcoded `false`, an exact behavioural no-op:
-  // no button rendered here today, none rendered here still. `res.recognition.ok`
+  // `fetchable`, added so the header can offer a targeted-fetch button.
+  // `outcome.fetchable` is real: both `not-indexed` and `unresolvable` (the only
+  // arms left once `found`/`ambiguous` returned above) already carry it on the
+  // wire (ResolveOutcome, shared/types.ts) — it is not invented here. What is
+  // still Task 7's job is the fetch STATE MACHINE: the click handler, the
+  // one-fetch-per-panel latch, and the outcome→header mapping for the fetch
+  // response itself (fetching / fetch-blocked / fetch-retry) — none of that is
+  // wired here; `onFetch` is not passed to `renderShell` below. `res.recognition.ok`
   // is guaranteed true whenever `surface` is non-null (see `surfaceLine`), so this
   // guard is unreachable in practice; it exists only so TS can narrow `product`
   // off `res.recognition` without a non-null assertion.
   if (!res.recognition.ok) {
     return { kind: "unrecognised" };
   }
-  return { kind: "not-indexed", surface, product: res.recognition.product, fetchable: false };
+  return {
+    kind: "not-indexed",
+    surface,
+    product: res.recognition.product,
+    fetchable: outcome.fetchable,
+  };
 }
 
 /**

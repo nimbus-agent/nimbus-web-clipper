@@ -352,6 +352,40 @@ describe("panel-in-page recognition header", () => {
     });
   });
 
+  // Closes the gap where `outcome.fetchable` flows from the wire into the header:
+  // every panel-view.test.ts fixture passes `fetchable` as a hardcoded literal, so
+  // it alone can't tell a real wire-through from a hardcoded `false`. This drives
+  // a genuine ResolveResponse end to end through headerFrom/renderShell.
+  test("a fetchable miss offers a fetch button naming the product", async () => {
+    respond({
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: true },
+    });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).toContain("Not indexed");
+    });
+    expect(shadow()?.querySelector(".nimbus-related__header-state button")?.textContent).toBe(
+      "Fetch this from GitHub",
+    );
+  });
+
+  test("an unfetchable miss offers no fetch button", async () => {
+    respond({
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: false },
+    });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).toContain("Not indexed");
+    });
+    expect(shadow()?.querySelector(".nimbus-related__header-state button")).toBeNull();
+  });
+
   test("an unsupported gateway is a first-class state, not an error", async () => {
     respond({ kind: "resolve", ok: false, recognition, reason: "unsupported" });
     await loadPanel();
