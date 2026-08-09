@@ -2,7 +2,7 @@
 // deterministic store screenshots. Not shipped in dist/. The RelatedHit typing
 // keeps these in lockstep with the locked /v1/clips/related contract; a unit test
 // re-asserts the shape at runtime.
-import type { RelatedHit, ResolvedItem } from "../../src/shared/types.ts";
+import type { RelatedHit } from "../../src/shared/types.ts";
 
 export interface PairConfirmResponse {
   readonly token: string;
@@ -29,21 +29,20 @@ export const CLIP_INGEST: ClipIngestResponse = {
   status: "created",
 };
 
-/** The PROPOSED resolve route (not part of the locked contract — see the C1 spec). */
-export interface ResolveResponse {
-  readonly item: ResolvedItem;
-}
-
-export const RESOLVE: ResolveResponse = {
+/** `GET /v1/items/resolve` — the contracted resolve route (Nimbus gateway). */
+export const RESOLVE_FIXTURE = {
+  found: true,
+  matchKind: "exact",
   item: {
-    id: "pr-482",
-    service: "bitbucket",
+    id: "gh-pr-482",
+    service: "github",
     type: "pr",
-    title: "Cache the index between runs",
-    canonicalUrl: "https://bitbucket.org/acme/web/pull-requests/482",
-    url: "https://bitbucket.org/acme/web/pull-requests/482",
+    title: "Cache the readability pass",
+    url: "https://github.com/acme/web/pull/482",
+    // Fixed, not Date.now() — screenshots must be reproducible.
+    modified_at: 1_700_000_000_000,
   },
-};
+} as const;
 
 export const RELATED: RelatedResponse = {
   items: [

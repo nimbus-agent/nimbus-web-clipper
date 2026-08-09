@@ -32,10 +32,17 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   change where Nimbus can send data, which remains your local gateway on
   `127.0.0.1` and nothing else.
 
-Resolution needs a gateway route (`POST /v1/clips/resolve`) that is still being
-proposed upstream. Until it ships, the panel says so plainly — *"This Nimbus
-gateway can't resolve pages yet."* — and everything else, including recognition
-and related items, works as described.
+### Changed
+
+- The panel now resolves pages against the gateway's shipped
+  `GET /v1/items/resolve` route instead of the guessed shape Phase C1 was built
+  against. It shows how fresh the indexed item is, marks a closest-match result
+  as weaker than an exact one, and lets you pick when several indexed items match
+  the page. The not-paired, pairing-rejected and can't-reach-Nimbus messages for
+  resolve are reworded to match the new contract, and a malformed resolve
+  response now says "Couldn't read Nimbus's answer." instead of a generic error.
+- A pairing made before the gateway gained token scopes now says so, and names the
+  command that grants it (`nimbus clip scopes`), instead of reporting a Nimbus error.
 
 ## [0.2.0] - 2026-07-28
 

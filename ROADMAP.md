@@ -286,8 +286,8 @@ end-to-end core works in both Chrome and Firefox:
   GitHub / GitLab PRs, Jenkins builds and Jira issues (SaaS hosts are built in;
   self-hosted instances are configured per origin, with optional path prefixes);
   a lane-based panel shell that leads with the recognised surface and the
-  resolved item; opt-in page access, granted per host. The resolve read itself is built and degrades honestly until the
-  gateway route lands — see C1.1.
+  resolved item; opt-in page access, granted per host. The resolve read is
+  shipped against the gateway's real contract — see C1.1.
 - **Release** — tag-driven build/package + Chrome Web Store / Firefox AMO publish
   automation.
 
@@ -302,30 +302,33 @@ the load-bearing decisions and the two state machines are documented there.
 a Bitbucket PR in repo X, and here is the indexed item for it". Everything in C2
 is worthless without this — and half of C1 is buildable today.*
 
-### C1.1 Page → indexed item resolution · 🟡 · M — *client shipped, awaiting the gateway*
-> **What** Resolve the current page's canonical URL to a single indexed item
-> (service, type, id) — or an honest miss.
+### C1.1 Page → indexed item resolution · 🟢 · M — ✅ shipped
+> **What** Resolve the current page's URL to a single indexed item (service,
+> type, id) — or an honest miss.
 > **Why it wows** The panel stops guessing. Naming the item it resolved to is
 > the whole difference between a search box and a client that knows the page.
-> **Touches** `src/shared/related.ts`, `src/background/gateway-client.ts`,
-> `src/shared/messages.ts` (a new request/response pair + guard).
-> **Approach** Send the canonical URL, get back at most one item or a miss —
-> resolution, not ranking. The client must not fall back to fuzzy hits and
-> pretend they are the page.
-> **Depends** **a resolve-by-URL read on the gateway.** Today's contract cannot
-> do it: `/v1/clips/related` uses `canonicalUrl` only to *exclude* the current
-> host from FTS hits (`clips/clip-related.ts`, `buildRelatedQuery`), and
-> `GET /v1/items/<id>` matches `id` or `external_id`, never `canonical_url`.
-> **Done when** On an indexed PR/build/issue the client names the exact item it
-> resolved to; on a miss it says "not indexed" instead of showing loose hits.
-> **Status** The client path is built and shipped, and degrades honestly: an
-> absent route 404s and the panel says "this gateway can't resolve pages yet".
-> **The gateway route is already designed upstream** — `GET /v1/items/resolve?url=`
-> in the Nimbus repo's `2026-08-06-http-agents-route-and-resolve-by-url-design.md`,
-> whose token-scopes PR has landed (#1062) and whose resolve PR has not. Nothing
-> needs proposing. What the client shipped differs from that design in route,
-> auth scope and response shape — the gaps and the order to close them are in
-> [`docs/superpowers/specs/2026-08-07-c1-upstream-reconciliation.md`](./docs/superpowers/specs/2026-08-07-c1-upstream-reconciliation.md).
+> **Touches** `src/shared/recognise.ts`, `src/background/gateway-client.ts`,
+> `src/shared/messages.ts`, `src/panel/panel-view.ts` (header states + the
+> ambiguous-candidate chooser).
+> **Approach** Send the page URL, get back at most one item, an honest miss, or
+> a short list to choose from — resolution, not ranking. The client must not
+> fall back to fuzzy hits and pretend they are the page.
+> **Status** Shipped end to end, against the gateway's real contract:
+> `GET /v1/items/resolve?url=`, its `resolve` token scope, and all four 200
+> outcomes (`found` / `not_indexed` / `unresolvable_url` / `ambiguous`) as a
+> closed union. The client does identity normalisation only (Jira issue-key
+> upper-casing); the gateway owns canonicalisation and match confidence
+> (`matchKind`) — see [`docs/architecture.md`](./docs/architecture.md#the-recognition-pipeline).
+> A pairing made before the gateway grew token scopes gets a named re-grant
+> path (`nimbus clip scopes`) instead of a generic error. `fetchable` — whether
+> the gateway could fetch this URL itself — is parsed and carried through the
+> message boundary on the `not-indexed` / `unresolvable` / `ambiguous` arms,
+> unrendered for now; it is **C3.1**'s targeted-sync trigger.
+> **This closes out the contract adaptation** tracked in
+> [`docs/superpowers/specs/2026-08-07-c1-upstream-reconciliation.md`](./docs/superpowers/specs/2026-08-07-c1-upstream-reconciliation.md):
+> the client was originally built against a guessed shape while the gateway
+> route was still proposed; both landed, and this phase closed the gap between
+> them.
 
 ### C1.2 Surface recognisers · 🟢 · M — ✅ shipped
 > **What** Pure modules that classify the current page — Bitbucket PR, Jenkins

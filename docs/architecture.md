@@ -192,15 +192,18 @@ panel-in-page.ts  ──{ kind:"resolve", pageUrl: location.href }──►  ser
               not recognised                  recognised
               (no gateway call)         { product, kind, ref, resolveUrl }
                     │                              │
-                    │                    postResolve(resolveUrl)
-                    │                    POST /v1/clips/resolve
+                    │                    resolveItem(resolveUrl)
+                    │                    GET /v1/items/resolve?url=
                     │                              │
-                    │              ┌───────────────┼──────────────┐
-                    │           200 item        200 null        404
-                    │              │               │              │
-                    ▼              ▼               ▼              ▼
-              "unrecognised"   "resolved"    "not indexed"   "can't resolve
-                                                              pages yet"
+                    │       ┌──────────┬───────────┼───────────┬──────────┐
+                    │    found     not_indexed  unresolvable  ambiguous  403/404
+                    │       │          │            │            │          │
+                    ▼       ▼          ▼            ▼            ▼          ▼
+              "unrecog-  "resolved" "not         "can't      chooser →  "needs-
+               nised"               indexed"     resolve      "chosen"   scope" /
+                                                  this URL"               "can't
+                                                                          resolve
+                                                                          pages yet"
 ```
 
 Four decisions worth knowing before you change any of it:
@@ -217,16 +220,43 @@ Four decisions worth knowing before you change any of it:
 - **The product is declared per origin, never inferred from the path.** Bitbucket,
   Jenkins and Jira are routinely self-hosted, often behind a reverse proxy on a
   sub-path, so origins are matched longest-prefix-wins and the prefix is stripped
-  before the product's path pattern is applied — then preserved in `resolveUrl`,
-  which must stay byte-identical to the `canonical_url` the connector indexed.
-  Path matching is case-sensitive for the same reason.
-- **`POST /v1/clips/resolve` is proposed, not contracted.** It does not exist on
-  the shipped gateway, which is why it lives in `PROPOSED_PATHS` rather than the
-  locked `CLIP_PATHS`. A **404 means the route is absent** and surfaces as an
-  honest "this gateway can't resolve pages yet"; a **200 with `item: null` is a
-  real miss**. Keeping those distinct is what lets the client ship today and flip
-  to live with no code change. Resolution is at most one item — the panel never
-  passes ranked related hits off as "the page".
+  before the product's path pattern is applied. Path matching is case-sensitive
+  for the same reason.
+- **The gateway owns canonicalisation — the client does identity normalisation
+  only.** `resolveUrl` is the address-bar URL with exactly one narrow change: the
+  matched path prefix swapped for the matcher's normalised form (today only Jira
+  does this, upper-casing the issue key). Query string and sub-tab path segments
+  are sent as-is; stripping them client-side is exactly the duplicate
+  canonicalisation this design removed. `GET /v1/items/resolve?url=` runs the URL
+  through its own `canonicalizeUrl` (drops the fragment, `utm_*`/click-ids, a
+  trailing slash) and then a bounded match ladder — exact key, then the
+  query-stripped key, then up to three trimmed trailing path segments — reporting
+  which rung matched as `matchKind`. `path_trimmed` is a weaker claim than the
+  other two (part of the URL was discarded to get a hit) and the panel renders it
+  as such; `exact` and `query_stripped` are shown with equal confidence. Identity
+  normalisation stays client-side because the ladder is case-sensitive — a
+  lower-cased Jira key would miss rungs 1 and 2 and then get trimmed away
+  entirely on rung 3.
+- **All four resolve outcomes are HTTP 200 — a miss is an answer, not a
+  failure.** `found` (with `item` + `matchKind`), `not_indexed`, `unresolvable_url`
+  and `ambiguous` (up to 5 candidates, `truncated` when the gateway held more back
+  — see below) are modelled as a closed `ResolveOutcome` union, never as a
+  generic 200/404 split. A 403 is `insufficient_scope`: every token paired before
+  the gateway grew scopes lacks `resolve` (`LEGACY_SCOPES` is `["clip","briefs"]`),
+  and the panel says so by name (`nimbus clip scopes`) rather than reporting a
+  Nimbus error — the fix is a re-grant, not a re-pair. A 404 means this gateway
+  build has no resolve route at all, and still surfaces as "this gateway can't
+  resolve pages yet". Resolution is at most one item — the panel never passes
+  ranked related hits off as "the page".
+- **`chosen` is a separate header state from `resolved`, not a rendering of the
+  same state.** When the outcome is `ambiguous`, the panel renders a chooser over
+  `candidates`; picking one repaints the header as `chosen`. A candidate has no
+  `modified_at` — the gateway sends freshness only for a resolved item, never for
+  a candidate — so rendering a chosen candidate as `resolved` would mean
+  inventing an age for it, which is precisely the invisible staleness this header
+  exists to avoid. `truncated` renders no chooser at all: the gateway sends an
+  empty candidate list on that arm specifically so the client cannot imply the
+  right answer is sitting on a shortened menu.
 
 ### Page access is a different axis from network access
 
