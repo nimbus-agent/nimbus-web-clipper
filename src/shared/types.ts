@@ -179,3 +179,42 @@ export interface ScopeGap {
   readonly required: string;
   readonly granted: readonly string[];
 }
+
+/**
+ * A successful call to the targeted-fetch route. Every arm is HTTP 200 — upstream
+ * is explicit that "a miss is a legitimate answer to a well-formed request, not a
+ * client error" (ipc/http-write-routes.ts).
+ *
+ * The three wire arms `not_found`, `unsupported_url` and `no_targeted_fetch`
+ * collapse into `unfetchable`: they differ in WHY the gateway declined but are
+ * identical in what the user can do about it, which is nothing. `not_configured`
+ * stays separate because C3.1's done-when requires it — an unconfigured connector
+ * must "say so plainly instead of retrying".
+ *
+ * `not-configured` carries no service name because the WIRE carries none (only
+ * `no_targeted_fetch` does). The panel names the connector from `Recognition`.
+ */
+export type FetchOutcome =
+  | { readonly kind: "indexed"; readonly itemId: string }
+  | { readonly kind: "unfetchable" }
+  | { readonly kind: "not-configured" }
+  | { readonly kind: "rate-limited" };
+
+/**
+ * `timeout` is NOT a failure and must never be collapsed into `unreachable`.
+ *
+ * It means our 30s timer fired: the gateway may still be completing the fetch.
+ * Reporting it as a failure would assert something we have not established, and
+ * would invite a retry that fires a second outbound provider request for work
+ * already done. `unreachable` means the connection itself failed — nothing was
+ * sent, and a retry is safe.
+ */
+export type FetchError =
+  | "not_paired"
+  | "unauthorized"
+  | "insufficient_scope"
+  /** 404 — this gateway has no fetch route, or the seam is disabled. */
+  | "unsupported"
+  | "timeout"
+  | "unreachable"
+  | "server_error";
