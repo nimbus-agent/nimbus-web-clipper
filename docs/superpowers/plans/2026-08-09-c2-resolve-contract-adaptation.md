@@ -38,12 +38,21 @@ files a later task rewrites. A task that leaves a test failing, or leaves
 
 ## Gateway version prerequisite — read before manual verification
 
-The contract below is merged upstream, but **merged is not installed**. Checked on this
-machine on 2026-08-09:
+The contract below is merged upstream, and **as of 2026-08-09 it is also installed**.
 
-- Installed CLI: **v1.24.0** (`C:\Users\asafg\AppData\Local\Programs\Nimbus\bin\nimbus.exe`)
-- Nimbus repo main: **v1.26.0**
-- No gateway process was listening on loopback at the time of checking.
+History, kept because it explains why this section exists: the machine was on
+**v1.24.0**, which predates the resolve route. It was upgraded to **v1.26.0** during
+this work — the winget manifest was stale (stuck at 1.19.1), so the same
+`nimbus-headless-windows-x64.msi` artifact was installed directly from the v1.26.0
+release after verifying its SHA256 against the release's `SHA256SUMS` (and
+independently against the GitHub API's asset digest). The detached GPG signature was
+**not** verified — `gpg` is not installed on this machine.
+
+Verified present in the installed `nimbus-gateway.exe` by string search, rather than
+inferred from the version number: `/v1/items/resolve`, `/v1/items/fetch`,
+`/v1/agents/runs`, `resolve_disabled`, `insufficient_scope`, `unresolvable_url`.
+`nimbus clip --help` on v1.26.0 still reports `nimbus clip scopes <label> --set <a,b>`
+and `Scopes: clip, briefs, agents, resolve, fetch`.
 
 Which release each dependency first appears in (`git tag --contains <adding commit>`):
 
@@ -56,14 +65,21 @@ Which release each dependency first appears in (`git tag --contains <adding comm
 | `POST /v1/items/fetch` | `369f9af1` (#1072) | **v1.25.0** | **no** |
 
 **Consequence for this plan.** Every task here is unit-tested and needs no running
-gateway, so the work can be built and shipped as-is. But **end-to-end manual
-verification requires a gateway on ≥ v1.25.0**. Against the installed v1.24.0 the
-route 404s, which this client maps to `unsupported` — the panel correctly says
-*"This Nimbus gateway can't resolve pages yet."* That is the C1 degradation path
-working as designed, **not** a bug in this work. Do not chase it.
+gateway, so none of this blocks implementation. End-to-end manual verification is now
+possible: the gateway must be **started** (nothing was listening on loopback when this
+was written), and the paired browser must be granted the scope:
 
-Before manually verifying: upgrade the gateway to ≥ v1.25.0 (v1.26.0 is current),
-start it, and grant the scope with `nimbus clip scopes <label> --set clip,briefs,resolve`.
+```
+nimbus clip scopes <label> --set clip,briefs,resolve
+```
+
+`nimbus clip status` lists the labels and their current scopes.
+
+**Expected on a browser paired before the upgrade:** its token carries only
+`LEGACY_SCOPES` (`clip,briefs`), so resolve returns 403 and the panel shows the
+`needs-scope` state built in Task 7 — naming the command above. That is the correct
+behaviour and the single most valuable thing to verify by hand, because it is the
+state every pre-existing pairing hits first.
 
 ## The contract, verified against merged upstream source
 
