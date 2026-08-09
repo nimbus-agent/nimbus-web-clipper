@@ -10,6 +10,14 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **On a resolve miss, fetch that one item.** On a page Nimbus recognises but has
+  not yet indexed, the panel now offers to fetch that item through the connector
+  that owns it — a GitHub PR, a Jira issue, a Jenkins build. Nothing is fetched
+  until you ask: the button names exactly what it will fetch and from where (e.g.
+  *"Fetch this from GitHub"*), and only ever fires once per panel. An unconfigured
+  connector says so plainly instead of inviting a retry that can't work, and if the
+  gateway is just slow to answer, the panel says it's still working rather than
+  reporting a failure.
 - **The panel knows what page you're on.** On a Bitbucket, GitHub or GitLab pull
   request, a Jenkins build or a Jira issue, the related-items panel now leads with
   what the page is — *"GitHub PR · acme/web #482"* — and, where the gateway
@@ -41,8 +49,15 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   the page. The not-paired, pairing-rejected and can't-reach-Nimbus messages for
   resolve are reworded to match the new contract, and a malformed resolve
   response now says "Couldn't read Nimbus's answer." instead of a generic error.
-- A pairing made before the gateway gained token scopes now says so, and names the
-  command that grants it (`nimbus clip scopes`), instead of reporting a Nimbus error.
+- **Scope guidance is now a command you can paste, and one that's safe to run.**
+  When a pairing predates a scope the panel needs (`resolve`, and now `fetch`),
+  the fix-it text used to show a `<label>` placeholder you had to edit by hand and
+  a hardcoded list of scopes to grant. Because `nimbus clip scopes … --set`
+  *replaces* the device's scope set rather than adding to it, typing that
+  placeholder command from memory could silently drop a scope you already held —
+  for example, granting `resolve` while accidentally dropping `agents`. The panel
+  now names your actual device and lists the exact resulting set, built from the
+  gateway's own 403 response rather than guessed.
 
 ## [0.2.0] - 2026-07-28
 

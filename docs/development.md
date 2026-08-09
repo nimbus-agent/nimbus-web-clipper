@@ -203,6 +203,37 @@ describing the page it was opened on. Close and reopen to correct it.
 Recognition does not follow navigation in this phase; doing so needs the
 gesture-free access Phase C2 is the first to require.
 
+## Manual verification — Targeted fetch (C3.1)
+
+Prereq: paired, gateway running, a token scoped with `fetch` (grant it if
+needed: `nimbus clip scopes <label> --set clip,briefs,resolve,fetch`, replacing
+`<label>` and the list with your device's real name and current scopes — see
+`nimbus clip status`), and at least one connector (e.g. GitHub) configured on
+the gateway.
+
+1. **Recognised, unindexed, fetchable:** open a GitHub PR the gateway's index
+   has never seen and press `Alt+Shift+R`. → The header reads "Not indexed."
+   with a **"Fetch this from GitHub"** button. Click it. → The header shows
+   "Fetching from GitHub…", then settles into the `resolved` state naming the
+   item once the gateway answers `indexed` and the panel re-resolves. Reopen the
+   same page's panel — the item now resolves without a fetch button.
+2. **Not configured:** repeat step 1 against a service with no connector
+   configured on this gateway. → "No <Product> connector is configured on your
+   gateway." with **no button** — this is terminal, unlike a retryable error.
+3. **403 with only `resolve` granted:** scope a token with `resolve` but not
+   `fetch` (`nimbus clip scopes <label> --set clip,briefs,resolve`), open a
+   recognised, unindexed page, and click Fetch. → "This pairing can't fetch
+   pages yet." plus a pasteable `nimbus clip scopes <label> --set
+   clip,briefs,resolve,fetch` command built from the gateway's own 403 response
+   (your real device label and full scope set) — not the `resolve`-scope
+   guidance from the page-recognition checklist above (a different scope, a
+   different fix), and not a literal `<label>` you have to edit by hand.
+4. **One fetch per panel:** after a fetch lands (step 1) or is declined
+   (steps 2–3), the button never reappears for that same panel instance, even if
+   you trigger a recovery re-resolve that comes back as another miss. Close and
+   reopen the panel to get the offer back.
+5. Repeat 1–3 in Firefox.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any

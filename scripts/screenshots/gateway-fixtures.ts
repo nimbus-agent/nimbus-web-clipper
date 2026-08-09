@@ -50,6 +50,20 @@ export const RESOLVE_FIXTURE = {
   },
 } as const;
 
+/**
+ * `POST /v1/items/fetch` — the contracted targeted-fetch route. The mock imitates
+ * the gateway's WIRE format here, so `status`/`itemId` are correct — unlike
+ * everywhere else in `src/`, which speaks the client's own camelCase vocabulary
+ * after `gateway-client.ts` translates it at the boundary.
+ *
+ * A fixed literal, never generated: this fixture drives reproducible Playwright
+ * screenshots, and a live id would make the asserted response drift between runs.
+ */
+export const FETCH_FIXTURE = {
+  status: "indexed",
+  itemId: "gh-pr-482",
+} as const;
+
 export const RELATED: RelatedResponse = {
   items: [
     {

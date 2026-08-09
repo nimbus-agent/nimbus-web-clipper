@@ -4,7 +4,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { GATEWAY_PATHS } from "../../src/shared/gateway.ts";
-import { CLIP_INGEST, PAIR_CONFIRM, RELATED, RESOLVE_FIXTURE } from "./gateway-fixtures.ts";
+import {
+  CLIP_INGEST,
+  FETCH_FIXTURE,
+  PAIR_CONFIRM,
+  RELATED,
+  RESOLVE_FIXTURE,
+} from "./gateway-fixtures.ts";
 
 export const DEFAULT_PORT = 8765;
 
@@ -59,6 +65,8 @@ export async function handleRequest(req: Request): Promise<Response> {
       return jsonResponse(CLIP_INGEST);
     case GATEWAY_PATHS.related:
       return jsonResponse(RELATED);
+    case GATEWAY_PATHS.itemsFetch:
+      return jsonResponse(FETCH_FIXTURE);
     default:
       return new Response(null, { status: 404 });
   }

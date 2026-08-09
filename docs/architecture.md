@@ -96,6 +96,8 @@ in a node environment.
                     │  POST /v1/clips        │
                     │  POST /v1/clips/pair/confirm
                     │  POST /v1/clips/related
+                    │  GET  /v1/items/resolve
+                    │  POST /v1/items/fetch  ← WRITE, see below
                     └───────────────────────┘
 ```
 
@@ -294,6 +296,86 @@ Today the panel works without any grant at all: `Alt+Shift+R` and the popup
 button are user gestures, which give `activeTab`. The grant buys gesture-free
 recognition, which Phase C2 is the first to need.
 
+## The targeted-fetch path
+
+A resolve miss (`not-indexed`) can mean the gateway has a connector for this
+service but has never synced *this* item — `fetchable: true` says so. **C3.1**
+turns that miss into a button: ask the gateway to go fetch and index that one
+item through the connector that already owns it, then re-resolve.
+
+```
+not-indexed, fetchable ─{ click "Fetch this from GitHub" }─►  panel-in-page.ts
+                                                                     │
+                                       { kind:"fetch", pageUrl: location.href }
+                                                                     │
+                                            service worker → recognise() gate
+                                                                     │
+                                             fetchItem(origin, token, pageUrl)
+                                       POST /v1/items/fetch — under `fetch` scope
+                                                                     │
+      ┌───────────┬─────────────────────┬───────────────┬───────────┼──────────┐
+   indexed    not_found /          not_configured   rate_limited  403      timeout
+              unsupported_url /                                 (scope)   (client
+              no_targeted_fetch                                            abort)
+      │           │                     │                │          │         │
+  re-resolve  "unfetchable"      "no connector      "Try again"  needs-    "Still
+  (no header  — nothing to        configured on      — safe,     fetch-    working"
+   built from  do)                your gateway"       nothing     scope    — re-
+   the fetch                                          was sent              resolve,
+   response)                                           yet"                 not
+                                                                             re-fetch
+```
+
+- **`POST /v1/items/fetch` is a WRITE, not a read with side effects.** It is an
+  explicit addition to invariant **I13**'s write allowlist (see
+  [`src/shared/gateway.ts`](../src/shared/gateway.ts)), because it causes an
+  *outbound* request to a real provider (GitHub, Jira, …) under the gateway
+  owner's stored credential — a materially different action than `resolve`,
+  which only reads the local index. That is why it needs its own explicit user
+  gesture (the button click; nothing fetches on panel open) and its own `fetch`
+  token scope, distinct from `resolve`. A token that can resolve pages cannot
+  fetch one until the owner separately grants `fetch` — repeating `resolve`'s
+  scope guidance in that state would be a dead end, so `fetch-blocked` /
+  `needs-fetch-scope` gets its own copy in `panel-view.ts`.
+- **Six wire outcomes collapse to four client-facing ones, deliberately not
+  five.** `not_found`, `unsupported_url` and `no_targeted_fetch` differ in *why*
+  the gateway declined but are identical in what the user can do about it —
+  nothing — so `gateway-client.ts#parseFetchBody` collapses all three into one
+  `unfetchable` outcome. `indexed` and `rate_limited` keep their own arms
+  because each drives genuinely different client behavior (re-resolve; a safe
+  retry). `not_configured` is the one arm that stays separate even though its
+  *user-visible result* ("nothing happens") looks like `unfetchable`'s: an
+  unconfigured connector must say so **by name** — "No GitHub connector is
+  configured on your gateway." — instead of inviting a retry that can only ever
+  fail again the same way. Folding it into `unfetchable` would turn a permanent,
+  nameable condition into generic "can't fetch this" noise, which is exactly
+  what C3.1's done-when ("an unconfigured connector says so plainly instead of
+  retrying") rules out.
+- **A client-side timeout is not a failure — it is modelled as its own
+  `FetchError` arm, never collapsed into `unreachable`.** `fetchItem`'s 30s abort
+  firing means *our* wait gave up; it says nothing about whether the gateway's
+  outbound call to the provider is still running. Reporting it as a failure
+  would assert something we have not established, and a retry there would risk
+  a second outbound provider request for work that may already be in flight or
+  done. `unreachable` means the connection itself failed — nothing was sent, so
+  a retry is unambiguously safe. That is why the `timeout` header
+  (`fetch-retry`/`still-working`, "Still working — your gateway may not have
+  finished. Nothing was lost.") wires its recovery button to send
+  `{kind:"resolve"}`, **not** a second `{kind:"fetch"}`: it re-checks whether the
+  item showed up rather than asking the gateway to fetch it again.
+- **One fetch per panel — a latch, not a counter.** `panel-in-page.ts` tracks a
+  boolean, `fetchSent`, that means "an outbound provider request *may currently
+  be in flight*", not merely "a fetch message was sent". Once set it stays true
+  for the life of that panel instance — the Fetch button never reappears, even
+  if a recovery re-resolve comes back as another miss — because the panel
+  cannot distinguish "still fetching" from "the fetch died", and re-offering the
+  button in that gap would risk firing a second outbound request for work that
+  might still be running. `rate_limited` is the one outcome that clears the
+  latch back to false: the gateway returns it **before** any outbound call
+  happens, so nothing is in flight and a second click is exactly as safe as the
+  first. Reopening the panel is the deliberate escape hatch — a fresh resolve by
+  then either finds the item or offers the button again.
+
 ## Two state machines worth understanding
 
 These are the parts that are easy to get subtly wrong, and where most of the
@@ -403,6 +485,7 @@ changes here are potential upstream contributions.
 | **I6** | Loopback only — one destination, no `<all_urls>`, no remote host | Client-side, mirrors gateway I6: `src/shared/gateway.ts` origin validation + restricted `host_permissions` |
 | — | Page access is opt-in (configured per origin, granted per host) and never widens the network destination | `optional_host_permissions` (inert at install) + `src/browser/permissions.ts`; `shared/origins.ts` is deliberately a separate validator from `shared/gateway.ts` |
 | **I30** | Pairing is fail-closed — token minted only in an owner-opened window | Gateway; extension redeems, never assumes |
+| **I13** | A targeted fetch is a WRITE (outbound provider request), gated by an explicit click and its own `fetch` scope — never fired on panel open | `src/panel/panel-in-page.ts`'s `sendFetch` (button click only) + the gateway's `fetch` token scope; see [the targeted-fetch path](#the-targeted-fetch-path) |
 | — | The bearer token / pairing code is never logged, never in a page DOM | `noConsole` in `src/` (Biome); token held only in the SW + storage |
 | — | No `console.*` in `src/`; strict TypeScript, no `any` | `biome.json` (`noConsole`, `noExplicitAny`) + `tsc --noEmit` |
 | — | The wire contract is not redesigned here | Owned by the Nimbus gateway repo; this repo builds against it |
