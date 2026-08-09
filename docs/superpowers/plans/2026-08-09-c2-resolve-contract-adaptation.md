@@ -78,8 +78,13 @@ After Task 5 that comment is exactly backwards. Task 5 must flip the assertion t
 `["https://github.com/a/b/pull/1?files=1"]` and rewrite the comment to say the query
 is preserved deliberately. The failing assertion will force the issue; the stale
 comment will not, so it is called out here.
-| 7 | − panel-view.test.ts | — |
+| 7 | − panel-view.test.ts, **+ src/panel/panel-in-page.ts** | — |
 | 8 | **none** | — |
+
+**Task 7 correction (measured).** Widening `HeaderState`'s `resolved` arm with
+`matchKind` and `nowMs` makes `panel-in-page.ts` red, because it still builds the old
+two-field shape. Task 7 correctly did NOT fix it — that file is Task 8's. Task 8
+therefore closes `panel-in-page.ts` as well as everything already listed for it.
 | 9 | none (fixtures fixed) | — |
 
 A task that leaves a test failing *outside this table*, or `tsc` red in a file
