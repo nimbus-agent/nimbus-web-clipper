@@ -81,25 +81,86 @@ export type Recognition =
       readonly label: string;
       /** Short identity for the header, e.g. "acme/web #482". */
       readonly ref: string;
-      /** The canonicalised URL sent to the gateway as the resolution key. */
+      /**
+       * The URL sent to the gateway as the resolution key: the address-bar URL with
+       * identity normalisation only. The gateway owns canonicalisation — see
+       * shared/recognise.ts.
+       */
       readonly resolveUrl: string;
     }
   | { readonly ok: false; readonly reason: "unknown-host" | "unrecognised-path" };
 
-/** The gateway's resolved item. PROPOSED shape — see the C1 design spec. */
-export interface ResolvedItem {
+/**
+ * How confidently the gateway matched our URL — its match ladder, in order:
+ * exact key, then the key with all query params dropped, then up to three
+ * trimmed trailing path segments (packages/gateway/src/index/resolve-by-url.ts).
+ *
+ * `path_trimmed` is a WEAKER claim than the other two and must never be rendered
+ * with equal confidence: the ladder reached it by discarding part of the URL.
+ *
+ * Single-sourced here: both wire validators (gateway-client.ts's parser,
+ * messages.ts's SW→panel guard) read `RESOLVE_MATCH_KINDS` rather than each
+ * declaring their own literal list, so the type and its two validators cannot
+ * drift apart — adding a match kind here adds it to both validators for free,
+ * instead of typechecking green while both silently rejected the new arm.
+ */
+export const RESOLVE_MATCH_KINDS = ["exact", "query_stripped", "path_trimmed"] as const;
+export type ResolveMatchKind = (typeof RESOLVE_MATCH_KINDS)[number];
+
+/** One indexed item, metadata only. Resolve is a resolver — reading is a separate route. */
+export interface ResolveCandidate {
   readonly id: string;
   readonly service: string;
   readonly type: string;
   readonly title: string;
-  readonly canonicalUrl: string;
   readonly url: string | null;
 }
 
-/** `unsupported` is a 404 — this gateway has no resolve route yet. */
+/**
+ * A resolved item. `modifiedAt` is epoch ms, renamed from the wire's `modified_at`
+ * at the HTTP boundary (gateway-client.ts) so the wire shape stops at the parser.
+ *
+ * A CANDIDATE has no `modifiedAt` — the gateway does not send one for candidates.
+ * That asymmetry is deliberate and load-bearing: it is why choosing a candidate
+ * cannot render as `resolved` (see HeaderState's `chosen` arm).
+ */
+export interface ResolvedItem extends ResolveCandidate {
+  readonly modifiedAt: number;
+}
+
+/**
+ * A successful call to the resolve route. All four arms are HTTP 200 — a miss is
+ * an answer, not a failure.
+ *
+ * `not-indexed` carries no service: upstream always sends `service: null` on that
+ * arm (resolve-by-url.ts:169), so modelling one would invite the header to promise
+ * a name we do not have.
+ */
+export type ResolveOutcome =
+  | { readonly kind: "found"; readonly item: ResolvedItem; readonly matchKind: ResolveMatchKind }
+  | { readonly kind: "not-indexed"; readonly fetchable: boolean }
+  | { readonly kind: "unresolvable"; readonly fetchable: boolean }
+  | {
+      readonly kind: "ambiguous";
+      readonly service: string | null;
+      readonly fetchable: boolean;
+      /** EMPTY whenever `truncated` — upstream sends no list rather than a sliced one. */
+      readonly candidates: readonly ResolveCandidate[];
+      readonly truncated: boolean;
+    };
+
+/**
+ * `unsupported` is a 404 — this gateway has no resolve route (or the clips seam
+ * is off). `insufficient_scope` is a 403 and is the state EVERY browser paired
+ * before token scopes hits first: LEGACY_SCOPES is ["clip","briefs"], so an
+ * existing token carries no `resolve`. It is separate from `unauthorized`
+ * because the fix is different — the owner re-grants the scope, the user does
+ * not re-authenticate.
+ */
 export type ResolveError =
   | "not_paired"
   | "unauthorized"
+  | "insufficient_scope"
   | "unsupported"
   | "unreachable"
   | "server_error";

@@ -2,7 +2,13 @@
 // Pure DOM builders for the related-items panel. Every gateway-provided string is
 // written via textContent (never innerHTML) — the indexed content is
 // attacker-influenceable, so plain-text rendering is the XSS backstop.
-import type { RelatedHit, ResolvedItem } from "../shared/types.ts";
+import { formatAge } from "../shared/freshness.ts";
+import type {
+  RelatedHit,
+  ResolveCandidate,
+  ResolvedItem,
+  ResolveMatchKind,
+} from "../shared/types.ts";
 
 /** Returns the parsed href when the scheme is http or https; null otherwise.
  *  Rejects javascript:, data:, vbscript:, relative paths, and malformed URLs. */
@@ -80,8 +86,47 @@ export function renderHits(doc: Document, items: RelatedHit[]): HTMLElement {
 export type HeaderState =
   | { readonly kind: "loading" }
   | { readonly kind: "unrecognised" }
-  | { readonly kind: "resolved"; readonly surface: string; readonly item: ResolvedItem }
+  | {
+      readonly kind: "resolved";
+      readonly surface: string;
+      readonly item: ResolvedItem;
+      readonly matchKind: ResolveMatchKind;
+      /**
+       * Captured once, when the resolve response lands (`Date.now()` at that
+       * moment) — NOT re-read per repaint. So the age is frozen at load: a panel
+       * left open for ten minutes keeps saying "indexed 3 min ago".
+       *
+       * Repaints of a `resolved` header DO happen — resolve and related are
+       * fetched in parallel and land independently (panel-in-page.ts), and
+       * `loadRelated()` ends in an unconditional `paint()`, so a `resolved`
+       * header is repainted on essentially every panel open, as soon as the
+       * related lane settles (often before it, since resolve is usually the
+       * faster call). Freezing `nowMs` at response time is exactly what makes
+       * those repaints stable: the age line does not jitter (or count up) as
+       * the related lane lands or as the panel sits open. If a future lane ever
+       * repaints on a TIMER — i.e. calls `paint()` on an interval rather than in
+       * response to a new answer — make this a render-time parameter instead of
+       * state; a clock reading stored in a state object goes stale by
+       * construction and freezing would then hide real staleness.
+       */
+      readonly nowMs: number;
+    }
+  /**
+   * A candidate the USER picked out of an ambiguous answer. Distinct from
+   * `resolved` because a candidate carries no `modified_at`: rendering it as
+   * resolved would mean inventing a freshness, which is precisely the invisible
+   * staleness this header exists to avoid.
+   */
+  | { readonly kind: "chosen"; readonly surface: string; readonly candidate: ResolveCandidate }
+  | {
+      readonly kind: "ambiguous";
+      readonly surface: string;
+      readonly candidates: readonly ResolveCandidate[];
+      readonly truncated: boolean;
+    }
   | { readonly kind: "not-indexed"; readonly surface: string }
+  /** A 403. The token predates the `resolve` scope; the OWNER grants it. */
+  | { readonly kind: "needs-scope"; readonly surface: string }
   | { readonly kind: "error"; readonly surface: string | null; readonly message: string };
 
 /** A collapsible section of the panel. Phase C2 adds why/impact/expert here. */
@@ -104,10 +149,11 @@ function line(doc: Document, className: string, text: string): HTMLElement {
   return el;
 }
 
-function itemLine(doc: Document, item: ResolvedItem): HTMLElement {
-  const href = item.url !== null ? safeHttpUrl(item.url) : null;
+/** `title` for a candidate; `title` + freshness for a resolved item. */
+function candidateLine(doc: Document, c: ResolveCandidate): HTMLElement {
+  const href = c.url !== null ? safeHttpUrl(c.url) : null;
   if (href === null) {
-    return line(doc, "nimbus-related__header-item", item.title);
+    return line(doc, "nimbus-related__header-item", c.title);
   }
   const wrapper = doc.createElement("p");
   wrapper.className = "nimbus-related__header-item";
@@ -115,12 +161,39 @@ function itemLine(doc: Document, item: ResolvedItem): HTMLElement {
   link.href = href;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
-  link.textContent = item.title;
+  link.textContent = c.title;
   wrapper.append(link);
   return wrapper;
 }
 
-export function renderHeader(doc: Document, state: HeaderState): HTMLElement {
+function chooser(
+  doc: Document,
+  candidates: readonly ResolveCandidate[],
+  onChoose: ((c: ResolveCandidate) => void) | undefined,
+): HTMLElement {
+  const list = doc.createElement("ul");
+  list.className = "nimbus-related__candidates";
+  for (const c of candidates) {
+    const li = doc.createElement("li");
+    const button = doc.createElement("button");
+    button.type = "button";
+    button.className = "nimbus-related__candidate";
+    // textContent, never innerHTML — this string comes from the gateway.
+    button.textContent = c.title;
+    if (onChoose !== undefined) {
+      button.addEventListener("click", () => onChoose(c));
+    }
+    li.append(button);
+    list.append(li);
+  }
+  return list;
+}
+
+export function renderHeader(
+  doc: Document,
+  state: HeaderState,
+  onChoose?: (c: ResolveCandidate) => void,
+): HTMLElement {
   const box = doc.createElement("div");
   box.className = "nimbus-related__header-state";
 
@@ -151,11 +224,72 @@ export function renderHeader(doc: Document, state: HeaderState): HTMLElement {
   }
 
   box.append(line(doc, "nimbus-related__surface", state.surface));
-  box.append(
-    state.kind === "resolved"
-      ? itemLine(doc, state.item)
-      : line(doc, "nimbus-related__status", "Not indexed."),
-  );
+
+  if (state.kind === "resolved") {
+    box.append(candidateLine(doc, state.item));
+    box.append(
+      line(
+        doc,
+        "nimbus-related__status",
+        `Indexed ${formatAge(state.item.modifiedAt, state.nowMs)}`,
+      ),
+    );
+    // Only rung 3 gets a hedge. Rungs 1 and 2 differ by query params, which carry
+    // no identity on any surface the recogniser matches; rung 3 got here by
+    // discarding path segments, so it may be the parent of the page, not the page.
+    if (state.matchKind === "path_trimmed") {
+      box.append(
+        line(doc, "nimbus-related__status", "Closest match — this page's exact URL isn't indexed."),
+      );
+    }
+    return box;
+  }
+
+  if (state.kind === "chosen") {
+    box.append(candidateLine(doc, state.candidate));
+    return box;
+  }
+
+  if (state.kind === "ambiguous") {
+    if (state.truncated) {
+      // Upstream deliberately sends an EMPTY list when it would have to truncate:
+      // a shortened menu implies the right answer is on it. Say so instead.
+      box.append(
+        line(
+          doc,
+          "nimbus-related__status",
+          "Too many matches to choose from — open the item in Nimbus.",
+        ),
+      );
+      return box;
+    }
+    box.append(line(doc, "nimbus-related__status", "Several indexed items match this page:"));
+    box.append(chooser(doc, state.candidates, onChoose));
+    return box;
+  }
+
+  if (state.kind === "needs-scope") {
+    box.append(
+      line(doc, "nimbus-related__status", "This pairing can't resolve pages yet."),
+      line(
+        doc,
+        "nimbus-related__status",
+        "Grant it on the gateway: nimbus clip scopes <label> --set clip,briefs,resolve",
+      ),
+    );
+    return box;
+  }
+
+  // Exhaustiveness backstop: every other arm returns above, so `state` here must
+  // be narrowed to exactly `not-indexed`. If a future arm is added to
+  // `HeaderState` without a branch handling it above, `state` stops narrowing to
+  // `never` and this line fails to compile — instead of the new arm silently
+  // falling through to "Not indexed." at runtime.
+  if (state.kind !== "not-indexed") {
+    const _never: never = state;
+    return _never;
+  }
+  box.append(line(doc, "nimbus-related__status", "Not indexed."));
   return box;
 }
 
@@ -171,10 +305,14 @@ export function renderLane(doc: Document, lane: Lane): HTMLElement {
   return details;
 }
 
-export function renderShell(doc: Document, state: PanelState): HTMLElement {
+export function renderShell(
+  doc: Document,
+  state: PanelState,
+  onChoose?: (c: ResolveCandidate) => void,
+): HTMLElement {
   const shell = doc.createElement("div");
   shell.className = "nimbus-related__shell";
-  shell.append(renderHeader(doc, state.header));
+  shell.append(renderHeader(doc, state.header, onChoose));
   for (const lane of state.lanes) {
     shell.append(renderLane(doc, lane));
   }

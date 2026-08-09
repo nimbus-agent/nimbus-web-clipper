@@ -156,18 +156,23 @@ with a shipped extension or configured interval for production accuracy.
 
 ## Manual verification — Page recognition (Phase C1)
 
-Prereq: paired, gateway running. Note the shipped gateway has **no**
-`/v1/clips/resolve` route yet, so against a real gateway the header will
-correctly say *"This Nimbus gateway can't resolve pages yet."* To exercise the
-resolved path, run `bun run mock-gateway` and pair against
-`http://127.0.0.1:8765` — its mock resolve route always returns an item.
+Prereq: paired, gateway running. The gateway route is `GET /v1/items/resolve?url=`,
+under a `resolve` token scope a browser paired before the gateway grew scopes will
+not have — its header then correctly says the pairing needs the scope re-granted
+(`nimbus clip scopes`). A gateway build with no resolve route at all 404s and the
+header says *"This Nimbus gateway can't resolve pages yet."* To exercise the
+resolved path reproducibly, run `bun run mock-gateway` and pair against
+`http://127.0.0.1:8765` — its mock resolve route always returns a `found` item.
 
 1. **Recognised, resolved:** open any GitHub PR (e.g.
    `https://github.com/acme/web/pull/482`) and press `Alt+Shift+R`.
    → The header reads `GitHub PR · acme/web #482` and names the resolved item.
    The Related lane is below it, collapsed/expandable.
-2. **Sub-tabs collapse:** navigate to the PR's *Files changed* tab and reopen the
-   panel. → The header is unchanged; the resolve request carried the bare PR URL.
+2. **Sub-tabs still resolve:** navigate to the PR's *Files changed* tab and reopen
+   the panel. → The header is unchanged; the client sends the address-bar URL
+   as-is (it does no canonicalisation of its own) and the gateway's match ladder
+   trims the sub-tab segment to find the PR, so the result may show as a
+   closest, not exact, match.
 3. **Unrecognised:** open any news article and press `Alt+Shift+R`.
    → *"Not a recognised Nimbus surface"*, and **the Related lane still renders**.
 4. **Gateway down:** stop the gateway and repeat step 1. → The surface line still

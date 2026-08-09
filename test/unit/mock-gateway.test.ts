@@ -1,10 +1,6 @@
-import { describe, expect, test } from "vitest";
-import {
-  CLIP_INGEST,
-  PAIR_CONFIRM,
-  RELATED,
-  RESOLVE,
-} from "../../scripts/screenshots/gateway-fixtures.ts";
+import { describe, expect, it, test } from "vitest";
+import { CLIP_INGEST, PAIR_CONFIRM, RELATED } from "../../scripts/screenshots/gateway-fixtures.ts";
+import { handleRequest } from "../../scripts/screenshots/mock-gateway.ts";
 
 describe("mock gateway fixtures — locked contract shape", () => {
   test("pair/confirm returns a non-empty token and label", () => {
@@ -31,13 +27,20 @@ describe("mock gateway fixtures — locked contract shape", () => {
     expect(RELATED.items.some((h) => h.url === null)).toBe(true);
   });
 
-  // PROPOSED route, not part of the locked contract — see shared/gateway.ts.
-  test("resolve returns a single item carrying every field the panel header needs", () => {
-    expect(typeof RESOLVE.item.id).toBe("string");
-    expect(typeof RESOLVE.item.service).toBe("string");
-    expect(typeof RESOLVE.item.type).toBe("string");
-    expect(typeof RESOLVE.item.title).toBe("string");
-    expect(typeof RESOLVE.item.canonicalUrl).toBe("string");
-    expect(RESOLVE.item.url === null || typeof RESOLVE.item.url === "string").toBe(true);
+  it("serves GET /v1/items/resolve with a found outcome", async () => {
+    const res = await handleRequest(
+      new Request(
+        "http://127.0.0.1:8765/v1/items/resolve?url=https%3A%2F%2Fgithub.com%2Fa%2Fb%2Fpull%2F1",
+        {
+          method: "GET",
+          headers: { authorization: "Bearer test-token" },
+        },
+      ),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body["found"]).toBe(true);
+    expect(body["matchKind"]).toBe("exact");
+    expect((body["item"] as Record<string, unknown>)["modified_at"]).toEqual(expect.any(Number));
   });
 });

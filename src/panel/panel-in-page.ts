@@ -5,7 +5,7 @@
 import { sendMessage } from "../browser/runtime.ts";
 import { isRelatedResponse, isResolveResponse } from "../shared/messages.ts";
 import { surfaceLine } from "../shared/recognise.ts";
-import type { RelatedHit } from "../shared/types.ts";
+import type { RelatedHit, ResolveCandidate } from "../shared/types.ts";
 import { type HeaderState, type Lane, renderError, renderHits, renderShell } from "./panel-view.ts";
 
 const HOST_ID = "nimbus-related-host";
@@ -18,11 +18,20 @@ const RELATED_MESSAGES: Record<string, string> = {
 };
 
 const RESOLVE_MESSAGES: Record<string, string> = {
-  not_paired: "Pair a browser first (Options).",
-  unauthorized: "Pairing expired — re-pair in Options.",
+  not_paired: "Pair with Nimbus in Options to see what it knows about this page.",
+  unauthorized: "Nimbus rejected this pairing. Re-pair in Options.",
   unsupported: "This Nimbus gateway can't resolve pages yet.",
-  unreachable: "Can't reach Nimbus — is the gateway running?",
+  unreachable: "Couldn't connect to Nimbus.",
   server_error: "Nimbus had an error resolving this page.",
+  // `insufficient_scope` is handled BEFORE this map is consulted, in headerFrom
+  // below — but only when `surface !== null`. That guard always holds in
+  // practice: `handleResolve` calls the gateway only after `recognise()`
+  // succeeds, and a 403 can only come back from a gateway call, so a 403 always
+  // carries a surface. This entry exists as a fallback for that invariant alone
+  // — if it were ever violated, this is the one message this branch went out of
+  // its way to avoid reusing the generic "Couldn't resolve this page." for.
+  insufficient_scope:
+    "This pairing can't resolve pages yet. Grant it on the gateway: nimbus clip scopes <label> --set clip,briefs,resolve",
 };
 
 // Inlined so the panel is fully self-contained. `:host { all: initial }` drops
@@ -102,6 +111,12 @@ const STYLES = `
 .nimbus-related__header-item a { color: var(--nimbus-accent); text-decoration: none; }
 .nimbus-related__lane { border-bottom: 1px solid var(--nimbus-border); }
 .nimbus-related__lane-title { cursor: pointer; padding: 10px 16px; font-weight: 600; }
+.nimbus-related__candidates { list-style: none; margin: 4px 0 0; padding: 0; }
+.nimbus-related__candidate {
+  background: none; border: none; padding: 4px 0; cursor: pointer;
+  color: var(--nimbus-accent); font: inherit; text-align: left;
+}
+.nimbus-related__candidate:hover { text-decoration: underline; }
 `;
 
 interface NimbusHost extends HTMLElement {
@@ -119,24 +134,42 @@ function readContext(): { title: string; canonicalUrl?: string; selection: strin
   };
 }
 
-function headerFrom(res: unknown): HeaderState {
+function headerFrom(res: unknown, nowMs: number): HeaderState {
   if (!isResolveResponse(res)) {
-    return { kind: "error", surface: null, message: "Unexpected response." };
+    return { kind: "error", surface: null, message: "Couldn't read Nimbus's answer." };
   }
   const surface = surfaceLine(res.recognition);
-  if (surface === null) {
-    return { kind: "unrecognised" };
-  }
   if (!res.ok) {
+    // `insufficient_scope` is NOT an error: the route works, the owner just has
+    // not granted this device the scope. It gets its own state so the panel can
+    // say what to run instead of blaming Nimbus.
+    if (res.reason === "insufficient_scope" && surface !== null) {
+      return { kind: "needs-scope", surface };
+    }
     return {
       kind: "error",
       surface,
       message: RESOLVE_MESSAGES[res.reason] ?? "Couldn't resolve this page.",
     };
   }
-  return res.item === null
-    ? { kind: "not-indexed", surface }
-    : { kind: "resolved", surface, item: res.item };
+  if (surface === null) {
+    return { kind: "unrecognised" };
+  }
+  const outcome = res.outcome;
+  if (outcome.kind === "found") {
+    return { kind: "resolved", surface, item: outcome.item, matchKind: outcome.matchKind, nowMs };
+  }
+  if (outcome.kind === "ambiguous") {
+    return {
+      kind: "ambiguous",
+      surface,
+      candidates: outcome.candidates,
+      truncated: outcome.truncated,
+    };
+  }
+  // `unresolvable` means the gateway could not parse the URL we sent — a client
+  // bug, not a user-facing distinction. It reads as "not indexed" either way.
+  return { kind: "not-indexed", surface };
 }
 
 /**
@@ -155,6 +188,9 @@ function createPanel(body: HTMLElement): {
   loadRelated: () => Promise<void>;
 } {
   let header: HeaderState = { kind: "loading" };
+  // The candidate the user picked out of an `ambiguous` header. Only meaningful
+  // alongside an `ambiguous` header — see the `shown` narrowing in paint() below.
+  let chosen: ResolveCandidate | null = null;
   let relatedBody: (doc: Document) => HTMLElement = (doc) => renderError(doc, "Loading…");
   // Resolve and related land at different times and each triggers a full repaint,
   // so a lane the user collapsed in between would spring back open. Read the live
@@ -169,7 +205,18 @@ function createPanel(body: HTMLElement): {
     const lanes: Lane[] = [
       { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
     ];
-    body.replaceChildren(renderShell(document, { header, lanes }));
+    // A chosen candidate renders via `chosen`, never `resolved` — candidates carry
+    // no `modifiedAt`, and `resolved` would demand one.
+    const shown: HeaderState =
+      chosen !== null && header.kind === "ambiguous"
+        ? { kind: "chosen", surface: header.surface, candidate: chosen }
+        : header;
+    body.replaceChildren(
+      renderShell(document, { header: shown, lanes }, (c) => {
+        chosen = c;
+        paint();
+      }),
+    );
   }
 
   async function loadHeader(): Promise<void> {
@@ -185,7 +232,9 @@ function createPanel(body: HTMLElement): {
       paint();
       return;
     }
-    header = headerFrom(res);
+    // Taken ONCE per repaint here, not re-read per rendered line — see the
+    // `resolved` state's `nowMs` doc comment in panel-view.ts.
+    header = headerFrom(res, Date.now());
     paint();
   }
 

@@ -4,15 +4,18 @@
 
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
-import type {
-  CaptureResult,
-  ClipError,
-  PairError,
-  Recognition,
-  RelatedError,
-  RelatedHit,
-  ResolvedItem,
-  ResolveError,
+import {
+  type CaptureResult,
+  type ClipError,
+  type PairError,
+  RESOLVE_MATCH_KINDS,
+  type Recognition,
+  type RelatedError,
+  type RelatedHit,
+  type ResolveCandidate,
+  type ResolvedItem,
+  type ResolveError,
+  type ResolveOutcome,
 } from "./types.ts";
 
 /** A liveness probe the popup sends to confirm the service worker is responsive. */
@@ -117,7 +120,7 @@ export type ResolveResponse =
       readonly kind: "resolve";
       readonly ok: true;
       readonly recognition: Recognition;
-      readonly item: ResolvedItem | null;
+      readonly outcome: ResolveOutcome;
     }
   | {
       readonly kind: "resolve";
@@ -213,15 +216,48 @@ export function isResolveRequest(v: unknown): v is ResolveRequest {
   );
 }
 
-export function isResolvedItem(v: unknown): v is ResolvedItem {
+function isCandidate(v: unknown): v is ResolveCandidate {
   return (
     isObject(v) &&
     typeof v["id"] === "string" &&
     typeof v["service"] === "string" &&
     typeof v["type"] === "string" &&
     typeof v["title"] === "string" &&
-    typeof v["canonicalUrl"] === "string" &&
     (v["url"] === null || typeof v["url"] === "string")
+  );
+}
+
+export function isResolvedItem(v: unknown): v is ResolvedItem {
+  return isCandidate(v) && typeof (v as { modifiedAt?: unknown })["modifiedAt"] === "number";
+}
+
+/**
+ * Guards the DOMAIN outcome crossing the SW→panel boundary — not the wire shape.
+ * The wire's `modified_at` is renamed in gateway-client.ts and never reaches here.
+ */
+function isResolveOutcome(v: unknown): v is ResolveOutcome {
+  if (!isObject(v)) {
+    return false;
+  }
+  if (v["kind"] === "found") {
+    return (
+      isResolvedItem(v["item"]) &&
+      typeof v["matchKind"] === "string" &&
+      (RESOLVE_MATCH_KINDS as readonly string[]).includes(v["matchKind"])
+    );
+  }
+  if (v["kind"] === "not-indexed" || v["kind"] === "unresolvable") {
+    return typeof v["fetchable"] === "boolean";
+  }
+  if (v["kind"] !== "ambiguous") {
+    return false;
+  }
+  return (
+    typeof v["fetchable"] === "boolean" &&
+    typeof v["truncated"] === "boolean" &&
+    (v["service"] === null || typeof v["service"] === "string") &&
+    Array.isArray(v["candidates"]) &&
+    v["candidates"].every(isCandidate)
   );
 }
 
@@ -248,7 +284,7 @@ export function isResolveResponse(v: unknown): v is ResolveResponse {
     return false;
   }
   if (v["ok"] === true) {
-    return v["item"] === null || isResolvedItem(v["item"]);
+    return isResolveOutcome(v["outcome"]);
   }
   return v["ok"] === false && typeof v["reason"] === "string";
 }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // test/unit/panel-in-page.test.ts
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
 import type { RelatedHit } from "../../src/shared/types.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
@@ -36,6 +36,30 @@ function status(): string | null | undefined {
 /** The recognition header's text — surface line plus item/status. */
 function headerText(): string | null | undefined {
   return shadow()?.querySelector(".nimbus-related__header-state")?.textContent;
+}
+
+/** Mounts the panel with a stubbed "resolve" response (and an empty "related"
+ *  response), waiting for the header to settle past "Checking Nimbus…". Returns
+ *  the shadow root so callers can query/click into the rendered header. */
+async function mountPanelWithResolve(resolveResponse: unknown): Promise<ShadowRoot> {
+  harness.sendMessage.mockImplementation(async (message: unknown) => {
+    const kind = (message as { kind?: string }).kind;
+    if (kind === "resolve") {
+      return resolveResponse;
+    }
+    return { kind: "related", ok: true, items: [] };
+  });
+
+  await loadPanel();
+  await vi.waitFor(() => {
+    expect(headerText()).not.toContain("Checking Nimbus");
+  });
+
+  const root = shadow();
+  if (root === null) {
+    throw new Error("panel shadow root not found");
+  }
+  return root;
 }
 
 const hit: RelatedHit = {
@@ -263,8 +287,8 @@ describe("panel-in-page recognition header", () => {
     service: "github",
     type: "pr",
     title: "Add thing",
-    canonicalUrl: "https://github.com/acme/web/pull/1",
     url: "https://github.com/acme/web/pull/1",
+    modifiedAt: 1_700_000_000_000,
   };
   const recognition = {
     ok: true,
@@ -287,7 +311,12 @@ describe("panel-in-page recognition header", () => {
   }
 
   test("sends the page url for resolution", async () => {
-    respond({ kind: "resolve", ok: true, recognition, item });
+    respond({
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "found", matchKind: "exact", item },
+    });
     await loadPanel();
     await vi.waitFor(() => {
       expect(harness.sendMessage).toHaveBeenCalledWith(
@@ -297,7 +326,12 @@ describe("panel-in-page recognition header", () => {
   });
 
   test("a resolved item is named in the header", async () => {
-    respond({ kind: "resolve", ok: true, recognition, item });
+    respond({
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "found", matchKind: "exact", item },
+    });
     await loadPanel();
     await vi.waitFor(() => {
       expect(headerText()).toContain("GitHub PR · acme/web #1");
@@ -306,7 +340,12 @@ describe("panel-in-page recognition header", () => {
   });
 
   test("a miss says not indexed, and does NOT imply the related hits are the page", async () => {
-    respond({ kind: "resolve", ok: true, recognition, item: null });
+    respond({
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: true },
+    });
     await loadPanel();
     await vi.waitFor(() => {
       expect(shadow()?.textContent).toContain("Not indexed");
@@ -334,7 +373,7 @@ describe("panel-in-page recognition header", () => {
       kind: "resolve",
       ok: true,
       recognition: { ok: false, reason: "unknown-host" },
-      item: null,
+      outcome: { kind: "not-indexed", fetchable: false },
     });
     await loadPanel();
     await vi.waitFor(() => {
@@ -347,8 +386,60 @@ describe("panel-in-page recognition header", () => {
     respond({ kind: "resolve", ok: true });
     await loadPanel();
     await vi.waitFor(() => {
-      expect(shadow()?.textContent).toContain("Unexpected response");
+      expect(shadow()?.textContent).toContain("Couldn't read Nimbus's answer.");
     });
+  });
+});
+
+describe("panel-in-page resolve outcomes", () => {
+  it("renders scope guidance for an insufficient_scope reason", async () => {
+    const panel = await mountPanelWithResolve({
+      kind: "resolve",
+      ok: false,
+      reason: "insufficient_scope",
+      recognition: {
+        ok: true,
+        product: "github",
+        kind: "pr",
+        label: "GitHub PR",
+        ref: "a/b #1",
+        resolveUrl: "https://github.com/a/b/pull/1",
+      },
+    });
+    expect(panel.textContent).toContain("nimbus clip scopes");
+    expect(panel.textContent).not.toContain("had an error");
+  });
+
+  it("renders the chooser for an ambiguous outcome and settles on the clicked candidate", async () => {
+    const panel = await mountPanelWithResolve({
+      kind: "resolve",
+      ok: true,
+      recognition: {
+        ok: true,
+        product: "jira",
+        kind: "issue",
+        label: "Jira issue",
+        ref: "ABC-1",
+        resolveUrl: "https://acme.atlassian.net/browse/ABC-1",
+      },
+      outcome: {
+        kind: "ambiguous",
+        service: "jira",
+        fetchable: false,
+        truncated: false,
+        candidates: [
+          { id: "a", service: "jira", type: "issue", title: "One", url: null },
+          { id: "b", service: "jira", type: "issue", title: "Two", url: null },
+        ],
+      },
+    });
+
+    const buttons = panel.querySelectorAll("button.nimbus-related__candidate");
+    expect(buttons).toHaveLength(2);
+    (buttons[1] as HTMLButtonElement).click();
+
+    expect(panel.textContent).toContain("Two");
+    expect(panel.querySelectorAll("button.nimbus-related__candidate")).toHaveLength(0);
   });
 });
 
@@ -383,7 +474,7 @@ describe("panel-in-page lane state", () => {
       kind: "resolve",
       ok: true,
       recognition: { ok: false, reason: "unknown-host" },
-      item: null,
+      outcome: { kind: "not-indexed", fetchable: false },
     });
 
     await vi.waitFor(() => {

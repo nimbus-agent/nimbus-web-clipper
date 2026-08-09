@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // test/unit/panel-view.test.ts
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import {
   type HeaderState,
   type Lane,
@@ -84,8 +84,8 @@ const item: ResolvedItem = {
   service: "bitbucket",
   type: "pr",
   title: "Cache the index between runs",
-  canonicalUrl: "https://bitbucket.org/acme/web/pull-requests/482",
   url: "https://bitbucket.org/acme/web/pull-requests/482",
+  modifiedAt: 1_700_000_000_000,
 };
 
 describe("renderHeader", () => {
@@ -103,6 +103,8 @@ describe("renderHeader", () => {
       kind: "resolved",
       surface: "Bitbucket PR · acme/web #482",
       item,
+      matchKind: "exact",
+      nowMs: item.modifiedAt,
     });
     expect(el.textContent).toContain("Cache the index between runs");
     expect(el.querySelector("a")?.getAttribute("href")).toBe(item.url);
@@ -113,6 +115,8 @@ describe("renderHeader", () => {
       kind: "resolved",
       surface: "s",
       item: { ...item, url: "javascript:alert(1)" },
+      matchKind: "exact",
+      nowMs: item.modifiedAt,
     });
     expect(el.querySelector("a")).toBeNull();
     expect(el.textContent).toContain("Cache the index between runs");
@@ -139,6 +143,8 @@ describe("renderHeader", () => {
       kind: "resolved",
       surface: "s",
       item: { ...item, url: null, title: "<img src=x onerror=alert(1)>" },
+      matchKind: "exact",
+      nowMs: item.modifiedAt,
     });
     expect(el.querySelector("img")).toBeNull();
   });
@@ -190,5 +196,140 @@ describe("renderShell", () => {
   test("a shell with no lanes still renders its header", () => {
     const el = renderShell(document, { header, lanes: [] });
     expect(el.textContent).toContain("Not a recognised Nimbus surface");
+  });
+});
+
+const ITEM = {
+  id: "i1",
+  service: "github",
+  type: "pr",
+  title: "Fix the flake",
+  url: "https://github.com/a/b/pull/1",
+  modifiedAt: 1_700_000_000_000,
+};
+const NOW = ITEM.modifiedAt + 3 * 60_000;
+
+describe("renderHeader — freshness and match confidence", () => {
+  it("shows the surface, a linked title and the indexed age on an exact match", () => {
+    const el = renderHeader(document, {
+      kind: "resolved",
+      surface: "GitHub PR · a/b #1",
+      item: ITEM,
+      matchKind: "exact",
+      nowMs: NOW,
+    });
+    expect(el.textContent).toContain("GitHub PR · a/b #1");
+    expect(el.textContent).toContain("Fix the flake");
+    expect(el.textContent).toContain("Indexed 3 min ago");
+    // An exact match makes no hedge.
+    expect(el.textContent).not.toContain("Closest match");
+    const link = el.querySelector("a");
+    expect(link?.getAttribute("href")).toBe("https://github.com/a/b/pull/1");
+    expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+
+  it("does not hedge a query_stripped match — the query is not identity here", () => {
+    const el = renderHeader(document, {
+      kind: "resolved",
+      surface: "S",
+      item: ITEM,
+      matchKind: "query_stripped",
+      nowMs: NOW,
+    });
+    expect(el.textContent).not.toContain("Closest match");
+  });
+
+  it("marks a path_trimmed match as the weaker claim it is", () => {
+    const el = renderHeader(document, {
+      kind: "resolved",
+      surface: "S",
+      item: ITEM,
+      matchKind: "path_trimmed",
+      nowMs: NOW,
+    });
+    expect(el.textContent).toContain("Closest match");
+  });
+
+  it("renders a title-only line when the item has no url", () => {
+    const el = renderHeader(document, {
+      kind: "resolved",
+      surface: "S",
+      item: { ...ITEM, url: null },
+      matchKind: "exact",
+      nowMs: NOW,
+    });
+    expect(el.querySelector("a")).toBeNull();
+    expect(el.textContent).toContain("Fix the flake");
+  });
+
+  it("renders gateway strings as text, never as markup", () => {
+    const el = renderHeader(document, {
+      kind: "resolved",
+      surface: "S",
+      item: { ...ITEM, title: "<img src=x onerror=alert(1)>" },
+      matchKind: "exact",
+      nowMs: NOW,
+    });
+    expect(el.querySelector("img")).toBeNull();
+    expect(el.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+});
+
+describe("renderHeader — needs-scope", () => {
+  it("names the command that grants the scope instead of blaming the gateway", () => {
+    const el = renderHeader(document, { kind: "needs-scope", surface: "GitHub PR · a/b #1" });
+    expect(el.textContent).toContain("GitHub PR · a/b #1");
+    // The exact CLI syntax, verified against `nimbus clip --help` and CLIP_USAGE.
+    // `--label`/`--scopes` is the IPC param shape, NOT the CLI's flags.
+    expect(el.textContent).toContain("nimbus clip scopes <label> --set");
+    expect(el.textContent).toContain("resolve");
+    // It is a grant the owner has not made — not an error, and not a re-pair.
+    expect(el.textContent).not.toContain("error");
+    expect(el.textContent?.toLowerCase()).not.toContain("re-pair");
+  });
+});
+
+describe("renderHeader — ambiguous", () => {
+  const candidates = [
+    { id: "a", service: "jira", type: "issue", title: "One", url: "https://j.test/a" },
+    { id: "b", service: "jira", type: "issue", title: "Two", url: null },
+  ];
+
+  it("offers one button per candidate and reports the choice", () => {
+    const chosen: string[] = [];
+    const el = renderHeader(
+      document,
+      { kind: "ambiguous", surface: "Jira issue · ABC-1", candidates, truncated: false },
+      (c) => chosen.push(c.id),
+    );
+    const buttons = el.querySelectorAll("button");
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]?.textContent).toContain("One");
+    (buttons[1] as HTMLButtonElement).click();
+    expect(chosen).toEqual(["b"]);
+  });
+
+  it("shows NO chooser when truncated — upstream sends no list, so there is nothing honest to offer", () => {
+    const el = renderHeader(document, {
+      kind: "ambiguous",
+      surface: "Jira issue · ABC-1",
+      candidates: [],
+      truncated: true,
+    });
+    expect(el.querySelectorAll("button")).toHaveLength(0);
+    expect(el.textContent).toContain("Too many matches");
+  });
+});
+
+describe("renderHeader — chosen", () => {
+  it("shows the chosen candidate without claiming a freshness it does not have", () => {
+    const el = renderHeader(document, {
+      kind: "chosen",
+      surface: "Jira issue · ABC-1",
+      candidate: { id: "a", service: "jira", type: "issue", title: "One", url: "https://j.test/a" },
+    });
+    expect(el.textContent).toContain("One");
+    expect(el.textContent).not.toContain("Indexed");
+    expect(el.querySelectorAll("button")).toHaveLength(0);
   });
 });
