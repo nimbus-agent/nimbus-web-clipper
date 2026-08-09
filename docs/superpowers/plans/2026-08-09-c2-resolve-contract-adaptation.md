@@ -20,6 +20,22 @@ Copied from `CLAUDE.md`; every task's requirements implicitly include these.
 - Green bar is: `bun run typecheck && bun run lint && bun run test && bun run build && bun run check-build`.
 - `CHANGELOG.md` entry under `## [Unreleased]` for anything user-visible.
 
+**Green bar timing — read before reviewing any single task.** Changing
+`ResolvedItem` has a blast radius that cannot be closed in one commit:
+`messages.ts`, `gateway-client.ts`, `handlers.ts` and the panel all consume it.
+Tasks 2-5 therefore commit with `bun run typecheck` RED by design, and each of
+those tasks states the expected failure explicitly. **Task 8 restores the green
+bar, and Task 9 runs all five checks.**
+
+This is a deliberate sequencing choice, not an oversight, and it is safe here
+because this repo squash-merges (every PR is one commit on `main` — see #35,
+#36, #37), so no red commit ever lands. The alternative — one giant commit
+spanning types, client, guards, recogniser and panel — would be unreviewable.
+
+The unit test suite stays GREEN throughout; only `tsc` is red, and only in the
+files a later task rewrites. A task that leaves a test failing, or leaves
+`tsc` red in a file outside the stated set, is a genuine defect.
+
 ## Gateway version prerequisite — read before manual verification
 
 The contract below is merged upstream, but **merged is not installed**. Checked on this
@@ -1022,6 +1038,8 @@ In `src/shared/recognise.ts`, replace the `resolveUrl` construction at the end o
   const resolveUrl = `${split.base}${split.prefix}${match.path}${rest}`;
 ```
 
+The snippet above is the SHAPE; it needs one more input to be correct, defined next. Write the final form given at the end of this step — not the snippet above.
+
 This needs the *raw* matched slice to know how much of `pageUrl` the matcher consumed. Extend the matchers' `Match` type with the verbatim slice they matched:
 
 ```ts
@@ -1036,17 +1054,12 @@ interface Match {
 }
 ```
 
-Each matcher returns `matchedPath` as the verbatim join of the segments it consumed. For every matcher except Jira, `matchedPath === path`; `matchJira` returns `` `/browse/${key}` `` (verbatim) as `matchedPath` and `` `/browse/${upper}` `` as `path`. Read `split.matchedPath` from the match, not from `split` — adjust the snippet above to use `match.matchedPath`:
+Each matcher returns `matchedPath` as the verbatim join of the segments it consumed. For every matcher except Jira, `matchedPath === path`; `matchJira` returns `` `/browse/${key}` `` (verbatim) as `matchedPath` and `` `/browse/${upper}` `` as `path`.
+
+**This is the final form to write** — it reads `matchedPath` off `match` (not `split`), and falls back to `pageUrl` unchanged if the prefix does not line up (a defensive case, e.g. a percent-encoded path the splitter decoded) rather than emitting a mis-spliced string:
 
 ```ts
   const matchedPrefix = `${split.base}${split.prefix}${match.matchedPath}`;
-  const rest = pageUrl.slice(matchedPrefix.length);
-  const resolveUrl = `${split.base}${split.prefix}${match.path}${rest}`;
-```
-
-If `pageUrl` does not start with `matchedPrefix` (a defensive case — e.g. a percent-encoded path the splitter decoded), fall back to `pageUrl` unchanged rather than producing a spliced string:
-
-```ts
   const resolveUrl = pageUrl.startsWith(matchedPrefix)
     ? `${split.base}${split.prefix}${match.path}${pageUrl.slice(matchedPrefix.length)}`
     : pageUrl;
