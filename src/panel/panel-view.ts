@@ -5,12 +5,22 @@
 import { formatAge } from "../shared/freshness.ts";
 import { scopeCommand } from "../shared/scope-command.ts";
 import type {
+  Product,
   RelatedHit,
   ResolveCandidate,
   ResolvedItem,
   ResolveMatchKind,
   ScopeGap,
 } from "../shared/types.ts";
+
+/** One spelling of each product name — mirrors `options/surfaces-view.ts`. */
+const PRODUCT_NAMES: Record<Product, string> = {
+  bitbucket: "Bitbucket",
+  github: "GitHub",
+  gitlab: "GitLab",
+  jenkins: "Jenkins",
+  jira: "Jira",
+};
 
 /** Returns the parsed href when the scheme is http or https; null otherwise.
  *  Rejects javascript:, data:, vbscript:, relative paths, and malformed URLs. */
@@ -126,14 +136,46 @@ export type HeaderState =
       readonly candidates: readonly ResolveCandidate[];
       readonly truncated: boolean;
     }
-  | { readonly kind: "not-indexed"; readonly surface: string }
+  | {
+      readonly kind: "not-indexed";
+      readonly surface: string;
+      readonly product: Product;
+      /** Whether the miss can be turned into a targeted fetch — gates the button. */
+      readonly fetchable: boolean;
+    }
   /**
    * A 403. The token predates the `resolve` scope; the OWNER grants it.
    * `scopeGap` is null when the 403 body carried no scope detail — the panel then
    * falls back to generic guidance rather than inventing a command.
    */
   | { readonly kind: "needs-scope"; readonly surface: string; readonly scopeGap: ScopeGap | null }
-  | { readonly kind: "error"; readonly surface: string | null; readonly message: string };
+  | { readonly kind: "error"; readonly surface: string | null; readonly message: string }
+  /** A targeted fetch is in flight — no action to offer while it runs. */
+  | { readonly kind: "fetching"; readonly surface: string; readonly product: Product }
+  /**
+   * The gateway answered the fetch request but declined it. `scopeGap` follows the
+   * same null-means-no-detail convention as `needs-scope`, but for the `fetch`
+   * scope specifically — repeating `resolve` guidance here would be a dead end for
+   * a token that already has `resolve` but not `fetch`.
+   */
+  | {
+      readonly kind: "fetch-blocked";
+      readonly surface: string;
+      readonly product: Product;
+      readonly reason: "unfetchable" | "not-configured" | "needs-fetch-scope";
+      readonly scopeGap: ScopeGap | null;
+    }
+  /**
+   * The fetch attempt did not settle: `rate-limited` never left the client (safe
+   * to retry the fetch), `still-working` means our timeout fired but the gateway
+   * may still finish — retrying must re-check via resolve, not fire a second
+   * outbound provider request.
+   */
+  | {
+      readonly kind: "fetch-retry";
+      readonly surface: string;
+      readonly reason: "rate-limited" | "still-working";
+    };
 
 /** A collapsible section of the panel. Phase C2 adds why/impact/expert here. */
 export interface Lane {
@@ -172,6 +214,23 @@ function candidateLine(doc: Document, c: ResolveCandidate): HTMLElement {
   return wrapper;
 }
 
+/** Mirrors `chooser`'s button construction: type="button", textContent, addEventListener. */
+function actionButton(
+  doc: Document,
+  className: string,
+  text: string,
+  onClick: (() => void) | undefined,
+): HTMLButtonElement {
+  const button = doc.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = text;
+  if (onClick !== undefined) {
+    button.addEventListener("click", onClick);
+  }
+  return button;
+}
+
 function chooser(
   doc: Document,
   candidates: readonly ResolveCandidate[],
@@ -199,6 +258,7 @@ export function renderHeader(
   doc: Document,
   state: HeaderState,
   onChoose?: (c: ResolveCandidate) => void,
+  onFetch?: (action: "fetch" | "resolve") => void,
 ): HTMLElement {
   const box = doc.createElement("div");
   box.className = "nimbus-related__header-state";
@@ -292,6 +352,74 @@ export function renderHeader(
     return box;
   }
 
+  if (state.kind === "fetching") {
+    box.append(
+      line(doc, "nimbus-related__status", `Fetching from ${PRODUCT_NAMES[state.product]}…`),
+    );
+    return box;
+  }
+
+  if (state.kind === "fetch-blocked") {
+    if (state.reason === "unfetchable") {
+      box.append(line(doc, "nimbus-related__status", "Nimbus can't fetch this page."));
+      return box;
+    }
+    if (state.reason === "not-configured") {
+      // Terminal on purpose: retrying will never work, so this arm stays
+      // distinct rather than collapsing into generic guidance with a button.
+      box.append(
+        line(
+          doc,
+          "nimbus-related__status",
+          `No ${PRODUCT_NAMES[state.product]} connector is configured on your gateway.`,
+        ),
+      );
+      return box;
+    }
+    // needs-fetch-scope. Names the `fetch` scope, not `resolve` — someone who
+    // granted `resolve` earlier still cannot fetch, and repeating the `resolve`
+    // advice would be a dead end. Same null-fallback convention as `needs-scope`:
+    // an unsafe label or scope name leaks neither the label nor `--set`.
+    box.append(line(doc, "nimbus-related__status", "This pairing can't fetch pages yet."));
+    const cmd = state.scopeGap === null ? null : scopeCommand(state.scopeGap);
+    box.append(
+      line(
+        doc,
+        "nimbus-related__status",
+        cmd === null
+          ? "Grant it on the gateway: run nimbus clip status to find this device, then nimbus clip scopes."
+          : `Grant it on the gateway: ${cmd}`,
+      ),
+    );
+    return box;
+  }
+
+  if (state.kind === "fetch-retry") {
+    if (state.reason === "rate-limited") {
+      // rate_limited is returned before any outbound call happens, so retrying
+      // is safe to send as a fresh fetch.
+      box.append(line(doc, "nimbus-related__status", "Rate limited — try again shortly."));
+      box.append(
+        actionButton(doc, "nimbus-related__action", "Try again", () => onFetch?.("fetch")),
+      );
+      return box;
+    }
+    // still-working: our timeout fired, not a failure — the gateway may still be
+    // completing the fetch. The retry must re-check via resolve, never fire a
+    // second outbound provider request for work that may already be done.
+    box.append(
+      line(
+        doc,
+        "nimbus-related__status",
+        "Still working — your gateway may not have finished. Nothing was lost.",
+      ),
+    );
+    box.append(
+      actionButton(doc, "nimbus-related__action", "Check again", () => onFetch?.("resolve")),
+    );
+    return box;
+  }
+
   // Exhaustiveness backstop: every other arm returns above, so `state` here must
   // be narrowed to exactly `not-indexed`. If a future arm is added to
   // `HeaderState` without a branch handling it above, `state` stops narrowing to
@@ -302,6 +430,18 @@ export function renderHeader(
     return _never;
   }
   box.append(line(doc, "nimbus-related__status", "Not indexed."));
+  // The button appears only when the miss is fetchable — otherwise there is
+  // nothing to offer.
+  if (state.fetchable) {
+    box.append(
+      actionButton(
+        doc,
+        "nimbus-related__action",
+        `Fetch this from ${PRODUCT_NAMES[state.product]}`,
+        () => onFetch?.("fetch"),
+      ),
+    );
+  }
   return box;
 }
 
@@ -321,10 +461,11 @@ export function renderShell(
   doc: Document,
   state: PanelState,
   onChoose?: (c: ResolveCandidate) => void,
+  onFetch?: (action: "fetch" | "resolve") => void,
 ): HTMLElement {
   const shell = doc.createElement("div");
   shell.className = "nimbus-related__shell";
-  shell.append(renderHeader(doc, state.header, onChoose));
+  shell.append(renderHeader(doc, state.header, onChoose, onFetch));
   for (const lane of state.lanes) {
     shell.append(renderLane(doc, lane));
   }

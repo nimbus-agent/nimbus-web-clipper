@@ -169,7 +169,19 @@ function headerFrom(res: unknown, nowMs: number): HeaderState {
   }
   // `unresolvable` means the gateway could not parse the URL we sent — a client
   // bug, not a user-facing distinction. It reads as "not indexed" either way.
-  return { kind: "not-indexed", surface };
+  //
+  // TYPE-COMPAT NOTE (Task 6, C3.1): `not-indexed` now also carries `product` and
+  // `fetchable`, added so the header can offer a targeted-fetch button. Nothing
+  // here decides fetchability yet — that's Task 7's job, wiring the fetch state
+  // machine — so `fetchable` stays hardcoded `false`, an exact behavioural no-op:
+  // no button rendered here today, none rendered here still. `res.recognition.ok`
+  // is guaranteed true whenever `surface` is non-null (see `surfaceLine`), so this
+  // guard is unreachable in practice; it exists only so TS can narrow `product`
+  // off `res.recognition` without a non-null assertion.
+  if (!res.recognition.ok) {
+    return { kind: "unrecognised" };
+  }
+  return { kind: "not-indexed", surface, product: res.recognition.product, fetchable: false };
 }
 
 /**
