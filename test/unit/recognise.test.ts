@@ -1,5 +1,5 @@
 // test/unit/recognise.test.ts
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import { recognise, surfaceLine } from "../../src/shared/recognise.ts";
 import type { ConfiguredOrigin } from "../../src/shared/types.ts";
 
@@ -33,12 +33,12 @@ describe("built-in SaaS hosts", () => {
       resolveUrl: "https://github.com/acme/web/pull/482",
     });
   });
-  test("GitHub PR sub-tab collapses onto the PR", () => {
+  test("GitHub PR sub-tab is preserved onto the resolveUrl — the gateway trims it", () => {
     expectItem("https://github.com/acme/web/pull/482/files", NONE, {
       product: "github",
       kind: "pr",
       ref: "acme/web #482",
-      resolveUrl: "https://github.com/acme/web/pull/482",
+      resolveUrl: "https://github.com/acme/web/pull/482/files",
     });
   });
   test("GitLab MR under a nested group", () => {
@@ -46,7 +46,7 @@ describe("built-in SaaS hosts", () => {
       product: "gitlab",
       kind: "pr",
       ref: "acme/team/web !7",
-      resolveUrl: "https://gitlab.com/acme/team/web/-/merge_requests/7",
+      resolveUrl: "https://gitlab.com/acme/team/web/-/merge_requests/7/diffs",
     });
   });
   test("Bitbucket Cloud PR", () => {
@@ -54,7 +54,7 @@ describe("built-in SaaS hosts", () => {
       product: "bitbucket",
       kind: "pr",
       ref: "acme/web #12",
-      resolveUrl: "https://bitbucket.org/acme/web/pull-requests/12",
+      resolveUrl: "https://bitbucket.org/acme/web/pull-requests/12/diff",
     });
   });
   test("Jira Cloud issue on any *.atlassian.net host", () => {
@@ -81,7 +81,7 @@ describe("self-hosted instances", () => {
       product: "jenkins",
       kind: "build",
       ref: "web/deploy #42",
-      resolveUrl: "https://corp.example/jenkins/job/web/job/deploy/42",
+      resolveUrl: "https://corp.example/jenkins/job/web/job/deploy/42/console",
     });
   });
   test("Bitbucket Server PR on a non-default port", () => {
@@ -92,7 +92,8 @@ describe("self-hosted instances", () => {
         product: "bitbucket",
         kind: "pr",
         ref: "PLAT/web #9",
-        resolveUrl: "https://stash.corp.example:8443/projects/PLAT/repos/web/pull-requests/9",
+        resolveUrl:
+          "https://stash.corp.example:8443/projects/PLAT/repos/web/pull-requests/9/overview",
       },
     );
   });
@@ -102,13 +103,13 @@ describe("self-hosted instances", () => {
   });
 });
 
-describe("canonicalisation", () => {
-  test("strips query parameters, fragment and trailing slash", () => {
+describe("canonicalisation moved to the gateway", () => {
+  test("preserves query parameters, fragment and trailing slash — the gateway strips those", () => {
     expectItem("https://github.com/acme/web/pull/482/?utm_source=slack#note-3", NONE, {
       product: "github",
       kind: "pr",
       ref: "acme/web #482",
-      resolveUrl: "https://github.com/acme/web/pull/482",
+      resolveUrl: "https://github.com/acme/web/pull/482/?utm_source=slack#note-3",
     });
   });
   test("is idempotent — recognising a resolveUrl reproduces it exactly", () => {
@@ -156,6 +157,34 @@ describe("misses", () => {
   });
   test("unparseable input is unknown-host, not a throw", () => {
     expect(recognise("not a url", NONE)).toEqual({ ok: false, reason: "unknown-host" });
+  });
+});
+
+describe("resolveUrl keeps identity, not canonicalisation", () => {
+  const origins = [{ origin: "https://github.com", product: "github" as const }];
+
+  it("preserves the query string — the gateway's ladder strips it, not us", () => {
+    const r = recognise("https://github.com/a/b/pull/1?w=1&diff=split", origins);
+    expect(r.ok && r.resolveUrl).toBe("https://github.com/a/b/pull/1?w=1&diff=split");
+  });
+
+  it("preserves a sub-tab path segment — rung 3 trims it upstream", () => {
+    const r = recognise("https://github.com/a/b/pull/1/files", origins);
+    expect(r.ok && r.resolveUrl).toBe("https://github.com/a/b/pull/1/files");
+    // The header still reads off the matched ref, not the full path.
+    expect(r.ok && r.ref).toBe("a/b #1");
+  });
+
+  it("still uppercases a Jira key — that is identity, not canonicalisation", () => {
+    const jira = [{ origin: "https://acme.atlassian.net", product: "jira" as const }];
+    const r = recognise("https://acme.atlassian.net/browse/abc-1?filter=42", jira);
+    expect(r.ok && r.resolveUrl).toBe("https://acme.atlassian.net/browse/ABC-1?filter=42");
+  });
+
+  it("preserves a configured path prefix on a self-hosted instance", () => {
+    const jenkins = [{ origin: "https://corp.example/jenkins", product: "jenkins" as const }];
+    const r = recognise("https://corp.example/jenkins/job/build/42/console", jenkins);
+    expect(r.ok && r.resolveUrl).toBe("https://corp.example/jenkins/job/build/42/console");
   });
 });
 

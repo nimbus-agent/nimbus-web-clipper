@@ -365,12 +365,13 @@ describe("handleResolve", () => {
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
       },
-      // Note: recognise() canonicalises away the query string, so the recogniser's
-      // resolveUrl (asserted below) differs from the raw pageUrl — that's the point.
+      // Note: recognise() preserves the query string deliberately — the gateway
+      // owns canonicalisation, so the recogniser's resolveUrl (asserted below)
+      // matches the raw pageUrl verbatim.
       { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1?files=1" },
     );
 
-    expect(seen).toEqual(["https://github.com/a/b/pull/1"]);
+    expect(seen).toEqual(["https://github.com/a/b/pull/1?files=1"]);
     expect(res).toEqual({
       kind: "resolve",
       ok: true,
@@ -450,6 +451,6 @@ describe("handleResolve", () => {
       },
       { kind: "resolve", pageUrl: "https://corp.example/jira/browse/plat-9?x=1" },
     );
-    expect(sent).toBe("https://corp.example/jira/browse/PLAT-9");
+    expect(sent).toBe("https://corp.example/jira/browse/PLAT-9?x=1");
   });
 });

@@ -160,7 +160,7 @@ describe("message routing — success shapes", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test("resolve: a recognised page GETs the canonicalised URL and returns the outcome", async () => {
+  test("resolve: a recognised page GETs the address-bar URL and returns the outcome", async () => {
     await load();
     harness.storage.set(CONNECTION_KEY, conn);
     const item = {
@@ -191,7 +191,7 @@ describe("message routing — success shapes", () => {
       RequestInit,
     ];
     expect(url).toBe(
-      `http://127.0.0.1:8765/v1/items/resolve?url=${encodeURIComponent("https://github.com/acme/web/pull/1")}`,
+      `http://127.0.0.1:8765/v1/items/resolve?url=${encodeURIComponent("https://github.com/acme/web/pull/1/files")}`,
     );
     expect(init.method).toBe("GET");
     expect((init.headers as Record<string, string>)["authorization"]).toBe("Bearer tok-abc");

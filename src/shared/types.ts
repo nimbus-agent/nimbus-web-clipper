@@ -81,7 +81,11 @@ export type Recognition =
       readonly label: string;
       /** Short identity for the header, e.g. "acme/web #482". */
       readonly ref: string;
-      /** The canonicalised URL sent to the gateway as the resolution key. */
+      /**
+       * The URL sent to the gateway as the resolution key: the address-bar URL with
+       * identity normalisation only. The gateway owns canonicalisation — see
+       * shared/recognise.ts.
+       */
       readonly resolveUrl: string;
     }
   | { readonly ok: false; readonly reason: "unknown-host" | "unrecognised-path" };
