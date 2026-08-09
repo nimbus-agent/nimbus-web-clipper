@@ -31,7 +31,7 @@ const RESOLVE_MESSAGES: Record<string, string> = {
   // — if it were ever violated, this is the one message this branch went out of
   // its way to avoid reusing the generic "Couldn't resolve this page." for.
   insufficient_scope:
-    "This pairing can't resolve pages yet. Grant it on the gateway: nimbus clip scopes <label> --set clip,briefs,resolve",
+    "This pairing can't resolve pages yet. Run nimbus clip status to find this device, then nimbus clip scopes.",
 };
 
 // Inlined so the panel is fully self-contained. `:host { all: initial }` drops
@@ -144,7 +144,7 @@ function headerFrom(res: unknown, nowMs: number): HeaderState {
     // not granted this device the scope. It gets its own state so the panel can
     // say what to run instead of blaming Nimbus.
     if (res.reason === "insufficient_scope" && surface !== null) {
-      return { kind: "needs-scope", surface };
+      return { kind: "needs-scope", surface, scopeGap: res.scopeGap ?? null };
     }
     return {
       kind: "error",

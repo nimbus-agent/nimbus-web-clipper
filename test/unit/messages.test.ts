@@ -211,6 +211,37 @@ describe("isResolveResponse", () => {
     ).toBe(true);
   });
 
+  it("accepts a failure arm carrying a well-formed scopeGap", () => {
+    expect(
+      isResolveResponse({
+        kind: "resolve",
+        ok: false,
+        recognition,
+        reason: "insufficient_scope",
+        scopeGap: { label: "chrome", required: "resolve", granted: ["clip", "briefs"] },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a failure arm carrying a malformed scopeGap", () => {
+    for (const scopeGap of [
+      { label: "chrome", required: "resolve" }, // missing granted
+      { label: "chrome", required: "resolve", granted: [1, 2] }, // non-string granted
+      { required: "resolve", granted: [] }, // missing label
+      "chrome",
+    ]) {
+      expect(
+        isResolveResponse({
+          kind: "resolve",
+          ok: false,
+          recognition,
+          reason: "insufficient_scope",
+          scopeGap,
+        }),
+      ).toBe(false);
+    }
+  });
+
   it("rejects an item missing modifiedAt, an unknown outcome kind, and a bad candidate", () => {
     for (const outcome of [
       {

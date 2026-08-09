@@ -277,15 +277,38 @@ describe("renderHeader — freshness and match confidence", () => {
 
 describe("renderHeader — needs-scope", () => {
   it("names the command that grants the scope instead of blaming the gateway", () => {
-    const el = renderHeader(document, { kind: "needs-scope", surface: "GitHub PR · a/b #1" });
+    const el = renderHeader(document, {
+      kind: "needs-scope",
+      surface: "GitHub PR · a/b #1",
+      scopeGap: { label: "chrome", required: "resolve", granted: ["clip", "briefs"] },
+    });
     expect(el.textContent).toContain("GitHub PR · a/b #1");
-    // The exact CLI syntax, verified against `nimbus clip --help` and CLIP_USAGE.
-    // `--label`/`--scopes` is the IPC param shape, NOT the CLI's flags.
-    expect(el.textContent).toContain("nimbus clip scopes <label> --set");
-    expect(el.textContent).toContain("resolve");
+    expect(el.textContent).toContain("nimbus clip scopes chrome --set clip,briefs,resolve");
     // It is a grant the owner has not made — not an error, and not a re-pair.
     expect(el.textContent).not.toContain("error");
     expect(el.textContent?.toLowerCase()).not.toContain("re-pair");
+  });
+
+  it("renders the real label and the full resulting scope set", () => {
+    const el = renderHeader(document, {
+      kind: "needs-scope",
+      surface: "GitHub PR · a/b #1",
+      scopeGap: { label: "chrome", required: "resolve", granted: ["clip", "briefs"] },
+    });
+    expect(el.textContent).toContain("nimbus clip scopes chrome --set clip,briefs,resolve");
+    // The literal placeholder does not paste, and an ellipsis is not valid CLI syntax.
+    expect(el.textContent).not.toContain("<label>");
+    expect(el.textContent).not.toContain("...");
+  });
+
+  it("falls back to generic guidance when the 403 carried no scope detail", () => {
+    const el = renderHeader(document, {
+      kind: "needs-scope",
+      surface: "S",
+      scopeGap: null,
+    });
+    expect(el.textContent).toContain("nimbus clip scopes");
+    expect(el.textContent).not.toContain("--set");
   });
 });
 

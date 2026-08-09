@@ -111,12 +111,15 @@ export async function handleRelated(
 
 export interface ResolveDeps {
   readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
-  readonly getConnection: () => Promise<{ origin: string; token: string } | null>;
+  readonly getConnection: () => Promise<{ origin: string; token: string; label: string } | null>;
   readonly resolveItem: (
     origin: string,
     token: string,
     pageUrl: string,
-  ) => Promise<{ ok: true; outcome: ResolveOutcome } | { ok: false; reason: ResolveError }>;
+  ) => Promise<
+    | { ok: true; outcome: ResolveOutcome }
+    | { ok: false; reason: ResolveError; scopeGap?: { required: string; granted: string[] } }
+  >;
 }
 
 /**
@@ -147,7 +150,15 @@ export async function handleResolve(
   }
   const r = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!r.ok) {
-    return { kind: "resolve", ok: false, recognition, reason: r.reason };
+    return r.scopeGap === undefined
+      ? { kind: "resolve", ok: false, recognition, reason: r.reason }
+      : {
+          kind: "resolve",
+          ok: false,
+          recognition,
+          reason: r.reason,
+          scopeGap: { label: conn.label, ...r.scopeGap },
+        };
   }
   return { kind: "resolve", ok: true, recognition, outcome: r.outcome };
 }

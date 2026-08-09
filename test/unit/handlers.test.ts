@@ -359,7 +359,11 @@ describe("handleResolve", () => {
     const res = await handleResolve(
       {
         getOrigins: async () => [],
-        getConnection: async () => ({ origin: "http://127.0.0.1:8765", token: "t" }),
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "MacBook",
+        }),
         resolveItem: async (_o, _t, url) => {
           seen.push(url);
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
@@ -384,7 +388,11 @@ describe("handleResolve", () => {
     const res = await handleResolve(
       {
         getOrigins: async () => [],
-        getConnection: async () => ({ origin: "http://127.0.0.1:8765", token: "t" }),
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "MacBook",
+        }),
         resolveItem: async () => ({ ok: false, reason: "insufficient_scope" }),
       },
       { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
@@ -398,12 +406,43 @@ describe("handleResolve", () => {
     });
   });
 
+  it("attaches the connection's own label to the scope gap from the 403", async () => {
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "chrome",
+        }),
+        resolveItem: async () => ({
+          ok: false,
+          reason: "insufficient_scope",
+          scopeGap: { required: "resolve", granted: ["clip", "briefs"] },
+        }),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(res).toEqual({
+      kind: "resolve",
+      ok: false,
+      recognition: expect.objectContaining({ ok: true, ref: "a/b #1" }),
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "resolve", granted: ["clip", "briefs"] },
+    });
+  });
+
   it("makes no gateway call for an unrecognised page", async () => {
     let called = false;
     const res = await handleResolve(
       {
         getOrigins: async () => [],
-        getConnection: async () => ({ origin: "http://127.0.0.1:8765", token: "t" }),
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "MacBook",
+        }),
         resolveItem: async () => {
           called = true;
           return { ok: false, reason: "server_error" };

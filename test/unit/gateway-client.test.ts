@@ -475,7 +475,18 @@ describe("resolveItem", () => {
     expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
       ok: false,
       reason: "insufficient_scope",
+      scopeGap: { required: "resolve", granted: ["clip", "briefs"] },
     });
+  });
+
+  test("403 with no parseable scope detail carries no scopeGap", async () => {
+    for (const body of [{}, { required: "resolve" }, { granted: ["clip"] }, null]) {
+      const doFetch = async () => jsonRes(403, body);
+      expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+        ok: false,
+        reason: "insufficient_scope",
+      });
+    }
   });
 
   test("maps 401 / 404 / 500 / transport failure", async () => {

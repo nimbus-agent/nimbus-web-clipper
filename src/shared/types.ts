@@ -165,3 +165,17 @@ export type ResolveError =
   | "unsupported"
   | "unreachable"
   | "server_error";
+
+/**
+ * What a 403 tells us about a scope the paired token lacks, plus the label needed
+ * to name the device in the fix command.
+ *
+ * `granted` comes from the gateway's own 403 body (`insufficientScopeBody` in
+ * ipc/http-route-auth.ts), NOT from a client guess — `--set` replaces the set, so
+ * guessing it would strip scopes the token already holds.
+ */
+export interface ScopeGap {
+  readonly label: string;
+  readonly required: string;
+  readonly granted: readonly string[];
+}

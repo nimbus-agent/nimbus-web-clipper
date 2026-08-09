@@ -16,6 +16,7 @@ import {
   type ResolvedItem,
   type ResolveError,
   type ResolveOutcome,
+  type ScopeGap,
 } from "./types.ts";
 
 /** A liveness probe the popup sends to confirm the service worker is responsive. */
@@ -127,6 +128,7 @@ export type ResolveResponse =
       readonly ok: false;
       readonly recognition: Recognition;
       readonly reason: ResolveError;
+      readonly scopeGap?: ScopeGap;
     };
 
 export type QueueResponse = { readonly kind: "queue"; readonly items: QueuedClipView[] };
@@ -260,6 +262,16 @@ function isResolveOutcome(v: unknown): v is ResolveOutcome {
   );
 }
 
+function isScopeGap(v: unknown): v is ScopeGap {
+  return (
+    isObject(v) &&
+    typeof v["label"] === "string" &&
+    typeof v["required"] === "string" &&
+    Array.isArray(v["granted"]) &&
+    v["granted"].every((s) => typeof s === "string")
+  );
+}
+
 function isRecognition(v: unknown): v is Recognition {
   if (!isObject(v)) {
     return false;
@@ -285,7 +297,11 @@ export function isResolveResponse(v: unknown): v is ResolveResponse {
   if (v["ok"] === true) {
     return isResolveOutcome(v["outcome"]);
   }
-  return v["ok"] === false && typeof v["reason"] === "string";
+  return (
+    v["ok"] === false &&
+    typeof v["reason"] === "string" &&
+    (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"]))
+  );
 }
 
 export function isQueueListRequest(v: unknown): v is QueueListRequest {

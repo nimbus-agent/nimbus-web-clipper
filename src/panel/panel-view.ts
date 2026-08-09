@@ -3,11 +3,13 @@
 // written via textContent (never innerHTML) — the indexed content is
 // attacker-influenceable, so plain-text rendering is the XSS backstop.
 import { formatAge } from "../shared/freshness.ts";
+import { scopeCommand } from "../shared/scope-command.ts";
 import type {
   RelatedHit,
   ResolveCandidate,
   ResolvedItem,
   ResolveMatchKind,
+  ScopeGap,
 } from "../shared/types.ts";
 
 /** Returns the parsed href when the scheme is http or https; null otherwise.
@@ -125,8 +127,12 @@ export type HeaderState =
       readonly truncated: boolean;
     }
   | { readonly kind: "not-indexed"; readonly surface: string }
-  /** A 403. The token predates the `resolve` scope; the OWNER grants it. */
-  | { readonly kind: "needs-scope"; readonly surface: string }
+  /**
+   * A 403. The token predates the `resolve` scope; the OWNER grants it.
+   * `scopeGap` is null when the 403 body carried no scope detail — the panel then
+   * falls back to generic guidance rather than inventing a command.
+   */
+  | { readonly kind: "needs-scope"; readonly surface: string; readonly scopeGap: ScopeGap | null }
   | { readonly kind: "error"; readonly surface: string | null; readonly message: string };
 
 /** A collapsible section of the panel. Phase C2 adds why/impact/expert here. */
@@ -269,12 +275,18 @@ export function renderHeader(
   }
 
   if (state.kind === "needs-scope") {
+    box.append(line(doc, "nimbus-related__status", "This pairing can't resolve pages yet."));
+    // Null when the 403 carried no detail, OR when the device label is not safe to
+    // put in a shell command. Both fall back to guidance that names the tool
+    // without pretending to know the exact invocation.
+    const cmd = state.scopeGap === null ? null : scopeCommand(state.scopeGap);
     box.append(
-      line(doc, "nimbus-related__status", "This pairing can't resolve pages yet."),
       line(
         doc,
         "nimbus-related__status",
-        "Grant it on the gateway: nimbus clip scopes <label> --set clip,briefs,resolve",
+        cmd === null
+          ? "Grant it on the gateway: run nimbus clip status to find this device, then nimbus clip scopes."
+          : `Grant it on the gateway: ${cmd}`,
       ),
     );
     return box;

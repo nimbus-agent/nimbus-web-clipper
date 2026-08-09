@@ -410,6 +410,24 @@ describe("panel-in-page resolve outcomes", () => {
     expect(panel.textContent).not.toContain("had an error");
   });
 
+  it("renders the real built command when the 403 carried a scope gap", async () => {
+    const panel = await mountPanelWithResolve({
+      kind: "resolve",
+      ok: false,
+      reason: "insufficient_scope",
+      recognition: {
+        ok: true,
+        product: "github",
+        kind: "pr",
+        label: "GitHub PR",
+        ref: "a/b #1",
+        resolveUrl: "https://github.com/a/b/pull/1",
+      },
+      scopeGap: { label: "chrome", required: "resolve", granted: ["clip", "briefs"] },
+    });
+    expect(panel.textContent).toContain("nimbus clip scopes chrome --set clip,briefs,resolve");
+  });
+
   it("renders the chooser for an ambiguous outcome and settles on the clicked candidate", async () => {
     const panel = await mountPanelWithResolve({
       kind: "resolve",

@@ -300,7 +300,10 @@ export async function resolveItem(
   token: string,
   pageUrl: string,
   doFetch: FetchLike = fetch,
-): Promise<{ ok: true; outcome: ResolveOutcome } | { ok: false; reason: ResolveError }> {
+): Promise<
+  | { ok: true; outcome: ResolveOutcome }
+  | { ok: false; reason: ResolveError; scopeGap?: { required: string; granted: string[] } }
+> {
   let res: Response;
   try {
     res = await getJson(
@@ -322,10 +325,30 @@ export async function resolveItem(
     return { ok: false, reason: "unauthorized" };
   }
   if (res.status === 403) {
-    return { ok: false, reason: "insufficient_scope" };
+    const body = await readJson(res);
+    const gap = parseScopeGap(body);
+    return gap === null
+      ? { ok: false, reason: "insufficient_scope" }
+      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
   }
   if (res.status === 404) {
     return { ok: false, reason: "unsupported" };
   }
   return { ok: false, reason: "server_error" };
+}
+
+/** The 403 body's scope detail. Absent or malformed => omit it; the panel then
+ *  falls back to generic guidance rather than inventing a command. */
+function parseScopeGap(v: unknown): { required: string; granted: string[] } | null {
+  if (!isObject(v) || typeof v["required"] !== "string" || !Array.isArray(v["granted"])) {
+    return null;
+  }
+  const granted: string[] = [];
+  for (const s of v["granted"]) {
+    if (typeof s !== "string") {
+      return null;
+    }
+    granted.push(s);
+  }
+  return { required: v["required"], granted };
 }
