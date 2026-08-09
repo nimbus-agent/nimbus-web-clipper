@@ -51,6 +51,33 @@ So the accurate sequencing rule is:
 | 2 | gateway-fixtures.ts, handlers.test.ts, mock-gateway.test.ts, panel-view.test.ts | — |
 | 3 | the above + service-worker.ts | service-worker.test.ts (2) |
 | 4 | the above − handlers.test.ts − service-worker.ts | — |
+
+**Task 4 correction (measured).** The `item` → `outcome` rename on `ResolveResponse`
+also breaks `src/panel/panel-in-page.ts`, which this table did not predict. Because
+the table forbids failing tests after Task 4, Task 4 necessarily made a **minimal,
+mechanical** migration there (`found` → `resolved`, every other outcome →
+`not-indexed`), adding no new UI states.
+
+**Consequence for Task 8:** `panel-in-page.ts` arrives *partially* migrated. Task 8
+is still responsible for everything that matters — the `needs-scope` mapping, the
+`ambiguous` mapping, the `chosen` state, the chooser callback wiring, the per-repaint
+`nowMs`, and the stylesheet additions. Do not assume the file is done because it
+compiles.
+
+**A landmine Task 5 must clear.** Task 4's brief contained a test asserting that
+`handleResolve` passes a query-bearing URL through unchanged — which is Task 5's
+behaviour, not Task 4's. Task 4 correctly adapted it to the *current* stripping
+behaviour and left this comment at `test/unit/handlers.test.ts:368`:
+
+```
+// Note: recognise() canonicalises away the query string, so the recogniser's
+// resolveUrl (asserted below) differs from the raw pageUrl — that's the point.
+```
+
+After Task 5 that comment is exactly backwards. Task 5 must flip the assertion to
+`["https://github.com/a/b/pull/1?files=1"]` and rewrite the comment to say the query
+is preserved deliberately. The failing assertion will force the issue; the stale
+comment will not, so it is called out here.
 | 7 | − panel-view.test.ts | — |
 | 8 | **none** | — |
 | 9 | none (fixtures fixed) | — |
