@@ -18,6 +18,14 @@ async function loadPanel(): Promise<void> {
   await import(MODULE_PATH);
 }
 
+/** Flushes pending microtasks (chained `await`s in the click handlers under
+ *  test) via a real macrotask tick — Node drains the microtask queue fully
+ *  before any queued macrotask runs, so one tick is enough regardless of how
+ *  deep the awaited chain is (e.g. fetch -> re-resolve). */
+async function flush(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function host(): HTMLElement | null {
   return document.getElementById(HOST_ID);
 }
@@ -60,6 +68,55 @@ async function mountPanelWithResolve(resolveResponse: unknown): Promise<ShadowRo
     throw new Error("panel shadow root not found");
   }
   return root;
+}
+
+/**
+ * Mounts the panel with a scripted SEQUENCE of responses per message kind, and
+ * records each "resolve"/"fetch" kind sent (in order) into `sent` — the
+ * assertion surface for "exactly one fetch, ever". "related" traffic is
+ * answered with a fixed empty response and deliberately NOT recorded: it fires
+ * in parallel with every mount and isn't part of the fetch state machine under
+ * test, so recording it would make `sent` an unpredictable interleave instead
+ * of the ordered ["resolve", "fetch", ...] trace these tests assert on.
+ *
+ * Each kind's array is consumed in order; once exhausted, its last entry
+ * repeats for any further call of that kind (a recovery resolve after a single
+ * scripted miss keeps returning that same miss).
+ *
+ * Returns the panel's BODY element (not the full shadow root) so callers can
+ * do `panel.querySelector("button")` unambiguously — the shadow root's first
+ * button is the panel's own close control, which lives outside the body.
+ */
+async function mountPanelWithScript(
+  sent: string[],
+  script: { readonly resolve?: unknown[]; readonly fetch?: unknown[] },
+): Promise<HTMLElement> {
+  const counters: Record<string, number> = {};
+  harness.sendMessage.mockImplementation(async (message: unknown) => {
+    const kind = (message as { kind?: string }).kind;
+    if (kind === "related") {
+      return { kind: "related", ok: true, items: [] };
+    }
+    if (kind !== "resolve" && kind !== "fetch") {
+      throw new Error(`mountPanelWithScript: unscripted message kind ${String(kind)}`);
+    }
+    sent.push(kind);
+    const responses = script[kind] ?? [];
+    const i = counters[kind] ?? 0;
+    counters[kind] = i + 1;
+    return responses[Math.min(i, responses.length - 1)];
+  });
+
+  await loadPanel();
+  await vi.waitFor(() => {
+    expect(headerText()).not.toContain("Checking Nimbus");
+  });
+
+  const body = shadow()?.querySelector<HTMLElement>(".nimbus-related__body");
+  if (body === null || body === undefined) {
+    throw new Error("panel body not found");
+  }
+  return body;
 }
 
 const hit: RelatedHit = {
@@ -532,5 +589,109 @@ describe("panel-in-page lane state", () => {
       expect(shadow()?.textContent).toContain("Not a recognised Nimbus surface");
     });
     expect(lane()?.open).toBe(false);
+  });
+});
+
+describe("panel-in-page fetch state machine", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #1",
+    resolveUrl: "https://github.com/acme/web/pull/1",
+  } as const;
+
+  const miss = {
+    kind: "resolve",
+    ok: true,
+    recognition,
+    outcome: { kind: "not-indexed", fetchable: true },
+  };
+
+  function found(): unknown {
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: {
+        kind: "found",
+        matchKind: "exact",
+        item: {
+          id: "i1",
+          service: "github",
+          type: "pr",
+          title: "Add thing",
+          url: "https://github.com/acme/web/pull/1",
+          modifiedAt: Date.now(),
+        },
+      },
+    };
+  }
+
+  const indexed = {
+    kind: "fetch",
+    ok: true,
+    recognition,
+    outcome: { kind: "indexed", itemId: "i1" },
+  };
+
+  const timedOut = {
+    kind: "fetch",
+    ok: false,
+    recognition,
+    reason: "timeout",
+  };
+
+  it("fetches on click, then re-resolves to show the item", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss, found()],
+      fetch: [indexed],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click();
+    await flush();
+
+    expect(sent).toEqual(["resolve", "fetch", "resolve"]);
+    expect(panel.textContent).toContain("Indexed just now");
+  });
+
+  it("after a timeout, Check again re-resolves and does NOT fetch again", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [timedOut],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click();
+    await flush();
+    expect(panel.textContent).toContain("Still working");
+
+    (panel.querySelector("button") as HTMLButtonElement).click();
+    await flush();
+
+    // One fetch, ever. The recovery click is a resolve.
+    expect(sent.filter((k) => k === "fetch")).toHaveLength(1);
+    expect(sent[sent.length - 1]).toBe("resolve");
+  });
+
+  it("does not re-offer the Fetch button when the recovery resolve is still a miss", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [timedOut],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    await flush();
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Check again
+    await flush();
+
+    // Falling back to not-indexed would restore the Fetch button and allow a second
+    // outbound request for work possibly still in flight.
+    expect(panel.textContent).toContain("Still working");
+    expect(panel.textContent).not.toContain("Fetch this from");
+    expect(sent.filter((k) => k === "fetch")).toHaveLength(1);
   });
 });

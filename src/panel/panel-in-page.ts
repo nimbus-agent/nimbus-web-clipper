@@ -3,9 +3,9 @@
 // panel. Mounts a Shadow-DOM overlay (inlined styles — no web_accessible_resources),
 // reads the page context, asks the SW for related items, and renders them.
 import { sendMessage } from "../browser/runtime.ts";
-import { isRelatedResponse, isResolveResponse } from "../shared/messages.ts";
+import { isFetchResponse, isRelatedResponse, isResolveResponse } from "../shared/messages.ts";
 import { surfaceLine } from "../shared/recognise.ts";
-import type { RelatedHit, ResolveCandidate } from "../shared/types.ts";
+import type { Product, RelatedHit, ResolveCandidate } from "../shared/types.ts";
 import { type HeaderState, type Lane, renderError, renderHits, renderShell } from "./panel-view.ts";
 
 const HOST_ID = "nimbus-related-host";
@@ -32,6 +32,19 @@ const RESOLVE_MESSAGES: Record<string, string> = {
   // its way to avoid reusing the generic "Couldn't resolve this page." for.
   insufficient_scope:
     "This pairing can't resolve pages yet. Run nimbus clip status to find this device, then nimbus clip scopes.",
+};
+
+// `insufficient_scope` and `timeout` are handled BEFORE this map is consulted,
+// in `fetchOutcomeHeader` below, where they get their own first-class header
+// states (`fetch-blocked`/`needs-fetch-scope` and `fetch-retry`/`still-working`)
+// instead of a flat message. What's left here is the generic fallback for the
+// remaining `FetchError` reasons, mirroring `RESOLVE_MESSAGES` above.
+const FETCH_MESSAGES: Record<string, string> = {
+  not_paired: "Pair with Nimbus in Options to fetch this page.",
+  unauthorized: "Nimbus rejected this pairing. Re-pair in Options.",
+  unsupported: "This Nimbus gateway can't fetch pages yet.",
+  unreachable: "Couldn't connect to Nimbus.",
+  server_error: "Nimbus had an error fetching this page.",
 };
 
 // Inlined so the panel is fully self-contained. `:host { all: initial }` drops
@@ -134,7 +147,7 @@ function readContext(): { title: string; canonicalUrl?: string; selection: strin
   };
 }
 
-function headerFrom(res: unknown, nowMs: number): HeaderState {
+function headerFrom(res: unknown, nowMs: number, fetchSent: boolean): HeaderState {
   if (!isResolveResponse(res)) {
     return { kind: "error", surface: null, message: "Couldn't read Nimbus's answer." };
   }
@@ -170,18 +183,9 @@ function headerFrom(res: unknown, nowMs: number): HeaderState {
   // `unresolvable` means the gateway could not parse the URL we sent — a client
   // bug, not a user-facing distinction. It reads as "not indexed" either way.
   //
-  // TYPE-COMPAT NOTE (Task 6, C3.1): `not-indexed` now also carries `product` and
-  // `fetchable`, added so the header can offer a targeted-fetch button.
-  // `outcome.fetchable` is real: both `not-indexed` and `unresolvable` (the only
-  // arms left once `found`/`ambiguous` returned above) already carry it on the
-  // wire (ResolveOutcome, shared/types.ts) — it is not invented here. What is
-  // still Task 7's job is the fetch STATE MACHINE: the click handler, the
-  // one-fetch-per-panel latch, and the outcome→header mapping for the fetch
-  // response itself (fetching / fetch-blocked / fetch-retry) — none of that is
-  // wired here; `onFetch` is not passed to `renderShell` below. `res.recognition.ok`
-  // is guaranteed true whenever `surface` is non-null (see `surfaceLine`), so this
-  // guard is unreachable in practice; it exists only so TS can narrow `product`
-  // off `res.recognition` without a non-null assertion.
+  // `res.recognition.ok` is guaranteed true whenever `surface` is non-null (see
+  // `surfaceLine`), so this guard is unreachable in practice; it exists only so
+  // TS can narrow `product` off `res.recognition` without a non-null assertion.
   if (!res.recognition.ok) {
     return { kind: "unrecognised" };
   }
@@ -189,8 +193,76 @@ function headerFrom(res: unknown, nowMs: number): HeaderState {
     kind: "not-indexed",
     surface,
     product: res.recognition.product,
-    fetchable: outcome.fetchable,
+    // Once a fetch has been sent for this panel, `fetchable` is forced false on
+    // every subsequent resolve — including a recovery re-resolve that comes back
+    // as another miss. See the `fetchSent` doc comment in `createPanel` for why
+    // the button must not return.
+    fetchable: outcome.fetchable && !fetchSent,
   };
+}
+
+/**
+ * Maps a settled `FetchResponse` — everything except `indexed`, which the
+ * caller re-resolves instead of rendering (the response carries only
+ * `{status:"indexed", itemId}`, no title/url/modified_at to build a `resolved`
+ * header from) — to a header state.
+ *
+ * `res.recognition` rides on both arms, mirroring `headerFrom`. When it comes
+ * back not-ok, this maps to `unrecognised` rather than falling into
+ * `FETCH_MESSAGES`. That specifically routes around a defect in
+ * `handleFetch` (background/handlers.ts): it answers an unrecognised page
+ * with `{reason:"server_error"}` instead of a clean outcome, unlike
+ * `handleResolve`'s equivalent path. Left as `server_error` here it would
+ * render "Nimbus had an error" — blaming the gateway for a client-side
+ * condition. It is unreachable in practice (the fetch button only renders on
+ * an already-recognised miss), but this guard means it can never render that
+ * way if it ever were.
+ */
+function fetchOutcomeHeader(res: unknown, surface: string, product: Product): HeaderState {
+  if (!isFetchResponse(res)) {
+    return { kind: "error", surface, message: "Couldn't read Nimbus's answer." };
+  }
+  if (surfaceLine(res.recognition) === null) {
+    return { kind: "unrecognised" };
+  }
+  if (!res.ok) {
+    // `timeout` is not a failure: our client-side timer fired, the gateway may
+    // still finish. It gets its own retry state that re-resolves rather than
+    // re-fetching — see `fetch-retry`/`still-working` in panel-view.ts.
+    if (res.reason === "timeout") {
+      return { kind: "fetch-retry", surface, reason: "still-working" };
+    }
+    if (res.reason === "insufficient_scope") {
+      return {
+        kind: "fetch-blocked",
+        surface,
+        product,
+        reason: "needs-fetch-scope",
+        scopeGap: res.scopeGap ?? null,
+      };
+    }
+    return {
+      kind: "error",
+      surface,
+      message: FETCH_MESSAGES[res.reason] ?? "Couldn't fetch this page.",
+    };
+  }
+  const outcome = res.outcome;
+  if (outcome.kind === "rate-limited") {
+    // Returned before any outbound call happens — safe to retry as a fresh fetch.
+    return { kind: "fetch-retry", surface, reason: "rate-limited" };
+  }
+  if (outcome.kind === "not-configured") {
+    return { kind: "fetch-blocked", surface, product, reason: "not-configured", scopeGap: null };
+  }
+  if (outcome.kind === "indexed") {
+    // Not reached: the caller re-resolves on `indexed` before calling this
+    // function (see `sendFetch` in `createPanel`). Handled here only so this
+    // function stays total over `FetchOutcome`.
+    return { kind: "fetching", surface, product };
+  }
+  // outcome.kind === "unfetchable"
+  return { kind: "fetch-blocked", surface, product, reason: "unfetchable", scopeGap: null };
 }
 
 /**
@@ -213,6 +285,29 @@ function createPanel(body: HTMLElement): {
   // alongside an `ambiguous` header — see the `shown` narrowing in paint() below.
   let chosen: ResolveCandidate | null = null;
   let relatedBody: (doc: Document) => HTMLElement = (doc) => renderError(doc, "Loading…");
+  /**
+   * Once a fetch has been sent, the Fetch button never returns for the life of
+   * this panel — not even if a recovery resolve is still a miss.
+   *
+   * The panel cannot tell "still fetching" from "the fetch died", so re-offering
+   * the button would let a user fire a second outbound request for work that may
+   * be in flight. Reopening the panel resets this, which is the deliberate escape
+   * hatch: a fresh resolve either finds the item or offers the button again, by
+   * which point the original fetch has landed or genuinely failed.
+   */
+  let fetchSent = false;
+  /**
+   * The fetch-related header (`fetching` / `fetch-blocked` / `fetch-retry`),
+   * shown INSTEAD of `header` for as long as it is non-null.
+   *
+   * It is set the moment a fetch is sent and cleared only when a resolve lands
+   * with something other than a miss (`found`, `ambiguous`, `needs-scope`,
+   * `unrecognised`, or an error) — see `loadHeader` below. A recovery resolve
+   * that comes back as another miss leaves it untouched: `header` itself would
+   * flip back to `not-indexed`, but `paint()` never shows that while this is set,
+   * which is what keeps the button from reappearing.
+   */
+  let fetchState: HeaderState | null = null;
   // Resolve and related land at different times and each triggers a full repaint,
   // so a lane the user collapsed in between would spring back open. Read the live
   // <details> state before replacing it and carry it into the next render.
@@ -226,17 +321,28 @@ function createPanel(body: HTMLElement): {
     const lanes: Lane[] = [
       { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
     ];
-    // A chosen candidate renders via `chosen`, never `resolved` — candidates carry
-    // no `modifiedAt`, and `resolved` would demand one.
+    // `fetchState` wins whenever it is set — see its doc comment above for why a
+    // recovery resolve that is still a miss must not displace it. A chosen
+    // candidate renders via `chosen`, never `resolved` — candidates carry no
+    // `modifiedAt`, and `resolved` would demand one.
     const shown: HeaderState =
-      chosen !== null && header.kind === "ambiguous"
-        ? { kind: "chosen", surface: header.surface, candidate: chosen }
-        : header;
+      fetchState !== null
+        ? fetchState
+        : chosen !== null && header.kind === "ambiguous"
+          ? { kind: "chosen", surface: header.surface, candidate: chosen }
+          : header;
     body.replaceChildren(
-      renderShell(document, { header: shown, lanes }, (c) => {
-        chosen = c;
-        paint();
-      }),
+      renderShell(
+        document,
+        { header: shown, lanes },
+        (c) => {
+          chosen = c;
+          paint();
+        },
+        (action) => {
+          handleFetchAction(action).catch(() => undefined);
+        },
+      ),
     );
   }
 
@@ -250,13 +356,69 @@ function createPanel(body: HTMLElement): {
       });
     } catch {
       header = { kind: "error", surface: null, message: "Couldn't connect to Nimbus." };
+      fetchState = null;
       paint();
       return;
     }
     // Taken ONCE per repaint here, not re-read per rendered line — see the
     // `resolved` state's `nowMs` doc comment in panel-view.ts.
-    header = headerFrom(res, Date.now());
+    header = headerFrom(res, Date.now(), fetchSent);
+    // A settled answer other than "still a miss" replaces whatever fetch state
+    // was showing — this is how `indexed` (via `sendFetch` below, which
+    // re-resolves rather than rendering the fetch response) and any other
+    // definitive outcome let the normal path render. A miss leaves `fetchState`
+    // in place; see its doc comment for why.
+    if (header.kind !== "not-indexed") {
+      fetchState = null;
+    }
     paint();
+  }
+
+  /**
+   * Sends the ONE fetch this panel instance will ever send. Guarded by
+   * `fetchSent` so a stray extra call (there should never be one — the button is
+   * suppressed the moment this runs) can't fire a second outbound request.
+   */
+  async function sendFetch(): Promise<void> {
+    if (fetchSent || header.kind !== "not-indexed") {
+      return;
+    }
+    const { surface, product } = header;
+    fetchSent = true;
+    fetchState = { kind: "fetching", surface, product };
+    paint();
+    let res: unknown;
+    try {
+      res = await sendMessage({ kind: "fetch", pageUrl: window.location.href });
+    } catch {
+      fetchState = { kind: "error", surface, message: "Couldn't connect to Nimbus." };
+      paint();
+      return;
+    }
+    if (isFetchResponse(res) && res.ok && res.outcome.kind === "indexed") {
+      // The fetch response carries only {status:"indexed", itemId} — no title,
+      // url or modified_at — so the panel cannot build a `resolved` header from
+      // it directly. Re-send resolve and let the normal path render.
+      fetchState = null;
+      await loadHeader();
+      return;
+    }
+    fetchState = fetchOutcomeHeader(res, surface, product);
+    paint();
+  }
+
+  /**
+   * `renderShell`'s `onFetch` callback. `"fetch"` sends the (one, ever) targeted
+   * fetch; `"resolve"` re-checks via a normal resolve — used by the recovery
+   * button on `fetch-retry` states. Never conflate the two: a `still-working`
+   * retry that fired a fresh fetch would defeat the one-fetch-per-panel rule.
+   */
+  async function handleFetchAction(action: "fetch" | "resolve"): Promise<void> {
+    if (action === "resolve") {
+      await loadHeader();
+      return;
+    }
+    await sendFetch();
   }
 
   async function loadRelated(): Promise<void> {
