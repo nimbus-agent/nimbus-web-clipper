@@ -1,14 +1,16 @@
 import type { ClipPayload } from "../shared/clip.ts";
 import { endpointUrl, type GatewayEndpoint } from "../shared/gateway.ts";
-import { isResolvedItem } from "../shared/messages.ts";
 import { isRelatedHit, type RelatedQuery } from "../shared/related.ts";
 import type {
   ClipPostResult,
   PairError,
   RelatedError,
   RelatedHit,
+  ResolveCandidate,
   ResolvedItem,
   ResolveError,
+  ResolveMatchKind,
+  ResolveOutcome,
 } from "../shared/types.ts";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -52,6 +54,28 @@ async function postJson(
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function getJson(
+  doFetch: FetchLike,
+  origin: string,
+  endpoint: GatewayEndpoint,
+  query: Record<string, string>,
+  headers: Record<string, string>,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const qs = new URLSearchParams(query).toString();
+  try {
+    return await doFetch(`${endpointUrl(origin, endpoint)}?${qs}`, {
+      method: "GET",
+      headers,
       signal: controller.signal,
     });
   } finally {
@@ -172,27 +196,121 @@ export async function postRelated(
   return { ok: false, reason: "server_error" };
 }
 
+const MATCH_KINDS: readonly ResolveMatchKind[] = ["exact", "query_stripped", "path_trimmed"];
+
+function isMatchKind(v: unknown): v is ResolveMatchKind {
+  return typeof v === "string" && (MATCH_KINDS as readonly string[]).includes(v);
+}
+
+/** The wire's candidate shape. Metadata only — resolve never returns a body. */
+function parseCandidate(v: unknown): ResolveCandidate | null {
+  if (
+    !isObject(v) ||
+    typeof v["id"] !== "string" ||
+    typeof v["service"] !== "string" ||
+    typeof v["type"] !== "string" ||
+    typeof v["title"] !== "string" ||
+    !(v["url"] === null || typeof v["url"] === "string")
+  ) {
+    return null;
+  }
+  return {
+    id: v["id"],
+    service: v["service"],
+    type: v["type"],
+    title: v["title"],
+    url: v["url"],
+  };
+}
+
+/** A candidate plus freshness. `modified_at` is the ONLY snake_case field on the
+ *  wire, and this is the only place it is spelled that way. */
+function parseItem(v: unknown): ResolvedItem | null {
+  const base = parseCandidate(v);
+  if (base === null || !isObject(v) || typeof v["modified_at"] !== "number") {
+    return null;
+  }
+  return { ...base, modifiedAt: v["modified_at"] };
+}
+
 /**
- * Resolve a canonical URL to at most one indexed item.
+ * Narrows a 200 body into one of the four outcomes, or null when the gateway sent
+ * something this client does not model.
  *
- * PROPOSED route — see shared/gateway.ts#PROPOSED_PATHS. The 404 mapping is
- * load-bearing: a MISS is a 200 with `item: null`, while an ABSENT ROUTE is a
- * 404. Keeping them distinct is what lets this ship before the gateway has the
- * route and flip to live with no code change.
+ * Returning null (=> server_error) rather than a "miss" is deliberate: an
+ * unrecognised body must never render as a confident "not indexed".
  */
-export async function postResolve(
+function parseResolveBody(data: unknown): ResolveOutcome | null {
+  if (!isObject(data)) {
+    return null;
+  }
+  if (data["found"] === true) {
+    const item = parseItem(data["item"]);
+    return item !== null && isMatchKind(data["matchKind"])
+      ? { kind: "found", item, matchKind: data["matchKind"] }
+      : null;
+  }
+  if (data["found"] !== false || typeof data["fetchable"] !== "boolean") {
+    return null;
+  }
+  const fetchable = data["fetchable"];
+  const reason = data["reason"];
+  if (reason === "not_indexed") {
+    return { kind: "not-indexed", fetchable };
+  }
+  if (reason === "unresolvable_url") {
+    return { kind: "unresolvable", fetchable };
+  }
+  if (reason !== "ambiguous" || typeof data["truncated"] !== "boolean") {
+    return null;
+  }
+  const raw = data["candidates"];
+  if (!Array.isArray(raw)) {
+    return null;
+  }
+  const candidates: ResolveCandidate[] = [];
+  for (const c of raw) {
+    const parsed = parseCandidate(c);
+    if (parsed === null) {
+      return null;
+    }
+    candidates.push(parsed);
+  }
+  const service = data["service"];
+  return {
+    kind: "ambiguous",
+    service: typeof service === "string" ? service : null,
+    fetchable,
+    candidates,
+    truncated: data["truncated"],
+  };
+}
+
+/**
+ * `GET /v1/items/resolve?url=` — a bearer read under the `resolve` scope.
+ *
+ * Sends the page URL as the recogniser normalised it and lets the gateway's
+ * canonicalizeUrl + match ladder do the rest; this client does no canonicalisation
+ * of its own (see shared/recognise.ts).
+ *
+ * The 403 mapping is the load-bearing one: LEGACY_SCOPES is ["clip","briefs"], so
+ * every browser paired before scopes lacks `resolve` and lands here first. Folding
+ * it into server_error would blame the gateway for a grant the owner simply has
+ * not made yet.
+ */
+export async function resolveItem(
   origin: string,
   token: string,
-  canonicalUrl: string,
+  pageUrl: string,
   doFetch: FetchLike = fetch,
-): Promise<{ ok: true; item: ResolvedItem | null } | { ok: false; reason: ResolveError }> {
+): Promise<{ ok: true; outcome: ResolveOutcome } | { ok: false; reason: ResolveError }> {
   let res: Response;
   try {
-    res = await postJson(
+    res = await getJson(
       doFetch,
       origin,
       "resolve",
-      { canonicalUrl },
+      { url: pageUrl },
       { authorization: `Bearer ${token}` },
       RESOLVE_TIMEOUT_MS,
     );
@@ -200,20 +318,14 @@ export async function postResolve(
     return { ok: false, reason: "unreachable" };
   }
   if (res.status === 200) {
-    const data = await readJson(res);
-    if (!isObject(data)) {
-      return { ok: false, reason: "server_error" };
-    }
-    if (data["item"] === null) {
-      return { ok: true, item: null };
-    }
-    if (isResolvedItem(data["item"])) {
-      return { ok: true, item: data["item"] };
-    }
-    return { ok: false, reason: "server_error" };
+    const outcome = parseResolveBody(await readJson(res));
+    return outcome === null ? { ok: false, reason: "server_error" } : { ok: true, outcome };
   }
   if (res.status === 401) {
     return { ok: false, reason: "unauthorized" };
+  }
+  if (res.status === 403) {
+    return { ok: false, reason: "insufficient_scope" };
   }
   if (res.status === 404) {
     return { ok: false, reason: "unsupported" };
