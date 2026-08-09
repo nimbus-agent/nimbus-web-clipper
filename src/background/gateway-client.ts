@@ -275,17 +275,8 @@ function parseResolveBody(data: unknown): ResolveOutcome | null {
     }
     candidates.push(parsed);
   }
-  const service = data["service"];
-  // Reject, don't coerce: every other unexpected type in this parser returns
-  // null (=> server_error). Silently folding a wire-shape violation into `null`
-  // here would make it a plausible-looking value instead of the loud failure it
-  // should be.
-  if (!(service === null || typeof service === "string")) {
-    return null;
-  }
   return {
     kind: "ambiguous",
-    service,
     fetchable,
     candidates,
     truncated: data["truncated"],

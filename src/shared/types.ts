@@ -134,7 +134,9 @@ export interface ResolvedItem extends ResolveCandidate {
  *
  * `not-indexed` carries no service: upstream always sends `service: null` on that
  * arm (resolve-by-url.ts:169), so modelling one would invite the header to promise
- * a name we do not have.
+ * a name we do not have. `ambiguous` no longer carries one either: the panel names
+ * the service from `Recognition`, which it already has, and a second source for the
+ * same fact is only a chance for the two to disagree.
  */
 export type ResolveOutcome =
   | { readonly kind: "found"; readonly item: ResolvedItem; readonly matchKind: ResolveMatchKind }
@@ -142,7 +144,6 @@ export type ResolveOutcome =
   | { readonly kind: "unresolvable"; readonly fetchable: boolean }
   | {
       readonly kind: "ambiguous";
-      readonly service: string | null;
       readonly fetchable: boolean;
       /** EMPTY whenever `truncated` — upstream sends no list rather than a sliced one. */
       readonly candidates: readonly ResolveCandidate[];

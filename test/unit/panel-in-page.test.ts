@@ -424,7 +424,6 @@ describe("panel-in-page resolve outcomes", () => {
       },
       outcome: {
         kind: "ambiguous",
-        service: "jira",
         fetchable: false,
         truncated: false,
         candidates: [

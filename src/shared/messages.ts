@@ -255,7 +255,6 @@ function isResolveOutcome(v: unknown): v is ResolveOutcome {
   return (
     typeof v["fetchable"] === "boolean" &&
     typeof v["truncated"] === "boolean" &&
-    (v["service"] === null || typeof v["service"] === "string") &&
     Array.isArray(v["candidates"]) &&
     v["candidates"].every(isCandidate)
   );

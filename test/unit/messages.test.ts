@@ -190,7 +190,6 @@ describe("isResolveResponse", () => {
       { kind: "unresolvable", fetchable: false },
       {
         kind: "ambiguous",
-        service: "jira",
         fetchable: false,
         truncated: false,
         candidates: [{ id: "a", service: "jira", type: "issue", title: "One", url: null }],
@@ -227,7 +226,6 @@ describe("isResolveResponse", () => {
       { kind: "elsewhere", fetchable: true },
       {
         kind: "ambiguous",
-        service: null,
         fetchable: false,
         truncated: false,
         candidates: [{ id: "a" }],
