@@ -286,14 +286,23 @@ function createPanel(body: HTMLElement): {
   let chosen: ResolveCandidate | null = null;
   let relatedBody: (doc: Document) => HTMLElement = (doc) => renderError(doc, "Loading…");
   /**
-   * Once a fetch has been sent, the Fetch button never returns for the life of
-   * this panel — not even if a recovery resolve is still a miss.
+   * Whether an outbound provider request may currently be IN FLIGHT for this
+   * panel — not simply "a fetch message was sent". That distinction matters
+   * for exactly one outcome: `rate-limited` is returned BEFORE any outbound
+   * call happens, so nothing is in flight when it comes back, and `sendFetch`
+   * clears this latch back to `false` in that one case so "Try again" can send
+   * a genuinely fresh fetch.
    *
-   * The panel cannot tell "still fetching" from "the fetch died", so re-offering
-   * the button would let a user fire a second outbound request for work that may
-   * be in flight. Reopening the panel resets this, which is the deliberate escape
-   * hatch: a fresh resolve either finds the item or offers the button again, by
-   * which point the original fetch has landed or genuinely failed.
+   * For every other outcome — most importantly `timeout`, the case this latch
+   * exists for, where our client-side timer fired but the gateway may still be
+   * completing the outbound call — it stays `true` for the life of this panel,
+   * and the Fetch button never returns, not even if a recovery resolve is
+   * still a miss. The panel cannot tell "still fetching" from "the fetch
+   * died", so re-offering the button in that case would risk a second
+   * outbound request for work that may still be running. Reopening the panel
+   * resets this, which is the deliberate escape hatch: a fresh resolve either
+   * finds the item or offers the button again, by which point the original
+   * fetch has landed or genuinely failed.
    */
   let fetchSent = false;
   /**
@@ -375,9 +384,16 @@ function createPanel(body: HTMLElement): {
   }
 
   /**
-   * Sends the ONE fetch this panel instance will ever send. Guarded by
-   * `fetchSent` so a stray extra call (there should never be one — the button is
-   * suppressed the moment this runs) can't fire a second outbound request.
+   * Sends a fetch for this panel instance. Guarded by `fetchSent` — "an
+   * outbound provider request may be in flight" (see its doc comment) — so a
+   * stray extra call can't fire a second outbound request while one might
+   * still be running.
+   *
+   * This normally means one fetch for the panel's life: `fetchSent` latches
+   * `true` below, before the request goes out, and stays `true`. The one
+   * exception is `rate-limited`, cleared back to `false` below because that
+   * outcome means no outbound call happened — so a second call through here
+   * is exactly as safe as the first.
    */
   async function sendFetch(): Promise<void> {
     if (fetchSent || header.kind !== "not-indexed") {
@@ -403,7 +419,15 @@ function createPanel(body: HTMLElement): {
       await loadHeader();
       return;
     }
-    fetchState = fetchOutcomeHeader(res, surface, product);
+    const outcomeHeader = fetchOutcomeHeader(res, surface, product);
+    if (outcomeHeader.kind === "fetch-retry" && outcomeHeader.reason === "rate-limited") {
+      // Returned before any outbound call happens (see fetchOutcomeHeader's
+      // rate-limited branch) — nothing is in flight, so this is not the
+      // condition `fetchSent` guards against. Clear it so "Try again" sends a
+      // genuinely fresh fetch instead of silently doing nothing.
+      fetchSent = false;
+    }
+    fetchState = outcomeHeader;
     paint();
   }
 

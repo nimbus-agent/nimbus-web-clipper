@@ -643,6 +643,13 @@ describe("panel-in-page fetch state machine", () => {
     reason: "timeout",
   };
 
+  const rateLimited = {
+    kind: "fetch",
+    ok: true,
+    recognition,
+    outcome: { kind: "rate-limited" },
+  };
+
   it("fetches on click, then re-resolves to show the item", async () => {
     const sent: string[] = [];
     const panel = await mountPanelWithScript(sent, {
@@ -693,5 +700,56 @@ describe("panel-in-page fetch state machine", () => {
     expect(panel.textContent).toContain("Still working");
     expect(panel.textContent).not.toContain("Fetch this from");
     expect(sent.filter((k) => k === "fetch")).toHaveLength(1);
+  });
+
+  it("a rate-limited outcome renders Try again", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [rateLimited],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click();
+    await flush();
+
+    expect(panel.textContent).toContain("Rate limited");
+    const labels = Array.from(panel.querySelectorAll("button")).map((b) => b.textContent);
+    expect(labels).toContain("Try again");
+  });
+
+  it("clicking Try again after rate-limited sends a second fetch", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [rateLimited, indexed],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    await flush();
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Try again
+    await flush();
+
+    // rate_limited is returned before any outbound call happens — unlike
+    // timeout, a second fetch after it is exactly as safe as the first.
+    expect(sent.filter((k) => k === "fetch")).toHaveLength(2);
+  });
+
+  it("pins the distinction: a timeout followed by a recovery click still sends exactly one fetch", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [timedOut],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    await flush();
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Check again
+    await flush();
+
+    // Unlike rate-limited, timeout means an outbound call may still be
+    // running — the latch must stay set and the recovery click must be a
+    // resolve, not a second fetch.
+    expect(sent.filter((k) => k === "fetch")).toHaveLength(1);
+    expect(sent[sent.length - 1]).toBe("resolve");
   });
 });
