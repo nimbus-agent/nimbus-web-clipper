@@ -32,9 +32,31 @@ because this repo squash-merges (every PR is one commit on `main` — see #35,
 #36, #37), so no red commit ever lands. The alternative — one giant commit
 spanning types, client, guards, recogniser and panel — would be unreviewable.
 
-The unit test suite stays GREEN throughout; only `tsc` is red, and only in the
-files a later task rewrites. A task that leaves a test failing, or leaves
-`tsc` red in a file outside the stated set, is a genuine defect.
+**Amended after Task 3 (measured, not predicted).** The original claim here — "the
+unit test suite stays GREEN throughout" — is FALSE, and pretending otherwise would
+hide a real signal. Deleting `postResolve` in Task 3 leaves `service-worker.ts`
+importing a symbol that no longer exists, which fails **2 tests in
+`test/unit/service-worker.test.ts`**. Task 4 rewires that import and closes them.
+
+Note *how* they fail, because it is instructive: the missing import does not crash
+loudly — it surfaces as `reason: "server_error"` where the test expects
+`"unsupported"`. A missing dependency is silently absorbed by the existing
+catch-all error mapping. **Task 4 must confirm those two tests go green for the
+right reason** (the dep is correctly wired) and not merely stop failing.
+
+So the accurate sequencing rule is:
+
+| After task | `tsc` red in | tests red in |
+| --- | --- | --- |
+| 2 | gateway-fixtures.ts, handlers.test.ts, mock-gateway.test.ts, panel-view.test.ts | — |
+| 3 | the above + service-worker.ts | service-worker.test.ts (2) |
+| 4 | the above − handlers.test.ts − service-worker.ts | — |
+| 7 | − panel-view.test.ts | — |
+| 8 | **none** | — |
+| 9 | none (fixtures fixed) | — |
+
+A task that leaves a test failing *outside this table*, or `tsc` red in a file
+outside it, is a genuine defect.
 
 **The actual red set after Task 2, measured (not predicted):**
 
@@ -1409,7 +1431,18 @@ export type HeaderState =
       readonly surface: string;
       readonly item: ResolvedItem;
       readonly matchKind: ResolveMatchKind;
-      /** Taken once per repaint so every line agrees on "now". */
+      /**
+       * Captured once, when the resolve response lands — NOT re-read per repaint.
+       * So the age is frozen at load: a panel left open for ten minutes keeps
+       * saying "indexed 3 min ago".
+       *
+       * That is acceptable HERE and only here, because nothing in this plan
+       * repaints a `resolved` header — the one repaint trigger is choosing an
+       * ambiguous candidate, and the `chosen` arm renders no freshness at all.
+       * If a future lane ever repaints a resolved header, make this a render-time
+       * parameter instead of state; a clock reading stored in a state object goes
+       * stale by construction.
+       */
       readonly nowMs: number;
     }
   /**
