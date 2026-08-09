@@ -30,7 +30,10 @@
 
 **Green-bar timing.** Unlike the #38 plan, **every task here ends green**. The type changes are additive except Task 1, which is a deletion small enough to complete inside its own task. A red `tsc` at the end of any task is a defect, not a sequencing artefact.
 
-**Baseline:** branch `worktree-c3-1-targeted-fetch` off `9441491` (merged `main`). 457 tests, 40 files, all five checks green.
+**Baseline:** branch `worktree-c3-1-targeted-fetch` off `9441491` (merged `main`). **459 tests, 40 files**, all five checks green.
+
+(An earlier draft of this plan said 457 — stale. `main` gained two tests in #38's
+fix wave. Measured on the branch before Task 1: 459.)
 
 ## The contract, verified against merged upstream source
 
