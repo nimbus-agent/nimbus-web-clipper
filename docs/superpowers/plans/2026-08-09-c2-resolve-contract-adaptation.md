@@ -36,6 +36,43 @@ The unit test suite stays GREEN throughout; only `tsc` is red, and only in the
 files a later task rewrites. A task that leaves a test failing, or leaves
 `tsc` red in a file outside the stated set, is a genuine defect.
 
+**The actual red set after Task 2, measured (not predicted):**
+
+```
+scripts/screenshots/gateway-fixtures.ts   -> fixed by Task 9
+test/unit/handlers.test.ts                -> fixed by Task 4
+test/unit/mock-gateway.test.ts            -> fixed by Task 9
+test/unit/panel-view.test.ts              -> fixed by Task 7
+```
+
+### A hazard this uncovered — read before Task 4
+
+Task 2 predicted `messages.ts`, `gateway-client.ts` and `panel-view.ts` would go
+red. **They did not, and the reason matters.**
+
+`isResolvedItem` in `src/shared/messages.ts` is a user-defined type predicate
+(`v is ResolvedItem`). **TypeScript never checks a predicate's body against the type
+it claims.** So after Task 2 the guard still requires `canonicalUrl` and still never
+checks `modifiedAt`, while asserting the value is a `ResolvedItem` — it is now a
+guard that lies, and `tsc` is structurally incapable of noticing. The consumers
+(`gateway-client.ts`, `panel-view.ts`) only ever reach `ResolvedItem` *through* that
+guard, so they inherit the lie and compile clean.
+
+Consequences, both load-bearing:
+
+1. **A green `tsc` is NOT evidence that the guards in `messages.ts` are correct.**
+   The guards are the only thing between `unknown` wire data and the domain types.
+   Their correctness is established by the tests in Task 4 and nowhere else.
+2. Had Task 4 not rewritten `isResolvedItem`, this would have shipped as a silent
+   runtime hole: an object with no `modifiedAt` accepted as a `ResolvedItem`, then
+   `formatAge(undefined, now)` producing `NaN` and the header rendering
+   "NaN days ago". Task 4's guard rewrite is what closes it — treat that task's
+   tests as the safety net, not the compiler.
+
+The same reasoning applies to every `is*` predicate in `messages.ts`. When a task
+changes a domain type, the matching guard body must be changed in the same plan, and
+only a test can prove it was.
+
 ## Gateway version prerequisite — read before manual verification
 
 The contract below is merged upstream, and **as of 2026-08-09 it is also installed**.
