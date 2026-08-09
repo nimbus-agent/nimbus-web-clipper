@@ -5,6 +5,14 @@
 **Supersedes:** the *Proposed gateway contract* section of
 [`2026-08-07-phase-c1-know-where-you-are-design.md`](./2026-08-07-phase-c1-know-where-you-are-design.md).
 
+> **2026-08-09 update:** the route landed. `GET /v1/items/resolve` first shipped
+> upstream in gateway v1.25.0; this repo verified it against v1.26.0. The "When
+> gateway PR 3 lands" section below has landed and its client adaptation has
+> shipped in this repo (phase C2, branch `c2-resolve-contract`). The table row
+> and prose below that said "not landed" are corrected in place rather than
+> rewritten, so this document stays the accurate record of why the C2 work
+> happened — read it as history, not as the current state.
+
 ## Why this exists
 
 Phase C1 shipped (#36) stating that a contract proposal for resolve-by-URL still
@@ -22,7 +30,7 @@ Everything below was read from the gateway repo at `82c03d27`, not reasoned abou
 | `docs/superpowers/specs/2026-08-06-http-agents-route-and-resolve-by-url-design.md` | Designed + reviewed (review and review-response alongside it). Owns the **gateway side**. |
 | `docs/superpowers/specs/2026-08-01-browser-gateway-client-design.md` | Committed but **unmerged**, on `dev/asafgolombek/spec-browser-client` (`d8b4d93d`). Owns the **extension side** — recogniser, panel, notify-when-ready. |
 | Token scopes (PR 1 of the gateway design) | **Landed** — `feat(gateway): scope the HTTP API bearer tokens (#1062)`. `packages/gateway/src/clips/api-scopes.ts` is on main. |
-| The resolve route itself (PR 3) | Designed and sequenced, **not landed**. No `items/resolve` in `packages/gateway/src/`. |
+| The resolve route itself (PR 3) | Designed and sequenced at the time this table was written; **landed since** — shipped in gateway v1.25.0, verified against v1.26.0. `items/resolve` is now in `packages/gateway/src/`. See the 2026-08-09 update banner above. |
 
 So there is nothing to propose. The C1 client is a consumer of a contract that
 already exists on paper, and it was built against a different shape.
@@ -109,8 +117,14 @@ URL matching via `resolve_key`, which is closer to what C1 built.
 
 ## What changes in this repo, and when
 
-**Now** — corrections only, because the route has not landed and adapting to a
-design that may still shift would be rework:
+Both steps below are now done — see the 2026-08-09 update banner at the top.
+Left as originally written (rather than rewritten in past tense) because this
+document's value is the record of the plan made *before* the route landed;
+only the two corrections below are updated in place so a reader doesn't come
+away believing the opposite of what happened.
+
+**Then** — corrections only, because at the time of writing the route had not
+landed and adapting to a design that might still shift would have been rework:
 
 - `ROADMAP.md` C1.1: drop *"Propose in the gateway repo first"*; link the real
   upstream design and name the shape the client will consume.
@@ -118,7 +132,8 @@ design that may still shift would be rework:
   contract* superseded by this note, and correct *Token scope — decided (client
   position)*, which claimed resolve reuses the clip token. It does not.
 
-**When gateway PR 3 lands** — the client adaptation, in one slice:
+**When gateway PR 3 landed** — the client adaptation, done in one slice (phase
+C2, this branch):
 
 - `GET /v1/items/resolve?url=` in place of the POST, and `PROPOSED_PATHS` becomes
   a real entry.
@@ -130,7 +145,8 @@ design that may still shift would be rework:
 - Stop stripping query params client-side; send the address-bar URL.
 - `fetchable` is carried through for C3.1 rather than dropped.
 
-**Sequencing note.** The 404-degradation path shipped in C1 keeps working
-throughout: an unshipped route 404s, and the panel says so. Nothing is broken
-today, and nothing above is urgent — it is the difference between the feature
-lighting up correctly and lighting up wrong when the route lands.
+**Sequencing note (historical).** The 404-degradation path shipped in C1 kept
+working throughout the wait: an unshipped route 404ed, and the panel said so.
+Nothing was broken while waiting, and none of the above was urgent — it was the
+difference between the feature lighting up correctly and lighting up wrong once
+the route landed, which it now has.

@@ -195,14 +195,14 @@ panel-in-page.ts  ──{ kind:"resolve", pageUrl: location.href }──►  ser
                     │                    resolveItem(resolveUrl)
                     │                    GET /v1/items/resolve?url=
                     │                              │
-                    │       ┌──────────┬───────────┼───────────┬──────────┐
-                    │    found     not_indexed  unresolvable  ambiguous  403/404
-                    │       │          │            │            │          │
-                    ▼       ▼          ▼            ▼            ▼          ▼
-              "unrecog-  "resolved" "not         "can't      chooser →  "needs-
-               nised"               indexed"     resolve      "chosen"   scope" /
-                                                  this URL"               "can't
-                                                                          resolve
+                    │       ┌──────────┬──────────────────────┬───────────┬──────────┐
+                    │     found    not_indexed /            ambiguous   403 / 404
+                    │       │     unresolvable_url                │          │
+                    ▼       ▼            │                        ▼          ▼
+              "unrecog-  "resolved"      ▼                    chooser →   "needs-
+               nised"                "not indexed"            "chosen"    scope" /
+                                     (one header state for                "can't
+                                      both — see note below)              resolve
                                                                           pages yet"
 ```
 
@@ -248,6 +248,18 @@ Four decisions worth knowing before you change any of it:
   build has no resolve route at all, and still surfaces as "this gateway can't
   resolve pages yet". Resolution is at most one item — the panel never passes
   ranked related hits off as "the page".
+- **`not_indexed` and `unresolvable_url` render as the same header state.** The
+  client models both as distinct `ResolveOutcome` arms (`not-indexed` and
+  `unresolvable` in `ResolveOutcome`, kept apart because they mean different
+  things server-side: one is "we looked and it isn't there", the other is "we
+  couldn't even parse the URL you sent"). But `unresolvable_url` can only happen
+  if this client sent the gateway a `resolveUrl` its own `canonicalizeUrl` can't
+  parse — a bug in `recognise()`, not a fact about the user's page. The panel
+  deliberately has no `HeaderState` arm for it: `panel-in-page.ts`'s
+  `headerFrom` folds `unresolvable` into `not-indexed` before it ever reaches
+  `renderHeader`, so both read as "Not indexed." to the user. A user-facing
+  "can't resolve this URL" distinction would be reporting a client bug as if it
+  were information about their page.
 - **`chosen` is a separate header state from `resolved`, not a rendering of the
   same state.** When the outcome is `ambiguous`, the panel renders a chooser over
   `candidates`; picking one repaints the header as `chosen`. A candidate has no
