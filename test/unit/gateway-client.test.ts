@@ -362,7 +362,7 @@ describe("postResolve", () => {
       seenAuth = (init?.headers as Record<string, string> | undefined)?.["authorization"];
       return jsonRes(200, { item: null });
     });
-    expect(seenUrl).toBe("http://127.0.0.1:8765/v1/clips/resolve");
+    expect(seenUrl).toBe("http://127.0.0.1:8765/v1/items/resolve");
     expect(seenBody).toEqual({ canonicalUrl: "https://github.com/a/b/pull/1" });
     expect(seenAuth).toBe("Bearer tok");
   });

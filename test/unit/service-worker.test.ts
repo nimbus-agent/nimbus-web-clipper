@@ -183,7 +183,7 @@ describe("message routing — success shapes", () => {
       string,
       RequestInit,
     ];
-    expect(url).toBe("http://127.0.0.1:8765/v1/clips/resolve");
+    expect(url).toBe("http://127.0.0.1:8765/v1/items/resolve");
     expect(JSON.parse(String(init.body))).toEqual({
       canonicalUrl: "https://github.com/acme/web/pull/1",
     });
