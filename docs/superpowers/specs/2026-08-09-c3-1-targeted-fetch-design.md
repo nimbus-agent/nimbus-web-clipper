@@ -115,6 +115,23 @@ timeout tells us we stopped listening, not that nothing happened. Reporting
 button there would fire a second outbound request for work that may already be
 done.
 
+**Once a fetch has been sent, the Fetch button never returns for the life of this
+panel.** After a timeout, **Check again** re-resolves; if that resolve is *still*
+a miss, the panel stays in `still-working` with **Check again** offered again —
+it does **not** fall back to `not-indexed` with a Fetch button.
+
+Without this rule the design defeats itself: a re-resolve miss would restore the
+button, and a user could fire a second outbound fetch for work still in flight —
+exactly what the timeout decision exists to prevent. The panel cannot distinguish
+"still fetching" from "the fetch died", so it must not offer an action that is
+only safe in one of those cases.
+
+The state is per-panel-instance, so **closing and reopening the panel resets it**.
+That is the deliberate escape hatch: a fresh panel issues a fresh resolve, and if
+that is still a fetchable miss the button is offered again — by which point the
+original fetch has either landed or genuinely failed. A panel is short-lived and
+reopening is one keystroke, so no in-panel "unstick" affordance is needed.
+
 ### Architecture: the panel orchestrates, the background stays a thin transport
 
 One new message (`fetch`) returns a `FetchOutcome`. On `indexed`, the panel
@@ -274,11 +291,51 @@ The 403 copy must name the **`fetch`** scope, not `resolve`. A user who granted
 `resolve` after #38 still cannot fetch, and telling them to grant `resolve` again
 would be a dead end.
 
-The exact CLI syntax is `nimbus clip scopes <label> --set <a,b>` — verified
-against `nimbus clip --help` on the installed v1.26.0 and `CLIP_USAGE` in the
-gateway source. **Do not** derive it from the gateway's IPC test file, which
-yields `--label/--scopes`; that does not parse. This exact mistake reached a
-user-facing string during #38 and was caught only by checking the installed
+### The scope command must be built, not templated
+
+`nimbus clip scopes <label> --set <a,b>` **replaces** the scope set — it does not
+append. Verified in `packages/cli/src/commands/clip.ts`: `runClipScopes` passes
+the parsed array straight to `clip.scopes` and prints *"Scopes for X are now: …"*.
+
+Two consequences:
+
+1. **`--set …,fetch` is not valid guidance.** An ellipsis standing for "your
+   existing scopes" is not something the CLI tolerates; a user pasting it gets an
+   error. The command must name every scope it wants the token to end up with.
+2. **A hardcoded set can silently drop a scope.** Telling everyone
+   `--set clip,briefs,fetch` would strip `agents` from a token that had it.
+
+Both are avoidable, because **the client already holds everything it needs**:
+
+- The **403 body carries `granted`** (`{error, required, granted}` —
+  `insufficientScopeBody` in `http-route-auth.ts`). That is the token's current
+  set, from the gateway itself.
+- The **pairing label is stored client-side** (`connection-store.ts`;
+  `Connection.label` in `types.ts`), so the real label can be interpolated.
+
+So the panel renders a command that is correct and copy-pasteable:
+
+```
+nimbus clip scopes chrome --set clip,briefs,resolve,fetch
+```
+
+built as `granted ∪ {required}`, with the label from the stored connection. The
+parser must therefore **keep `granted` and `required`** from the 403 rather than
+discarding them, as it does today.
+
+**This retro-fixes a defect in shipped code.** The `needs-scope` message from #38
+renders a literal `<label>` and a hardcoded `clip,briefs,resolve`. The literal
+placeholder does not paste; the hardcoded set is a guess that happens to be right
+only because `LEGACY_SCOPES` is exactly `["clip","briefs"]`. A token with
+`agents` would lose it. Fixing the builder fixes both messages at once — it is
+one function with two callers — so this slice corrects the resolve message too.
+
+### Deriving the syntax
+
+Verified against `nimbus clip --help` on the installed v1.26.0 and `CLIP_USAGE`
+in the gateway source. **Do not** derive it from the gateway's IPC test file,
+which yields `--label/--scopes`; that does not parse. That exact mistake reached
+a user-facing string during #38 and was caught only by checking the installed
 binary.
 
 ## Testing
@@ -314,9 +371,40 @@ Unit tests, node env; DOM tests opt into jsdom via a docblock.
 - The **`ambiguous`** outcome does not get a fetch button. Several indexed items
   already match; fetching another would not disambiguate them.
 
-## Open question, deliberately left
+## Settled: `service` on resolve's `ambiguous` arm is removed
 
-Does `service` on resolve's `ambiguous` arm earn its place? It is parsed and
-carried, but nothing renders it, and unlike `fetchable` it has no consumer
-present or planned. Raised in #38's review and still unanswered. This slice does
-not settle it; it should be decided before a third consumer inherits it.
+Raised in #38's review, again in this design's first draft, and a third time in
+review of that draft. Three flags is enough.
+
+It is parsed, guarded, carried across the message boundary, and rendered by
+nothing. Unlike `fetchable` — whose consumer is *this* slice — it has no consumer
+present or planned, and the panel names the service from `Recognition` anyway, so
+a second source for the same fact would be a chance to disagree.
+
+**Removed from `ResolveOutcome`, the parser, the guard and their tests**, as its
+own commit in this slice. "Before a third consumer inherits it" is now: this
+slice is the second consumer of that area, and the moment to prune is while only
+one thing depends on it.
+
+Deliberately *not* removed from the wire model in any way that assumes the
+gateway stops sending it — the parser simply stops carrying it forward. If a
+future lane wants "Several matches on GitHub", it re-reads it from a response it
+already receives.
+
+## Deferred: no cooldown on the rate-limit retry
+
+Review raised spam-clicking **Try again** after `rate_limited`. Deferred, for
+three reasons:
+
+1. **`rate_limited` makes no outbound request.** It is returned after failing to
+   acquire a local token (`ACQUIRE_TIMEOUT_MS`, `tryAcquire` in
+   `sync/targeted-fetch.ts`), before any provider call. A repeated click costs a
+   gateway-local poll, not provider quota.
+2. **In-flight spam is already impossible.** The `fetching` state replaces the
+   button, so a second click cannot land while a request is open.
+3. The gateway enforces the limit that matters; a client-side cooldown would be a
+   second, weaker copy of a rule that already exists in the right place.
+
+Recorded as a Minor for later. If a retry-after header is ever surfaced on this
+route, a countdown becomes worth building — the honest version of a cooldown is
+one that names a real time, not a guessed one.
