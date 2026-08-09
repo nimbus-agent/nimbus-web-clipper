@@ -39,7 +39,13 @@ export const RESOLVE_FIXTURE = {
     type: "pr",
     title: "Cache the readability pass",
     url: "https://github.com/acme/web/pull/482",
-    // Fixed, not Date.now() — screenshots must be reproducible.
+    // Fixed, not Date.now(): this fixture is never actually rendered in a
+    // screenshot (capture.ts injects the panel at http://127.0.0.1:8765/sample,
+    // which `recognise()` classifies as unknown-host, so no resolve call ever
+    // fires) — it exists as the wire-shape record `mock-gateway.test.ts` asserts
+    // against. A fixed literal keeps that record stable; a live Date.now() would
+    // make the asserted fixture drift by a day every day, which is the opposite
+    // of what a pinned test fixture should do.
     modified_at: 1_700_000_000_000,
   },
 } as const;

@@ -451,6 +451,22 @@ describe("resolveItem", () => {
     expect(r.ok && r.outcome.kind === "ambiguous" && r.outcome.candidates).toEqual([]);
   });
 
+  test("rejects a non-string, non-null service on the ambiguous arm — never coerces it to null", async () => {
+    const doFetch = async () =>
+      jsonRes(200, {
+        found: false,
+        reason: "ambiguous",
+        service: 42,
+        fetchable: false,
+        truncated: false,
+        candidates: [],
+      });
+    expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
   test("maps 403 to insufficient_scope, NOT server_error — it is the every-existing-pairing case", async () => {
     const doFetch = async () =>
       jsonRes(403, {

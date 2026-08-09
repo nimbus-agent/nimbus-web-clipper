@@ -4,17 +4,18 @@
 
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
-import type {
-  CaptureResult,
-  ClipError,
-  PairError,
-  Recognition,
-  RelatedError,
-  RelatedHit,
-  ResolveCandidate,
-  ResolvedItem,
-  ResolveError,
-  ResolveOutcome,
+import {
+  type CaptureResult,
+  type ClipError,
+  type PairError,
+  RESOLVE_MATCH_KINDS,
+  type Recognition,
+  type RelatedError,
+  type RelatedHit,
+  type ResolveCandidate,
+  type ResolvedItem,
+  type ResolveError,
+  type ResolveOutcome,
 } from "./types.ts";
 
 /** A liveness probe the popup sends to confirm the service worker is responsive. */
@@ -230,8 +231,6 @@ export function isResolvedItem(v: unknown): v is ResolvedItem {
   return isCandidate(v) && typeof (v as { modifiedAt?: unknown })["modifiedAt"] === "number";
 }
 
-const MATCH_KINDS = new Set(["exact", "query_stripped", "path_trimmed"]);
-
 /**
  * Guards the DOMAIN outcome crossing the SW→panel boundary — not the wire shape.
  * The wire's `modified_at` is renamed in gateway-client.ts and never reaches here.
@@ -241,7 +240,11 @@ function isResolveOutcome(v: unknown): v is ResolveOutcome {
     return false;
   }
   if (v["kind"] === "found") {
-    return isResolvedItem(v["item"]) && MATCH_KINDS.has(v["matchKind"] as string);
+    return (
+      isResolvedItem(v["item"]) &&
+      typeof v["matchKind"] === "string" &&
+      (RESOLVE_MATCH_KINDS as readonly string[]).includes(v["matchKind"])
+    );
   }
   if (v["kind"] === "not-indexed" || v["kind"] === "unresolvable") {
     return typeof v["fetchable"] === "boolean";

@@ -92,16 +92,22 @@ export type HeaderState =
       readonly item: ResolvedItem;
       readonly matchKind: ResolveMatchKind;
       /**
-       * Captured once, when the resolve response lands — NOT re-read per repaint.
-       * So the age is frozen at load: a panel left open for ten minutes keeps
-       * saying "indexed 3 min ago".
+       * Captured once, when the resolve response lands (`Date.now()` at that
+       * moment) — NOT re-read per repaint. So the age is frozen at load: a panel
+       * left open for ten minutes keeps saying "indexed 3 min ago".
        *
-       * That is acceptable HERE and only here, because nothing in this plan
-       * repaints a `resolved` header — the one repaint trigger is choosing an
-       * ambiguous candidate, and the `chosen` arm renders no freshness at all.
-       * If a future lane ever repaints a resolved header, make this a render-time
-       * parameter instead of state; a clock reading stored in a state object goes
-       * stale by construction.
+       * Repaints of a `resolved` header DO happen — resolve and related are
+       * fetched in parallel and land independently (panel-in-page.ts), and
+       * `loadRelated()` ends in an unconditional `paint()`, so a `resolved`
+       * header is repainted on essentially every panel open, as soon as the
+       * related lane settles (often before it, since resolve is usually the
+       * faster call). Freezing `nowMs` at response time is exactly what makes
+       * those repaints stable: the age line does not jitter (or count up) as
+       * the related lane lands or as the panel sits open. If a future lane ever
+       * repaints on a TIMER — i.e. calls `paint()` on an interval rather than in
+       * response to a new answer — make this a render-time parameter instead of
+       * state; a clock reading stored in a state object goes stale by
+       * construction and freezing would then hide real staleness.
        */
       readonly nowMs: number;
     }
@@ -274,6 +280,15 @@ export function renderHeader(
     return box;
   }
 
+  // Exhaustiveness backstop: every other arm returns above, so `state` here must
+  // be narrowed to exactly `not-indexed`. If a future arm is added to
+  // `HeaderState` without a branch handling it above, `state` stops narrowing to
+  // `never` and this line fails to compile — instead of the new arm silently
+  // falling through to "Not indexed." at runtime.
+  if (state.kind !== "not-indexed") {
+    const _never: never = state;
+    return _never;
+  }
   box.append(line(doc, "nimbus-related__status", "Not indexed."));
   return box;
 }

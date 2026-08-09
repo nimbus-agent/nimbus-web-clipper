@@ -1,16 +1,17 @@
 import type { ClipPayload } from "../shared/clip.ts";
 import { endpointUrl, type GatewayEndpoint } from "../shared/gateway.ts";
 import { isRelatedHit, type RelatedQuery } from "../shared/related.ts";
-import type {
-  ClipPostResult,
-  PairError,
-  RelatedError,
-  RelatedHit,
-  ResolveCandidate,
-  ResolvedItem,
-  ResolveError,
-  ResolveMatchKind,
-  ResolveOutcome,
+import {
+  type ClipPostResult,
+  type PairError,
+  RESOLVE_MATCH_KINDS,
+  type RelatedError,
+  type RelatedHit,
+  type ResolveCandidate,
+  type ResolvedItem,
+  type ResolveError,
+  type ResolveMatchKind,
+  type ResolveOutcome,
 } from "../shared/types.ts";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -196,10 +197,8 @@ export async function postRelated(
   return { ok: false, reason: "server_error" };
 }
 
-const MATCH_KINDS: readonly ResolveMatchKind[] = ["exact", "query_stripped", "path_trimmed"];
-
 function isMatchKind(v: unknown): v is ResolveMatchKind {
-  return typeof v === "string" && (MATCH_KINDS as readonly string[]).includes(v);
+  return typeof v === "string" && (RESOLVE_MATCH_KINDS as readonly string[]).includes(v);
 }
 
 /** The wire's candidate shape. Metadata only — resolve never returns a body. */
@@ -277,9 +276,16 @@ function parseResolveBody(data: unknown): ResolveOutcome | null {
     candidates.push(parsed);
   }
   const service = data["service"];
+  // Reject, don't coerce: every other unexpected type in this parser returns
+  // null (=> server_error). Silently folding a wire-shape violation into `null`
+  // here would make it a plausible-looking value instead of the loud failure it
+  // should be.
+  if (!(service === null || typeof service === "string")) {
+    return null;
+  }
   return {
     kind: "ambiguous",
-    service: typeof service === "string" ? service : null,
+    service,
     fetchable,
     candidates,
     truncated: data["truncated"],

@@ -23,6 +23,11 @@ export function formatAge(modifiedAtMs: number, nowMs: number): string {
     return "just now";
   }
   if (age < HOUR_MS) {
+    // Deliberately inlined rather than routed through `plural`, unlike hour/day
+    // below: this bucket always reads "N min ago" — the fixed abbreviation
+    // "min", never pluralised to "mins" and never expanded to "minute(s)" the
+    // way `plural` would. Don't "fix" this into `plural(n, "min")` (→ "1 mins")
+    // or `plural(n, "minute")` (→ "1 minute ago") — both change the copy.
     return `${Math.floor(age / MINUTE_MS)} min ago`;
   }
   if (age < DAY_MS) {

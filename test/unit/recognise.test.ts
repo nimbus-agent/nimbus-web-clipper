@@ -186,6 +186,17 @@ describe("resolveUrl keeps identity, not canonicalisation", () => {
     const r = recognise("https://corp.example/jenkins/job/build/42/console", jenkins);
     expect(r.ok && r.resolveUrl).toBe("https://corp.example/jenkins/job/build/42/console");
   });
+
+  // Pins the defensive `: url` fallback (recognise.ts) for real: when the raw
+  // input string does not literally start with the rebuilt matched prefix — here
+  // because `URL` lower-cases the host but the original string is mixed-case —
+  // the function returns the caller's own input verbatim rather than fabricating
+  // a destination. That also means identity normalisation (the Jira upper-case)
+  // is skipped: the returned string is byte-for-byte the input.
+  it("falls back to the raw input, skipping Jira normalisation, when the host case doesn't match the rebuilt prefix", () => {
+    const r = recognise("https://ACME.atlassian.net/browse/abc-1", NONE);
+    expect(r.ok && r.resolveUrl).toBe("https://ACME.atlassian.net/browse/abc-1");
+  });
 });
 
 describe("surfaceLine", () => {

@@ -97,8 +97,15 @@ export type Recognition =
  *
  * `path_trimmed` is a WEAKER claim than the other two and must never be rendered
  * with equal confidence: the ladder reached it by discarding part of the URL.
+ *
+ * Single-sourced here: both wire validators (gateway-client.ts's parser,
+ * messages.ts's SW→panel guard) read `RESOLVE_MATCH_KINDS` rather than each
+ * declaring their own literal list, so the type and its two validators cannot
+ * drift apart — adding a match kind here adds it to both validators for free,
+ * instead of typechecking green while both silently rejected the new arm.
  */
-export type ResolveMatchKind = "exact" | "query_stripped" | "path_trimmed";
+export const RESOLVE_MATCH_KINDS = ["exact", "query_stripped", "path_trimmed"] as const;
+export type ResolveMatchKind = (typeof RESOLVE_MATCH_KINDS)[number];
 
 /** One indexed item, metadata only. Resolve is a resolver — reading is a separate route. */
 export interface ResolveCandidate {

@@ -23,6 +23,15 @@ const RESOLVE_MESSAGES: Record<string, string> = {
   unsupported: "This Nimbus gateway can't resolve pages yet.",
   unreachable: "Couldn't connect to Nimbus.",
   server_error: "Nimbus had an error resolving this page.",
+  // `insufficient_scope` is handled BEFORE this map is consulted, in headerFrom
+  // below — but only when `surface !== null`. That guard always holds in
+  // practice: `handleResolve` calls the gateway only after `recognise()`
+  // succeeds, and a 403 can only come back from a gateway call, so a 403 always
+  // carries a surface. This entry exists as a fallback for that invariant alone
+  // — if it were ever violated, this is the one message this branch went out of
+  // its way to avoid reusing the generic "Couldn't resolve this page." for.
+  insufficient_scope:
+    "This pairing can't resolve pages yet. Grant it on the gateway: nimbus clip scopes <label> --set clip,briefs,resolve",
 };
 
 // Inlined so the panel is fully self-contained. `:host { all: initial }` drops
