@@ -2,12 +2,13 @@ import { describe, expect, test } from "vitest";
 import { endpointUrl, GATEWAY_PATHS, isLoopbackOrigin } from "../../src/shared/gateway.ts";
 
 describe("GATEWAY_PATHS", () => {
-  test("is the four contracted gateway paths", () => {
+  test("is the five contracted gateway paths", () => {
     expect(GATEWAY_PATHS).toEqual({
       ingest: "/v1/clips",
       pairConfirm: "/v1/clips/pair/confirm",
       related: "/v1/clips/related",
       resolve: "/v1/items/resolve",
+      itemsFetch: "/v1/items/fetch",
     });
   });
 

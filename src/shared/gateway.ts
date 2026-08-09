@@ -11,12 +11,17 @@
  * packages/gateway/src/ipc/http-server.ts#handleItemsResolve. It was briefly
  * modelled here as PROPOSED while this client was built against a guessed shape;
  * that split is gone because the guess is gone.
+ *
+ * `itemsFetch` is the targeted-fetch route under the `fetch` token scope — an
+ * explicit I13 WRITE, not a read with side effects, because it causes an
+ * outbound request to a configured provider under the user's stored credential.
  */
 export const GATEWAY_PATHS = {
   ingest: "/v1/clips",
   pairConfirm: "/v1/clips/pair/confirm",
   related: "/v1/clips/related",
   resolve: "/v1/items/resolve",
+  itemsFetch: "/v1/items/fetch",
 } as const;
 
 export type GatewayEndpoint = keyof typeof GATEWAY_PATHS;
