@@ -155,12 +155,12 @@ describe("message routing — success shapes", () => {
       kind: "resolve",
       ok: true,
       recognition: { ok: false, reason: "unknown-host" },
-      item: null,
+      outcome: { kind: "not-indexed", fetchable: false },
     });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
-  test("resolve: a recognised page posts the canonical URL and returns the item", async () => {
+  test("resolve: a recognised page GETs the canonicalised URL and returns the outcome", async () => {
     await load();
     harness.storage.set(CONNECTION_KEY, conn);
     const item = {
@@ -168,25 +168,33 @@ describe("message routing — success shapes", () => {
       service: "github",
       type: "pr",
       title: "Add thing",
-      canonicalUrl: "https://github.com/acme/web/pull/1",
       url: "https://github.com/acme/web/pull/1",
     };
-    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { item }));
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        jsonRes(200, { found: true, matchKind: "exact", item: { ...item, modified_at: 5 } }),
+      );
 
     const res = await harness.emitMessage({
       kind: "resolve",
       pageUrl: "https://github.com/acme/web/pull/1/files",
     });
 
-    expect(res).toMatchObject({ kind: "resolve", ok: true, item });
+    expect(res).toMatchObject({
+      kind: "resolve",
+      ok: true,
+      outcome: { kind: "found", matchKind: "exact", item: { ...item, modifiedAt: 5 } },
+    });
     const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
       string,
       RequestInit,
     ];
-    expect(url).toBe("http://127.0.0.1:8765/v1/items/resolve");
-    expect(JSON.parse(String(init.body))).toEqual({
-      canonicalUrl: "https://github.com/acme/web/pull/1",
-    });
+    expect(url).toBe(
+      `http://127.0.0.1:8765/v1/items/resolve?url=${encodeURIComponent("https://github.com/acme/web/pull/1")}`,
+    );
+    expect(init.method).toBe("GET");
+    expect((init.headers as Record<string, string>)["authorization"]).toBe("Bearer tok-abc");
   });
 
   test("resolve: a gateway 404 is unsupported, and the recognition survives", async () => {

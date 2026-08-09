@@ -134,9 +134,13 @@ function headerFrom(res: unknown): HeaderState {
       message: RESOLVE_MESSAGES[res.reason] ?? "Couldn't resolve this page.",
     };
   }
-  return res.item === null
-    ? { kind: "not-indexed", surface }
-    : { kind: "resolved", surface, item: res.item };
+  // Mechanical translation only: `found` maps to the existing `resolved` state and
+  // every other outcome (not-indexed/unresolvable/ambiguous) collapses to the
+  // existing `not-indexed` state, preserving current behaviour exactly. Richer
+  // per-outcome rendering (ambiguous candidates, unresolvable) is Task 7's work.
+  return res.outcome.kind === "found"
+    ? { kind: "resolved", surface, item: res.outcome.item }
+    : { kind: "not-indexed", surface };
 }
 
 /**

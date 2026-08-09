@@ -27,7 +27,7 @@ import {
 import { getQueue, updateQueue } from "./clip-queue-store.ts";
 import { clearConnection, getConnection, setConnection } from "./connection-store.ts";
 import { showFeedback } from "./feedback.ts";
-import { confirmPair, postClip, postRelated, postResolve } from "./gateway-client.ts";
+import { confirmPair, postClip, postRelated, resolveItem } from "./gateway-client.ts";
 import {
   handleClip,
   handleConnectionStatus,
@@ -193,7 +193,7 @@ addMessageListener((message, respond) => {
     return true;
   }
   if (isResolveRequest(message)) {
-    handleResolve({ getConnection, getOrigins, postResolve }, message)
+    handleResolve({ getConnection, getOrigins, resolveItem }, message)
       .then(respond)
       .catch(() => {
         respond({

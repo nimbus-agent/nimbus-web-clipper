@@ -263,8 +263,8 @@ describe("panel-in-page recognition header", () => {
     service: "github",
     type: "pr",
     title: "Add thing",
-    canonicalUrl: "https://github.com/acme/web/pull/1",
     url: "https://github.com/acme/web/pull/1",
+    modifiedAt: 1_700_000_000_000,
   };
   const recognition = {
     ok: true,
@@ -287,7 +287,12 @@ describe("panel-in-page recognition header", () => {
   }
 
   test("sends the page url for resolution", async () => {
-    respond({ kind: "resolve", ok: true, recognition, item });
+    respond({
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "found", matchKind: "exact", item },
+    });
     await loadPanel();
     await vi.waitFor(() => {
       expect(harness.sendMessage).toHaveBeenCalledWith(
@@ -297,7 +302,12 @@ describe("panel-in-page recognition header", () => {
   });
 
   test("a resolved item is named in the header", async () => {
-    respond({ kind: "resolve", ok: true, recognition, item });
+    respond({
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "found", matchKind: "exact", item },
+    });
     await loadPanel();
     await vi.waitFor(() => {
       expect(headerText()).toContain("GitHub PR · acme/web #1");
@@ -306,7 +316,12 @@ describe("panel-in-page recognition header", () => {
   });
 
   test("a miss says not indexed, and does NOT imply the related hits are the page", async () => {
-    respond({ kind: "resolve", ok: true, recognition, item: null });
+    respond({
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: true },
+    });
     await loadPanel();
     await vi.waitFor(() => {
       expect(shadow()?.textContent).toContain("Not indexed");
@@ -334,7 +349,7 @@ describe("panel-in-page recognition header", () => {
       kind: "resolve",
       ok: true,
       recognition: { ok: false, reason: "unknown-host" },
-      item: null,
+      outcome: { kind: "not-indexed", fetchable: false },
     });
     await loadPanel();
     await vi.waitFor(() => {
@@ -383,7 +398,7 @@ describe("panel-in-page lane state", () => {
       kind: "resolve",
       ok: true,
       recognition: { ok: false, reason: "unknown-host" },
-      item: null,
+      outcome: { kind: "not-indexed", fetchable: false },
     });
 
     await vi.waitFor(() => {

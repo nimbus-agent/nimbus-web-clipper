@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import {
   isClipRequest,
   isConnectionResponse,
@@ -151,47 +151,89 @@ describe("isConnectionResponse", () => {
 });
 
 describe("resolve guards", () => {
-  const recognition = {
-    ok: true,
-    product: "github",
-    kind: "pr",
-    label: "GitHub PR",
-    ref: "acme/web #1",
-    resolveUrl: "https://github.com/acme/web/pull/1",
-  } as const;
-  const item = {
-    id: "i1",
-    service: "github",
-    type: "pr",
-    title: "Add thing",
-    canonicalUrl: "https://github.com/acme/web/pull/1",
-    url: "https://github.com/acme/web/pull/1",
-  } as const;
-
   test("isResolveRequest accepts a well-formed request", () => {
     expect(isResolveRequest({ kind: "resolve", pageUrl: "https://x/y" })).toBe(true);
   });
   test("isResolveRequest rejects a missing pageUrl", () => {
     expect(isResolveRequest({ kind: "resolve" })).toBe(false);
   });
-  test("isResolveResponse accepts a resolved item", () => {
-    expect(isResolveResponse({ kind: "resolve", ok: true, recognition, item })).toBe(true);
-  });
-  test("isResolveResponse accepts an explicit miss", () => {
-    expect(isResolveResponse({ kind: "resolve", ok: true, recognition, item: null })).toBe(true);
-  });
-  test("isResolveResponse accepts a failure that still carries the recognition", () => {
+});
+
+describe("isResolveResponse", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "a/b #1",
+    resolveUrl: "https://github.com/a/b/pull/1",
+  };
+
+  it("accepts a found outcome", () => {
     expect(
-      isResolveResponse({ kind: "resolve", ok: false, recognition, reason: "unsupported" }),
+      isResolveResponse({
+        kind: "resolve",
+        ok: true,
+        recognition,
+        outcome: {
+          kind: "found",
+          matchKind: "path_trimmed",
+          item: { id: "i", service: "s", type: "t", title: "T", url: null, modifiedAt: 5 },
+        },
+      }),
     ).toBe(true);
   });
-  test("isResolveResponse rejects an item missing a field", () => {
-    const { title: _title, ...partial } = item;
-    expect(isResolveResponse({ kind: "resolve", ok: true, recognition, item: partial })).toBe(
-      false,
-    );
+
+  it("accepts every non-found outcome", () => {
+    const outcomes = [
+      { kind: "not-indexed", fetchable: true },
+      { kind: "unresolvable", fetchable: false },
+      {
+        kind: "ambiguous",
+        service: "jira",
+        fetchable: false,
+        truncated: false,
+        candidates: [{ id: "a", service: "jira", type: "issue", title: "One", url: null }],
+      },
+    ];
+    for (const outcome of outcomes) {
+      expect(isResolveResponse({ kind: "resolve", ok: true, recognition, outcome })).toBe(true);
+    }
   });
-  test("isResolveResponse rejects a response with no recognition", () => {
-    expect(isResolveResponse({ kind: "resolve", ok: true, item: null })).toBe(false);
+
+  it("accepts a failure arm and keeps the recognition", () => {
+    expect(
+      isResolveResponse({
+        kind: "resolve",
+        ok: false,
+        recognition,
+        reason: "insufficient_scope",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects an item missing modifiedAt, an unknown outcome kind, and a bad candidate", () => {
+    for (const outcome of [
+      {
+        kind: "found",
+        matchKind: "exact",
+        item: { id: "i", service: "s", type: "t", title: "T", url: null },
+      },
+      {
+        kind: "found",
+        matchKind: "guessed",
+        item: { id: "i", service: "s", type: "t", title: "T", url: null, modifiedAt: 5 },
+      },
+      { kind: "elsewhere", fetchable: true },
+      {
+        kind: "ambiguous",
+        service: null,
+        fetchable: false,
+        truncated: false,
+        candidates: [{ id: "a" }],
+      },
+    ]) {
+      expect(isResolveResponse({ kind: "resolve", ok: true, recognition, outcome })).toBe(false);
+    }
   });
 });

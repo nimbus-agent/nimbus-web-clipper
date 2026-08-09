@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import {
   handleClip,
   handleConnectionStatus,
@@ -352,68 +352,72 @@ describe("handleResolve", () => {
     label: "MacBook",
     pairedAt: 0,
   };
-  const item = {
-    id: "i1",
-    service: "github",
-    type: "pr",
-    title: "Add thing",
-    canonicalUrl: "https://github.com/acme/web/pull/1",
-    url: "https://github.com/acme/web/pull/1",
-  };
   const PR = "https://github.com/acme/web/pull/1/files";
 
-  test("an unrecognised page never touches the gateway", async () => {
+  it("passes the recogniser's resolveUrl to the gateway and returns the outcome", async () => {
+    const seen: string[] = [];
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => ({ origin: "http://127.0.0.1:8765", token: "t" }),
+        resolveItem: async (_o, _t, url) => {
+          seen.push(url);
+          return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
+        },
+      },
+      // Note: recognise() canonicalises away the query string, so the recogniser's
+      // resolveUrl (asserted below) differs from the raw pageUrl — that's the point.
+      { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1?files=1" },
+    );
+
+    expect(seen).toEqual(["https://github.com/a/b/pull/1"]);
+    expect(res).toEqual({
+      kind: "resolve",
+      ok: true,
+      recognition: expect.objectContaining({ ok: true, label: "GitHub PR" }),
+      outcome: { kind: "not-indexed", fetchable: true },
+    });
+  });
+
+  it("keeps the recognition on an insufficient_scope failure", async () => {
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => ({ origin: "http://127.0.0.1:8765", token: "t" }),
+        resolveItem: async () => ({ ok: false, reason: "insufficient_scope" }),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(res).toEqual({
+      kind: "resolve",
+      ok: false,
+      recognition: expect.objectContaining({ ok: true, ref: "a/b #1" }),
+      reason: "insufficient_scope",
+    });
+  });
+
+  it("makes no gateway call for an unrecognised page", async () => {
     let called = false;
     const res = await handleResolve(
       {
-        getConnection: async () => conn,
         getOrigins: async () => [],
-        postResolve: async () => {
+        getConnection: async () => ({ origin: "http://127.0.0.1:8765", token: "t" }),
+        resolveItem: async () => {
           called = true;
-          return { ok: true, item: null };
+          return { ok: false, reason: "server_error" };
         },
       },
       { kind: "resolve", pageUrl: "https://example.com/whatever" },
     );
+
     expect(called).toBe(false);
     expect(res).toEqual({
       kind: "resolve",
       ok: true,
       recognition: { ok: false, reason: "unknown-host" },
-      item: null,
+      outcome: { kind: "not-indexed", fetchable: false },
     });
-  });
-
-  test("sends the CANONICALISED url, not the page url", async () => {
-    let sent: string | null = null;
-    await handleResolve(
-      {
-        getConnection: async () => conn,
-        getOrigins: async () => [],
-        postResolve: async (_o, _t, url) => {
-          sent = url;
-          return { ok: true, item };
-        },
-      },
-      { kind: "resolve", pageUrl: PR },
-    );
-    expect(sent).toBe("https://github.com/acme/web/pull/1");
-  });
-
-  test("a resolved item comes back with its recognition", async () => {
-    const res = await handleResolve(
-      {
-        getConnection: async () => conn,
-        getOrigins: async () => [],
-        postResolve: async () => ({ ok: true, item }),
-      },
-      { kind: "resolve", pageUrl: PR },
-    );
-    expect(res.ok).toBe(true);
-    expect(res.recognition.ok).toBe(true);
-    if (res.ok) {
-      expect(res.item).toEqual(item);
-    }
   });
 
   test("not paired short-circuits before the gateway call", async () => {
@@ -422,9 +426,9 @@ describe("handleResolve", () => {
       {
         getConnection: async () => null,
         getOrigins: async () => [],
-        postResolve: async () => {
+        resolveItem: async () => {
           called = true;
-          return { ok: true, item: null };
+          return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
       },
       { kind: "resolve", pageUrl: PR },
@@ -433,28 +437,15 @@ describe("handleResolve", () => {
     expect(res).toMatchObject({ ok: false, reason: "not_paired" });
   });
 
-  test("a gateway failure still carries the recognition — we know the page", async () => {
-    const res = await handleResolve(
-      {
-        getConnection: async () => conn,
-        getOrigins: async () => [],
-        postResolve: async () => ({ ok: false, reason: "unsupported" as const }),
-      },
-      { kind: "resolve", pageUrl: PR },
-    );
-    expect(res).toMatchObject({ ok: false, reason: "unsupported" });
-    expect(res.recognition.ok).toBe(true);
-  });
-
   test("a configured self-hosted origin is used for recognition", async () => {
     let sent: string | null = null;
     await handleResolve(
       {
         getConnection: async () => conn,
         getOrigins: async () => [{ origin: "https://corp.example/jira", product: "jira" as const }],
-        postResolve: async (_o, _t, url) => {
+        resolveItem: async (_o, _t, url) => {
           sent = url;
-          return { ok: true, item: null };
+          return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
       },
       { kind: "resolve", pageUrl: "https://corp.example/jira/browse/plat-9?x=1" },

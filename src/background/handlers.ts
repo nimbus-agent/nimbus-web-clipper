@@ -24,8 +24,8 @@ import type {
   PairError,
   RelatedError,
   RelatedHit,
-  ResolvedItem,
   ResolveError,
+  ResolveOutcome,
 } from "../shared/types.ts";
 
 export interface PairDeps {
@@ -110,13 +110,13 @@ export async function handleRelated(
 }
 
 export interface ResolveDeps {
-  readonly getConnection: () => Promise<Connection | null>;
-  readonly getOrigins: () => Promise<ConfiguredOrigin[]>;
-  readonly postResolve: (
+  readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
+  readonly getConnection: () => Promise<{ origin: string; token: string } | null>;
+  readonly resolveItem: (
     origin: string,
     token: string,
-    canonicalUrl: string,
-  ) => Promise<{ ok: true; item: ResolvedItem | null } | { ok: false; reason: ResolveError }>;
+    pageUrl: string,
+  ) => Promise<{ ok: true; outcome: ResolveOutcome } | { ok: false; reason: ResolveError }>;
 }
 
 /**
@@ -132,18 +132,24 @@ export async function handleResolve(
 ): Promise<ResolveResponse> {
   const recognition = recognise(req.pageUrl, await deps.getOrigins());
   if (!recognition.ok) {
-    // Nothing to ask the gateway about — and no request is made.
-    return { kind: "resolve", ok: true, recognition, item: null };
+    // Nothing to ask the gateway about — and no request is made. `fetchable:false`
+    // because an unrecognised page is not a fetch candidate either.
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: false },
+    };
   }
   const conn = await deps.getConnection();
   if (conn === null) {
     return { kind: "resolve", ok: false, recognition, reason: "not_paired" };
   }
-  const r = await deps.postResolve(conn.origin, conn.token, recognition.resolveUrl);
+  const r = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!r.ok) {
     return { kind: "resolve", ok: false, recognition, reason: r.reason };
   }
-  return { kind: "resolve", ok: true, recognition, item: r.item };
+  return { kind: "resolve", ok: true, recognition, outcome: r.outcome };
 }
 
 export interface QueueListDeps {
