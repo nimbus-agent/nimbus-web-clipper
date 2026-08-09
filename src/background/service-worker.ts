@@ -16,6 +16,7 @@ import { activeTab } from "../browser/tabs.ts";
 import {
   isClipRequest,
   isConnectionStatusRequest,
+  isFetchRequest,
   isPairRequest,
   isQueueListRequest,
   isQueueRemoveRequest,
@@ -27,10 +28,11 @@ import {
 import { getQueue, updateQueue } from "./clip-queue-store.ts";
 import { clearConnection, getConnection, setConnection } from "./connection-store.ts";
 import { showFeedback } from "./feedback.ts";
-import { confirmPair, postClip, postRelated, resolveItem } from "./gateway-client.ts";
+import { confirmPair, fetchItem, postClip, postRelated, resolveItem } from "./gateway-client.ts";
 import {
   handleClip,
   handleConnectionStatus,
+  handleFetch,
   handlePair,
   handleQueueList,
   handleQueueRemove,
@@ -198,6 +200,19 @@ addMessageListener((message, respond) => {
       .catch(() => {
         respond({
           kind: "resolve",
+          ok: false,
+          recognition: { ok: false, reason: "unknown-host" },
+          reason: "server_error",
+        });
+      });
+    return true;
+  }
+  if (isFetchRequest(message)) {
+    handleFetch({ getConnection, getOrigins, fetchItem }, message)
+      .then(respond)
+      .catch(() => {
+        respond({
+          kind: "fetch",
           ok: false,
           recognition: { ok: false, reason: "unknown-host" },
           reason: "server_error",

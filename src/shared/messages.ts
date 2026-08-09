@@ -7,6 +7,8 @@ import { isRelatedHit } from "./related.ts";
 import {
   type CaptureResult,
   type ClipError,
+  type FetchError,
+  type FetchOutcome,
   type PairError,
   RESOLVE_MATCH_KINDS,
   type Recognition,
@@ -61,6 +63,11 @@ export interface ResolveRequest {
   readonly title?: string;
 }
 
+export interface FetchRequest {
+  readonly kind: "fetch";
+  readonly pageUrl: string;
+}
+
 export interface QueueListRequest {
   readonly kind: "queue-list";
 }
@@ -88,6 +95,7 @@ export type ExtensionRequest =
   | ClipRequest
   | RelatedRequest
   | ResolveRequest
+  | FetchRequest
   | QueueListRequest
   | QueueRetryRequest
   | QueueRemoveRequest
@@ -131,6 +139,21 @@ export type ResolveResponse =
       readonly scopeGap?: ScopeGap;
     };
 
+export type FetchResponse =
+  | {
+      readonly kind: "fetch";
+      readonly ok: true;
+      readonly recognition: Recognition;
+      readonly outcome: FetchOutcome;
+    }
+  | {
+      readonly kind: "fetch";
+      readonly ok: false;
+      readonly recognition: Recognition;
+      readonly reason: FetchError;
+      readonly scopeGap?: ScopeGap;
+    };
+
 export type QueueResponse = { readonly kind: "queue"; readonly items: QueuedClipView[] };
 
 export type ConnectionResponse =
@@ -148,6 +171,7 @@ export type ExtensionResponse =
   | ClipResponse
   | RelatedResponse
   | ResolveResponse
+  | FetchResponse
   | QueueResponse
   | ConnectionResponse;
 
@@ -216,6 +240,10 @@ export function isResolveRequest(v: unknown): v is ResolveRequest {
     typeof v["pageUrl"] === "string" &&
     (v["title"] === undefined || typeof v["title"] === "string")
   );
+}
+
+export function isFetchRequest(v: unknown): v is FetchRequest {
+  return isObject(v) && v["kind"] === "fetch" && typeof v["pageUrl"] === "string";
 }
 
 function isCandidate(v: unknown): v is ResolveCandidate {
@@ -296,6 +324,38 @@ export function isResolveResponse(v: unknown): v is ResolveResponse {
   }
   if (v["ok"] === true) {
     return isResolveOutcome(v["outcome"]);
+  }
+  return (
+    v["ok"] === false &&
+    typeof v["reason"] === "string" &&
+    (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"]))
+  );
+}
+
+/**
+ * Guards the DOMAIN outcome crossing the SW→panel boundary — not the wire shape.
+ * The wire's `status` field is parsed in gateway-client.ts and never reaches here.
+ */
+function isFetchOutcome(v: unknown): v is FetchOutcome {
+  if (!isObject(v)) {
+    return false;
+  }
+  if (v["kind"] === "indexed") {
+    return typeof v["itemId"] === "string";
+  }
+  return (
+    v["kind"] === "unfetchable" || v["kind"] === "not-configured" || v["kind"] === "rate-limited"
+  );
+}
+
+/** The recognition is required on BOTH arms, mirroring `isResolveResponse`: a
+ *  gateway failure must not erase the fact that we know what page this is. */
+export function isFetchResponse(v: unknown): v is FetchResponse {
+  if (!isObject(v) || v["kind"] !== "fetch" || !isRecognition(v["recognition"])) {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return isFetchOutcome(v["outcome"]);
   }
   return (
     v["ok"] === false &&

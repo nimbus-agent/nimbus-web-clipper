@@ -3,6 +3,7 @@ import {
   isClipRequest,
   isConnectionResponse,
   isConnectionStatusRequest,
+  isFetchResponse,
   isPairRequest,
   isPingMessage,
   isQueueListRequest,
@@ -264,5 +265,45 @@ describe("isResolveResponse", () => {
     ]) {
       expect(isResolveResponse({ kind: "resolve", ok: true, recognition, outcome })).toBe(false);
     }
+  });
+});
+
+describe("isFetchResponse", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "a/b #1",
+    resolveUrl: "https://github.com/a/b/pull/1",
+  };
+
+  it("accepts each outcome", () => {
+    for (const outcome of [
+      { kind: "indexed", itemId: "i1" },
+      { kind: "unfetchable" },
+      { kind: "not-configured" },
+      { kind: "rate-limited" },
+    ]) {
+      expect(isFetchResponse({ kind: "fetch", ok: true, recognition, outcome })).toBe(true);
+    }
+  });
+
+  it("rejects indexed without an itemId and an unknown kind", () => {
+    for (const outcome of [{ kind: "indexed" }, { kind: "elsewhere" }]) {
+      expect(isFetchResponse({ kind: "fetch", ok: true, recognition, outcome })).toBe(false);
+    }
+  });
+
+  it("accepts a failure arm with a scope gap", () => {
+    expect(
+      isFetchResponse({
+        kind: "fetch",
+        ok: false,
+        recognition,
+        reason: "insufficient_scope",
+        scopeGap: { label: "chrome", required: "fetch", granted: ["clip"] },
+      }),
+    ).toBe(true);
   });
 });
