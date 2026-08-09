@@ -310,6 +310,22 @@ describe("renderHeader — needs-scope", () => {
     expect(el.textContent).toContain("nimbus clip scopes");
     expect(el.textContent).not.toContain("--set");
   });
+
+  // SECURITY end-to-end: full 403 detail is present, but the label is unsafe to
+  // paste into a shell. The render layer must fall back to the SAME generic
+  // guidance as a null scopeGap — echoing neither the label nor a `--set` list.
+  it("falls back to generic guidance, and leaks neither label nor --set, when the label is unsafe", () => {
+    const el = renderHeader(document, {
+      kind: "needs-scope",
+      surface: "S",
+      scopeGap: { label: "chrome; rm -rf ~", required: "resolve", granted: ["clip", "briefs"] },
+    });
+    expect(el.textContent).toContain(
+      "Grant it on the gateway: run nimbus clip status to find this device, then nimbus clip scopes.",
+    );
+    expect(el.textContent).not.toContain("chrome; rm -rf ~");
+    expect(el.textContent).not.toContain("--set");
+  });
 });
 
 describe("renderHeader — ambiguous", () => {

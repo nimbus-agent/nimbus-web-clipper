@@ -55,4 +55,15 @@ describe("scopeCommand", () => {
       );
     }
   });
+
+  // SECURITY. `required` and `granted` are ALSO gateway-supplied — straight off
+  // the 403 body — and the upstream guards (parseScopeGap, isScopeGap) only check
+  // typeof === "string", not the characters. A safe label alone is not enough:
+  // the same injection can arrive through a sibling field and land in `--set`.
+  it("returns null for an unsafe scope name in required or granted", () => {
+    expect(
+      scopeCommand({ label: "chrome", required: "fetch", granted: ["clip; rm -rf ~"] }),
+    ).toBeNull();
+    expect(scopeCommand({ label: "chrome", required: "$(id)", granted: ["clip"] })).toBeNull();
+  });
 });
