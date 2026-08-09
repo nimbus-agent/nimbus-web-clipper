@@ -353,7 +353,7 @@ is worthless without this — and half of C1 is buildable today.*
 > **Done when** Resolved / unresolved / loading / error states all render from
 > pure view code under unit tests, with no lane content yet.
 > **Status** Shipped with related-items as the first lane. The panel stays
-> **user-summoned** (`Alt+Shift+R` / popup button) — ambient auto-surfacing waits
+> **user-summoned** — ambient auto-surfacing waits
 > until C2 gives the lanes real answers. Known gap: recognition does not follow
 > client-side (SPA) navigation, so an open panel keeps describing the page it was
 > opened on; that needs C1.4's gesture-free access and is the first candidate for
@@ -378,6 +378,36 @@ is worthless without this — and half of C1 is buildable today.*
 > works on `activeTab` alone today, so the grant currently buys only gesture-free
 > recognition, which **C2** is the first to need. The store listing explains why
 > the optional pattern is broad (self-hosted hostnames are not enumerable).
+
+### C1.5 A second way into the panel · 🟢 · S
+> **What** The related panel has exactly **one** entry point: the `show_related`
+> command (`Alt+Shift+R`). Add a fallback the browser cannot silently withhold —
+> a context-menu item, a popup button, or both.
+> **Why it wows** It stops the feature from disappearing. `suggested_key` is a
+> *suggestion*: when something else already claims the combo, Chrome leaves the
+> command unbound, reports nothing, and the keystroke goes to the page instead.
+> The panel is then unreachable, with no error, no empty state, and nothing in
+> the UI hinting that a shortcut exists. A user in that state concludes the
+> feature is broken.
+> **Found by** The Phase C1 manual pass (2026-08-09), first time it was run.
+> `Alt+Shift+R` did not bind in Chrome; pressing it opened GitHub's own
+> "switch repository" menu. Every other entry point in the extension has a
+> click-driven fallback — clipping has the popup *and* the context menu — so
+> this is the only capability reachable by hotkey alone. This roadmap also
+> claimed C1.3 shipped with a "popup button"; it did not, which is part of why
+> the gap went unnoticed. That claim is corrected above.
+> **Touches** `src/background/quick-clip.ts` or a sibling for the context-menu
+> registration, `src/browser/context-menus.ts`, `src/popup/`,
+> `src/background/service-worker.ts` (route the new trigger into the same
+> `injectPanel` path the command already uses).
+> **Approach** One handler, several triggers — the command, the menu item and any
+> popup button must converge on the existing injection path so the panel cannot
+> drift between them. Keep the `activeTab` story intact: each trigger is a user
+> gesture, so no new permission is needed. Consider surfacing the bound shortcut
+> (or its absence) in Options, since the browser will not.
+> **Done when** The panel can be opened without touching the keyboard, on a
+> profile where the `show_related` shortcut is unbound, in both Chrome and
+> Firefox.
 
 ## Phase C2 — Run the agents from the page 🟡
 
