@@ -1236,6 +1236,125 @@ describe("agent run polling — survives eviction", () => {
     });
   });
 
+  // `activeAgentPolls` has two halves, and each needs its own test: the filter in
+  // `resumeAgentPolls` (this test) and `startAgentPollLoop`'s own guard (the next
+  // one). Neither is covered by any other test here — the suite stayed green with
+  // either one deleted.
+  //
+  // The alarm is PERIODIC, and Chrome fires it every minute whether or not the
+  // worker was ever evicted. Without the filter, each tick would start a SECOND
+  // uncoordinated backoff loop for a run already being polled — one extra loop per
+  // minute for up to the run's 10-minute TTL, and only for runs that stay
+  // `running`, i.e. against a gateway that is already slow or down.
+  //
+  // Fakes setTimeout as well as Date (unlike the Date-only tests above) because the
+  // assertion is about WHICH backoff ticks fire and when; with real timers the
+  // 750ms step would race the test body.
+  test("a second alarm tick does not start a second poll loop for a run already being polled", async () => {
+    await load();
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    harness.storage.set(CONNECTION_KEY, conn);
+    const { putRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        itemId: "gh-1",
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        // Well past every tick this test drives: the run must stay `running` the
+        // whole way, so nothing here can be mistaken for the expiry give-up.
+        expiresAtMs: NOW + 600_000,
+      },
+      NOW,
+    );
+    const polls: string[] = [];
+    stubFetch((url) => {
+      polls.push(url);
+      return jsonRes(200, { status: "running" });
+    });
+
+    harness.emitAlarm(AGENT_POLL_ALARM);
+    await vi.advanceTimersByTimeAsync(0); // the alarm's immediate first tick
+    expect(polls).toHaveLength(1);
+
+    // The next minute-tick, with the run still `running` and its loop mid-backoff.
+    harness.emitAlarm(AGENT_POLL_ALARM);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(polls).toHaveLength(1);
+
+    // And exactly one loop is still ticking: the single scheduled 500 * 1.5 poll.
+    // A second loop would have its own tick at the same moment.
+    await vi.advanceTimersByTimeAsync(750);
+    expect(polls).toHaveLength(2);
+  });
+
+  // The other half: `startAgentPollLoop`'s guard, which the test above cannot
+  // reach — `resumeAgentPolls` adds to the Set itself and never calls it. This
+  // guard covers the other way one runId can be polled twice: a `running` state
+  // persisted for it more than once. Two tabs on the same PR expanding the same
+  // lane at the same moment do exactly that whenever the gateway answers both
+  // invokes with one run id — which `scripts/mock-gateway.ts` does by design (a
+  // fixed run id for every invoke), so it is not a hypothetical shape. The
+  // guard's promise is one loop per runId, however often that runId is persisted
+  // as running.
+  test("persisting the same runId as running twice starts one poll loop, not two", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const item = {
+      id: "i1",
+      service: "github",
+      type: "pr",
+      title: "Add thing",
+      url: "https://github.com/acme/web/pull/1",
+    };
+    const runPolls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes("/v1/items/resolve")) {
+        return jsonRes(200, { found: true, matchKind: "exact", item: { ...item, modified_at: 5 } });
+      }
+      if (u.includes("/v1/agents/runs/")) {
+        runPolls.push(u);
+        return jsonRes(200, { status: "running" });
+      }
+      return jsonRes(202, { runId: "run-42" });
+    });
+
+    vi.useFakeTimers();
+    // CONCURRENT, not sequential: sequential calls would find the first run
+    // already cached as `running` and short-circuit before invoking at all.
+    const [a, b] = await Promise.all([
+      harness.emitMessage({
+        kind: "agent-run",
+        lane: "impact",
+        pageUrl: "https://github.com/acme/web/pull/1",
+      }),
+      harness.emitMessage({
+        kind: "agent-run",
+        lane: "impact",
+        pageUrl: "https://github.com/acme/web/pull/1",
+      }),
+    ]);
+    // Both really did invoke and persist — otherwise this test would be pinning
+    // the cache short-circuit instead of the poll-loop guard.
+    for (const res of [a, b]) {
+      expect(res).toEqual({
+        kind: "agent-state",
+        lane: "impact",
+        state: { kind: "running", runId: "run-42" },
+      });
+    }
+    const invokes = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(([url]) =>
+      String(url).includes("/v1/agents/impact"),
+    );
+    expect(invokes).toHaveLength(2);
+
+    // One loop polls once at the 500ms first step; two loops would poll twice.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(runPolls).toHaveLength(1);
+  });
+
   // The OTHER give-up path: a run that outlives its own TTL. `listRunning`
   // already filters out an ALREADY-expired run before ever polling it (see the
   // "stops polling... rather than polling forever" test above) — this test is
