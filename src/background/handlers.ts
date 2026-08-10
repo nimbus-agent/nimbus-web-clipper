@@ -4,6 +4,8 @@ import type {
   ClipRequest,
   ClipResponse,
   ConnectionResponse,
+  FetchRequest,
+  FetchResponse,
   PairRequest,
   PairResponse,
   QueueRemoveRequest,
@@ -21,6 +23,8 @@ import type {
   ClipPostResult,
   ConfiguredOrigin,
   Connection,
+  FetchError,
+  FetchOutcome,
   PairError,
   RelatedError,
   RelatedHit,
@@ -111,12 +115,15 @@ export async function handleRelated(
 
 export interface ResolveDeps {
   readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
-  readonly getConnection: () => Promise<{ origin: string; token: string } | null>;
+  readonly getConnection: () => Promise<{ origin: string; token: string; label: string } | null>;
   readonly resolveItem: (
     origin: string,
     token: string,
     pageUrl: string,
-  ) => Promise<{ ok: true; outcome: ResolveOutcome } | { ok: false; reason: ResolveError }>;
+  ) => Promise<
+    | { ok: true; outcome: ResolveOutcome }
+    | { ok: false; reason: ResolveError; scopeGap?: { required: string; granted: string[] } }
+  >;
 }
 
 /**
@@ -147,9 +154,63 @@ export async function handleResolve(
   }
   const r = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!r.ok) {
-    return { kind: "resolve", ok: false, recognition, reason: r.reason };
+    return r.scopeGap === undefined
+      ? { kind: "resolve", ok: false, recognition, reason: r.reason }
+      : {
+          kind: "resolve",
+          ok: false,
+          recognition,
+          reason: r.reason,
+          scopeGap: { label: conn.label, ...r.scopeGap },
+        };
   }
   return { kind: "resolve", ok: true, recognition, outcome: r.outcome };
+}
+
+export interface FetchDeps {
+  readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
+  readonly getConnection: () => Promise<Connection | null>;
+  readonly fetchItem: (
+    origin: string,
+    token: string,
+    pageUrl: string,
+  ) => Promise<
+    | { ok: true; outcome: FetchOutcome }
+    | { ok: false; reason: FetchError; scopeGap?: { required: string; granted: string[] } }
+  >;
+}
+
+/**
+ * A targeted fetch causes an OUTBOUND request to a provider under the user's
+ * stored credential. The recogniser is therefore a hard gate here, exactly as it
+ * is for resolve — and for a stronger reason: resolve reads the local index,
+ * this one leaves the machine. No gateway call happens on this branch either
+ * way; unlike `handleResolve`, an unrecognised page has no `not-indexed`
+ * outcome to report a `fetchable` flag on, so it settles as `unfetchable` —
+ * a client-side "can't fetch this", not a gateway error.
+ */
+export async function handleFetch(deps: FetchDeps, req: FetchRequest): Promise<FetchResponse> {
+  const recognition = recognise(req.pageUrl, await deps.getOrigins());
+  if (!recognition.ok) {
+    return { kind: "fetch", ok: true, recognition, outcome: { kind: "unfetchable" } };
+  }
+  const conn = await deps.getConnection();
+  if (conn === null) {
+    return { kind: "fetch", ok: false, recognition, reason: "not_paired" };
+  }
+  const r = await deps.fetchItem(conn.origin, conn.token, recognition.resolveUrl);
+  if (!r.ok) {
+    return r.scopeGap === undefined
+      ? { kind: "fetch", ok: false, recognition, reason: r.reason }
+      : {
+          kind: "fetch",
+          ok: false,
+          recognition,
+          reason: r.reason,
+          scopeGap: { label: conn.label, ...r.scopeGap },
+        };
+  }
+  return { kind: "fetch", ok: true, recognition, outcome: r.outcome };
 }
 
 export interface QueueListDeps {

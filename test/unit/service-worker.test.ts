@@ -211,6 +211,49 @@ describe("message routing — success shapes", () => {
     expect((res as { recognition: { ok: boolean } }).recognition.ok).toBe(true);
   });
 
+  test("fetch: an unrecognised page answers without a fetch (the recogniser gate)", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn();
+
+    const res = await harness.emitMessage({
+      kind: "fetch",
+      pageUrl: "https://example.com/nope",
+    });
+
+    expect(res).toEqual({
+      kind: "fetch",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+      outcome: { kind: "unfetchable" },
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("fetch: a recognised page POSTs to /v1/items/fetch and returns the outcome", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { status: "indexed", itemId: "i1" }));
+
+    const res = await harness.emitMessage({
+      kind: "fetch",
+      pageUrl: "https://github.com/acme/web/pull/1",
+    });
+
+    expect(res).toMatchObject({
+      kind: "fetch",
+      ok: true,
+      outcome: { kind: "indexed", itemId: "i1" },
+    });
+    const [url, init] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("http://127.0.0.1:8765/v1/items/fetch");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["authorization"]).toBe("Bearer tok-abc");
+  });
+
   test("queue-list: reads storage only, projects to views", async () => {
     await load();
     harness.storage.set(QUEUE_KEY, [queued("a"), queued("b")]);

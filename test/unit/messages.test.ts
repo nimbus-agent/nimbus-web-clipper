@@ -3,6 +3,7 @@ import {
   isClipRequest,
   isConnectionResponse,
   isConnectionStatusRequest,
+  isFetchResponse,
   isPairRequest,
   isPingMessage,
   isQueueListRequest,
@@ -190,7 +191,6 @@ describe("isResolveResponse", () => {
       { kind: "unresolvable", fetchable: false },
       {
         kind: "ambiguous",
-        service: "jira",
         fetchable: false,
         truncated: false,
         candidates: [{ id: "a", service: "jira", type: "issue", title: "One", url: null }],
@@ -212,6 +212,37 @@ describe("isResolveResponse", () => {
     ).toBe(true);
   });
 
+  it("accepts a failure arm carrying a well-formed scopeGap", () => {
+    expect(
+      isResolveResponse({
+        kind: "resolve",
+        ok: false,
+        recognition,
+        reason: "insufficient_scope",
+        scopeGap: { label: "chrome", required: "resolve", granted: ["clip", "briefs"] },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a failure arm carrying a malformed scopeGap", () => {
+    for (const scopeGap of [
+      { label: "chrome", required: "resolve" }, // missing granted
+      { label: "chrome", required: "resolve", granted: [1, 2] }, // non-string granted
+      { required: "resolve", granted: [] }, // missing label
+      "chrome",
+    ]) {
+      expect(
+        isResolveResponse({
+          kind: "resolve",
+          ok: false,
+          recognition,
+          reason: "insufficient_scope",
+          scopeGap,
+        }),
+      ).toBe(false);
+    }
+  });
+
   it("rejects an item missing modifiedAt, an unknown outcome kind, and a bad candidate", () => {
     for (const outcome of [
       {
@@ -227,7 +258,6 @@ describe("isResolveResponse", () => {
       { kind: "elsewhere", fetchable: true },
       {
         kind: "ambiguous",
-        service: null,
         fetchable: false,
         truncated: false,
         candidates: [{ id: "a" }],
@@ -235,5 +265,45 @@ describe("isResolveResponse", () => {
     ]) {
       expect(isResolveResponse({ kind: "resolve", ok: true, recognition, outcome })).toBe(false);
     }
+  });
+});
+
+describe("isFetchResponse", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "a/b #1",
+    resolveUrl: "https://github.com/a/b/pull/1",
+  };
+
+  it("accepts each outcome", () => {
+    for (const outcome of [
+      { kind: "indexed", itemId: "i1" },
+      { kind: "unfetchable" },
+      { kind: "not-configured" },
+      { kind: "rate-limited" },
+    ]) {
+      expect(isFetchResponse({ kind: "fetch", ok: true, recognition, outcome })).toBe(true);
+    }
+  });
+
+  it("rejects indexed without an itemId and an unknown kind", () => {
+    for (const outcome of [{ kind: "indexed" }, { kind: "elsewhere" }]) {
+      expect(isFetchResponse({ kind: "fetch", ok: true, recognition, outcome })).toBe(false);
+    }
+  });
+
+  it("accepts a failure arm with a scope gap", () => {
+    expect(
+      isFetchResponse({
+        kind: "fetch",
+        ok: false,
+        recognition,
+        reason: "insufficient_scope",
+        scopeGap: { label: "chrome", required: "fetch", granted: ["clip"] },
+      }),
+    ).toBe(true);
   });
 });

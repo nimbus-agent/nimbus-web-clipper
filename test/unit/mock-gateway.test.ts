@@ -43,4 +43,16 @@ describe("mock gateway fixtures — locked contract shape", () => {
     expect(body["matchKind"]).toBe("exact");
     expect((body["item"] as Record<string, unknown>)["modified_at"]).toEqual(expect.any(Number));
   });
+
+  it("serves POST /v1/items/fetch with an indexed outcome", async () => {
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/items/fetch", {
+        method: "POST",
+        headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+        body: JSON.stringify({ url: "https://github.com/acme/web/pull/482" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "indexed", itemId: expect.any(String) });
+  });
 });

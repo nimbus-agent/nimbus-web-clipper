@@ -3,6 +3,8 @@ import { endpointUrl, type GatewayEndpoint } from "../shared/gateway.ts";
 import { isRelatedHit, type RelatedQuery } from "../shared/related.ts";
 import {
   type ClipPostResult,
+  type FetchError,
+  type FetchOutcome,
   type PairError,
   RESOLVE_MATCH_KINDS,
   type RelatedError,
@@ -20,6 +22,7 @@ const PAIR_TIMEOUT_MS = 5_000;
 const CLIP_TIMEOUT_MS = 10_000;
 const RELATED_TIMEOUT_MS = 8_000;
 const RESOLVE_TIMEOUT_MS = 8_000;
+const FETCH_TIMEOUT_MS = 30_000;
 
 const DEFAULT_RETRY_AFTER_MS = 60_000; // the gateway's full rate-limit window
 const MAX_RETRY_AFTER_MS = 120_000;
@@ -275,17 +278,8 @@ function parseResolveBody(data: unknown): ResolveOutcome | null {
     }
     candidates.push(parsed);
   }
-  const service = data["service"];
-  // Reject, don't coerce: every other unexpected type in this parser returns
-  // null (=> server_error). Silently folding a wire-shape violation into `null`
-  // here would make it a plausible-looking value instead of the loud failure it
-  // should be.
-  if (!(service === null || typeof service === "string")) {
-    return null;
-  }
   return {
     kind: "ambiguous",
-    service,
     fetchable,
     candidates,
     truncated: data["truncated"],
@@ -309,7 +303,10 @@ export async function resolveItem(
   token: string,
   pageUrl: string,
   doFetch: FetchLike = fetch,
-): Promise<{ ok: true; outcome: ResolveOutcome } | { ok: false; reason: ResolveError }> {
+): Promise<
+  | { ok: true; outcome: ResolveOutcome }
+  | { ok: false; reason: ResolveError; scopeGap?: { required: string; granted: string[] } }
+> {
   let res: Response;
   try {
     res = await getJson(
@@ -331,7 +328,103 @@ export async function resolveItem(
     return { ok: false, reason: "unauthorized" };
   }
   if (res.status === 403) {
-    return { ok: false, reason: "insufficient_scope" };
+    const body = await readJson(res);
+    const gap = parseScopeGap(body);
+    return gap === null
+      ? { ok: false, reason: "insufficient_scope" }
+      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
+  }
+  if (res.status === 404) {
+    return { ok: false, reason: "unsupported" };
+  }
+  return { ok: false, reason: "server_error" };
+}
+
+/** The 403 body's scope detail. Absent or malformed => omit it; the panel then
+ *  falls back to generic guidance rather than inventing a command. */
+function parseScopeGap(v: unknown): { required: string; granted: string[] } | null {
+  if (!isObject(v) || typeof v["required"] !== "string" || !Array.isArray(v["granted"])) {
+    return null;
+  }
+  const granted: string[] = [];
+  for (const s of v["granted"]) {
+    if (typeof s !== "string") {
+      return null;
+    }
+    granted.push(s);
+  }
+  return { required: v["required"], granted };
+}
+
+/**
+ * True for the abort our own timeout raises. Kept narrow deliberately: anything
+ * else — DNS, connection refused, a killed service worker — is `unreachable`,
+ * and the two must not be confused (see FetchError's doc comment).
+ */
+function isAbortError(err: unknown): boolean {
+  return isObject(err) && err["name"] === "AbortError";
+}
+
+function parseFetchBody(data: unknown): FetchOutcome | null {
+  if (!isObject(data) || typeof data["status"] !== "string") {
+    return null;
+  }
+  const status = data["status"];
+  if (status === "indexed") {
+    return typeof data["itemId"] === "string" ? { kind: "indexed", itemId: data["itemId"] } : null;
+  }
+  if (status === "not_found" || status === "unsupported_url" || status === "no_targeted_fetch") {
+    return { kind: "unfetchable" };
+  }
+  if (status === "not_configured") {
+    return { kind: "not-configured" };
+  }
+  if (status === "rate_limited") {
+    return { kind: "rate-limited" };
+  }
+  return null;
+}
+
+/**
+ * `POST /v1/items/fetch` — a WRITE under the `fetch` scope. Upstream models it as
+ * an explicit write, not a read with side effects, because it causes an OUTBOUND
+ * request to a configured provider under the user's stored credential. Nothing in
+ * this client may call it without a user gesture behind it.
+ */
+export async function fetchItem(
+  origin: string,
+  token: string,
+  pageUrl: string,
+  doFetch: FetchLike = fetch,
+): Promise<
+  | { ok: true; outcome: FetchOutcome }
+  | { ok: false; reason: FetchError; scopeGap?: { required: string; granted: string[] } }
+> {
+  let res: Response;
+  try {
+    res = await postJson(
+      doFetch,
+      origin,
+      "itemsFetch",
+      { url: pageUrl },
+      { authorization: `Bearer ${token}` },
+      FETCH_TIMEOUT_MS,
+    );
+  } catch (err) {
+    return { ok: false, reason: isAbortError(err) ? "timeout" : "unreachable" };
+  }
+  if (res.status === 200) {
+    const outcome = parseFetchBody(await readJson(res));
+    return outcome === null ? { ok: false, reason: "server_error" } : { ok: true, outcome };
+  }
+  if (res.status === 401) {
+    return { ok: false, reason: "unauthorized" };
+  }
+  if (res.status === 403) {
+    const gap = parseScopeGap(await readJson(res));
+    return gap === null
+      ? { ok: false, reason: "insufficient_scope" }
+      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
   }
   if (res.status === 404) {
     return { ok: false, reason: "unsupported" };

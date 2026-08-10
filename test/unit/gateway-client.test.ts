@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
 import {
   confirmPair,
+  fetchItem,
   parseRetryAfterMs,
   postClip,
   postRelated,
@@ -425,7 +426,6 @@ describe("resolveItem", () => {
       ok: true,
       outcome: {
         kind: "ambiguous",
-        service: "jira",
         fetchable: false,
         truncated: false,
         candidates: [
@@ -451,20 +451,19 @@ describe("resolveItem", () => {
     expect(r.ok && r.outcome.kind === "ambiguous" && r.outcome.candidates).toEqual([]);
   });
 
-  test("rejects a non-string, non-null service on the ambiguous arm — never coerces it to null", async () => {
+  test("ignores a service field on the ambiguous arm — it is no longer modelled", async () => {
     const doFetch = async () =>
       jsonRes(200, {
         found: false,
         reason: "ambiguous",
-        service: 42,
+        service: "jira",
         fetchable: false,
-        truncated: false,
+        truncated: true,
         candidates: [],
       });
-    expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
-      ok: false,
-      reason: "server_error",
-    });
+    const r = await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch);
+    expect(r.ok && r.outcome.kind === "ambiguous").toBe(true);
+    expect(r.ok && r.outcome).not.toHaveProperty("service");
   });
 
   test("maps 403 to insufficient_scope, NOT server_error — it is the every-existing-pairing case", async () => {
@@ -477,7 +476,18 @@ describe("resolveItem", () => {
     expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
       ok: false,
       reason: "insufficient_scope",
+      scopeGap: { required: "resolve", granted: ["clip", "briefs"] },
     });
+  });
+
+  test("403 with no parseable scope detail carries no scopeGap", async () => {
+    for (const body of [{}, { required: "resolve" }, { granted: ["clip"] }, null]) {
+      const doFetch = async () => jsonRes(403, body);
+      expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+        ok: false,
+        reason: "insufficient_scope",
+      });
+    }
   });
 
   test("maps 401 / 404 / 500 / transport failure", async () => {
@@ -509,6 +519,160 @@ describe("resolveItem", () => {
         ok: false,
         reason: "server_error",
       });
+    }
+  });
+});
+
+describe("fetchItem", () => {
+  function jsonRes(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  it("POSTs the url with a bearer header and no url in the query string", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const doFetch = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonRes({ status: "indexed", itemId: "i1" });
+    };
+    await fetchItem("http://127.0.0.1:8765", "tok", "https://github.com/a/b/pull/1", doFetch);
+
+    const call = calls[0];
+    expect(call?.url).toBe("http://127.0.0.1:8765/v1/items/fetch");
+    expect(call?.init?.method).toBe("POST");
+    expect(JSON.parse(String(call?.init?.body))).toEqual({ url: "https://github.com/a/b/pull/1" });
+    expect((call?.init?.headers as Record<string, string> | undefined)?.["authorization"]).toBe(
+      "Bearer tok",
+    );
+    // The token belongs in the header and nowhere else.
+    expect(call?.url).not.toContain("tok");
+    expect(String(call?.init?.body)).not.toContain("tok");
+  });
+
+  it("maps indexed with its itemId", async () => {
+    const doFetch = async () => jsonRes({ status: "indexed", itemId: "gh-482" });
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: true,
+      outcome: { kind: "indexed", itemId: "gh-482" },
+    });
+  });
+
+  it("collapses the three no-action arms into unfetchable", async () => {
+    for (const status of ["not_found", "unsupported_url", "no_targeted_fetch"]) {
+      const doFetch = async () => jsonRes({ status, service: "github" });
+      const r = await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch);
+      expect(r).toEqual({ ok: true, outcome: { kind: "unfetchable" } });
+    }
+  });
+
+  it("keeps not_configured distinct — the user can act on it", async () => {
+    const doFetch = async () => jsonRes({ status: "not_configured" });
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: true,
+      outcome: { kind: "not-configured" },
+    });
+  });
+
+  it("maps rate_limited", async () => {
+    const doFetch = async () => jsonRes({ status: "rate_limited" });
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: true,
+      outcome: { kind: "rate-limited" },
+    });
+  });
+
+  it("rejects indexed without an itemId rather than inventing one", async () => {
+    const doFetch = async () => jsonRes({ status: "indexed" });
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
+  it("treats an unknown status as server_error, never as a miss", async () => {
+    for (const body of [null, {}, { status: "vibes" }]) {
+      const doFetch = async () => jsonRes(body);
+      expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+        ok: false,
+        reason: "server_error",
+      });
+    }
+  });
+
+  it("maps 403 to insufficient_scope and keeps the scope detail", async () => {
+    const doFetch = async () =>
+      jsonRes(
+        { error: "insufficient_scope", required: "fetch", granted: ["clip", "resolve"] },
+        403,
+      );
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: { required: "fetch", granted: ["clip", "resolve"] },
+    });
+  });
+
+  it("maps 401 / 404 / 400 / 500", async () => {
+    const cases: Array<[unknown, number, string]> = [
+      [{ error: "unauthorized" }, 401, "unauthorized"],
+      [{ error: "fetch_disabled" }, 404, "unsupported"],
+      [{ error: "missing_url" }, 400, "server_error"],
+      [{}, 500, "server_error"],
+    ];
+    for (const [body, status, reason] of cases) {
+      const doFetch = async () => jsonRes(body, status);
+      expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+        ok: false,
+        reason,
+      });
+    }
+  });
+
+  // THE test for this task. These two must not collapse: one means the gateway may
+  // still be working, the other means nothing was sent.
+  it("maps our own timeout to `timeout`, NOT to `unreachable`", async () => {
+    const abort = async () => {
+      throw Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+    };
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", abort)).toEqual({
+      ok: false,
+      reason: "timeout",
+    });
+  });
+
+  it("maps a transport failure to `unreachable`, NOT to `timeout`", async () => {
+    const refused = async () => {
+      throw new TypeError("Failed to fetch");
+    };
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", refused)).toEqual({
+      ok: false,
+      reason: "unreachable",
+    });
+  });
+
+  // FIX 5: the test above fabricates an `AbortError`-named Error directly, so it
+  // proves `isAbortError`'s predicate matches its own fixture — not that a REAL
+  // AbortController timeout produces the same shape. This test honours
+  // `init.signal` the way a real `fetch` would (rejecting with the signal's own
+  // DOMException reason on abort) and drives the actual postJson timeout path.
+  it("maps a genuine AbortController timeout (not a fabricated error) to `timeout`", async () => {
+    vi.useFakeTimers();
+    try {
+      const p = fetchItem(
+        "http://127.0.0.1:8765",
+        "t",
+        "https://x.test/",
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+          }),
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(await p).toEqual({ ok: false, reason: "timeout" });
+    } finally {
+      vi.useRealTimers();
     }
   });
 });

@@ -134,7 +134,9 @@ export interface ResolvedItem extends ResolveCandidate {
  *
  * `not-indexed` carries no service: upstream always sends `service: null` on that
  * arm (resolve-by-url.ts:169), so modelling one would invite the header to promise
- * a name we do not have.
+ * a name we do not have. `ambiguous` no longer carries one either: the panel names
+ * the service from `Recognition`, which it already has, and a second source for the
+ * same fact is only a chance for the two to disagree.
  */
 export type ResolveOutcome =
   | { readonly kind: "found"; readonly item: ResolvedItem; readonly matchKind: ResolveMatchKind }
@@ -142,7 +144,6 @@ export type ResolveOutcome =
   | { readonly kind: "unresolvable"; readonly fetchable: boolean }
   | {
       readonly kind: "ambiguous";
-      readonly service: string | null;
       readonly fetchable: boolean;
       /** EMPTY whenever `truncated` — upstream sends no list rather than a sliced one. */
       readonly candidates: readonly ResolveCandidate[];
@@ -162,5 +163,64 @@ export type ResolveError =
   | "unauthorized"
   | "insufficient_scope"
   | "unsupported"
+  | "unreachable"
+  | "server_error";
+
+/**
+ * What a 403 tells us about a scope the paired token lacks, plus the label needed
+ * to name the device in the fix command.
+ *
+ * `granted` comes from the gateway's own 403 body (`insufficientScopeBody` in
+ * ipc/http-route-auth.ts), NOT from a client guess — `--set` replaces the set, so
+ * guessing it would strip scopes the token already holds.
+ */
+export interface ScopeGap {
+  readonly label: string;
+  readonly required: string;
+  readonly granted: readonly string[];
+}
+
+/**
+ * A successful call to the targeted-fetch route. Every arm is HTTP 200 — upstream
+ * is explicit that "a miss is a legitimate answer to a well-formed request, not a
+ * client error" (ipc/http-write-routes.ts).
+ *
+ * The three wire arms `not_found`, `unsupported_url` and `no_targeted_fetch`
+ * collapse into `unfetchable`: they differ in WHY the gateway declined but are
+ * identical in what the user can do about it, which is nothing. `not_configured`
+ * stays separate because C3.1's done-when requires it — an unconfigured connector
+ * must "say so plainly instead of retrying".
+ *
+ * `not-configured` carries no service name because the WIRE carries none (only
+ * `no_targeted_fetch` does). The panel names the connector from `Recognition`.
+ */
+export type FetchOutcome =
+  // `itemId` is parsed, guarded and carried through but never read by the
+  // panel (the caller re-resolves on `indexed` rather than rendering this
+  // field — see `fetchOutcomeHeader`'s doc comment in panel-in-page.ts).
+  // Deliberate: requiring it is what makes `{status:"indexed"}` WITHOUT an id
+  // fail the parse in gateway-client.ts, rather than silently accepting a
+  // malformed 200 as a valid `indexed` outcome.
+  | { readonly kind: "indexed"; readonly itemId: string }
+  | { readonly kind: "unfetchable" }
+  | { readonly kind: "not-configured" }
+  | { readonly kind: "rate-limited" };
+
+/**
+ * `timeout` is NOT a failure and must never be collapsed into `unreachable`.
+ *
+ * It means our 30s timer fired: the gateway may still be completing the fetch.
+ * Reporting it as a failure would assert something we have not established, and
+ * would invite a retry that fires a second outbound provider request for work
+ * already done. `unreachable` means the connection itself failed — nothing was
+ * sent, and a retry is safe.
+ */
+export type FetchError =
+  | "not_paired"
+  | "unauthorized"
+  | "insufficient_scope"
+  /** 404 — this gateway has no fetch route, or the seam is disabled. */
+  | "unsupported"
+  | "timeout"
   | "unreachable"
   | "server_error";

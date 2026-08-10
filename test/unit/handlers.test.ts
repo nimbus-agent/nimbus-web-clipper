@@ -2,6 +2,7 @@ import { describe, expect, it, test } from "vitest";
 import {
   handleClip,
   handleConnectionStatus,
+  handleFetch,
   handlePair,
   handleQueueList,
   handleQueueRemove,
@@ -359,7 +360,11 @@ describe("handleResolve", () => {
     const res = await handleResolve(
       {
         getOrigins: async () => [],
-        getConnection: async () => ({ origin: "http://127.0.0.1:8765", token: "t" }),
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "MacBook",
+        }),
         resolveItem: async (_o, _t, url) => {
           seen.push(url);
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
@@ -384,7 +389,11 @@ describe("handleResolve", () => {
     const res = await handleResolve(
       {
         getOrigins: async () => [],
-        getConnection: async () => ({ origin: "http://127.0.0.1:8765", token: "t" }),
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "MacBook",
+        }),
         resolveItem: async () => ({ ok: false, reason: "insufficient_scope" }),
       },
       { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
@@ -398,12 +407,43 @@ describe("handleResolve", () => {
     });
   });
 
+  it("attaches the connection's own label to the scope gap from the 403", async () => {
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "chrome",
+        }),
+        resolveItem: async () => ({
+          ok: false,
+          reason: "insufficient_scope",
+          scopeGap: { required: "resolve", granted: ["clip", "briefs"] },
+        }),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(res).toEqual({
+      kind: "resolve",
+      ok: false,
+      recognition: expect.objectContaining({ ok: true, ref: "a/b #1" }),
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "resolve", granted: ["clip", "briefs"] },
+    });
+  });
+
   it("makes no gateway call for an unrecognised page", async () => {
     let called = false;
     const res = await handleResolve(
       {
         getOrigins: async () => [],
-        getConnection: async () => ({ origin: "http://127.0.0.1:8765", token: "t" }),
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "MacBook",
+        }),
         resolveItem: async () => {
           called = true;
           return { ok: false, reason: "server_error" };
@@ -452,5 +492,94 @@ describe("handleResolve", () => {
       { kind: "resolve", pageUrl: "https://corp.example/jira/browse/plat-9?x=1" },
     );
     expect(sent).toBe("https://corp.example/jira/browse/PLAT-9?x=1");
+  });
+});
+
+describe("handleFetch", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+
+  it("makes NO gateway call for an unrecognised page", async () => {
+    let called = false;
+    const res = await handleFetch(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        fetchItem: async () => {
+          called = true;
+          return { ok: false as const, reason: "server_error" as const };
+        },
+      },
+      { kind: "fetch", pageUrl: "https://example.com/whatever" },
+    );
+
+    // This is the security boundary: a fetch is an OUTBOUND request under the
+    // user's stored credential, so an unrecognised URL must never reach it.
+    expect(called).toBe(false);
+    // A settled "can't fetch this", not a gateway error — mirrors
+    // handleResolve's equivalent branch (recognition rides on the `ok: true` arm).
+    expect(res).toEqual({
+      kind: "fetch",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+      outcome: { kind: "unfetchable" },
+    });
+  });
+
+  it("passes the recogniser's resolveUrl and carries the outcome", async () => {
+    const seen: string[] = [];
+    const res = await handleFetch(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        fetchItem: async (_o, _t, url) => {
+          seen.push(url);
+          return { ok: true as const, outcome: { kind: "indexed" as const, itemId: "i1" } };
+        },
+      },
+      { kind: "fetch", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(seen).toEqual(["https://github.com/a/b/pull/1"]);
+    expect(res).toEqual({
+      kind: "fetch",
+      ok: true,
+      recognition: expect.objectContaining({ ok: true, label: "GitHub PR" }),
+      outcome: { kind: "indexed", itemId: "i1" },
+    });
+  });
+
+  it("attaches the device label to a scope gap", async () => {
+    const res = await handleFetch(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        fetchItem: async () => ({
+          ok: false as const,
+          reason: "insufficient_scope" as const,
+          scopeGap: { required: "fetch", granted: ["clip", "briefs"] },
+        }),
+      },
+      { kind: "fetch", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(res).toMatchObject({
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "fetch", granted: ["clip", "briefs"] },
+    });
+  });
+
+  it("short-circuits when not paired", async () => {
+    const res = await handleFetch(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => null,
+        fetchItem: async () => {
+          throw new Error("must not be called");
+        },
+      },
+      { kind: "fetch", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res).toMatchObject({ ok: false, reason: "not_paired" });
   });
 });

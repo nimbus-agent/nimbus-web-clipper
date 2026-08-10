@@ -465,7 +465,7 @@ that already exist, without leaving the tab.*
 *Theme: what to do when the page is real but the index has never seen it. The
 answer is to ask the gateway to go and get it, not to shred the DOM.*
 
-### C3.1 Targeted sync of a single item · 🟡 · L
+### C3.1 Targeted sync of a single item · 🟢 · L — ✅ shipped (resolve-after-fetch)
 > **What** On a resolve miss, ask the gateway to fetch and index *that one item*
 > through the connector that owns it, then answer against it.
 > **Why it wows** The client is never stuck on "I don't know that page" for a
@@ -482,6 +482,15 @@ answer is to ask the gateway to go and get it, not to shred the DOM.*
 > **Done when** A PR the index has never seen resolves after a bounded sync and
 > the lanes answer; an unconfigured connector says so plainly instead of
 > retrying.
+> **Status** Shipped against the gateway's real `POST /v1/items/fetch` contract
+> (see [`docs/architecture.md`](./docs/architecture.md#the-targeted-fetch-path)):
+> an explicit-click button on a fetchable miss, the six wire outcomes collapsed
+> to four honestly-distinct client states, a client timeout that never reads as
+> a failure, and one fetch per panel. Honest gap: the done-when above bundles two
+> things — "a PR resolves after a fetch" **and** "the lanes answer". Only the
+> first is delivered here; the lanes are **C2**, which is unbuilt. Once C2 lands,
+> it answers against exactly the item this slice already knows how to fetch and
+> resolve — no further work needed in this slice for that to happen.
 
 ### C3.2 Capture as the last resort · 🟢 · M
 > **What** For a surface with no connector at all — an internal wiki, a vendor

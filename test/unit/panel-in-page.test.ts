@@ -18,6 +18,14 @@ async function loadPanel(): Promise<void> {
   await import(MODULE_PATH);
 }
 
+/** Flushes pending microtasks (chained `await`s in the click handlers under
+ *  test) via a real macrotask tick — Node drains the microtask queue fully
+ *  before any queued macrotask runs, so one tick is enough regardless of how
+ *  deep the awaited chain is (e.g. fetch -> re-resolve). */
+async function flush(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function host(): HTMLElement | null {
   return document.getElementById(HOST_ID);
 }
@@ -60,6 +68,55 @@ async function mountPanelWithResolve(resolveResponse: unknown): Promise<ShadowRo
     throw new Error("panel shadow root not found");
   }
   return root;
+}
+
+/**
+ * Mounts the panel with a scripted SEQUENCE of responses per message kind, and
+ * records each "resolve"/"fetch" kind sent (in order) into `sent` — the
+ * assertion surface for "exactly one fetch, ever". "related" traffic is
+ * answered with a fixed empty response and deliberately NOT recorded: it fires
+ * in parallel with every mount and isn't part of the fetch state machine under
+ * test, so recording it would make `sent` an unpredictable interleave instead
+ * of the ordered ["resolve", "fetch", ...] trace these tests assert on.
+ *
+ * Each kind's array is consumed in order; once exhausted, its last entry
+ * repeats for any further call of that kind (a recovery resolve after a single
+ * scripted miss keeps returning that same miss).
+ *
+ * Returns the panel's BODY element (not the full shadow root) so callers can
+ * do `panel.querySelector("button")` unambiguously — the shadow root's first
+ * button is the panel's own close control, which lives outside the body.
+ */
+async function mountPanelWithScript(
+  sent: string[],
+  script: { readonly resolve?: unknown[]; readonly fetch?: unknown[] },
+): Promise<HTMLElement> {
+  const counters: Record<string, number> = {};
+  harness.sendMessage.mockImplementation(async (message: unknown) => {
+    const kind = (message as { kind?: string }).kind;
+    if (kind === "related") {
+      return { kind: "related", ok: true, items: [] };
+    }
+    if (kind !== "resolve" && kind !== "fetch") {
+      throw new Error(`mountPanelWithScript: unscripted message kind ${String(kind)}`);
+    }
+    sent.push(kind);
+    const responses = script[kind] ?? [];
+    const i = counters[kind] ?? 0;
+    counters[kind] = i + 1;
+    return responses[Math.min(i, responses.length - 1)];
+  });
+
+  await loadPanel();
+  await vi.waitFor(() => {
+    expect(headerText()).not.toContain("Checking Nimbus");
+  });
+
+  const body = shadow()?.querySelector<HTMLElement>(".nimbus-related__body");
+  if (body === null || body === undefined) {
+    throw new Error("panel body not found");
+  }
+  return body;
 }
 
 const hit: RelatedHit = {
@@ -352,6 +409,40 @@ describe("panel-in-page recognition header", () => {
     });
   });
 
+  // Closes the gap where `outcome.fetchable` flows from the wire into the header:
+  // every panel-view.test.ts fixture passes `fetchable` as a hardcoded literal, so
+  // it alone can't tell a real wire-through from a hardcoded `false`. This drives
+  // a genuine ResolveResponse end to end through headerFrom/renderShell.
+  test("a fetchable miss offers a fetch button naming the product", async () => {
+    respond({
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: true },
+    });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).toContain("Not indexed");
+    });
+    expect(shadow()?.querySelector(".nimbus-related__header-state button")?.textContent).toBe(
+      "Fetch this from GitHub",
+    );
+  });
+
+  test("an unfetchable miss offers no fetch button", async () => {
+    respond({
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: false },
+    });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).toContain("Not indexed");
+    });
+    expect(shadow()?.querySelector(".nimbus-related__header-state button")).toBeNull();
+  });
+
   test("an unsupported gateway is a first-class state, not an error", async () => {
     respond({ kind: "resolve", ok: false, recognition, reason: "unsupported" });
     await loadPanel();
@@ -410,6 +501,24 @@ describe("panel-in-page resolve outcomes", () => {
     expect(panel.textContent).not.toContain("had an error");
   });
 
+  it("renders the real built command when the 403 carried a scope gap", async () => {
+    const panel = await mountPanelWithResolve({
+      kind: "resolve",
+      ok: false,
+      reason: "insufficient_scope",
+      recognition: {
+        ok: true,
+        product: "github",
+        kind: "pr",
+        label: "GitHub PR",
+        ref: "a/b #1",
+        resolveUrl: "https://github.com/a/b/pull/1",
+      },
+      scopeGap: { label: "chrome", required: "resolve", granted: ["clip", "briefs"] },
+    });
+    expect(panel.textContent).toContain("nimbus clip scopes chrome --set clip,briefs,resolve");
+  });
+
   it("renders the chooser for an ambiguous outcome and settles on the clicked candidate", async () => {
     const panel = await mountPanelWithResolve({
       kind: "resolve",
@@ -424,7 +533,6 @@ describe("panel-in-page resolve outcomes", () => {
       },
       outcome: {
         kind: "ambiguous",
-        service: "jira",
         fetchable: false,
         truncated: false,
         candidates: [
@@ -481,5 +589,197 @@ describe("panel-in-page lane state", () => {
       expect(shadow()?.textContent).toContain("Not a recognised Nimbus surface");
     });
     expect(lane()?.open).toBe(false);
+  });
+});
+
+describe("panel-in-page fetch state machine", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #1",
+    resolveUrl: "https://github.com/acme/web/pull/1",
+  } as const;
+
+  const miss = {
+    kind: "resolve",
+    ok: true,
+    recognition,
+    outcome: { kind: "not-indexed", fetchable: true },
+  };
+
+  function found(): unknown {
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: {
+        kind: "found",
+        matchKind: "exact",
+        item: {
+          id: "i1",
+          service: "github",
+          type: "pr",
+          title: "Add thing",
+          url: "https://github.com/acme/web/pull/1",
+          modifiedAt: Date.now(),
+        },
+      },
+    };
+  }
+
+  const indexed = {
+    kind: "fetch",
+    ok: true,
+    recognition,
+    outcome: { kind: "indexed", itemId: "i1" },
+  };
+
+  const timedOut = {
+    kind: "fetch",
+    ok: false,
+    recognition,
+    reason: "timeout",
+  };
+
+  const rateLimited = {
+    kind: "fetch",
+    ok: true,
+    recognition,
+    outcome: { kind: "rate-limited" },
+  };
+
+  it("fetches on click, then re-resolves to show the item", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss, found()],
+      fetch: [indexed],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click();
+    await flush();
+
+    expect(sent).toEqual(["resolve", "fetch", "resolve"]);
+    expect(panel.textContent).toContain("Indexed just now");
+  });
+
+  it("after a timeout, Check again re-resolves and does NOT fetch again", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [timedOut],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click();
+    await flush();
+    expect(panel.textContent).toContain("Still working");
+
+    (panel.querySelector("button") as HTMLButtonElement).click();
+    await flush();
+
+    // One fetch, ever. The recovery click is a resolve.
+    expect(sent.filter((k) => k === "fetch")).toHaveLength(1);
+    expect(sent[sent.length - 1]).toBe("resolve");
+  });
+
+  it("does not re-offer the Fetch button when the recovery resolve is still a miss", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [timedOut],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    await flush();
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Check again
+    await flush();
+
+    // Falling back to not-indexed would restore the Fetch button and allow a second
+    // outbound request for work possibly still in flight.
+    expect(panel.textContent).toContain("Still working");
+    expect(panel.textContent).not.toContain("Fetch this from");
+    expect(sent.filter((k) => k === "fetch")).toHaveLength(1);
+  });
+
+  it("a rate-limited outcome renders Try again", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [rateLimited],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click();
+    await flush();
+
+    expect(panel.textContent).toContain("Rate limited");
+    const labels = Array.from(panel.querySelectorAll("button")).map((b) => b.textContent);
+    expect(labels).toContain("Try again");
+  });
+
+  it("clicking Try again after rate-limited sends a second fetch", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [rateLimited, indexed],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    await flush();
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Try again
+    await flush();
+
+    // rate_limited is returned before any outbound call happens — unlike
+    // timeout, a second fetch after it is exactly as safe as the first.
+    expect(sent.filter((k) => k === "fetch")).toHaveLength(2);
+  });
+
+  it("pins the distinction: a timeout followed by a recovery click still sends exactly one fetch", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [timedOut],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    await flush();
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Check again
+    await flush();
+
+    // Unlike rate-limited, timeout means an outbound call may still be
+    // running — the latch must stay set and the recovery click must be a
+    // resolve, not a second fetch.
+    expect(sent.filter((k) => k === "fetch")).toHaveLength(1);
+    expect(sent[sent.length - 1]).toBe("resolve");
+  });
+
+  // FIX 1: a fetch response that fails with a synthesised, non-recognising
+  // `recognition` (the service worker's catch-all on a rejected getOrigins/
+  // getConnection — see service-worker.ts's isFetchRequest branch) must NOT
+  // discard the surface the panel already knows from the prior resolve. The
+  // panel closure's own `surface`, not `res.recognition`, is what
+  // `fetchOutcomeHeader` renders — checking `res.recognition` first (the old
+  // order) threw that away and rendered "Not a recognised Nimbus surface" for
+  // a page the panel had just correctly identified.
+  it("a fetch failure with a non-recognising recognition keeps the surface line, not 'unrecognised'", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [
+        {
+          kind: "fetch",
+          ok: false,
+          reason: "server_error",
+          recognition: { ok: false, reason: "unknown-host" },
+        },
+      ],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    await flush();
+
+    expect(panel.textContent).toContain("GitHub PR · acme/web #1");
+    expect(panel.textContent).toContain("Nimbus had an error fetching this page.");
+    expect(panel.textContent).not.toContain("Not a recognised Nimbus surface");
   });
 });
