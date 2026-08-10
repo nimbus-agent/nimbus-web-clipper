@@ -651,4 +651,28 @@ describe("fetchItem", () => {
       reason: "unreachable",
     });
   });
+
+  // FIX 5: the test above fabricates an `AbortError`-named Error directly, so it
+  // proves `isAbortError`'s predicate matches its own fixture — not that a REAL
+  // AbortController timeout produces the same shape. This test honours
+  // `init.signal` the way a real `fetch` would (rejecting with the signal's own
+  // DOMException reason on abort) and drives the actual postJson timeout path.
+  it("maps a genuine AbortController timeout (not a fabricated error) to `timeout`", async () => {
+    vi.useFakeTimers();
+    try {
+      const p = fetchItem(
+        "http://127.0.0.1:8765",
+        "t",
+        "https://x.test/",
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+          }),
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(await p).toEqual({ ok: false, reason: "timeout" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

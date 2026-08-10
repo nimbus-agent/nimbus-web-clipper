@@ -231,6 +231,36 @@ function actionButton(
   return button;
 }
 
+/**
+ * Appends the two-line "can't {resolve,fetch} pages yet" + fix-it-command
+ * guidance shared by the `needs-scope` and `fetch-blocked`/`needs-fetch-scope`
+ * arms below. `lead` carries the one thing that differs between them (which
+ * route the pairing lacks); the fallback-command logic must stay identical
+ * between both callers — the null-fallback convention documented at each call
+ * site — so it lives here once instead of twice in lockstep.
+ */
+function appendScopeGuidance(
+  doc: Document,
+  box: HTMLElement,
+  lead: string,
+  scopeGap: ScopeGap | null,
+): void {
+  box.append(line(doc, "nimbus-related__status", lead));
+  // Null when the 403 carried no detail, OR when the device label is not safe to
+  // put in a shell command. Both fall back to guidance that names the tool
+  // without pretending to know the exact invocation.
+  const cmd = scopeGap === null ? null : scopeCommand(scopeGap);
+  box.append(
+    line(
+      doc,
+      "nimbus-related__status",
+      cmd === null
+        ? "Grant it on the gateway: run nimbus clip status to find this device, then nimbus clip scopes."
+        : `Grant it on the gateway: ${cmd}`,
+    ),
+  );
+}
+
 function chooser(
   doc: Document,
   candidates: readonly ResolveCandidate[],
@@ -335,20 +365,7 @@ export function renderHeader(
   }
 
   if (state.kind === "needs-scope") {
-    box.append(line(doc, "nimbus-related__status", "This pairing can't resolve pages yet."));
-    // Null when the 403 carried no detail, OR when the device label is not safe to
-    // put in a shell command. Both fall back to guidance that names the tool
-    // without pretending to know the exact invocation.
-    const cmd = state.scopeGap === null ? null : scopeCommand(state.scopeGap);
-    box.append(
-      line(
-        doc,
-        "nimbus-related__status",
-        cmd === null
-          ? "Grant it on the gateway: run nimbus clip status to find this device, then nimbus clip scopes."
-          : `Grant it on the gateway: ${cmd}`,
-      ),
-    );
+    appendScopeGuidance(doc, box, "This pairing can't resolve pages yet.", state.scopeGap);
     return box;
   }
 
@@ -380,17 +397,7 @@ export function renderHeader(
     // granted `resolve` earlier still cannot fetch, and repeating the `resolve`
     // advice would be a dead end. Same null-fallback convention as `needs-scope`:
     // an unsafe label or scope name leaks neither the label nor `--set`.
-    box.append(line(doc, "nimbus-related__status", "This pairing can't fetch pages yet."));
-    const cmd = state.scopeGap === null ? null : scopeCommand(state.scopeGap);
-    box.append(
-      line(
-        doc,
-        "nimbus-related__status",
-        cmd === null
-          ? "Grant it on the gateway: run nimbus clip status to find this device, then nimbus clip scopes."
-          : `Grant it on the gateway: ${cmd}`,
-      ),
-    );
+    appendScopeGuidance(doc, box, "This pairing can't fetch pages yet.", state.scopeGap);
     return box;
   }
 

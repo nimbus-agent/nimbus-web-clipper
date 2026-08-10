@@ -232,7 +232,16 @@ the gateway.
    (steps 2–3), the button never reappears for that same panel instance, even if
    you trigger a recovery re-resolve that comes back as another miss. Close and
    reopen the panel to get the offer back.
-5. Repeat 1–3 in Firefox.
+5. **Rate-limited → Try again → success:** trigger a fetch while the gateway's
+   fetch route is itself rate-limited (e.g. fire several fetches back to back,
+   or use `bun run mock-gateway` if it can simulate a `rate_limited` status) →
+   the header reads "Rate limited — try again shortly." with a **Try again**
+   button. Click it. → A second fetch goes out and, once the gateway allows it,
+   settles normally (Fetching… → resolved). This is the one path where a second
+   outbound fetch is deliberately permitted: `rate_limited` means nothing was
+   sent the first time, unlike `timeout` (step 4's recovery), so retrying here
+   is exactly as safe as the first attempt.
+6. Repeat 1–3 in Firefox.
 
 ## Security check
 

@@ -184,12 +184,15 @@ export interface FetchDeps {
  * A targeted fetch causes an OUTBOUND request to a provider under the user's
  * stored credential. The recogniser is therefore a hard gate here, exactly as it
  * is for resolve — and for a stronger reason: resolve reads the local index,
- * this one leaves the machine.
+ * this one leaves the machine. No gateway call happens on this branch either
+ * way; unlike `handleResolve`, an unrecognised page has no `not-indexed`
+ * outcome to report a `fetchable` flag on, so it settles as `unfetchable` —
+ * a client-side "can't fetch this", not a gateway error.
  */
 export async function handleFetch(deps: FetchDeps, req: FetchRequest): Promise<FetchResponse> {
   const recognition = recognise(req.pageUrl, await deps.getOrigins());
   if (!recognition.ok) {
-    return { kind: "fetch", ok: false, recognition, reason: "server_error" };
+    return { kind: "fetch", ok: true, recognition, outcome: { kind: "unfetchable" } };
   }
   const conn = await deps.getConnection();
   if (conn === null) {

@@ -195,6 +195,12 @@ export interface ScopeGap {
  * `no_targeted_fetch` does). The panel names the connector from `Recognition`.
  */
 export type FetchOutcome =
+  // `itemId` is parsed, guarded and carried through but never read by the
+  // panel (the caller re-resolves on `indexed` rather than rendering this
+  // field — see `fetchOutcomeHeader`'s doc comment in panel-in-page.ts).
+  // Deliberate: requiring it is what makes `{status:"indexed"}` WITHOUT an id
+  // fail the parse in gateway-client.ts, rather than silently accepting a
+  // malformed 200 as a valid `indexed` outcome.
   | { readonly kind: "indexed"; readonly itemId: string }
   | { readonly kind: "unfetchable" }
   | { readonly kind: "not-configured" }

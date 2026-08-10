@@ -223,9 +223,9 @@ describe("message routing — success shapes", () => {
 
     expect(res).toEqual({
       kind: "fetch",
-      ok: false,
+      ok: true,
       recognition: { ok: false, reason: "unknown-host" },
-      reason: "server_error",
+      outcome: { kind: "unfetchable" },
     });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });

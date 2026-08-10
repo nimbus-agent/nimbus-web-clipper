@@ -38,7 +38,12 @@ const RESOLVE_MESSAGES: Record<string, string> = {
 // in `fetchOutcomeHeader` below, where they get their own first-class header
 // states (`fetch-blocked`/`needs-fetch-scope` and `fetch-retry`/`still-working`)
 // instead of a flat message. What's left here is the generic fallback for the
-// remaining `FetchError` reasons, mirroring `RESOLVE_MESSAGES` above.
+// remaining five `FetchError` reasons — `not_paired`, `unauthorized`,
+// `unsupported`, `unreachable` and `server_error` — every one of them a
+// designed, reachable outcome (a stale/missing pairing, a gateway with the
+// route disabled, the network down, or an unexpected server failure), not an
+// undesigned catch-all. This mirrors `RESOLVE_MESSAGES` above, which is the
+// same fallback for the same five reasons on the resolve route.
 const FETCH_MESSAGES: Record<string, string> = {
   not_paired: "Pair with Nimbus in Options to fetch this page.",
   unauthorized: "Nimbus rejected this pairing. Re-pair in Options.",
@@ -115,7 +120,7 @@ const STYLES = `
   color: var(--nimbus-muted);
 }
 .nimbus-related__snippet { margin: 4px 0 0; color: var(--nimbus-muted); }
-.nimbus-related__status { padding: 16px; color: var(--nimbus-muted); }
+.nimbus-related__status { padding: 16px; color: var(--nimbus-muted); overflow-wrap: anywhere; }
 .nimbus-related__shell { display: flex; flex-direction: column; }
 .nimbus-related__header-state { padding: 12px 16px; border-bottom: 1px solid var(--nimbus-border); }
 .nimbus-related__header-state .nimbus-related__status { padding: 4px 0 0; }
@@ -130,6 +135,11 @@ const STYLES = `
   color: var(--nimbus-accent); font: inherit; text-align: left;
 }
 .nimbus-related__candidate:hover { text-decoration: underline; }
+.nimbus-related__action {
+  background: none; border: none; padding: 4px 0; cursor: pointer;
+  color: var(--nimbus-accent); font: inherit; text-align: left;
+}
+.nimbus-related__action:hover { text-decoration: underline; }
 `;
 
 interface NimbusHost extends HTMLElement {
@@ -207,23 +217,24 @@ function headerFrom(res: unknown, nowMs: number, fetchSent: boolean): HeaderStat
  * `{status:"indexed", itemId}`, no title/url/modified_at to build a `resolved`
  * header from) — to a header state.
  *
- * `res.recognition` rides on both arms, mirroring `headerFrom`. When it comes
- * back not-ok, this maps to `unrecognised` rather than falling into
- * `FETCH_MESSAGES`. That specifically routes around a defect in
- * `handleFetch` (background/handlers.ts): it answers an unrecognised page
- * with `{reason:"server_error"}` instead of a clean outcome, unlike
- * `handleResolve`'s equivalent path. Left as `server_error` here it would
- * render "Nimbus had an error" — blaming the gateway for a client-side
- * condition. It is unreachable in practice (the fetch button only renders on
- * an already-recognised miss), but this guard means it can never render that
- * way if it ever were.
+ * `!res.ok` is checked BEFORE `res.recognition`, deliberately: `surface` (the
+ * function's own parameter) already carries the page identity the panel
+ * learned from the resolve that offered the fetch button in the first place —
+ * it does NOT come from `res.recognition`. That matters because
+ * `service-worker.ts` synthesises `recognition: {ok:false,
+ * reason:"unknown-host"}` on ANY rejection from `handleFetch` (e.g. a
+ * `chrome.storage` read failing mid-fetch), even for an already-recognised
+ * page. Checking `res.recognition` first would read that synthesised,
+ * non-recognising value and discard the real surface, rendering "Not a
+ * recognised Nimbus surface" for a page the panel had just correctly named a
+ * moment earlier — and because `fetchState` has no button in that state, the
+ * wrong header would stick until the panel is reopened. Routing `!res.ok`
+ * through `FETCH_MESSAGES` first keeps the known `surface` and reports the
+ * real failure instead.
  */
 function fetchOutcomeHeader(res: unknown, surface: string, product: Product): HeaderState {
   if (!isFetchResponse(res)) {
     return { kind: "error", surface, message: "Couldn't read Nimbus's answer." };
-  }
-  if (surfaceLine(res.recognition) === null) {
-    return { kind: "unrecognised" };
   }
   if (!res.ok) {
     // `timeout` is not a failure: our client-side timer fired, the gateway may
@@ -246,6 +257,9 @@ function fetchOutcomeHeader(res: unknown, surface: string, product: Product): He
       surface,
       message: FETCH_MESSAGES[res.reason] ?? "Couldn't fetch this page.",
     };
+  }
+  if (surfaceLine(res.recognition) === null) {
+    return { kind: "unrecognised" };
   }
   const outcome = res.outcome;
   if (outcome.kind === "rate-limited") {

@@ -752,4 +752,34 @@ describe("panel-in-page fetch state machine", () => {
     expect(sent.filter((k) => k === "fetch")).toHaveLength(1);
     expect(sent[sent.length - 1]).toBe("resolve");
   });
+
+  // FIX 1: a fetch response that fails with a synthesised, non-recognising
+  // `recognition` (the service worker's catch-all on a rejected getOrigins/
+  // getConnection — see service-worker.ts's isFetchRequest branch) must NOT
+  // discard the surface the panel already knows from the prior resolve. The
+  // panel closure's own `surface`, not `res.recognition`, is what
+  // `fetchOutcomeHeader` renders — checking `res.recognition` first (the old
+  // order) threw that away and rendered "Not a recognised Nimbus surface" for
+  // a page the panel had just correctly identified.
+  it("a fetch failure with a non-recognising recognition keeps the surface line, not 'unrecognised'", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [
+        {
+          kind: "fetch",
+          ok: false,
+          reason: "server_error",
+          recognition: { ok: false, reason: "unknown-host" },
+        },
+      ],
+    });
+
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    await flush();
+
+    expect(panel.textContent).toContain("GitHub PR · acme/web #1");
+    expect(panel.textContent).toContain("Nimbus had an error fetching this page.");
+    expect(panel.textContent).not.toContain("Not a recognised Nimbus surface");
+  });
 });

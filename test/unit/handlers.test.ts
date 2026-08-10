@@ -515,11 +515,13 @@ describe("handleFetch", () => {
     // This is the security boundary: a fetch is an OUTBOUND request under the
     // user's stored credential, so an unrecognised URL must never reach it.
     expect(called).toBe(false);
+    // A settled "can't fetch this", not a gateway error — mirrors
+    // handleResolve's equivalent branch (recognition rides on the `ok: true` arm).
     expect(res).toEqual({
       kind: "fetch",
-      ok: false,
+      ok: true,
       recognition: { ok: false, reason: "unknown-host" },
-      reason: "server_error",
+      outcome: { kind: "unfetchable" },
     });
   });
 

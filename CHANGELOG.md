@@ -49,15 +49,13 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   the page. The not-paired, pairing-rejected and can't-reach-Nimbus messages for
   resolve are reworded to match the new contract, and a malformed resolve
   response now says "Couldn't read Nimbus's answer." instead of a generic error.
-- **Scope guidance is now a command you can paste, and one that's safe to run.**
+- **Scope guidance is a command you can paste, and one that's safe to run.**
   When a pairing predates a scope the panel needs (`resolve`, and now `fetch`),
-  the fix-it text used to show a `<label>` placeholder you had to edit by hand and
-  a hardcoded list of scopes to grant. Because `nimbus clip scopes … --set`
-  *replaces* the device's scope set rather than adding to it, typing that
-  placeholder command from memory could silently drop a scope you already held —
-  for example, granting `resolve` while accidentally dropping `agents`. The panel
-  now names your actual device and lists the exact resulting set, built from the
-  gateway's own 403 response rather than guessed.
+  the fix-it text names your actual device and the exact resulting set, built
+  from the gateway's own 403 response — not a guessed list. That matters
+  because `nimbus clip scopes … --set` *replaces* the device's scope set
+  rather than adding to it, so a guessed list could silently drop a scope you
+  already held (e.g. `agents`).
 
 ## [0.2.0] - 2026-07-28
 
