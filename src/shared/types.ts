@@ -264,21 +264,28 @@ export type LaneState =
  * `Retry-After` and retrying. Upstream sized that header at one second precisely
  * because a slot frees when a run finishes, in seconds. Surfacing it would report
  * a normal condition as a failure.
+ *
+ * Single-sourced here, same shape as `RESOLVE_MATCH_KINDS` and `AGENT_LANES`:
+ * `agent-run-store.ts`'s storage guard reads `AGENT_ERRORS` rather than
+ * declaring its own literal list, so the type and its guard cannot drift apart —
+ * `satisfies readonly AgentError[]` on a hand-duplicated list does NOT check
+ * exhaustiveness, so adding a member there but not here would typecheck green
+ * while silently dropping any stored run carrying the new reason on read.
  */
-export type AgentError =
-  | "not_paired"
-  | "unauthorized"
-  | "insufficient_scope"
-  /** 404 — unknown agent, or this gateway has no agents surface. */
-  | "unsupported"
-  /**
-   * There is no single indexed item for this page to ask an agent about — the
-   * page is unrecognised, or it resolved to a miss/ambiguous answer. A
-   * condition of the PAGE, never of the gateway: reporting it as `unsupported`
-   * would say "this gateway can't run agents yet" about a gateway that runs
-   * them fine.
-   */
-  | "not_resolved"
-  | "stale"
-  | "unreachable"
-  | "server_error";
+export const AGENT_ERRORS = [
+  "not_paired",
+  "unauthorized",
+  "insufficient_scope",
+  // 404 — unknown agent, or this gateway has no agents surface.
+  "unsupported",
+  // There is no single indexed item for this page to ask an agent about — the
+  // page is unrecognised, or it resolved to a miss/ambiguous answer. A
+  // condition of the PAGE, never of the gateway: reporting it as `unsupported`
+  // would say "this gateway can't run agents yet" about a gateway that runs
+  // them fine.
+  "not_resolved",
+  "stale",
+  "unreachable",
+  "server_error",
+] as const;
+export type AgentError = (typeof AGENT_ERRORS)[number];

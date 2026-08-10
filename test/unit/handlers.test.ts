@@ -819,6 +819,79 @@ describe("handleAgentRun", () => {
     expect(res.state).toEqual({ kind: "failed", reason: "server_error" });
   });
 
+  // Only a SECOND `busy` collapses to `server_error` — any other retry failure is
+  // the real answer and must be reported as itself, scope gap included. Collapsing
+  // a 403 here would strip the guidance that actually fixes it.
+  it("on a first busy then a 403 with a scope gap, reports the 403 (not server_error)", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const promise = handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          calls++;
+          return calls === 1
+            ? { ok: false as const, reason: "busy" as const, retryAfterMs: 1000 }
+            : {
+                ok: false as const,
+                reason: "insufficient_scope" as const,
+                scopeGap: { required: "agents", granted: ["clip", "resolve"] },
+              };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    const res = await promise;
+    vi.useRealTimers();
+
+    expect(calls).toBe(2);
+    expect(res.state).toEqual({
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "agents", granted: ["clip", "resolve"] },
+    });
+  });
+
+  // Same shape, a transport failure instead of a scope failure — e.g. the gateway
+  // restarted between the two attempts. Also must not collapse to server_error.
+  it("on a first busy then unreachable, reports unreachable (not server_error)", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const promise = handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          calls++;
+          return calls === 1
+            ? { ok: false as const, reason: "busy" as const, retryAfterMs: 1000 }
+            : { ok: false as const, reason: "unreachable" as const };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    const res = await promise;
+    vi.useRealTimers();
+
+    expect(calls).toBe(2);
+    expect(res.state).toEqual({ kind: "failed", reason: "unreachable" });
+  });
+
   it("attaches the device label to a 403's scope gap from invokeAgent", async () => {
     const res = await handleAgentRun(
       {

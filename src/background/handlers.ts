@@ -271,10 +271,15 @@ function delay(ms: number): Promise<void> {
 /**
  * `busy` (429) is a normal, brief condition — upstream sizes `Retry-After` at one
  * second because a run slot frees when a run FINISHES, in seconds. So this backs
- * off by exactly that long and retries ONCE. A second `busy` within that window
- * means genuine contention, not something a longer wait would fix, and the lane's
- * own re-run affordance covers it from here — so it reports `server_error` rather
- * than backing off again or surfacing `busy` (which is not a member of AgentError).
+ * off by exactly that long and retries ONCE.
+ *
+ * A second `busy` within that window means genuine contention, not something a
+ * longer wait would fix, and the lane's own re-run affordance covers it from
+ * here — so THAT specific case reports `server_error` rather than backing off
+ * again or surfacing `busy` (which is not a member of `AgentError`). Any OTHER
+ * failure on the retry is the real answer and must be reported as itself:
+ * collapsing e.g. a 403 to `server_error` would strip its `scopeGap` and tell
+ * the user Nimbus is broken when they need to grant a scope.
  */
 async function invokeWithRetry(
   deps: AgentRunDeps,
@@ -289,7 +294,10 @@ async function invokeWithRetry(
   }
   await delay(first.retryAfterMs);
   const second = await deps.invokeAgent(origin, token, lane, params);
-  return second.ok ? second : { ok: false, reason: "server_error" };
+  if (second.ok) {
+    return second;
+  }
+  return second.reason === "busy" ? { ok: false, reason: "server_error" } : second;
 }
 
 type ResolveForAgent =
