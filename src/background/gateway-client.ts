@@ -43,6 +43,33 @@ export function parseRetryAfterMs(header: string | null): number {
   return Math.min(Number(header.trim()) * 1000, MAX_RETRY_AFTER_MS);
 }
 
+/**
+ * The URL-taking core of a POST. Extracted so routes with a path parameter
+ * (`/v1/agents/{agent}`) can supply a caller-built URL while everything else
+ * keeps going through `postJson`'s `GatewayEndpoint` lookup — one timeout/abort
+ * implementation, not a parallel one for agents.
+ */
+async function postJsonAt(
+  doFetch: FetchLike,
+  url: string,
+  body: unknown,
+  headers: Record<string, string>,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await doFetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function postJson(
   doFetch: FetchLike,
   origin: string,
@@ -51,13 +78,22 @@ async function postJson(
   headers: Record<string, string>,
   timeoutMs: number,
 ): Promise<Response> {
+  return postJsonAt(doFetch, endpointUrl(origin, endpoint), body, headers, timeoutMs);
+}
+
+/** The URL-taking core of a GET — see `postJsonAt`'s doc comment. */
+async function getJsonAt(
+  doFetch: FetchLike,
+  url: string,
+  headers: Record<string, string>,
+  timeoutMs: number,
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await doFetch(endpointUrl(origin, endpoint), {
-      method: "POST",
-      headers: { "content-type": "application/json", ...headers },
-      body: JSON.stringify(body),
+    return await doFetch(url, {
+      method: "GET",
+      headers,
       signal: controller.signal,
     });
   } finally {
@@ -73,18 +109,8 @@ async function getJson(
   headers: Record<string, string>,
   timeoutMs: number,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const qs = new URLSearchParams(query).toString();
-  try {
-    return await doFetch(`${endpointUrl(origin, endpoint)}?${qs}`, {
-      method: "GET",
-      headers,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+  return getJsonAt(doFetch, `${endpointUrl(origin, endpoint)}?${qs}`, headers, timeoutMs);
 }
 
 async function readJson(res: Response): Promise<unknown> {
