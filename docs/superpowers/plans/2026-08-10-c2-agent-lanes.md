@@ -1053,7 +1053,9 @@ Only Re-run-able failures get a button, per the tests above.
 
 The `failed`/`insufficient_scope` arm reuses `appendScopeGuidance` — the helper extracted in the fetch slice — so all four scope messages stay one implementation. It already handles the missing-gap case by falling back to generic guidance rather than printing a half-built command, which is why `scopeGap` is optional.
 
-`not_resolved` says the page is not indexed — "Nimbus hasn't indexed this page yet." Do **not** reuse `unsupported`'s copy: that one says the gateway has no agents surface, and saying it here blames the gateway for a page that simply has no row.
+`not_resolved` — "Nimbus couldn't pin this page to one indexed item." Do **not** reuse `unsupported`'s copy: that one says the gateway has no agents surface, and saying it here blames the gateway for a page that simply has no row.
+
+And do **not** say "hasn't indexed this page yet", which is what this plan originally prescribed. `resolveForAgent` returns `not_resolved` for *three* conditions — unrecognised, a miss, and **ambiguous** — and on an ambiguous resolve the page **is** indexed, under several items. The header is simultaneously rendering "Several indexed items match this page:" with a chooser, so "hasn't indexed this page yet" directly contradicts the line above it. One string has to be true of all three sub-cases; "couldn't pin this page to one indexed item" is.
 
 `agent_failed` says the agent could not answer — "The agent couldn't finish this run." Do **not** reuse `server_error`'s copy: `server_error` means the *call* failed, and this call succeeded. When `detail` is present, append it via **`textContent`** — it is free text from the gateway and gets the same no-parsing treatment as the brief, for the same reason. When it is absent, the base sentence stands alone; never render an empty trailing colon or a dangling separator.
 
