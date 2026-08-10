@@ -1199,6 +1199,18 @@ brief renders as text** — the XSS reasoning is the part most likely to be
 reopen the panel mid-run; a lane with only `resolve`+`fetch` granted (scope
 guidance naming `agents`).
 
+**Plus the eviction check, and say in the doc why it is manual.** Task 6's review
+established that no unit test can cover it: the harness fakes the alarm by calling
+the handler directly, so whether *Chrome* preserves a registered alarm across a real
+eviction and honours the one-minute period is unverifiable here by construction. The
+step: start a run, evict the worker (`chrome://serviceworker-internals` → **Stop**,
+or wait out the ~30s idle timeout), leave the panel closed past the run's completion,
+then reopen it and confirm the brief is there. Do the same in Firefox
+(`about:debugging` → **Terminate Service Worker**), since only Chrome uses
+`background.service_worker` — Firefox runs `background.scripts` and evicts on
+different rules, so a pass in one is not evidence for the other. That asymmetry is
+exactly what the C1 grant/revoke check found the hard way.
+
 `ROADMAP.md`: mark C2.1 shipped **with the correction** — it ships two lanes, not
 three, and records that `agents.why` needs a local checkout and `agents.whyPeek` is
 HTTP-excluded. Add a C2.4 item for a browser-viable "why". Correct C2.2's abort
