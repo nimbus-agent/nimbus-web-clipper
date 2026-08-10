@@ -1294,8 +1294,9 @@ describe("agent run polling — survives eviction", () => {
   // guard covers the other way one runId can be polled twice: a `running` state
   // persisted for it more than once. Two tabs on the same PR expanding the same
   // lane at the same moment do exactly that whenever the gateway answers both
-  // invokes with one run id — which `scripts/mock-gateway.ts` does by design (a
-  // fixed run id for every invoke), so it is not a hypothetical shape. The
+  // invokes with one run id — which `scripts/screenshots/mock-gateway.ts` does
+  // by design (`gateway-fixtures.ts` hands back a fixed `runId` for every
+  // invoke), so it is not a hypothetical shape. The
   // guard's promise is one loop per runId, however often that runId is persisted
   // as running.
   test("persisting the same runId as running twice starts one poll loop, not two", async () => {

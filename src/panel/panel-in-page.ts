@@ -444,8 +444,10 @@ function createPanel(body: HTMLElement): {
   // --- Agent lanes (impact/expert) ---------------------------------------
   //
   // Per-lane state, seeded to `collapsed` — "never opened" — for the life of
-  // this panel. Only rendered while the header names a single resolved item
-  // (`resolved`/`chosen`) — see `showAgentLanes` in paint() below.
+  // this panel. Rendered ONLY in the `resolved` state — see `showAgentLanes` in
+  // paint() below. Not on `chosen`: that state is reachable only from an
+  // ambiguous resolve, and the handler re-resolves and refuses anything that is
+  // not `found`, so a lane there could never succeed. Deferred as ROADMAP C2.5.
   const laneState: Record<AgentLane, LaneState> = {
     impact: { kind: "collapsed" },
     expert: { kind: "collapsed" },
