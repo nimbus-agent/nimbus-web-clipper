@@ -689,6 +689,38 @@ describe("handleAgentRun", () => {
     expect(res.state).toEqual({ kind: "done", brief: "b" });
   });
 
+  // A cached `failed` must NOT short-circuit — unlike `done`/`running` above —
+  // or the Re-run button `AgentError`'s doc comment promises ("one state, one
+  // Re-run") would be inert until the 10-minute TTL expires.
+  it("DOES re-invoke when a cached failed run exists (Re-run must stay live)", async () => {
+    let called = false;
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          called = true;
+          return { ok: true as const, runId: "r-rerun" };
+        },
+        getRun: async () => ({
+          itemId: "gh-1",
+          lane: "impact" as const,
+          runId: "r1",
+          state: { kind: "failed" as const, reason: "stale" as const },
+          expiresAtMs: 9e15,
+        }),
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(called).toBe(true);
+    expect(res.state).toEqual({ kind: "running", runId: "r-rerun" });
+  });
+
   it("refuses when the page resolves to a miss — there is no item to ask about", async () => {
     const res = await handleAgentRun(
       {

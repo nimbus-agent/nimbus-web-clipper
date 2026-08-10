@@ -311,11 +311,17 @@ describe("message routing — success shapes", () => {
       return jsonRes(202, { runId: "run-42" });
     });
 
+    // A successful "running" persist schedules the in-worker poll loop's first
+    // tick via a real setTimeout; fake timers here stop that pending timer from
+    // leaking into a LATER test (it is simply dropped by useRealTimers below,
+    // never fired) rather than firing mid-suite against a different test's mock.
+    vi.useFakeTimers();
     const res = await harness.emitMessage({
       kind: "agent-run",
       lane: "impact",
       pageUrl: "https://github.com/acme/web/pull/1",
     });
+    vi.useRealTimers();
 
     expect(res).toEqual({
       kind: "agent-state",
@@ -349,11 +355,15 @@ describe("message routing — success shapes", () => {
       return jsonRes(202, { runId: "run-42" });
     });
 
+    // See the previous test's comment: fake timers only to stop the poll
+    // loop's setTimeout from leaking into a later test.
+    vi.useFakeTimers();
     await harness.emitMessage({
       kind: "agent-run",
       lane: "impact",
       pageUrl: "https://github.com/acme/web/pull/1",
     });
+    vi.useRealTimers();
     const res = await harness.emitMessage({
       kind: "agent-state",
       lane: "impact",
@@ -946,5 +956,188 @@ describe("rate-limit pacing", () => {
     await settle();
 
     expect(harness.storage.get(QUEUE_KEY)).toEqual([]);
+  });
+});
+
+describe("agent run polling — survives eviction", () => {
+  // The alarm name is a local literal here too, mirroring FLUSH_ALARM above —
+  // real value asserted against by the "resumes polling" test below via the URL
+  // it triggers, not against this string directly.
+  const AGENT_POLL_ALARM = "nimbus-agent-poll";
+  const NOW = 1_700_000_000_000;
+
+  /** Point globalThis.fetch at a handler keyed by URL, recording nothing itself —
+   *  callers push into their own `polls` array from inside `handler`. */
+  function stubFetch(handler: (url: string) => Response): ReturnType<typeof vi.fn> {
+    const fn = vi.fn(async (url: string | URL | Request) => handler(String(url)));
+    globalThis.fetch = fn;
+    return fn;
+  }
+
+  /** Fire the alarm and let its fire-and-forget promise chain settle — same
+   *  shape as the "alarm route" describe block above. */
+  async function fireAlarm(name: string): Promise<void> {
+    harness.emitAlarm(name);
+    await settle();
+  }
+
+  // Date is faked (not setTimeout — the poll loop's real setTimeout still needs
+  // to interoperate with settle()'s real macrotask ticks) so `Date.now()` inside
+  // the SW lines up with the fixed `expiresAtMs` values these tests seed.
+  test("resumes polling a persisted run after a simulated worker eviction", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    // Persist a running run directly through the store (bypassing agent-run,
+    // whose module is the SAME fresh instance load() just imported) — the
+    // closest this harness gets to modelling "the worker was evicted": module
+    // state (activeAgentPolls, any in-flight setTimeout) is gone, storage is not.
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        itemId: "gh-1",
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 60_000,
+      },
+      NOW,
+    );
+
+    const polls: string[] = [];
+    stubFetch((url) => {
+      polls.push(url);
+      return jsonRes(200, { status: "done", brief: "answered" });
+    });
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    expect(polls.some((u) => u.includes("/v1/agents/runs/r1"))).toBe(true);
+    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+      kind: "done",
+      brief: "answered",
+    });
+    vi.useRealTimers();
+  });
+
+  test("stops polling a run past its expiry rather than polling forever", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const { putRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        itemId: "gh-1",
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW - 1,
+      },
+      NOW - 2,
+    );
+
+    const polls: string[] = [];
+    const fetchMock = stubFetch((url) => {
+      polls.push(url);
+      return jsonRes(200, { status: "running" });
+    });
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    expect(polls).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  test("a done poll result also clears the now-empty poll alarm", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const { putRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        itemId: "gh-1",
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 60_000,
+      },
+      NOW,
+    );
+    harness.alarmsClear.mockClear();
+    stubFetch(() => jsonRes(200, { status: "done", brief: "answered" }));
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    expect(harness.alarmsClear).toHaveBeenCalledWith(AGENT_POLL_ALARM);
+    vi.useRealTimers();
+  });
+
+  test("a stale poll result is terminal and does not auto-re-invoke", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        itemId: "gh-1",
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 60_000,
+      },
+      NOW,
+    );
+    const invokeCalls: string[] = [];
+    stubFetch((url) => {
+      if (url.includes("/v1/agents/runs/")) {
+        return new Response(null, { status: 410 });
+      }
+      invokeCalls.push(url);
+      return jsonRes(202, { runId: "should-not-happen" });
+    });
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+      kind: "failed",
+      reason: "stale",
+    });
+    expect(invokeCalls).toEqual([]);
+    vi.useRealTimers();
+  });
+
+  // The wire's `failed` status carries free-text `failureReason` with no
+  // `AgentError` member to hold it — this pins the fallback bucket rather than
+  // leaving it to whatever the code happens to do.
+  test("the agent's own failed run maps to a failed lane state (server_error)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        itemId: "gh-1",
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 60_000,
+      },
+      NOW,
+    );
+    stubFetch(() => jsonRes(200, { status: "failed", failureReason: "no index" }));
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+      kind: "failed",
+      reason: "server_error",
+    });
+    vi.useRealTimers();
   });
 });

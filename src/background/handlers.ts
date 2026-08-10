@@ -399,7 +399,12 @@ export async function handleAgentRun(
   const { origin, token, label, resolveUrl, item } = resolved;
 
   const cached = await deps.getRun(item.id, req.lane);
-  if (cached !== null && cached.state.kind !== "collapsed") {
+  // Only `running` and `done` short-circuit. A `failed` state is not an answer, and
+  // `agent-run` only arrives from an explicit user action — expanding a lane or
+  // pressing Re-run — so re-asking is what the user just asked for. It also self-heals:
+  // the moment they grant the missing scope, the next expand succeeds instead of
+  // replaying a stale 403 for the rest of the TTL.
+  if (cached !== null && (cached.state.kind === "running" || cached.state.kind === "done")) {
     return { kind: "agent-state", lane: req.lane, state: cached.state };
   }
 

@@ -27,11 +27,12 @@ import {
   isResolveRequest,
   isUnpairRequest,
 } from "../shared/messages.ts";
-import type { AgentLane } from "../shared/types.ts";
+import type { AgentError, AgentLane, LaneState } from "../shared/types.ts";
 import {
   AGENT_RUN_CACHE_TTL_MS,
   type StoredRun,
   getRun as storeGetRun,
+  listRunning as storeListRunning,
   putRun as storePutRun,
 } from "./agent-run-store.ts";
 import { getQueue, updateQueue } from "./clip-queue-store.ts";
@@ -40,6 +41,7 @@ import { showFeedback } from "./feedback.ts";
 import {
   confirmPair,
   fetchItem,
+  getAgentRun,
   invokeAgent,
   postClip,
   postRelated,
@@ -66,6 +68,19 @@ import { clearPause, getPauseUntil, setPauseUntil } from "./rate-limit-pause.ts"
 import { singleFlight } from "./single-flight.ts";
 
 const FLUSH_ALARM = "flush-clip-queue";
+
+/**
+ * The EVICTION NET, not the poll cadence.
+ *
+ * `chrome.alarms` has a ONE-MINUTE floor and agent runs finish in SECONDS, so an
+ * alarm-driven poll would turn a two-second answer into a sixty-second wait. The
+ * real cadence is the in-worker timer below, which runs while the worker is alive.
+ * This alarm exists only so a run whose worker was evicted mid-flight is still
+ * picked up and completed.
+ */
+export const AGENT_POLL_ALARM = "nimbus-agent-poll";
+const POLL_START_MS = 500;
+const POLL_MAX_MS = 2_000;
 
 // The one place the rate-limit pause is written. Wrapping the seam — rather than
 // threading a dependency through handleClip and flushQueue — keeps both of those
@@ -151,11 +166,142 @@ const agentRunDeps = {
   resolveItem,
   invokeAgent,
   ...agentStoreDeps,
-  putRun: (run: Omit<StoredRun, "expiresAtMs">) =>
-    storePutRun({ ...run, expiresAtMs: Date.now() + AGENT_RUN_CACHE_TTL_MS }, Date.now()),
+  // Persisting a `running` state is also the ONE place a run starts being polled:
+  // wrapping the seam here (rather than threading a "start polling" call through
+  // handleAgentRun) keeps the pure handler free of the side effect, exactly as
+  // postClipPaced wraps postClip above.
+  putRun: async (run: Omit<StoredRun, "expiresAtMs">): Promise<void> => {
+    const stored: StoredRun = { ...run, expiresAtMs: Date.now() + AGENT_RUN_CACHE_TTL_MS };
+    await storePutRun(stored, Date.now());
+    if (stored.state.kind === "running") {
+      await ensureAlarm(AGENT_POLL_ALARM, 1).catch(() => undefined);
+      startAgentPollLoop(stored);
+    }
+  },
 };
 
 const agentStateDeps = { getOrigins, getConnection, resolveItem, ...agentStoreDeps };
+
+// Runs currently being polled by an in-worker loop, keyed by runId. Lets the
+// alarm's resume skip a run already being handled locally: unlike the eviction
+// case the alarm exists for, Chrome fires a periodic alarm whether or not the
+// worker was actually evicted, so without this guard every minute-tick would
+// spawn a second, uncoordinated backoff loop for the same still-running run.
+// A fresh worker start (real eviction, or this module reloading in tests) means
+// an empty Set — exactly the case the alarm needs to be ABLE to resume into.
+const activeAgentPolls = new Set<string>();
+
+/** The wire's `failed` status carries free-text `failureReason` with no
+ *  `AgentError` member to hold it — `server_error` is the same honest generic
+ *  bucket this client already uses for a 200 body it cannot classify further
+ *  (see `getAgentRun`'s own "malformed done" branch). `scopeGap`, when present,
+ *  needs the device label attached — only `service-worker.ts` holds a
+ *  `Connection`, mirroring how `handlers.ts` attaches it elsewhere. */
+function terminalLaneState(
+  result:
+    | { readonly ok: true; readonly status: "done"; readonly brief: string }
+    | { readonly ok: true; readonly status: "failed"; readonly failureReason: string }
+    | {
+        readonly ok: false;
+        readonly reason: AgentError;
+        readonly scopeGap?: { readonly required: string; readonly granted: string[] };
+      },
+  label: string,
+): LaneState {
+  if (result.ok) {
+    return result.status === "done"
+      ? { kind: "done", brief: result.brief }
+      : { kind: "failed", reason: "server_error" };
+  }
+  return result.scopeGap === undefined
+    ? { kind: "failed", reason: result.reason }
+    : { kind: "failed", reason: result.reason, scopeGap: { label, ...result.scopeGap } };
+}
+
+/**
+ * One poll attempt, right now (no delay). `running` and a transient
+ * `unreachable`/`server_error` both reschedule via `scheduleAgentPoll` — the
+ * run keeps its slot in `activeAgentPolls` while looping. Every other outcome
+ * (`done`, the wire's `failed`, or any other `AgentError` — `unauthorized`,
+ * `insufficient_scope`, `stale`, …) is terminal: it is written to the store and
+ * the loop stops. A `stale` result is terminal like the rest and, per the
+ * `AGENT_ERRORS` doc comment, must never trigger a fresh invoke on its own —
+ * only an explicit `agent-run` (a lane expand or Re-run) may do that.
+ */
+async function tickAgentPoll(run: StoredRun, delayMs: number): Promise<void> {
+  if (run.expiresAtMs <= Date.now()) {
+    activeAgentPolls.delete(run.runId);
+    return;
+  }
+  const conn = await getConnection();
+  if (conn === null) {
+    // Nothing to poll with right now; give up quietly rather than throw — the
+    // next alarm tick (or a fresh invoke) gets another chance once paired again.
+    activeAgentPolls.delete(run.runId);
+    return;
+  }
+  const result = await getAgentRun(conn.origin, conn.token, run.runId);
+  if (
+    (result.ok && result.status === "running") ||
+    (!result.ok && (result.reason === "unreachable" || result.reason === "server_error"))
+  ) {
+    scheduleAgentPoll(run, Math.min(POLL_MAX_MS, delayMs * 1.5));
+    return;
+  }
+  activeAgentPolls.delete(run.runId);
+  await agentRunDeps.putRun({
+    itemId: run.itemId,
+    lane: run.lane,
+    runId: run.runId,
+    state: terminalLaneState(result, conn.label),
+  });
+}
+
+/** Schedule the NEXT poll attempt after `delayMs`. Real `setTimeout`, not
+ *  `chrome.alarms` — see `AGENT_POLL_ALARM`'s doc comment for why. */
+function scheduleAgentPoll(run: StoredRun, delayMs: number): void {
+  setTimeout(() => {
+    tickAgentPoll(run, delayMs).catch(() => {
+      activeAgentPolls.delete(run.runId);
+    });
+  }, delayMs);
+}
+
+/** Start the in-worker loop for a freshly-persisted `running` run. Idempotent
+ *  per runId via `activeAgentPolls` — see its own doc comment. */
+function startAgentPollLoop(run: StoredRun): void {
+  if (activeAgentPolls.has(run.runId)) {
+    return;
+  }
+  activeAgentPolls.add(run.runId);
+  scheduleAgentPoll(run, POLL_START_MS);
+}
+
+/**
+ * The alarm's job: pick up whatever `listRunning` says is still going — which,
+ * after a real eviction, is EVERYTHING (the module-local `activeAgentPolls` was
+ * wiped along with the rest of module state) — and poll each ONCE, immediately
+ * (no artificial delay: we don't know how long the worker was gone). A run
+ * already tracked in `activeAgentPolls` is skipped, not double-polled — see its
+ * doc comment. Clears the alarm once nothing is left running, so a periodic
+ * alarm does not wake the worker forever for no reason.
+ */
+async function resumeAgentPolls(): Promise<void> {
+  const running = await storeListRunning(Date.now());
+  await Promise.all(
+    running
+      .filter((run) => !activeAgentPolls.has(run.runId))
+      .map((run) => {
+        activeAgentPolls.add(run.runId);
+        return tickAgentPoll(run, POLL_START_MS).catch(() => {
+          activeAgentPolls.delete(run.runId);
+        });
+      }),
+  );
+  if ((await storeListRunning(Date.now())).length === 0) {
+    await clearAlarm(AGENT_POLL_ALARM).catch(() => undefined);
+  }
+}
 
 const quickClipDeps: QuickClipDeps = {
   activeTab,
@@ -352,9 +498,14 @@ addCommandListener((command) => {
 });
 
 // The periodic alarm drains the queue, then reconciles the badge + alarm lifecycle.
+// AGENT_POLL_ALARM is the eviction net for agent runs — see its own doc comment.
 addAlarmListener((name) => {
   if (name === FLUSH_ALARM) {
     backgroundFlush().catch(() => undefined);
+    return;
+  }
+  if (name === AGENT_POLL_ALARM) {
+    resumeAgentPolls().catch(() => undefined);
   }
 });
 
