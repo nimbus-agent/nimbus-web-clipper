@@ -3,7 +3,11 @@
 // close the panel, and the brief is waiting on reopen. Modelled on
 // clip-queue-store.ts — same storageGet/storageSet seam through
 // src/browser/storage.ts, same rule that stored data is external input to be
-// filtered through a guard and never cast.
+// filtered through a guard and never cast, AND the same single-writer chain:
+// the SW is single-threaded but not single-task, so two `putRun` calls in
+// flight together (both lanes expanded on one item; a poll's `done` landing
+// while a fresh lane-start writes `running`) would otherwise read the same
+// snapshot and the second write would silently clobber the first.
 import { storageGet, storageSet } from "../browser/storage.ts";
 import { AGENT_LANES, type AgentError, type AgentLane, type LaneState } from "../shared/types.ts";
 
@@ -116,6 +120,14 @@ async function readAll(): Promise<Record<string, StoredEntry>> {
   return out;
 }
 
+/** Strip the internal `writtenAtMs` bookkeeping field before it crosses the
+ *  public `StoredRun` boundary — callers (soon: a message to the panel) must
+ *  never see it. */
+function toStoredRun(entry: StoredEntry): StoredRun {
+  const { itemId, lane, runId, state, expiresAtMs } = entry;
+  return { itemId, lane, runId, state, expiresAtMs };
+}
+
 export async function getRun(
   itemId: string,
   lane: AgentLane,
@@ -126,8 +138,14 @@ export async function getRun(
   if (found === undefined || found.expiresAtMs <= nowMs) {
     return null;
   }
-  return found;
+  return toStoredRun(found);
 }
+
+// Single-writer chain — see clip-queue-store.ts's `chain` for the identical
+// pattern and the reasoning: the SW is single-threaded but not single-task, so
+// concurrent callers awaiting storage would otherwise read the same snapshot
+// and clobber each other's write.
+let chain: Promise<unknown> = Promise.resolve();
 
 /**
  * The cap is enforced on WRITE, not only on read: `putRun` evicts before
@@ -135,23 +153,28 @@ export async function getRun(
  * That is what makes a startup cleanup sweep unnecessary — the worst resting
  * state is MAX_STORED_RUNS stale entries, each dropped the moment it is read.
  */
-export async function putRun(run: StoredRun, nowMs: number): Promise<void> {
-  const all = await readAll();
-  const key = makeKey(run.itemId, run.lane);
-  const entries = Object.entries(all).filter(([k]) => k !== key);
-  entries.push([key, { ...run, writtenAtMs: nowMs }]);
-  // Oldest write survives longest against the cap; evict by writtenAtMs, not by
-  // incidental object-key insertion order.
-  entries.sort(([, a], [, b]) => a.writtenAtMs - b.writtenAtMs);
-  while (entries.length > MAX_STORED_RUNS) {
-    entries.shift();
-  }
-  await storageSet(STORE_KEY, Object.fromEntries(entries));
+export function putRun(run: StoredRun, nowMs: number): Promise<void> {
+  const next = chain.then(async () => {
+    const all = await readAll();
+    const key = makeKey(run.itemId, run.lane);
+    const entries = Object.entries(all).filter(([k]) => k !== key);
+    entries.push([key, { ...run, writtenAtMs: nowMs }]);
+    // Oldest write survives longest against the cap; evict by writtenAtMs, not
+    // by incidental object-key insertion order.
+    entries.sort(([, a], [, b]) => a.writtenAtMs - b.writtenAtMs);
+    while (entries.length > MAX_STORED_RUNS) {
+      entries.shift();
+    }
+    await storageSet(STORE_KEY, Object.fromEntries(entries));
+  });
+  // Keep the lock chain alive whether or not this call resolved or rejected.
+  chain = next.catch(() => undefined);
+  return next;
 }
 
 export async function listRunning(nowMs: number): Promise<StoredRun[]> {
   const all = await readAll();
-  return Object.values(all).filter(
-    (run) => run.state.kind === "running" && run.expiresAtMs > nowMs,
-  );
+  return Object.values(all)
+    .filter((run) => run.state.kind === "running" && run.expiresAtMs > nowMs)
+    .map(toStoredRun);
 }

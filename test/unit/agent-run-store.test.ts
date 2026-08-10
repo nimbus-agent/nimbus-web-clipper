@@ -73,4 +73,28 @@ describe("agent-run-store", () => {
     expect(await getRun("i1", "impact", NOW)).toBeNull();
     expect(await listRunning(NOW)).toEqual([]);
   });
+
+  it("serializes concurrent putRun calls (no lost update)", async () => {
+    // Both calls are invoked synchronously, so without a single-writer lock both
+    // reads would see the same empty snapshot and each write a single entry — the
+    // result would be one lane persisted, never both. This is the store's primary
+    // use case: two lanes on one item expanded together, or a poll's `done`
+    // landing while a fresh lane-start writes `running`.
+    const p1 = putRun(run("i1", "impact", NOW + 1000), NOW);
+    const p2 = putRun(run("i1", "expert", NOW + 1000), NOW);
+    await Promise.all([p1, p2]);
+    expect((await getRun("i1", "impact", NOW))?.runId).toBe("i1-impact");
+    expect((await getRun("i1", "expert", NOW))?.runId).toBe("i1-expert");
+  });
+
+  it("does not leak the internal write-order tag across the public boundary", async () => {
+    await putRun(run("i1", "impact", NOW + 1000), NOW);
+    expect(await getRun("i1", "impact", NOW)).not.toHaveProperty("writtenAtMs");
+    await putRun(
+      { ...run("i2", "impact", NOW + 1000), state: { kind: "running", runId: "r2" } },
+      NOW,
+    );
+    const [running] = await listRunning(NOW);
+    expect(running).not.toHaveProperty("writtenAtMs");
+  });
 });
