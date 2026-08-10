@@ -19,6 +19,10 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **Ask an agent about the pull request you are looking at.** On a resolved PR the
+  panel now offers two lanes — *what breaks if it lands*, and *who should review
+  it*. Expanding one runs the agent behind it; nothing runs until you ask. Answers
+  survive closing the panel and are shown again instantly if you reopen it.
 - **On a resolve miss, fetch that one item.** On a page Nimbus recognises but has
   not yet indexed, the panel now offers to fetch that item through the connector
   that owns it — a GitHub PR, a Jira issue, a Jenkins build. Nothing is fetched

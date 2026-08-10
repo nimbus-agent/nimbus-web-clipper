@@ -412,40 +412,64 @@ is worthless without this — and half of C1 is buildable today.*
 > profile where the `show_related` shortcut is unbound, in both Chrome and
 > Firefox.
 
-## Phase C2 — Run the agents from the page 🟡
+## Phase C2 — Run the agents from the page 🟢/🟡
 
-*Theme: the payoff. Three questions on a code-review page, answered by agents
-that already exist, without leaving the tab.*
+*Theme: the payoff. Two questions on a code-review page, answered by agents
+that already exist, without leaving the tab — a third ("why") turned out to
+need a browser-viable shape first; see C2.4.*
 
-### C2.1 The code-review lanes — why · impact · expert · 🟡 · L
-> **What** On a resolved pull request: *why does this change exist*
-> (`agents.why` / `agents.whyPeek`), *what breaks if it lands* (`agents.impact`),
-> *who should review it* (`agents.expert`).
+### C2.1 The code-review lanes — impact · expert · 🟢 · L — ✅ shipped (two lanes, not three)
+> **What** On a resolved pull request: *what breaks if it lands*
+> (`agents.impact`), *who should review it* (`agents.expert`).
 > **Why it wows** This is the demo. The answers already exist behind the
 > gateway; today you must stop reviewing and open a terminal to get them.
 > **Touches** `src/panel/`, `src/background/gateway-client.ts` +
 > `handlers.ts`, `src/shared/messages.ts`.
-> **Depends** **a browser-reachable agent-invocation surface.** `agents.*` is
-> JSON-RPC over the local IPC socket; the extension can only speak the
-> bearer-authed HTTP surface, which has no agents route. Shape, scoping and
-> auth are the gateway's to design. **Propose there first.**
+> **Status** Shipped **two** lanes, not the three originally briefed here.
+> *Why does this change exist* is **not** one of them — the roadmap named
+> `agents.why` / `agents.whyPeek` for it, and neither fits this surface:
+> `agents.why` takes `{ ref, line? }`, where `ref` is a **local filesystem
+> path** resolved against configured `[[filesystem.roots]]` and answered by
+> **git blame on a local checkout** — it answers "why does this *line*
+> exist", not "why does this *change* exist", and a browser on a PR page has
+> neither the path nor necessarily the repo cloned at all. `agents.whyPeek` is
+> **excluded from the HTTP surface entirely** — it is the namespace's one
+> *synchronous* method (it returns its payload directly and never calls
+> `notify`), so it cannot be represented on the `{runId}` + poll contract this
+> client depends on; polling it would just wait out its own TTL into a 410.
+> See **C2.4** below for a browser-viable version of "why". This roadmap
+> previously named both as if they were reachable here; that was wrong, not a
+> simplification made for time — corrected as part of landing this phase. Full
+> reasoning: `docs/superpowers/specs/2026-08-10-c2-agent-lanes-design.md`.
 > **Done when** Each lane returns a cited brief for the resolved item, or a
-> plain "couldn't answer, and here's why" — never a silent empty lane.
+> plain "couldn't answer, and here's why" — never a silent empty lane. ✅ — see
+> `AGENT_ERRORS` (`src/shared/types.ts`) and `renderLaneBody`
+> (`src/panel/panel-view.ts`).
 
-### C2.2 Progress, abort and delivery under MV3 · 🟢/🟡 · M
+### C2.2 Progress and delivery under MV3 · 🟢 · M — ✅ shipped (abort deferred)
 > **What** Agent runs that outlive the service worker: start, poll, show
-> progress, abort.
+> progress.
 > **Why it wows** Invisible when it works; the whole feature feels broken when
 > it doesn't.
 > **Touches** `src/browser/alarms.ts`, `src/background/service-worker.ts`,
-> `src/background/single-flight.ts`, the persistence pattern in
-> `src/background/clip-queue-store.ts`.
-> **Approach** **Polling plus `chrome.alarms` — not SSE.** A decision, not a
-> preference: MV3 terminates idle service workers and a hanging stream dies with
-> them. A job id, persisted run state, a poll cadence, and an abort that is
-> honoured upstream rather than just hidden in the UI.
-> **Done when** A run started before a service-worker eviction still delivers
-> its result; abort actually cancels; nothing is lost by closing the panel.
+> `src/background/agent-run-store.ts`.
+> **Status** Shipped **polling plus `chrome.alarms`, not SSE** — MV3
+> terminates idle service workers and a hanging stream dies with them. A run
+> started before a service-worker eviction still delivers its result: every
+> state transition is persisted to `chrome.storage.local`
+> (`agent-run-store.ts`, TTL and eviction cap mirroring the gateway's own),
+> `chrome.alarms` exists purely as the **eviction net** (a real poll cadence
+> would need `chrome.alarms`' one-minute floor, which is far slower than an
+> agent run actually takes), and the panel closing never loses a result —
+> reopening it answers instantly from the cached terminal state.
+> **Abort is deferred, not shipped** — this roadmap item originally claimed
+> it. There is no upstream cancellation to hook into: `agents.*` has no
+> `AbortController` and runs are not tracked in any registry a cancel could
+> target. A UI-only "abort" that merely stopped polling would claim to cancel
+> a run that is, in fact, still going — that would be lying to the user about
+> what happened, not a smaller version of abort. Deferred until upstream
+> offers real cancellation. See `docs/architecture.md`'s agent-lanes section
+> for the fuller reasoning.
 
 ### C2.3 The remaining lanes, surface by surface · 🟡 · M
 > **What** Map the other agents onto the pages they belong on —
@@ -459,6 +483,27 @@ that already exist, without leaving the tab.*
 > **Depends** C2.1's invocation surface.
 > **Done when** Every shipped lane appears only where it is useful, and the
 > rule that put it there is written down.
+
+### C2.4 A browser-viable "why" · 🟡 · M
+> **What** Answer *why does this change exist* from the browser, without
+> `agents.why`'s local-checkout requirement. Two directions worth spiking
+> before committing to either: (a) a PR-shaped variant of `why` the gateway
+> exposes over HTTP — e.g. resolving `ref` from the PR's diff hunks against a
+> checkout the *gateway* already has, rather than one the browser needs; or
+> (b) recasting the question as "why was this PR opened" and answering it from
+> `agents.expert`'s own inputs (PR title/description/commits) instead of git
+> blame, accepting a different, shallower answer than `why` gives on a file.
+> **Why it wows** Closes the gap C2.1 opened: two of the three review
+> questions from the original demo pitch now have a lane; this is the third.
+> **Touches** Whichever surface the gateway spike lands on —
+> `src/background/gateway-client.ts` + `handlers.ts`, `src/shared/types.ts`
+> (`AGENT_LANES` grows a member), `src/panel/`.
+> **Depends** A gateway-side decision on which direction (a)/(b) above — or a
+> third — is worth building. **Propose there first**, same as C2.1 originally
+> needed an HTTP agents surface at all.
+> **Done when** A lane answers "why does this change exist" for a resolved
+> pull request, without requiring the browser to have a local checkout of
+> anything.
 
 ## Phase C3 — On a miss, sync — don't scrape 🟡
 

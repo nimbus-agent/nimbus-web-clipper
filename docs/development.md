@@ -243,6 +243,75 @@ the gateway.
    is exactly as safe as the first attempt.
 6. Repeat 1–3 in Firefox.
 
+## Manual verification — Agent lanes (C2.1)
+
+Prereq: paired, gateway running, a token scoped with `resolve`, `fetch` and
+`agents` (grant it if needed: `nimbus clip scopes <label> --set
+clip,briefs,resolve,fetch,agents`) for steps 1–2 below; step 3 deliberately
+pairs with `agents` withheld to exercise the scope-gap guidance. To exercise
+steps 1–2 reproducibly, run `bun run mock-gateway` and pair against
+`http://127.0.0.1:8765` — its mock agent routes always return a fixed run id
+and report the run `done` immediately with a fixed brief, so a lane never sits
+in "Working…" long enough to make a manual pass flaky.
+
+1. **Expand a lane on a resolved PR:** open a GitHub PR the gateway resolves
+   (e.g. via the mock gateway's `/sample`, or a real recognised, indexed PR)
+   and press `Alt+Shift+R`. → Below Related, two collapsed lanes read *"What
+   breaks if it lands"* and *"Who should review it"*. Expand one. → It shows
+   "Working…" briefly, then the brief as plain text (no bold, no links, no
+   headings — even if the brief contains something that looks like markup).
+   Collapse and re-expand it → the same brief reappears with no second
+   "Working…" flash and no second network call (confirm in the gateway's own
+   log, or DevTools' Network panel, that only one `POST /v1/agents/<lane>`
+   fired).
+2. **Close and reopen the panel mid-run:** against a gateway slow enough to
+   stay `running` for a few seconds (a real gateway with an LLM configured;
+   the mock gateway is too fast for this step), expand a lane, then close the
+   panel (`Alt+Shift+R` or Esc) before it settles, and wait past however long
+   the run takes. Reopen the panel and expand the same lane again. → The
+   finished brief is already there — no second "Working…", because the run
+   kept polling in the worker after the panel closed and the result was
+   cached in `chrome.storage.local`.
+3. **Scope guidance, `resolve`+`fetch` only:** scope a token with `resolve` and
+   `fetch` but not `agents` (`nimbus clip scopes <label> --set
+   clip,briefs,resolve,fetch`), open a recognised, resolved page, and expand a
+   lane. → "This pairing can't run agents yet." plus a pasteable
+   `nimbus clip scopes <label> --set clip,briefs,resolve,fetch,agents` command
+   built from the gateway's own 403 response (your real device label and full
+   scope set, `agents` named as the missing one) — not a hand-edited
+   placeholder, and not the `resolve`/`fetch` guidance from the checklists
+   above (a different scope, a different fix).
+4. Repeat 1 in Firefox.
+
+### The eviction check — why this one stays manual
+
+No unit test can cover a run surviving a *real* service-worker eviction: the
+harness fakes the eviction net's alarm by calling its handler directly, so
+whether Chrome actually preserves a registered `chrome.alarms` alarm across a
+genuine eviction, and honours its one-minute period, is unverifiable in this
+suite by construction — the test would be asserting behavior of Chrome's own
+alarm scheduler, not of this code. See `AGENT_POLL_ALARM`'s doc comment
+(`service-worker.ts`) for why the alarm exists only as that net, not as the
+poll cadence itself.
+
+Run this in **both** browsers separately — a pass in one is not evidence for
+the other. Only Chrome uses `background.service_worker` (an event page that is
+evicted after ~30s idle); Firefox runs `background.scripts` and evicts on
+different rules entirely. That asymmetry is exactly what the C1 grant/revoke
+manual check (above) found the hard way — the same reasoning applies here.
+
+1. **Chrome:** pair, open a recognised resolved page, expand a lane so a run
+   starts. Immediately open `chrome://serviceworker-internals`, find this
+   extension's worker, and click **Stop** (or just wait out Chrome's ~30s idle
+   timeout without touching the extension). Leave the panel closed until well
+   past however long the run takes to finish. Reopen the panel and expand the
+   same lane. → The brief is there — the alarm fired on a fresh worker start,
+   resumed the poll, and the result made it into the store despite the
+   worker having been fully torn down mid-run.
+2. **Firefox:** same steps, but evict via `about:debugging` → **This
+   Firefox** → this extension → **Terminate Service Worker** (or your Firefox
+   build's equivalent for `background.scripts`).
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any

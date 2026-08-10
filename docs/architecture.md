@@ -386,6 +386,86 @@ not-indexed, fetchable ─{ click "Fetch this from GitHub" }─►  panel-in-pag
   first. Reopening the panel is the deliberate escape hatch — a fresh resolve by
   then either finds the item or offers the button again.
 
+## The agent lanes (Phase C2.1)
+
+On a resolved page (`resolved` or `chosen` header state) the panel offers two
+collapsed lanes below Related — *what breaks if it lands* (`agents.impact`) and
+*who should review it* (`agents.expert`) — each answered by an agent that
+already exists behind the gateway. Two routes:
+
+```
+POST /v1/agents/{agent}        202 { runId }            · 404 unknown agent · 429 busy (Retry-After)
+GET  /v1/agents/runs/{id}      200 { status, brief?, failureReason? } · 404 · 410
+```
+
+Expanding a lane is the only trigger — nothing runs on panel open, and a second
+expand of an already-`running`/`done`/`failed` lane never re-invokes (only its
+Re-run button does). `impact` receives `recognition.resolveUrl` as
+`fileOrPrUrl`; `expert` receives the resolved item's `title` as `topicOrFile` —
+both request bodies pass through to the gateway's validator verbatim, so the
+client sends exactly the shape each agent's own scope expects, no more.
+
+- **404 and 410 on the poll route collapse into one `stale` state.** Upstream
+  distinguishes "unknown, possibly lost to a gateway restart" from "known, but
+  past its TTL" — but the client's answer to both is identical: re-issue, never
+  keep waiting. Modelling two client-facing reasons for one recovery action
+  would be a distinction with no behavioral difference, so `AGENT_ERRORS`
+  (`src/shared/types.ts`) has exactly one `stale` member and `getAgentRun`
+  (`gateway-client.ts`) folds both statuses into it before the client ever sees
+  a difference. `renderLaneBody` gives `stale` a working Re-run button; every
+  other refusal reason needs a fix on a different surface first (re-pair, a
+  scope grant, an indexed page) and gets guidance instead of a button that
+  would just fail again identically.
+- **`chrome.alarms` is the EVICTION NET, not the poll cadence.** The real
+  cadence is an in-worker `setTimeout` loop (`tickAgentPoll`/`scheduleAgentPoll`
+  in `service-worker.ts`) that backs off from 500ms toward a 2s ceiling while
+  the worker is alive — agent runs finish in seconds, and `chrome.alarms` has a
+  hard one-minute floor, so alarm-driven polling would turn a two-second answer
+  into a minute-long wait. The alarm (`AGENT_POLL_ALARM`) exists only so a run
+  whose worker was evicted mid-poll is still picked up: on wake, its handler
+  (`resumeAgentPolls`) reads the store's still-running runs and resumes a
+  `setTimeout` loop for each, then clears the alarm once nothing is left
+  running. `activeAgentPolls` (an in-memory `Set<runId>`) keeps a periodic
+  alarm tick — which Chrome fires whether or not an eviction actually
+  happened — from spawning a second, uncoordinated backoff loop for a run
+  already being polled locally.
+- **Runs outlive the panel; the store is what makes that true.** `putRun`
+  persists every state transition to `chrome.storage.local`
+  (`agent-run-store.ts`), keyed by resolved item id + lane, with a TTL mirroring
+  the gateway's own and a bounded, oldest-first eviction cap. Closing and
+  reopening the panel — or the worker itself being evicted and restarted mid-run
+  — replays from that store: `handleAgentState` answers instantly from the
+  cached terminal state rather than re-invoking, which is also what makes a
+  second lane-expand a no-op instead of a second model call.
+- **The brief renders as `textContent`, never parsed, never `innerHTML`.** On a
+  gateway with an LLM configured, the brief is model output rendered inside a
+  Shadow DOM that overlays the user's authenticated session on the page it was
+  opened on (e.g. `github.com`). Interpreting any of it as markup — even a
+  "safe subset" markdown pass — would be a direct prompt-injection-to-XSS path:
+  a brief containing `<img src=x onerror=...>` must create zero elements, only
+  a text node. The same rule applies to `failed`'s `failureReason`/`detail` —
+  it is free text from the gateway, not from the model, but it is still
+  attacker-adjacent (an agent's own explanation of why it failed) and gets the
+  identical `textContent` treatment in `renderLaneBody`. This is the line most
+  likely to be "optimised" away by someone adding rich formatting later — the
+  cost (no headings, no bold, no clickable links) is accepted deliberately, and
+  a real safe renderer is its own separate, explicit decision, not a drive-by
+  addition here.
+- **No `busy` `AgentError` member.** A 429 from the invoke route never
+  reaches the panel as a failure. `invokeAgent` (`gateway-client.ts`) reports
+  it as `{ ok: false, reason: "busy", retryAfterMs }`; `handlers.ts`'s
+  `invokeWithRetry` is what absorbs it — backing off for the gateway's own
+  `Retry-After` (sized at ~1s, because a slot frees when some other run
+  finishes) and retrying exactly once. A second `busy` within that window
+  means genuine contention a longer wait would not fix, and reports
+  `server_error` rather than backing off again — `busy` itself never escapes
+  as a stored lane state.
+- **Abort is deferred, not shipped.** C2.2 named it in the roadmap, but
+  `agents.*` has no upstream cancellation — no `AbortController`, no job
+  registry a cancel could target. A UI-only "abort" that just stopped polling
+  would claim to cancel a run that is, in fact, still going. See ROADMAP.md's
+  C2.2 entry for the correction.
+
 ## Two state machines worth understanding
 
 These are the parts that are easy to get subtly wrong, and where most of the

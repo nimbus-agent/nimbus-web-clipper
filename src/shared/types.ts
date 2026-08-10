@@ -238,7 +238,16 @@ export type FetchError =
 export const AGENT_LANES = ["impact", "expert"] as const;
 export type AgentLane = (typeof AGENT_LANES)[number];
 
-/** What one lane is doing. `collapsed` is also the state of a lane never opened. */
+/**
+ * What one lane is doing. `collapsed` is also the state of a lane never opened.
+ *
+ * The run route's `findings` field is deliberately NOT modelled on the `done`
+ * arm below. Upstream types it `unknown` — "the shape is per-agent" — and
+ * nothing in the panel renders it; the resolve slice already had to prune
+ * exactly such a per-item catch-all. Recorded here so a future reader editing
+ * this type alone has the reasoning: add `findings` back only alongside a
+ * concrete renderer for it, never as a passthrough `unknown`.
+ */
 export type LaneState =
   | { readonly kind: "collapsed" }
   | { readonly kind: "running"; readonly runId: string }

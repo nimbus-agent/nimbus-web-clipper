@@ -64,6 +64,34 @@ export const FETCH_FIXTURE = {
   itemId: "gh-pr-482",
 } as const;
 
+/** `POST /v1/agents/{agent}` — invoke response: a run id to poll. */
+export interface AgentInvokeResponse {
+  readonly runId: string;
+}
+
+/**
+ * `GET /v1/agents/runs/{id}` — the mock reports every run as `done` immediately,
+ * with a fixed brief, so a lane never sits in `running` long enough to make a
+ * screenshot flaky. A fixed literal, never generated: same reasoning as
+ * `FETCH_FIXTURE`'s id above — a live id/brief would make the asserted fixture
+ * drift between runs, which is the opposite of what a pinned screenshot needs.
+ */
+export interface AgentRunDoneResponse {
+  readonly status: "done";
+  readonly brief: string;
+}
+
+export const AGENT_INVOKE: AgentInvokeResponse = {
+  runId: "run_mock_0001",
+};
+
+export const AGENT_RUN_DONE: AgentRunDoneResponse = {
+  status: "done",
+  brief:
+    "This change touches only the readability cache path; no other module calls " +
+    "into it. Low blast radius — safe to land once tests are green.",
+};
+
 export const RELATED: RelatedResponse = {
   items: [
     {

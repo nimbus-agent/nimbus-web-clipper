@@ -71,9 +71,21 @@ const FETCH_MESSAGES: Record<string, string> = {
   server_error: "Nimbus had an error fetching this page.",
 };
 
-/** The two C2 agent lanes' summary labels — each phrased as the question its
- *  agent answers, matching the design spec's own naming
- *  (docs/superpowers/specs/2026-08-10-c2-agent-lanes-design.md). */
+/**
+ * The two C2 agent lanes' summary labels — each phrased as the question its
+ * agent answers, matching the design spec's own naming
+ * (docs/superpowers/specs/2026-08-10-c2-agent-lanes-design.md).
+ *
+ * Left here rather than moved into `panel-view.ts`, which nominally owns
+ * render code but not a fixed copy table: `Lane.title` is caller-supplied by
+ * design (see `Lane` in panel-view.ts) precisely so a lane's label lives with
+ * its caller, not hardcoded into the shared shell. `RELATED_MESSAGES` /
+ * `RESOLVE_MESSAGES` / `FETCH_MESSAGES` above are the same pattern for
+ * per-outcome copy — this file, not panel-view.ts, is where copy keyed off a
+ * caller-owned identifier (a lane id, an error reason) actually lives.
+ * Consolidating all of it into panel-view.ts would mean changing that
+ * contract for four tables at once, which is out of scope here.
+ */
 const LANE_TITLES: Record<AgentLane, string> = {
   impact: "What breaks if it lands",
   expert: "Who should review it",
