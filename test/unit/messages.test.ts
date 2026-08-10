@@ -399,5 +399,32 @@ describe("agent-lane guards", () => {
         ).toBe(false);
       }
     });
+
+    it("accepts an agent_failed state carrying a string detail, and one with no detail at all", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "agent_failed", detail: "no LLM configured" },
+        }),
+      ).toBe(true);
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "agent_failed" },
+        }),
+      ).toBe(true);
+    });
+
+    it("rejects a failed state carrying a non-string detail", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "agent_failed", detail: 42 },
+        }),
+      ).toBe(false);
+    });
   });
 });

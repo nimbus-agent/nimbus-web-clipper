@@ -791,6 +791,20 @@ describe("handleAgentRun", () => {
 
   // Behaviour 4: on `busy` the handler waits the given `retryAfterMs` and retries
   // exactly once. Fake timers stand in for the real wait so the test stays fast.
+  //
+  // A DIFFERENT, sharper reason to reach for `vi.useFakeTimers()` lives in
+  // test/unit/service-worker.test.ts, not here: this file drives `handleAgentRun`
+  // directly against injected stub `deps`, so nothing here ever schedules a real
+  // timer. But driving the SAME `agent-run` message through the real service
+  // worker (service-worker.test.ts) makes a successful invoke persist a `running`
+  // state, and agentRunDeps.putRun's side effect there starts the in-worker poll
+  // loop with a genuine `setTimeout`. `vi.resetModules()` between tests does not
+  // cancel that pending real timer — leave it unguarded and it can fire during a
+  // LATER, unrelated test, hitting whatever `chrome`/`fetch` mock happens to be
+  // active then and non-deterministically breaking a `not.toHaveBeenCalled()`
+  // assertion there. Any new test in service-worker.test.ts that drives a
+  // successful `agent-run` must wrap it in `vi.useFakeTimers()` / `vi.useRealTimers()`
+  // for that reason — see the existing agent-run tests there for the pattern.
   it("on busy, waits retryAfterMs and retries once, then succeeds if the retry does", async () => {
     vi.useFakeTimers();
     let calls = 0;

@@ -437,7 +437,8 @@ function isLaneState(v: unknown): v is LaneState {
   return (
     v["kind"] === "failed" &&
     typeof v["reason"] === "string" &&
-    (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"]))
+    (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"])) &&
+    (v["detail"] === undefined || typeof v["detail"] === "string")
   );
 }
 

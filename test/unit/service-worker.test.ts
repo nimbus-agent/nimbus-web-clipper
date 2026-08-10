@@ -1111,10 +1111,11 @@ describe("agent run polling — survives eviction", () => {
     vi.useRealTimers();
   });
 
-  // The wire's `failed` status carries free-text `failureReason` with no
-  // `AgentError` member to hold it — this pins the fallback bucket rather than
-  // leaving it to whatever the code happens to do.
-  test("the agent's own failed run maps to a failed lane state (server_error)", async () => {
+  // The wire's `failed` status is a NORMAL terminal outcome (transport worked,
+  // gateway healthy, the agent itself couldn't answer) — `agent_failed`, never
+  // `server_error`, which is reserved for a genuinely failed CALL. The
+  // gateway's free-text explanation carries through as `detail`.
+  test("the agent's own failed run maps to agent_failed, carrying the gateway's detail", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);
     await load();
@@ -1130,14 +1131,44 @@ describe("agent run polling — survives eviction", () => {
       },
       NOW,
     );
-    stubFetch(() => jsonRes(200, { status: "failed", failureReason: "no index" }));
+    stubFetch(() => jsonRes(200, { status: "failed", failureReason: "no LLM configured" }));
 
     await fireAlarm(AGENT_POLL_ALARM);
 
     expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
       kind: "failed",
-      reason: "server_error",
+      reason: "agent_failed",
+      detail: "no LLM configured",
     });
+    vi.useRealTimers();
+  });
+
+  // A blank failureReason omits `detail` entirely — never a written
+  // `detail: undefined` — since toEqual treats an explicit undefined as equal
+  // and would let that regress silently.
+  test("a blank failureReason stores agent_failed with no detail key at all", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        itemId: "gh-1",
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 60_000,
+      },
+      NOW,
+    );
+    stubFetch(() => jsonRes(200, { status: "failed", failureReason: "" }));
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    const state = (await getRun("gh-1", "impact", NOW))?.state;
+    expect(state).toEqual({ kind: "failed", reason: "agent_failed" });
+    expect(state !== undefined && "detail" in state).toBe(false);
     vi.useRealTimers();
   });
 });

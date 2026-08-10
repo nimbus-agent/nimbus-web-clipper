@@ -253,6 +253,12 @@ export type LaneState =
        * absent, it falls back to generic guidance rather than inventing one.
        */
       readonly scopeGap?: ScopeGap;
+      /**
+       * The gateway's own explanation, present only on `agent_failed` and only
+       * when the run carried one. Free text from the gateway — Task 7 renders it
+       * with `textContent`, never parsed, exactly as it does the brief.
+       */
+      readonly detail?: string;
     };
 
 /**
@@ -287,5 +293,14 @@ export const AGENT_ERRORS = [
   "stale",
   "unreachable",
   "server_error",
+  /**
+   * The run reached a terminal `failed` status: the transport worked and the
+   * gateway is healthy, but the agent could not produce an answer. Distinct from
+   * `server_error`, which means the CALL failed. Upstream separates these
+   * deliberately — see the `failureReason`, NOT `error` comment on the run route
+   * in the gateway's http-server.ts — so that a normal outcome is not misread as
+   * a transport error. Carries `detail` when the gateway explained why.
+   */
+  "agent_failed",
 ] as const;
 export type AgentError = (typeof AGENT_ERRORS)[number];

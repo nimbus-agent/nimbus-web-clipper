@@ -191,12 +191,16 @@ const agentStateDeps = { getOrigins, getConnection, resolveItem, ...agentStoreDe
 // an empty Set — exactly the case the alarm needs to be ABLE to resume into.
 const activeAgentPolls = new Set<string>();
 
-/** The wire's `failed` status carries free-text `failureReason` with no
- *  `AgentError` member to hold it — `server_error` is the same honest generic
- *  bucket this client already uses for a 200 body it cannot classify further
- *  (see `getAgentRun`'s own "malformed done" branch). `scopeGap`, when present,
- *  needs the device label attached — only `service-worker.ts` holds a
- *  `Connection`, mirroring how `handlers.ts` attaches it elsewhere. */
+/**
+ * The wire's `failed` status is a NORMAL terminal outcome — the transport
+ * worked and the gateway is healthy, the agent itself just could not produce
+ * an answer — so it maps to `agent_failed`, never `server_error` (that reason
+ * is reserved for a genuinely failed CALL). `failureReason` is the gateway's
+ * own free-text explanation of why; carried through as `detail` when it is a
+ * non-empty string, omitted (never `detail: undefined`) otherwise. `scopeGap`,
+ * when present, needs the device label attached — only `service-worker.ts`
+ * holds a `Connection`, mirroring how `handlers.ts` attaches it elsewhere.
+ */
 function terminalLaneState(
   result:
     | { readonly ok: true; readonly status: "done"; readonly brief: string }
@@ -209,9 +213,12 @@ function terminalLaneState(
   label: string,
 ): LaneState {
   if (result.ok) {
-    return result.status === "done"
-      ? { kind: "done", brief: result.brief }
-      : { kind: "failed", reason: "server_error" };
+    if (result.status === "done") {
+      return { kind: "done", brief: result.brief };
+    }
+    return result.failureReason.trim() === ""
+      ? { kind: "failed", reason: "agent_failed" }
+      : { kind: "failed", reason: "agent_failed", detail: result.failureReason };
   }
   return result.scopeGap === undefined
     ? { kind: "failed", reason: result.reason }
