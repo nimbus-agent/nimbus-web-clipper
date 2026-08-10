@@ -591,9 +591,21 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
   // member is added to `AGENT_ERRORS` without a branch handling it above,
   // `state.reason` stops narrowing to `never` and this line fails to compile —
   // instead of the new reason silently falling through to a blank lane.
+  //
+  // Returns `box` here, NOT `state.reason` — `isAgentStateResponse`
+  // (messages.ts) validates `reason` against `AGENT_ERRORS` before this
+  // function ever sees a `LaneState`, so this branch should be unreachable in
+  // practice. But `renderLaneBody` is typed to return `HTMLElement`, and
+  // `details.append(...)` accepts a plain string just as happily as a node —
+  // if that guard ever grew a hole, returning the never-typed value directly
+  // (as the sibling backstop in `renderHeader` above does) would put a raw
+  // reason CODE on screen as the lane body instead of failing loudly. The
+  // `_never` assignment below still does its compile-time job — a future
+  // unhandled `AgentError` member fails to typecheck here exactly as before.
   if (state.reason !== "agent_failed") {
     const _never: never = state.reason;
-    return _never;
+    void _never;
+    return box;
   }
   // The run reached the agent and it could not answer — the CALL succeeded, so
   // this must not read like `server_error` above.

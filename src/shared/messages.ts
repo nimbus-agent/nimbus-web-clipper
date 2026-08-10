@@ -5,7 +5,9 @@
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
 import {
+  AGENT_ERRORS,
   AGENT_LANES,
+  type AgentError,
   type AgentLane,
   type CaptureResult,
   type ClipError,
@@ -401,6 +403,15 @@ function isAgentLane(v: unknown): v is AgentLane {
   return typeof v === "string" && (AGENT_LANES as readonly string[]).includes(v);
 }
 
+/** Exported so `agent-run-store.ts`'s storage guard can reuse this instead of
+ *  hand-rolling a second copy — the exact drift class (a predicate that claims
+ *  `v is X` while checking fewer fields than X has) that already shipped once
+ *  in this repo as `isResolvedItem`, and that `isLaneState` below was itself
+ *  making with a bare `typeof v["reason"] === "string"` check before this. */
+export function isAgentError(v: unknown): v is AgentError {
+  return typeof v === "string" && (AGENT_ERRORS as readonly string[]).includes(v);
+}
+
 export function isAgentRunRequest(v: unknown): v is AgentRunRequest {
   return (
     isObject(v) &&
@@ -440,7 +451,7 @@ function isLaneState(v: unknown): v is LaneState {
   }
   return (
     v["kind"] === "failed" &&
-    typeof v["reason"] === "string" &&
+    isAgentError(v["reason"]) &&
     (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"])) &&
     (v["detail"] === undefined || typeof v["detail"] === "string")
   );

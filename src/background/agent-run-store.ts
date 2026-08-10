@@ -9,14 +9,8 @@
 // while a fresh lane-start writes `running`) would otherwise read the same
 // snapshot and the second write would silently clobber the first.
 import { storageGet, storageSet } from "../browser/storage.ts";
-import { isScopeGap } from "../shared/messages.ts";
-import {
-  AGENT_ERRORS,
-  AGENT_LANES,
-  type AgentError,
-  type AgentLane,
-  type LaneState,
-} from "../shared/types.ts";
+import { isAgentError, isScopeGap } from "../shared/messages.ts";
+import { AGENT_LANES, type AgentLane, type LaneState } from "../shared/types.ts";
 
 const STORE_KEY = "agentRuns";
 
@@ -58,10 +52,6 @@ function isObject(v: unknown): v is Record<string, unknown> {
 
 function isAgentLane(v: unknown): v is AgentLane {
   return typeof v === "string" && (AGENT_LANES as readonly string[]).includes(v);
-}
-
-function isAgentError(v: unknown): v is AgentError {
-  return typeof v === "string" && (AGENT_ERRORS as readonly string[]).includes(v);
 }
 
 function isLaneState(v: unknown): v is LaneState {

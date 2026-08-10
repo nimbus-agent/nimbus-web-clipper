@@ -426,5 +426,22 @@ describe("agent-lane guards", () => {
         }),
       ).toBe(false);
     });
+
+    // Review finding (round 1, IMPORTANT): this guard used to accept ANY
+    // string as `reason`, not just a member of `AGENT_ERRORS` — so a reason
+    // outside the union could pass validation, fall through every branch of
+    // `renderLaneBody`'s `AgentError` if-chain, and hit its exhaustiveness
+    // backstop, which returned the raw string where an `HTMLElement` was
+    // promised. `isAgentError` (also used by `agent-run-store.ts`'s own
+    // storage guard, so there is exactly one copy of this check) closes that.
+    it("rejects a failed state whose reason is not a known AgentError", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "not_a_real_reason" },
+        }),
+      ).toBe(false);
+    });
   });
 });

@@ -421,6 +421,16 @@ function createPanel(body: HTMLElement): {
    * the lane settles or this panel is torn down (see `stopAgentPolls`).
    */
   const lanePollTimers: Partial<Record<AgentLane, ReturnType<typeof setTimeout>>> = {};
+  /**
+   * Set once, by `stopAgentPolls`, when this panel is torn down. `pollLane` and
+   * `sendAgentRun` both resume after an `await` — a real gateway round trip —
+   * with no other liveness check, so a response landing after teardown would
+   * otherwise `paint()` into a detached `body` and, worse, call
+   * `scheduleLanePoll` to start a brand-new timer that `stopAgentPolls` has
+   * already run past and can never clear. Checked immediately after every
+   * `await` in both functions, before either effect.
+   */
+  let closed = false;
 
   function clearLanePoll(lane: AgentLane): void {
     const handle = lanePollTimers[lane];
@@ -451,6 +461,13 @@ function createPanel(body: HTMLElement): {
       // state on screen rather than guessing a new one.
       return;
     }
+    if (closed) {
+      // The panel was torn down while this poll was in flight. There's
+      // nothing left to repaint, and scheduling another tick would poll — and,
+      // via handleAgentState's own resolve call, hit the gateway — forever on
+      // a panel that no longer exists. See `closed`'s own doc comment.
+      return;
+    }
     if (!isAgentStateResponse(res)) {
       return;
     }
@@ -472,16 +489,33 @@ function createPanel(body: HTMLElement): {
       return;
     }
     laneInFlight.add(lane);
+    // Optimistic: show progress immediately rather than leaving the lane
+    // blank for a first expand, or leaving a stale failure message and its
+    // Re-run button on screen for the whole round trip of a Re-run click.
+    // Overwritten the moment the real response lands, a few lines down — this
+    // placeholder `runId` is never read anywhere: `renderLaneBody`'s `running`
+    // arm only ever checks `state.kind`.
+    laneState[lane] = { kind: "running", runId: "" };
+    paint();
     let res: unknown;
     try {
       res = await sendMessage({ kind: "agent-run", lane, pageUrl: window.location.href });
     } catch {
       laneInFlight.delete(lane);
+      if (closed) {
+        return;
+      }
       laneState[lane] = { kind: "failed", reason: "unreachable" };
       paint();
       return;
     }
     laneInFlight.delete(lane);
+    if (closed) {
+      // See `closed`'s own doc comment: a response landing after teardown
+      // must not repaint a detached body or start a fresh poll timer that
+      // `stopAgentPolls` has already run past.
+      return;
+    }
     if (!isAgentStateResponse(res)) {
       laneState[lane] = { kind: "failed", reason: "server_error" };
       paint();
@@ -507,9 +541,14 @@ function createPanel(body: HTMLElement): {
     sendAgentRun(lane).catch(() => undefined);
   }
 
-  /** Stops every lane's poll timer — called on panel teardown. The worker's own
-   *  poll of the gateway is untouched: it survives this panel closing by design. */
+  /** Stops every lane's poll timer and marks this panel closed — called on
+   *  panel teardown. The worker's own poll of the gateway is untouched: it
+   *  survives this panel closing by design. Setting `closed` here (not just
+   *  clearing pending timers) is what stops an invoke or poll already in
+   *  flight from starting a brand-new timer once its response lands — see
+   *  `closed`'s own doc comment. */
   function stopAgentPolls(): void {
+    closed = true;
     for (const lane of AGENT_LANES) {
       clearLanePoll(lane);
     }
@@ -584,7 +623,42 @@ function createPanel(body: HTMLElement): {
     // does not need.
     for (const lane of AGENT_LANES) {
       const el = body.querySelector<HTMLDetailsElement>(`[data-lane="${lane}"]`);
-      el?.addEventListener("toggle", () => onLaneToggle(lane, el.open));
+      if (el === null) {
+        continue;
+      }
+      // `renderLane` sets `details.open = lane.expanded` on this FRESH
+      // element. Per the HTML spec — confirmed directly in jsdom — that
+      // queues a "toggle" task exactly like a real click would, EVEN THOUGH
+      // nothing was clicked: the task fires later, asynchronously, and
+      // reaches whatever "toggle" listener is attached by then (this one),
+      // synthesising a user-open event out of a plain repaint. Left
+      // unguarded, every repaint of an already-expanded lane would replay as
+      // a fresh "expand" — and once that lane's state has gone stale back to
+      // `collapsed` (a resumed run's TTL lapsing, or eviction — see
+      // `handleAgentState`'s `?? {kind:"collapsed"}` fallback), each replay
+      // invokes a brand-new gateway run, forever, from one real click.
+      //
+      // `startedOpen` records what THIS element was created with. The FIRST
+      // toggle event it ever receives, if it just repeats that value, has no
+      // user intent behind it and is swallowed once. A genuine SECOND toggle
+      // on this same still-mounted element (an actual click) is never
+      // suppressed — and when the lane was created collapsed, no synthetic
+      // task is ever queued in the first place (no attribute change happens
+      // when `open` is left at its default `false`), so a real first expand
+      // is never mistaken for one either.
+      let startedOpen: boolean | null = el.open;
+      el.addEventListener("toggle", () => {
+        const open = el.open;
+        if (startedOpen !== null) {
+          const synthetic = open === startedOpen;
+          startedOpen = null;
+          if (synthetic) {
+            laneOpen[lane] = open;
+            return;
+          }
+        }
+        onLaneToggle(lane, open);
+      });
     }
   }
 
