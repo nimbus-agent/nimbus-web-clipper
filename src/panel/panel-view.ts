@@ -467,12 +467,15 @@ export function renderHeader(
  * "related" lane, which keeps its own `relatedBody` render path.
  *
  * Re-run is offered only for failure reasons a retry could plausibly fix:
- * `stale`/`unreachable`/`server_error` are transport-level blips, and
- * `agent_failed` means the run reached the agent and it could not answer, which a
- * retry may well do differently — it is NOT `server_error`, because the call
- * itself worked. Every other reason needs a DIFFERENT fix first (pair, re-pair,
- * grant a scope, index the page, or a gateway that has the surface at all) — a
- * Re-run there would just fail identically, so no button is offered for it.
+ * `stale`/`unreachable`/`server_error` are transport-level blips, `agent_failed`
+ * means the run reached the agent and it could not answer (which a retry may well
+ * do differently — it is NOT `server_error`, because the call itself worked), and
+ * `not_paired` is a leftover whose own remedy (pairing) is already done by the
+ * time it can be seen — see its branch below for why that makes it retryable
+ * where the others are not. Every other reason needs a DIFFERENT fix on ANOTHER
+ * surface first (re-pair, grant a scope, index the page, or a gateway that has
+ * the surface at all) — a Re-run there would just fail identically, so no button
+ * is offered for it.
  */
 export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => void): HTMLElement {
   const box = doc.createElement("div");
@@ -516,6 +519,13 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
     // only be seen by a user who has since re-paired: it is a leftover from a
     // run that failed under an EARLIER pairing, not a live gap. Saying "Pair a
     // browser first" here would be a false claim to an already-paired user.
+    //
+    // It gets a Re-run button, unlike the other refusal reasons below: its own
+    // remedy (pairing) is already done by the time it can even be seen, and
+    // `handleAgentRun`'s cache short-circuit only covers `running`/`done` (Task
+    // 6), so a Re-run here genuinely re-invokes and would now succeed. Every
+    // other reason below needs an action on ANOTHER surface first (re-pair,
+    // grant a scope, …); this is the only one with nothing left to ask for.
     box.append(
       line(
         doc,
@@ -523,6 +533,7 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
         "This result is from before your current pairing — it may be out of date.",
       ),
     );
+    box.append(actionButton(doc, "nimbus-related__action", "Re-run", () => onRerun?.()));
     return box;
   }
   if (state.reason === "unauthorized") {

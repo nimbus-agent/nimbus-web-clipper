@@ -557,6 +557,25 @@ describe("renderLaneBody", () => {
     }
   });
 
+  // `not_paired` is the one refusal whose remedy is already done by the time the
+  // user can see it. The handlers short-circuit on their OWN not_paired before ever
+  // reading a cached run, so this stored state is only ever visible to a user who
+  // has SINCE re-paired — and Task 6 narrowed the cache short-circuit to
+  // running/done, so a Re-run genuinely re-invokes and would now succeed.
+  // Withholding the button leaves the user told their result may be out of date
+  // with no way to refresh it: a dead end, and the only reason with no other action
+  // to offer.
+  it("offers Re-run on a result left over from an earlier pairing", () => {
+    const seen: string[] = [];
+    const el = renderLaneBody(document, { kind: "failed", reason: "not_paired" }, () =>
+      seen.push("rerun"),
+    );
+    // Must not tell an already-paired user to pair.
+    expect(el.textContent?.toLowerCase()).not.toContain("pair a browser");
+    (el.querySelector("button") as HTMLButtonElement).click();
+    expect(seen).toEqual(["rerun"]);
+  });
+
   it("shows the gateway's own explanation as text, never parsed", () => {
     const el = renderLaneBody(
       document,
@@ -581,11 +600,11 @@ describe("renderLaneBody", () => {
   });
 
   it("withholds Re-run where retrying cannot help, and says what would", () => {
-    // Each of these needs a different action — pair, re-pair, grant a scope, index
-    // the page, or a gateway that has the surface at all. A Re-run button would just
-    // fail again.
+    // Each of these needs a different action on ANOTHER surface first — re-pair,
+    // grant a scope, index the page, or a gateway that has the surface at all. A
+    // Re-run button would just fail again. `not_paired` is NOT here: see the
+    // dedicated test above for why it is the one exception.
     for (const reason of [
-      "not_paired",
       "unauthorized",
       "insufficient_scope",
       "unsupported",
