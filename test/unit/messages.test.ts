@@ -1,5 +1,8 @@
 import { describe, expect, it, test } from "vitest";
 import {
+  isAgentRunRequest,
+  isAgentStateRequest,
+  isAgentStateResponse,
   isClipRequest,
   isConnectionResponse,
   isConnectionStatusRequest,
@@ -305,5 +308,65 @@ describe("isFetchResponse", () => {
         scopeGap: { label: "chrome", required: "fetch", granted: ["clip"] },
       }),
     ).toBe(true);
+  });
+});
+
+describe("agent-lane guards", () => {
+  test("isAgentRunRequest accepts a well-formed request", () => {
+    expect(isAgentRunRequest({ kind: "agent-run", lane: "impact", pageUrl: "https://x/y" })).toBe(
+      true,
+    );
+  });
+  test("isAgentRunRequest rejects an unknown lane", () => {
+    expect(isAgentRunRequest({ kind: "agent-run", lane: "why", pageUrl: "https://x/y" })).toBe(
+      false,
+    );
+  });
+  test("isAgentRunRequest rejects a missing pageUrl", () => {
+    expect(isAgentRunRequest({ kind: "agent-run", lane: "expert" })).toBe(false);
+  });
+
+  test("isAgentStateRequest accepts a well-formed request", () => {
+    expect(
+      isAgentStateRequest({ kind: "agent-state", lane: "expert", pageUrl: "https://x/y" }),
+    ).toBe(true);
+  });
+  test("isAgentStateRequest rejects an unknown lane", () => {
+    expect(isAgentStateRequest({ kind: "agent-state", lane: "why", pageUrl: "https://x/y" })).toBe(
+      false,
+    );
+  });
+
+  describe("isAgentStateResponse", () => {
+    it("accepts every LaneState arm", () => {
+      const states = [
+        { kind: "collapsed" },
+        { kind: "running", runId: "r1" },
+        { kind: "done", brief: "b" },
+        { kind: "failed", reason: "stale" },
+      ];
+      for (const state of states) {
+        expect(isAgentStateResponse({ kind: "agent-state", lane: "impact", state })).toBe(true);
+      }
+    });
+
+    it("rejects a running/done state missing its required field", () => {
+      for (const state of [{ kind: "running" }, { kind: "done" }]) {
+        expect(isAgentStateResponse({ kind: "agent-state", lane: "impact", state })).toBe(false);
+      }
+    });
+
+    it("rejects an unknown lane or an unknown state kind", () => {
+      expect(
+        isAgentStateResponse({ kind: "agent-state", lane: "why", state: { kind: "collapsed" } }),
+      ).toBe(false);
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "elsewhere" },
+        }),
+      ).toBe(false);
+    });
   });
 });

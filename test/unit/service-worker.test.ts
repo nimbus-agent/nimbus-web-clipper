@@ -254,6 +254,117 @@ describe("message routing — success shapes", () => {
     expect((init.headers as Record<string, string>)["authorization"]).toBe("Bearer tok-abc");
   });
 
+  test("agent-run: an unrecognised page answers without a fetch (the recogniser gate)", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn();
+
+    const res = await harness.emitMessage({
+      kind: "agent-run",
+      lane: "impact",
+      pageUrl: "https://example.com/nope",
+    });
+
+    expect(res).toEqual({
+      kind: "agent-state",
+      lane: "impact",
+      state: { kind: "failed", reason: "unsupported" },
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("agent-state: an unrecognised page answers without a fetch (the recogniser gate)", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn();
+
+    const res = await harness.emitMessage({
+      kind: "agent-state",
+      lane: "impact",
+      pageUrl: "https://example.com/nope",
+    });
+
+    expect(res).toEqual({
+      kind: "agent-state",
+      lane: "impact",
+      state: { kind: "failed", reason: "unsupported" },
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("agent-run: a resolved page invokes the lane's agent with its params, and persists running", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const item = {
+      id: "i1",
+      service: "github",
+      type: "pr",
+      title: "Add thing",
+      url: "https://github.com/acme/web/pull/1",
+    };
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("/v1/items/resolve")) {
+        return jsonRes(200, { found: true, matchKind: "exact", item: { ...item, modified_at: 5 } });
+      }
+      return jsonRes(202, { runId: "run-42" });
+    });
+
+    const res = await harness.emitMessage({
+      kind: "agent-run",
+      lane: "impact",
+      pageUrl: "https://github.com/acme/web/pull/1",
+    });
+
+    expect(res).toEqual({
+      kind: "agent-state",
+      lane: "impact",
+      state: { kind: "running", runId: "run-42" },
+    });
+    const calls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls as Array<
+      [string, RequestInit]
+    >;
+    const invokeCall = calls.find(([url]) => String(url).includes("/v1/agents/impact"));
+    expect(invokeCall?.[0]).toBe("http://127.0.0.1:8765/v1/agents/impact");
+    expect(JSON.parse(String(invokeCall?.[1]?.body))).toEqual({
+      fileOrPrUrl: "https://github.com/acme/web/pull/1",
+    });
+  });
+
+  test("agent-run then agent-state: the persisted running state round-trips through storage", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const item = {
+      id: "i1",
+      service: "github",
+      type: "pr",
+      title: "Add thing",
+      url: "https://github.com/acme/web/pull/1",
+    };
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("/v1/items/resolve")) {
+        return jsonRes(200, { found: true, matchKind: "exact", item: { ...item, modified_at: 5 } });
+      }
+      return jsonRes(202, { runId: "run-42" });
+    });
+
+    await harness.emitMessage({
+      kind: "agent-run",
+      lane: "impact",
+      pageUrl: "https://github.com/acme/web/pull/1",
+    });
+    const res = await harness.emitMessage({
+      kind: "agent-state",
+      lane: "impact",
+      pageUrl: "https://github.com/acme/web/pull/1",
+    });
+
+    expect(res).toEqual({
+      kind: "agent-state",
+      lane: "impact",
+      state: { kind: "running", runId: "run-42" },
+    });
+  });
+
   test("queue-list: reads storage only, projects to views", async () => {
     await load();
     harness.storage.set(QUEUE_KEY, [queued("a"), queued("b")]);

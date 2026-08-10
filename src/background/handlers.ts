@@ -1,6 +1,9 @@
 import { buildClipPayload } from "../shared/clip.ts";
 import { isLoopbackOrigin } from "../shared/gateway.ts";
 import type {
+  AgentRunRequest,
+  AgentStateRequest,
+  AgentStateResponse,
   ClipRequest,
   ClipResponse,
   ConnectionResponse,
@@ -20,6 +23,8 @@ import { enqueue, type QueuedClip, removeFromQueue, toView } from "../shared/que
 import { recognise } from "../shared/recognise.ts";
 import { buildRelatedQuery, type RelatedQuery } from "../shared/related.ts";
 import type {
+  AgentError,
+  AgentLane,
   ClipPostResult,
   ConfiguredOrigin,
   Connection,
@@ -28,9 +33,11 @@ import type {
   PairError,
   RelatedError,
   RelatedHit,
+  ResolvedItem,
   ResolveError,
   ResolveOutcome,
 } from "../shared/types.ts";
+import type { StoredRun } from "./agent-run-store.ts";
 
 export interface PairDeps {
   readonly confirmPair: (
@@ -211,6 +218,191 @@ export async function handleFetch(deps: FetchDeps, req: FetchRequest): Promise<F
         };
   }
   return { kind: "fetch", ok: true, recognition, outcome: r.outcome };
+}
+
+/** The result of a call to `invokeAgent`, without the wire's `busy` reason — the
+ *  retry loop below absorbs `busy` and never lets it escape as a lane state. */
+type InvokeResult =
+  | { readonly ok: true; readonly runId: string }
+  | { readonly ok: false; readonly reason: AgentError };
+
+export interface AgentRunDeps {
+  readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
+  readonly getConnection: () => Promise<{ origin: string; token: string } | null>;
+  readonly resolveItem: (
+    origin: string,
+    token: string,
+    pageUrl: string,
+  ) => Promise<
+    | { ok: true; outcome: ResolveOutcome }
+    | { ok: false; reason: ResolveError; scopeGap?: { required: string; granted: string[] } }
+  >;
+  readonly invokeAgent: (
+    origin: string,
+    token: string,
+    agent: AgentLane,
+    params: unknown,
+  ) => Promise<
+    | { ok: true; runId: string }
+    | { ok: false; reason: AgentError; scopeGap?: { required: string; granted: string[] } }
+    | { ok: false; reason: "busy"; retryAfterMs: number }
+  >;
+  readonly getRun: (itemId: string, lane: AgentLane) => Promise<StoredRun | null>;
+  readonly putRun: (run: Omit<StoredRun, "expiresAtMs">) => Promise<void>;
+}
+
+export interface AgentStateDeps {
+  readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
+  readonly getConnection: () => Promise<{ origin: string; token: string } | null>;
+  readonly resolveItem: AgentRunDeps["resolveItem"];
+  readonly getRun: (itemId: string, lane: AgentLane) => Promise<StoredRun | null>;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * `busy` (429) is a normal, brief condition — upstream sizes `Retry-After` at one
+ * second because a run slot frees when a run FINISHES, in seconds. So this backs
+ * off by exactly that long and retries ONCE. A second `busy` within that window
+ * means genuine contention, not something a longer wait would fix, and the lane's
+ * own re-run affordance covers it from here — so it reports `server_error` rather
+ * than backing off again or surfacing `busy` (which is not a member of AgentError).
+ */
+async function invokeWithRetry(
+  deps: AgentRunDeps,
+  origin: string,
+  token: string,
+  lane: AgentLane,
+  params: unknown,
+): Promise<InvokeResult> {
+  const first = await deps.invokeAgent(origin, token, lane, params);
+  if (first.ok || first.reason !== "busy") {
+    return first;
+  }
+  await delay(first.retryAfterMs);
+  const second = await deps.invokeAgent(origin, token, lane, params);
+  return second.ok ? second : { ok: false, reason: "server_error" };
+}
+
+type ResolveForAgent =
+  | {
+      readonly ok: true;
+      readonly origin: string;
+      readonly token: string;
+      /** The URL sent to `resolve` — the same one `impact` is given. */
+      readonly resolveUrl: string;
+      readonly item: ResolvedItem;
+    }
+  | { readonly ok: false; readonly reason: AgentError };
+
+/**
+ * Recognise the page, then resolve it to at most one indexed item — exactly the
+ * shared prefix `handleAgentRun` and `handleAgentState` both need: the recogniser
+ * gate (no gateway call for a page we cannot classify) and the item id a lane is
+ * cached under.
+ *
+ * There is no `AgentError` member for "recognised but no single item" — a
+ * resolve miss and an unrecognised page both settle on `unsupported`: retrying
+ * cannot help either one, only visiting an indexed page can.
+ */
+async function resolveForAgent(
+  deps: Pick<AgentStateDeps, "getOrigins" | "getConnection" | "resolveItem">,
+  pageUrl: string,
+): Promise<ResolveForAgent> {
+  const recognition = recognise(pageUrl, await deps.getOrigins());
+  if (!recognition.ok) {
+    // Nothing to ask the gateway about — the recogniser is the boundary deciding
+    // which URLs may reach it at all. No resolve call, no invoke.
+    return { ok: false, reason: "unsupported" };
+  }
+  const conn = await deps.getConnection();
+  if (conn === null) {
+    return { ok: false, reason: "not_paired" };
+  }
+  const resolved = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
+  if (!resolved.ok) {
+    return { ok: false, reason: resolved.reason };
+  }
+  if (resolved.outcome.kind !== "found") {
+    // A miss (not-indexed / unresolvable / ambiguous) means there is no single
+    // item to ask about — refuse rather than guess.
+    return { ok: false, reason: "unsupported" };
+  }
+  return {
+    ok: true,
+    origin: conn.origin,
+    token: conn.token,
+    resolveUrl: recognition.resolveUrl,
+    item: resolved.outcome.item,
+  };
+}
+
+/** The gateway validates this body verbatim, so each agent gets exactly what it
+ *  accepts: `impact` takes the page's PR URL, `expert` free text to match
+ *  against indexed titles (the repo name would parse too, but answers a
+ *  broader question — the same people for every PR in the repo). */
+function agentParams(lane: AgentLane, resolveUrl: string, item: ResolvedItem): unknown {
+  return lane === "impact" ? { fileOrPrUrl: resolveUrl } : { topicOrFile: item.title };
+}
+
+/**
+ * Expand a lane: resolve the page first (the item id keys the cache, the title
+ * feeds `expert`), return any cached NON-`collapsed` state without invoking —
+ * re-invoking a `running` or `done` lane would be a second agent run and, on a
+ * gateway with an LLM configured, a second model call for one question — then
+ * invoke and persist `{kind:"running", runId}`.
+ */
+export async function handleAgentRun(
+  deps: AgentRunDeps,
+  req: AgentRunRequest,
+): Promise<AgentStateResponse> {
+  const resolved = await resolveForAgent(deps, req.pageUrl);
+  if (!resolved.ok) {
+    return {
+      kind: "agent-state",
+      lane: req.lane,
+      state: { kind: "failed", reason: resolved.reason },
+    };
+  }
+  const { origin, token, resolveUrl, item } = resolved;
+
+  const cached = await deps.getRun(item.id, req.lane);
+  if (cached !== null && cached.state.kind !== "collapsed") {
+    return { kind: "agent-state", lane: req.lane, state: cached.state };
+  }
+
+  const params = agentParams(req.lane, resolveUrl, item);
+  const invoked = await invokeWithRetry(deps, origin, token, req.lane, params);
+  if (!invoked.ok) {
+    return {
+      kind: "agent-state",
+      lane: req.lane,
+      state: { kind: "failed", reason: invoked.reason },
+    };
+  }
+  const state = { kind: "running" as const, runId: invoked.runId };
+  await deps.putRun({ itemId: item.id, lane: req.lane, runId: invoked.runId, state });
+  return { kind: "agent-state", lane: req.lane, state };
+}
+
+/** Poll a lane's current state. Read-only: never invokes, so it is safe to call
+ *  on the panel's own ~1s repaint cadence without spending a run slot. */
+export async function handleAgentState(
+  deps: AgentStateDeps,
+  req: AgentStateRequest,
+): Promise<AgentStateResponse> {
+  const resolved = await resolveForAgent(deps, req.pageUrl);
+  if (!resolved.ok) {
+    return {
+      kind: "agent-state",
+      lane: req.lane,
+      state: { kind: "failed", reason: resolved.reason },
+    };
+  }
+  const cached = await deps.getRun(resolved.item.id, req.lane);
+  return { kind: "agent-state", lane: req.lane, state: cached?.state ?? { kind: "collapsed" } };
 }
 
 export interface QueueListDeps {

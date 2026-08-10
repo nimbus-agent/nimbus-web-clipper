@@ -1,5 +1,7 @@
-import { describe, expect, it, test } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import {
+  handleAgentRun,
+  handleAgentState,
   handleClip,
   handleConnectionStatus,
   handleFetch,
@@ -581,5 +583,308 @@ describe("handleFetch", () => {
       { kind: "fetch", pageUrl: "https://github.com/a/b/pull/1" },
     );
     expect(res).toMatchObject({ ok: false, reason: "not_paired" });
+  });
+});
+
+describe("handleAgentRun", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+  const item = {
+    id: "gh-1",
+    service: "github",
+    type: "pr",
+    title: "Cache it",
+    url: "https://github.com/a/b/pull/1",
+    modifiedAt: 1,
+  };
+
+  it("makes NO gateway call for an unrecognised page", async () => {
+    let called = false;
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          called = true;
+          return { ok: false as const, reason: "server_error" as const };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://example.com/x" },
+    );
+    expect(called).toBe(false);
+    expect(res).toMatchObject({ kind: "agent-state", lane: "impact" });
+  });
+
+  it("sends impact the page URL and expert the item title", async () => {
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    // The brief's parameter is unused inside the factory itself — each caller
+    // below passes the matching `req.lane`, so it's kept for readability at the
+    // call sites and prefixed to satisfy noUnusedFunctionParameters.
+    const deps = (_lane: "impact" | "expert") => ({
+      getOrigins: async () => [],
+      getConnection: async () => conn,
+      resolveItem: async () => ({
+        ok: true as const,
+        outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+      }),
+      invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+        seen.push({ agent, params });
+        return { ok: true as const, runId: "r1" };
+      },
+      getRun: async () => null,
+      putRun: async () => undefined,
+    });
+    await handleAgentRun(deps("impact"), {
+      kind: "agent-run",
+      lane: "impact",
+      pageUrl: "https://github.com/a/b/pull/1",
+    });
+    await handleAgentRun(deps("expert"), {
+      kind: "agent-run",
+      lane: "expert",
+      pageUrl: "https://github.com/a/b/pull/1",
+    });
+
+    expect(seen[0]).toEqual({
+      agent: "impact",
+      params: { fileOrPrUrl: "https://github.com/a/b/pull/1" },
+    });
+    expect(seen[1]).toEqual({ agent: "expert", params: { topicOrFile: "Cache it" } });
+  });
+
+  it("does not re-invoke when a cached done run exists", async () => {
+    let called = false;
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          called = true;
+          return { ok: true as const, runId: "r2" };
+        },
+        getRun: async () => ({
+          itemId: "gh-1",
+          lane: "impact" as const,
+          runId: "r1",
+          state: { kind: "done" as const, brief: "b" },
+          expiresAtMs: 9e15,
+        }),
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(called).toBe(false);
+    expect(res.state).toEqual({ kind: "done", brief: "b" });
+  });
+
+  it("refuses when the page resolves to a miss — there is no item to ask about", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "not-indexed" as const, fetchable: true },
+        }),
+        invokeAgent: async () => {
+          throw new Error("must not be called");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toMatchObject({ kind: "failed" });
+  });
+
+  it("short-circuits before resolving when not paired", async () => {
+    let resolveCalled = false;
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => null,
+        resolveItem: async () => {
+          resolveCalled = true;
+          return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: true } };
+        },
+        invokeAgent: async () => {
+          throw new Error("must not be called");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(resolveCalled).toBe(false);
+    expect(res.state).toEqual({ kind: "failed", reason: "not_paired" });
+  });
+
+  it("persists a running state under the resolved item's id and lane", async () => {
+    const puts: unknown[] = [];
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => ({ ok: true as const, runId: "r9" }),
+        getRun: async () => null,
+        putRun: async (run) => {
+          puts.push(run);
+        },
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(puts).toEqual([
+      { itemId: "gh-1", lane: "impact", runId: "r9", state: { kind: "running", runId: "r9" } },
+    ]);
+    expect(res.state).toEqual({ kind: "running", runId: "r9" });
+  });
+
+  // Behaviour 4: on `busy` the handler waits the given `retryAfterMs` and retries
+  // exactly once. Fake timers stand in for the real wait so the test stays fast.
+  it("on busy, waits retryAfterMs and retries once, then succeeds if the retry does", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const promise = handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          calls++;
+          return calls === 1
+            ? { ok: false as const, reason: "busy" as const, retryAfterMs: 1000 }
+            : { ok: true as const, runId: "r-retry" };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    const res = await promise;
+    vi.useRealTimers();
+
+    expect(calls).toBe(2);
+    expect(res.state).toEqual({ kind: "running", runId: "r-retry" });
+  });
+
+  // A second 429 within the retry window means genuine contention, not something
+  // a longer wait would fix — report server_error rather than backing off again.
+  it("on a second busy, reports server_error rather than retrying again", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const promise = handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          calls++;
+          return { ok: false as const, reason: "busy" as const, retryAfterMs: 1000 };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    const res = await promise;
+    vi.useRealTimers();
+
+    expect(calls).toBe(2);
+    expect(res.state).toEqual({ kind: "failed", reason: "server_error" });
+  });
+});
+
+describe("handleAgentState", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+  const item = {
+    id: "gh-1",
+    service: "github",
+    type: "pr",
+    title: "Cache it",
+    url: "https://github.com/a/b/pull/1",
+    modifiedAt: 1,
+  };
+
+  it("is read-only: never calls invokeAgent-shaped behaviour, just reads the cache", async () => {
+    const res = await handleAgentState(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        getRun: async () => ({
+          itemId: "gh-1",
+          lane: "impact" as const,
+          runId: "r1",
+          state: { kind: "running" as const, runId: "r1" },
+          expiresAtMs: 9e15,
+        }),
+      },
+      { kind: "agent-state", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res).toEqual({
+      kind: "agent-state",
+      lane: "impact",
+      state: { kind: "running", runId: "r1" },
+    });
+  });
+
+  it("reports collapsed when no run has ever started", async () => {
+    const res = await handleAgentState(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        getRun: async () => null,
+      },
+      { kind: "agent-state", lane: "expert", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res).toEqual({ kind: "agent-state", lane: "expert", state: { kind: "collapsed" } });
+  });
+
+  it("makes NO gateway call for an unrecognised page", async () => {
+    let getRunCalled = false;
+    const res = await handleAgentState(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => {
+          throw new Error("must not be called");
+        },
+        getRun: async () => {
+          getRunCalled = true;
+          return null;
+        },
+      },
+      { kind: "agent-state", lane: "impact", pageUrl: "https://example.com/x" },
+    );
+    expect(getRunCalled).toBe(false);
+    expect(res.state).toMatchObject({ kind: "failed" });
   });
 });

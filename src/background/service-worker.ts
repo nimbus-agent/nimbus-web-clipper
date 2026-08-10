@@ -14,6 +14,8 @@ import {
 import { injectPanel, runCapture, showToast } from "../browser/scripting.ts";
 import { activeTab } from "../browser/tabs.ts";
 import {
+  isAgentRunRequest,
+  isAgentStateRequest,
   isClipRequest,
   isConnectionStatusRequest,
   isFetchRequest,
@@ -25,11 +27,27 @@ import {
   isResolveRequest,
   isUnpairRequest,
 } from "../shared/messages.ts";
+import type { AgentLane } from "../shared/types.ts";
+import {
+  AGENT_RUN_CACHE_TTL_MS,
+  type StoredRun,
+  getRun as storeGetRun,
+  putRun as storePutRun,
+} from "./agent-run-store.ts";
 import { getQueue, updateQueue } from "./clip-queue-store.ts";
 import { clearConnection, getConnection, setConnection } from "./connection-store.ts";
 import { showFeedback } from "./feedback.ts";
-import { confirmPair, fetchItem, postClip, postRelated, resolveItem } from "./gateway-client.ts";
 import {
+  confirmPair,
+  fetchItem,
+  invokeAgent,
+  postClip,
+  postRelated,
+  resolveItem,
+} from "./gateway-client.ts";
+import {
+  handleAgentRun,
+  handleAgentState,
   handleClip,
   handleConnectionStatus,
   handleFetch,
@@ -119,6 +137,25 @@ async function syncQueueState(): Promise<void> {
 // One clip pipeline for both entry points: the popup's `clip` message and the
 // quick-clip (context menu / hotkey) route go through the same handler deps.
 const clipDeps = { getConnection, postClip: postClipPaced, updateQueue, nowMs: () => Date.now() };
+
+// The pure handlers work with a domain-shaped run (no `expiresAtMs`); this is the
+// one place "now" is read and the TTL applied, mirroring how postClipPaced wraps
+// postClip with the side effects handleClip itself stays free of.
+const agentStoreDeps = {
+  getRun: (itemId: string, lane: AgentLane) => storeGetRun(itemId, lane, Date.now()),
+};
+
+const agentRunDeps = {
+  getOrigins,
+  getConnection,
+  resolveItem,
+  invokeAgent,
+  ...agentStoreDeps,
+  putRun: (run: Omit<StoredRun, "expiresAtMs">) =>
+    storePutRun({ ...run, expiresAtMs: Date.now() + AGENT_RUN_CACHE_TTL_MS }, Date.now()),
+};
+
+const agentStateDeps = { getOrigins, getConnection, resolveItem, ...agentStoreDeps };
 
 const quickClipDeps: QuickClipDeps = {
   activeTab,
@@ -216,6 +253,30 @@ addMessageListener((message, respond) => {
           ok: false,
           recognition: { ok: false, reason: "unknown-host" },
           reason: "server_error",
+        });
+      });
+    return true;
+  }
+  if (isAgentRunRequest(message)) {
+    handleAgentRun(agentRunDeps, message)
+      .then(respond)
+      .catch(() => {
+        respond({
+          kind: "agent-state",
+          lane: message.lane,
+          state: { kind: "failed", reason: "server_error" },
+        });
+      });
+    return true;
+  }
+  if (isAgentStateRequest(message)) {
+    handleAgentState(agentStateDeps, message)
+      .then(respond)
+      .catch(() => {
+        respond({
+          kind: "agent-state",
+          lane: message.lane,
+          state: { kind: "failed", reason: "server_error" },
         });
       });
     return true;

@@ -5,10 +5,13 @@
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
 import {
+  AGENT_LANES,
+  type AgentLane,
   type CaptureResult,
   type ClipError,
   type FetchError,
   type FetchOutcome,
+  type LaneState,
   type PairError,
   RESOLVE_MATCH_KINDS,
   type Recognition,
@@ -68,6 +71,21 @@ export interface FetchRequest {
   readonly pageUrl: string;
 }
 
+/** Expand a lane: run its agent (or return the cached state if one already
+ *  exists for this item and lane — expanding a `done` lane must not re-invoke). */
+export interface AgentRunRequest {
+  readonly kind: "agent-run";
+  readonly lane: AgentLane;
+  readonly pageUrl: string;
+}
+
+/** Poll a lane's current state. Read-only — never invokes. */
+export interface AgentStateRequest {
+  readonly kind: "agent-state";
+  readonly lane: AgentLane;
+  readonly pageUrl: string;
+}
+
 export interface QueueListRequest {
   readonly kind: "queue-list";
 }
@@ -96,6 +114,8 @@ export type ExtensionRequest =
   | RelatedRequest
   | ResolveRequest
   | FetchRequest
+  | AgentRunRequest
+  | AgentStateRequest
   | QueueListRequest
   | QueueRetryRequest
   | QueueRemoveRequest
@@ -154,6 +174,14 @@ export type FetchResponse =
       readonly scopeGap?: ScopeGap;
     };
 
+/** Both `agent-run` and `agent-state` answer with the lane's current state —
+ *  starting or polling converge on the same shape the panel repaints from. */
+export interface AgentStateResponse {
+  readonly kind: "agent-state";
+  readonly lane: AgentLane;
+  readonly state: LaneState;
+}
+
 export type QueueResponse = { readonly kind: "queue"; readonly items: QueuedClipView[] };
 
 export type ConnectionResponse =
@@ -172,6 +200,7 @@ export type ExtensionResponse =
   | RelatedResponse
   | ResolveResponse
   | FetchResponse
+  | AgentStateResponse
   | QueueResponse
   | ConnectionResponse;
 
@@ -361,6 +390,56 @@ export function isFetchResponse(v: unknown): v is FetchResponse {
     v["ok"] === false &&
     typeof v["reason"] === "string" &&
     (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"]))
+  );
+}
+
+function isAgentLane(v: unknown): v is AgentLane {
+  return typeof v === "string" && (AGENT_LANES as readonly string[]).includes(v);
+}
+
+export function isAgentRunRequest(v: unknown): v is AgentRunRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "agent-run" &&
+    isAgentLane(v["lane"]) &&
+    typeof v["pageUrl"] === "string"
+  );
+}
+
+export function isAgentStateRequest(v: unknown): v is AgentStateRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "agent-state" &&
+    isAgentLane(v["lane"]) &&
+    typeof v["pageUrl"] === "string"
+  );
+}
+
+/**
+ * Guards the DOMAIN state crossing the SW→panel boundary — not the wire shape.
+ * The wire's `status`/`runId`/`failureReason` vocabulary is parsed in
+ * gateway-client.ts and never reaches here (mirrors isResolveOutcome/isFetchOutcome
+ * above).
+ */
+function isLaneState(v: unknown): v is LaneState {
+  if (!isObject(v)) {
+    return false;
+  }
+  if (v["kind"] === "collapsed") {
+    return true;
+  }
+  if (v["kind"] === "running") {
+    return typeof v["runId"] === "string";
+  }
+  if (v["kind"] === "done") {
+    return typeof v["brief"] === "string";
+  }
+  return v["kind"] === "failed" && typeof v["reason"] === "string";
+}
+
+export function isAgentStateResponse(v: unknown): v is AgentStateResponse {
+  return (
+    isObject(v) && v["kind"] === "agent-state" && isAgentLane(v["lane"]) && isLaneState(v["state"])
   );
 }
 
