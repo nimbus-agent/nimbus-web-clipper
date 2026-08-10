@@ -527,7 +527,12 @@ export async function getAgentRun(
 ): Promise<
   | { ok: true; status: "running" }
   | { ok: true; status: "done"; brief: string }
-  | { ok: true; status: "failed"; failureReason: string }
+  // `failureReason` is OPTIONAL, not always present: upstream builds the body as
+  // `...(run.error === null ? {} : { failureReason: run.error })`
+  // (ipc/http-server.ts), so an absent one is a well-formed "the run failed, no
+  // explanation given" — not a malformed response. Only a PRESENT-but-non-string
+  // value is malformed (falls through to `server_error` below).
+  | { ok: true; status: "failed"; failureReason?: string }
   | { ok: false; reason: AgentError; scopeGap?: { required: string; granted: string[] } }
 > {
   let res: Response;
@@ -557,6 +562,9 @@ export async function getAgentRun(
         : { ok: false, reason: "server_error" };
     }
     if (data["status"] === "failed") {
+      if (data["failureReason"] === undefined) {
+        return { ok: true, status: "failed" };
+      }
       return typeof data["failureReason"] === "string"
         ? { ok: true, status: "failed", failureReason: data["failureReason"] }
         : { ok: false, reason: "server_error" };

@@ -11,8 +11,11 @@ import type { CaptureResult, Connection } from "../../src/shared/types.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
 // Real storage keys (see connection-store.ts / clip-queue-store.ts) and the
-// alarm name (a local const in service-worker.ts, not exported).
+// alarm names. FLUSH_ALARM is a local const in service-worker.ts, not
+// exported, so it's mirrored here as a literal; AGENT_POLL_ALARM IS exported
+// but is mirrored the same way for consistency with FLUSH_ALARM's convention.
 const FLUSH_ALARM = "flush-clip-queue";
+const AGENT_POLL_ALARM = "nimbus-agent-poll";
 const CONNECTION_KEY = "connection";
 const QUEUE_KEY = "clipQueue";
 
@@ -75,6 +78,11 @@ afterEach(() => {
   harness.restore();
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
+  // vi.restoreAllMocks() does NOT reset timers. Restoring here — rather than as
+  // each fake-timer test's own last statement — means a test that fails (and
+  // exits before reaching that statement) does not leave Date/setTimeout faked
+  // for every test that runs after it.
+  vi.useRealTimers();
 });
 
 describe("message routing — success shapes", () => {
@@ -313,15 +321,14 @@ describe("message routing — success shapes", () => {
 
     // A successful "running" persist schedules the in-worker poll loop's first
     // tick via a real setTimeout; fake timers here stop that pending timer from
-    // leaking into a LATER test (it is simply dropped by useRealTimers below,
-    // never fired) rather than firing mid-suite against a different test's mock.
+    // leaking into a LATER test (the global afterEach's vi.useRealTimers() drops
+    // it unfired) rather than firing mid-suite against a different test's mock.
     vi.useFakeTimers();
     const res = await harness.emitMessage({
       kind: "agent-run",
       lane: "impact",
       pageUrl: "https://github.com/acme/web/pull/1",
     });
-    vi.useRealTimers();
 
     expect(res).toEqual({
       kind: "agent-state",
@@ -336,6 +343,42 @@ describe("message routing — success shapes", () => {
     expect(JSON.parse(String(invokeCall?.[1]?.body))).toEqual({
       fileOrPrUrl: "https://github.com/acme/web/pull/1",
     });
+  });
+
+  // THE load-bearing eviction-net test: a bare chrome.alarms.create (or a
+  // one-shot) would still leave every "resumes polling" test below green,
+  // because those fire the alarm directly via harness.emitAlarm — they don't
+  // verify anything actually ARMS it. This is the test that would catch a
+  // regression to either. periodInMinutes is asserted explicitly, not just
+  // "some alarm was created": a one-shot alarm silently orphans a run that
+  // outlives a SECOND eviction, which is exactly what the periodic design
+  // exists to prevent (see AGENT_POLL_ALARM's doc comment in service-worker.ts).
+  test("agent-run: a successful invoke ensures the poll alarm as PERIODIC, not one-shot", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const item = {
+      id: "i1",
+      service: "github",
+      type: "pr",
+      title: "Add thing",
+      url: "https://github.com/acme/web/pull/1",
+    };
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      if (String(url).includes("/v1/items/resolve")) {
+        return jsonRes(200, { found: true, matchKind: "exact", item: { ...item, modified_at: 5 } });
+      }
+      return jsonRes(202, { runId: "run-42" });
+    });
+    harness.alarmsCreate.mockClear();
+
+    vi.useFakeTimers();
+    await harness.emitMessage({
+      kind: "agent-run",
+      lane: "impact",
+      pageUrl: "https://github.com/acme/web/pull/1",
+    });
+
+    expect(harness.alarmsCreate).toHaveBeenCalledWith(AGENT_POLL_ALARM, { periodInMinutes: 1 });
   });
 
   test("agent-run then agent-state: the persisted running state round-trips through storage", async () => {
@@ -363,7 +406,6 @@ describe("message routing — success shapes", () => {
       lane: "impact",
       pageUrl: "https://github.com/acme/web/pull/1",
     });
-    vi.useRealTimers();
     const res = await harness.emitMessage({
       kind: "agent-state",
       lane: "impact",
@@ -866,7 +908,6 @@ describe("rate-limit pacing", () => {
       delayInMinutes: 0.75,
       periodInMinutes: 1,
     });
-    vi.useRealTimers();
   });
 
   // Chrome ignores a delay under 0.5 and logs a warning, so short waits round up.
@@ -884,7 +925,6 @@ describe("rate-limit pacing", () => {
       delayInMinutes: 0.5,
       periodInMinutes: 1,
     });
-    vi.useRealTimers();
   });
 
   test("a successful clip clears an existing pause", async () => {
@@ -960,10 +1000,6 @@ describe("rate-limit pacing", () => {
 });
 
 describe("agent run polling — survives eviction", () => {
-  // The alarm name is a local literal here too, mirroring FLUSH_ALARM above —
-  // real value asserted against by the "resumes polling" test below via the URL
-  // it triggers, not against this string directly.
-  const AGENT_POLL_ALARM = "nimbus-agent-poll";
   const NOW = 1_700_000_000_000;
 
   /** Point globalThis.fetch at a handler keyed by URL, recording nothing itself —
@@ -1018,7 +1054,6 @@ describe("agent run polling — survives eviction", () => {
       kind: "done",
       brief: "answered",
     });
-    vi.useRealTimers();
   });
 
   test("stops polling a run past its expiry rather than polling forever", async () => {
@@ -1048,7 +1083,6 @@ describe("agent run polling — survives eviction", () => {
 
     expect(polls).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
-    vi.useRealTimers();
   });
 
   test("a done poll result also clears the now-empty poll alarm", async () => {
@@ -1073,7 +1107,6 @@ describe("agent run polling — survives eviction", () => {
     await fireAlarm(AGENT_POLL_ALARM);
 
     expect(harness.alarmsClear).toHaveBeenCalledWith(AGENT_POLL_ALARM);
-    vi.useRealTimers();
   });
 
   test("a stale poll result is terminal and does not auto-re-invoke", async () => {
@@ -1108,7 +1141,6 @@ describe("agent run polling — survives eviction", () => {
       reason: "stale",
     });
     expect(invokeCalls).toEqual([]);
-    vi.useRealTimers();
   });
 
   // The wire's `failed` status is a NORMAL terminal outcome (transport worked,
@@ -1140,7 +1172,6 @@ describe("agent run polling — survives eviction", () => {
       reason: "agent_failed",
       detail: "no LLM configured",
     });
-    vi.useRealTimers();
   });
 
   // A blank failureReason omits `detail` entirely — never a written
@@ -1169,6 +1200,121 @@ describe("agent run polling — survives eviction", () => {
     const state = (await getRun("gh-1", "impact", NOW))?.state;
     expect(state).toEqual({ kind: "failed", reason: "agent_failed" });
     expect(state !== undefined && "detail" in state).toBe(false);
-    vi.useRealTimers();
+  });
+
+  // C2.1's done-when is "never a silent empty lane". Without this, a run whose
+  // worker keeps waking up unpaired would sit as `running` until its 10-minute
+  // TTL lapsed, then silently become `collapsed` — a spinner that quietly
+  // resets to nothing, having told the user nothing. No fetch happens at all
+  // here (there is no connection to fetch WITH), so a stubbed fetch that throws
+  // if called doubles as proof of that.
+  test("give-up with no connection to poll with writes not_paired, not silence", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+    await load();
+    // Deliberately NOT seeding CONNECTION_KEY.
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        itemId: "gh-1",
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 60_000,
+      },
+      NOW,
+    );
+    stubFetch(() => {
+      throw new Error("must not fetch with no connection");
+    });
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+      kind: "failed",
+      reason: "not_paired",
+    });
+  });
+
+  // The OTHER give-up path: a run that outlives its own TTL. `listRunning`
+  // already filters out an ALREADY-expired run before ever polling it (see the
+  // "stops polling... rather than polling forever" test above) — this test is
+  // different: it reaches EXPIRY WHILE the in-worker backoff loop is actively
+  // ticking, which is the branch inside tickAgentPoll itself, not listRunning's
+  // filter. Needs real (fake-driven) elapsed time across two ticks, so this one
+  // fakes setTimeout too, not just Date — advancing the fake clock is what
+  // fake timers are for.
+  test("a run that outlives its TTL while still 'running' gives up as stale, not silence", async () => {
+    // load()'s own settle() relies on REAL setTimeout(0) ticks, so fake timers
+    // (including setTimeout, unlike the Date-only tests above) go on AFTER
+    // load() completes, never before.
+    await load();
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    harness.storage.set(CONNECTION_KEY, conn);
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    // Expires 600ms out: past the first backoff step (500ms) but short of the
+    // second (500 * 1.5 = 750ms), so the run is still "running" at t=0 (included
+    // by listRunning) but has expired by the time the SECOND tick fires.
+    await putRun(
+      {
+        itemId: "gh-1",
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 600,
+      },
+      NOW,
+    );
+    stubFetch(() => jsonRes(200, { status: "running" }));
+
+    harness.emitAlarm(AGENT_POLL_ALARM);
+    await vi.advanceTimersByTimeAsync(0); // the alarm's own immediate first tick
+    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+      kind: "running",
+      runId: "r1",
+    });
+    await vi.advanceTimersByTimeAsync(750); // the scheduled second tick, past expiry
+
+    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+      kind: "failed",
+      reason: "stale",
+    });
+  });
+
+  // Same expiry boundary, but the last thing actually observed before giving up
+  // was a transient gateway failure, not a `running` answer — the give-up must
+  // report THAT reason, not invent `stale` for a condition that was never
+  // ambiguous about what was wrong.
+  test("a run that outlives its TTL after only ever seeing unreachable gives up as unreachable", async () => {
+    await load();
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    harness.storage.set(CONNECTION_KEY, conn);
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        itemId: "gh-1",
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 600,
+      },
+      NOW,
+    );
+    // A doFetch rejection (not merely a non-2xx status) is what getAgentRun
+    // maps to `unreachable` — see its own try/catch.
+    stubFetch(() => {
+      throw new Error("simulated network failure");
+    });
+
+    harness.emitAlarm(AGENT_POLL_ALARM);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(750);
+
+    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+      kind: "failed",
+      reason: "unreachable",
+    });
   });
 });

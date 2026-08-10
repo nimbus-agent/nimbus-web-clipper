@@ -9,6 +9,14 @@ import {
 import { installChromeMock } from "./helpers/chrome-mock.ts";
 
 const NOW = 1_800_000_000_000;
+// The store's real key format (itemId + U+0000 + lane, matching
+// agent-run-store.ts's own KEY_SEP) — built via String.fromCharCode, never a
+// literal control character typed into this source file, which git/editors
+// mishandle. Needed by the two "drops a malformed X" tests below: a
+// mismatched key would make `getRun` miss the entry regardless of whether the
+// validation guard under test is even correct, which would make those tests
+// worthless.
+const realKey = (itemId: string, lane: string) => `${itemId}${String.fromCharCode(0)}${lane}`;
 const run = (itemId: string, lane: "impact" | "expert", expiresAtMs: number) => ({
   itemId,
   lane,
@@ -85,6 +93,67 @@ describe("agent-run-store", () => {
     await Promise.all([p1, p2]);
     expect((await getRun("i1", "impact", NOW))?.runId).toBe("i1-impact");
     expect((await getRun("i1", "expert", NOW))?.runId).toBe("i1-expert");
+  });
+
+  it("round-trips a failed state carrying a scopeGap and a detail", async () => {
+    await putRun(
+      {
+        ...run("i1", "impact", NOW + 1000),
+        state: {
+          kind: "failed",
+          reason: "insufficient_scope",
+          scopeGap: { label: "chrome", required: "agents", granted: ["clip"] },
+          detail: "no LLM configured",
+        },
+      },
+      NOW,
+    );
+    expect((await getRun("i1", "impact", NOW))?.state).toEqual({
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "agents", granted: ["clip"] },
+      detail: "no LLM configured",
+    });
+  });
+
+  // Storage is external input (the same rule the malformed-data test above pins):
+  // a hand-edited or partially-written `scopeGap`/`detail` must drop the whole
+  // entry on read, not pass a malformed shape through to a caller that trusts
+  // `getRun`'s return type.
+  it("drops a failed entry whose stored scopeGap is malformed", async () => {
+    chrome.storage.local.set({
+      agentRuns: {
+        [realKey("i1", "impact")]: {
+          itemId: "i1",
+          lane: "impact",
+          runId: "r1",
+          state: {
+            kind: "failed",
+            reason: "insufficient_scope",
+            scopeGap: { label: "chrome", required: "agents" }, // missing granted
+          },
+          expiresAtMs: NOW + 1000,
+          writtenAtMs: NOW,
+        },
+      },
+    });
+    expect(await getRun("i1", "impact", NOW)).toBeNull();
+  });
+
+  it("drops a failed entry whose stored detail is not a string", async () => {
+    chrome.storage.local.set({
+      agentRuns: {
+        [realKey("i1", "impact")]: {
+          itemId: "i1",
+          lane: "impact",
+          runId: "r1",
+          state: { kind: "failed", reason: "agent_failed", detail: 42 },
+          expiresAtMs: NOW + 1000,
+          writtenAtMs: NOW,
+        },
+      },
+    });
+    expect(await getRun("i1", "impact", NOW)).toBeNull();
   });
 
   it("does not leak the internal write-order tag across the public boundary", async () => {

@@ -9,6 +9,7 @@
 // while a fresh lane-start writes `running`) would otherwise read the same
 // snapshot and the second write would silently clobber the first.
 import { storageGet, storageSet } from "../browser/storage.ts";
+import { isScopeGap } from "../shared/messages.ts";
 import {
   AGENT_ERRORS,
   AGENT_LANES,
@@ -77,7 +78,17 @@ function isLaneState(v: unknown): v is LaneState {
     return typeof v["brief"] === "string";
   }
   if (v["kind"] === "failed") {
-    return isAgentError(v["reason"]);
+    // `reason` is required; `scopeGap` and `detail` are each optional and, when
+    // present, must be well-formed — storage is external input (a hand-edited
+    // or partially-written value), exactly like the SW→panel boundary this
+    // mirrors. Reuses `isScopeGap` rather than a second hand-rolled copy — the
+    // predicate-vs-type drift class that already shipped once as
+    // `isResolvedItem`.
+    return (
+      isAgentError(v["reason"]) &&
+      (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"])) &&
+      (v["detail"] === undefined || typeof v["detail"] === "string")
+    );
   }
   return false;
 }

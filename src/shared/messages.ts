@@ -319,7 +319,11 @@ function isResolveOutcome(v: unknown): v is ResolveOutcome {
   );
 }
 
-function isScopeGap(v: unknown): v is ScopeGap {
+/** Exported so `agent-run-store.ts`'s storage guard can reuse this instead of
+ *  hand-rolling a second copy — the exact drift class (a predicate that claims
+ *  `v is X` while checking fewer fields than X has) that already shipped once
+ *  in this repo as `isResolvedItem`. */
+export function isScopeGap(v: unknown): v is ScopeGap {
   return (
     isObject(v) &&
     typeof v["label"] === "string" &&

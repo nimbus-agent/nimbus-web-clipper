@@ -803,6 +803,27 @@ describe("getAgentRun", () => {
     });
   });
 
+  // Closes a documented gap: upstream builds the body as
+  // `...(run.error === null ? {} : { failureReason: run.error })`, so an ABSENT
+  // failureReason is well-formed ("failed, no explanation given"), while a
+  // PRESENT-but-non-string one is malformed and still falls through to
+  // server_error — the two must not be conflated.
+  it("maps failed with no failureReason at all (well-formed, not malformed)", async () => {
+    const doFetch = async () => jsonRes({ status: "failed" });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual({
+      ok: true,
+      status: "failed",
+    });
+  });
+
+  it("rejects failed with a non-string failureReason", async () => {
+    const doFetch = async () => jsonRes({ status: "failed", failureReason: 42 });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
   it("rejects done with no brief — a done run without one is malformed", async () => {
     const doFetch = async () => jsonRes({ status: "done", brief: null });
     expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual({
