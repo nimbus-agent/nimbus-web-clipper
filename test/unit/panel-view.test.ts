@@ -9,6 +9,7 @@ import {
   renderHit,
   renderHits,
   renderLane,
+  renderLaneBody,
   renderShell,
 } from "../../src/panel/panel-view.ts";
 import type { RelatedHit, ResolvedItem } from "../../src/shared/types.ts";
@@ -508,5 +509,116 @@ describe("renderHeader — fetch outcomes", () => {
     (el.querySelector("button") as HTMLButtonElement).click();
     // The whole point: a recovery click must not fire a second outbound request.
     expect(seen).toEqual(["resolve"]);
+  });
+});
+
+describe("renderLaneBody", () => {
+  it("renders a brief as TEXT, never as markup", () => {
+    const el = renderLaneBody(document, {
+      kind: "done",
+      brief: "## Impact\n\n<img src=x onerror=alert(1)>\n\n- a\n- b",
+    });
+    // The brief is gateway-generated and, on a configured gateway, LLM-generated.
+    // Parsing it would be an XSS path from model output into a Shadow DOM over the
+    // user's authenticated session.
+    expect(el.querySelector("img")).toBeNull();
+    expect(el.querySelector("h2")).toBeNull();
+    expect(el.querySelector("li")).toBeNull();
+    expect(el.textContent).toContain("<img src=x onerror=alert(1)>");
+    expect(el.textContent).toContain("## Impact");
+  });
+
+  it("shows progress while running, with no result text", () => {
+    const el = renderLaneBody(document, { kind: "running", runId: "r1" });
+    expect(el.textContent).toContain("Working");
+  });
+
+  it("offers Re-run on a stale run, and states why", () => {
+    const seen: string[] = [];
+    const el = renderLaneBody(document, { kind: "failed", reason: "stale" }, () =>
+      seen.push("rerun"),
+    );
+    expect(el.textContent?.toLowerCase()).toContain("gone");
+    (el.querySelector("button") as HTMLButtonElement).click();
+    expect(seen).toEqual(["rerun"]);
+  });
+
+  // Re-run is offered for failures a retry could actually fix, and withheld for
+  // ones it cannot. Offering it everywhere would invite a click that fails
+  // identically; withholding it everywhere but `stale` would strand a lane on a
+  // transient blip until the panel is reopened — the same dead-control shape the
+  // rate-limited retry hit in the fetch slice.
+  it("offers Re-run for transient failures", () => {
+    // `agent_failed` belongs here: the run reached the agent and the agent could not
+    // answer, which a retry may well fix. It is NOT `server_error` — the call worked.
+    for (const reason of ["stale", "unreachable", "server_error", "agent_failed"] as const) {
+      const el = renderLaneBody(document, { kind: "failed", reason }, () => undefined);
+      expect(el.querySelector("button")).not.toBeNull();
+    }
+  });
+
+  it("shows the gateway's own explanation as text, never parsed", () => {
+    const el = renderLaneBody(
+      document,
+      {
+        kind: "failed",
+        reason: "agent_failed",
+        detail: "<img src=x onerror=alert(1)> no LLM configured",
+      },
+      () => undefined,
+    );
+    expect(el.textContent).toContain("no LLM configured");
+    expect(el.querySelector("img")).toBeNull();
+  });
+
+  it("still states something when the gateway gave no explanation", () => {
+    const el = renderLaneBody(
+      document,
+      { kind: "failed", reason: "agent_failed" },
+      () => undefined,
+    );
+    expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("withholds Re-run where retrying cannot help, and says what would", () => {
+    // Each of these needs a different action — pair, re-pair, grant a scope, index
+    // the page, or a gateway that has the surface at all. A Re-run button would just
+    // fail again.
+    for (const reason of [
+      "not_paired",
+      "unauthorized",
+      "insufficient_scope",
+      "unsupported",
+      "not_resolved",
+    ] as const) {
+      const el = renderLaneBody(document, { kind: "failed", reason }, () => undefined);
+      expect(el.querySelector("button")).toBeNull();
+      expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it("names the agents scope on a scope failure, not resolve or fetch", () => {
+    const el = renderLaneBody(document, {
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "agents", granted: ["clip", "resolve"] },
+    });
+    expect(el.textContent).toContain("nimbus clip scopes chrome --set clip,resolve,agents");
+  });
+
+  // C2.1's done-when: never a silent empty lane.
+  it("renders a stated reason for every failure, never nothing", () => {
+    for (const reason of [
+      "not_paired",
+      "unauthorized",
+      "unsupported",
+      "not_resolved",
+      "agent_failed",
+      "unreachable",
+      "server_error",
+    ] as const) {
+      const el = renderLaneBody(document, { kind: "failed", reason });
+      expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    }
   });
 });
