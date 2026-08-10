@@ -572,6 +572,15 @@ export const MAX_STORED_RUNS = 16;
 
 Key by `${itemId}\u0000${lane}` (a separator that cannot occur in either). Guard every read.
 
+**The cap is enforced on WRITE, not only on read** — which is what makes a startup
+cleanup sweep unnecessary. Review raised expired runs sitting in storage for days
+after the browser closes. They can, but the store cannot exceed 16 entries at any
+point, because `putRun` evicts before writing. The worst resting state is 16 stale
+briefs — on the order of a hundred kilobytes against a 10 MB quota — and each is
+dropped the moment it is read. A `runtime.onInstalled` sweep would add a lifecycle
+hook and a second eviction path to reclaim that. Not worth it; revisit if briefs
+ever grow large enough for 16 of them to matter.
+
 - [ ] **Step 4: Run the tests**
 
 Run: `bun run typecheck && bun run test`
@@ -752,8 +761,34 @@ const POLL_MAX_MS = 2_000;
 ```
 
 - In-worker loop: `setTimeout`, starting at `POLL_START_MS`, backing off (×1.5) to `POLL_MAX_MS`. Stops on terminal state or `expiresAtMs`.
-- Alarm handler: `listRunning(now)` → resume the loop for each. Register the alarm when a run starts; clear it when none remain.
+- Alarm handler: `listRunning(now)` → resume the loop for each.
 - A `stale` poll result is terminal: store `{kind:"failed", reason:"stale"}` and stop. Do **not** auto-re-invoke — that would fire a fresh agent run the user did not ask for.
+
+**The alarm is PERIODIC, and this is not a detail.** Use the existing seam exactly as
+the clip queue does:
+
+```ts
+await ensureAlarm(AGENT_POLL_ALARM, 1);   // when a run starts
+// ...in the alarm handler, after resuming:
+if ((await listRunning(Date.now())).length === 0) {
+  await clearAlarm(AGENT_POLL_ALARM);
+}
+```
+
+A **one-shot** alarm would orphan a run permanently on a *second* eviction: the
+worker wakes, starts polling, is evicted again before the run settles, and nothing
+ever fires again — the brief is lost even though the gateway produced it. A
+periodic alarm self-heals, because every minute is another chance to resume.
+
+`ensureAlarm` is already a genuine "ensure" — it checks `chrome.alarms.get` first
+and does not re-create, because `chrome.alarms.create` *cancels and replaces* a
+same-named alarm and restarts its countdown. Calling `create` on every run start
+would push the next fire out indefinitely and a run could never be recovered. That
+bug is documented in `src/browser/alarms.ts` and was already paid for once by the
+clip queue; do not reintroduce it.
+
+Clearing when `listRunning` is empty matters too: a periodic alarm left armed wakes
+the worker every minute forever, for nothing.
 
 - [ ] **Step 4: Run the tests**
 
@@ -804,6 +839,28 @@ describe("renderLaneBody", () => {
     expect(seen).toEqual(["rerun"]);
   });
 
+  // Re-run is offered for failures a retry could actually fix, and withheld for
+  // ones it cannot. Offering it everywhere would invite a click that fails
+  // identically; withholding it everywhere but `stale` would strand a lane on a
+  // transient blip until the panel is reopened — the same dead-control shape the
+  // rate-limited retry hit in the fetch slice.
+  it("offers Re-run for transient failures", () => {
+    for (const reason of ["stale", "unreachable", "server_error"] as const) {
+      const el = renderLaneBody(document, { kind: "failed", reason }, () => undefined);
+      expect(el.querySelector("button")).not.toBeNull();
+    }
+  });
+
+  it("withholds Re-run where retrying cannot help, and says what would", () => {
+    // Each of these needs a different action — pair, re-pair, grant a scope, or a
+    // gateway that has the surface at all. A Re-run button would just fail again.
+    for (const reason of ["not_paired", "unauthorized", "insufficient_scope", "unsupported"] as const) {
+      const el = renderLaneBody(document, { kind: "failed", reason }, () => undefined);
+      expect(el.querySelector("button")).toBeNull();
+      expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
   it("names the agents scope on a scope failure, not resolve or fetch", () => {
     const el = renderLaneBody(document, {
       kind: "failed", reason: "insufficient_scope",
@@ -830,6 +887,29 @@ Expected: FAIL — `renderLaneBody` is not exported.
 - [ ] **Step 3: Implement**
 
 `renderLaneBody(doc, state, onRerun?)`. The `done` arm builds a `<pre class="nimbus-related__brief">` and sets `textContent` — one assignment, no parsing, no `innerHTML`. Add a CSS rule for it in `panel-in-page.ts`'s `STYLES` (`white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 0`), since `:host { all: initial }` gives `<pre>` no useful defaults.
+
+**Put the reason in the code, directly above that assignment.** Nothing enforces
+this mechanically — Biome's security rules here are `noGlobalEval` only, and it has
+no rule for a raw `.innerHTML` assignment — so the convention is held by comments
+and review, as it is in the five other files that state it. Of all of them this is
+the one most likely to be "improved" into a markdown renderer by someone who does
+not know where the string came from:
+
+```ts
+// textContent, NEVER innerHTML, and never a markdown-to-HTML pass.
+//
+// This string is the agent's brief. On a gateway with an LLM configured it is
+// MODEL OUTPUT, and it renders inside a Shadow DOM overlaying the user's
+// authenticated session on github.com. Parsing it would be a direct XSS path from
+// whatever the model emitted.
+//
+// The cost is real and accepted: no headings, no bold, no clickable links. A safe
+// renderer (allow-listed subset, or a sanitiser) is a separate, deliberate
+// decision — not something to add here because the output looks plain.
+pre.textContent = state.brief;
+```
+
+Only Re-run-able failures get a button, per the tests above.
 
 The `failed`/`insufficient_scope` arm reuses `appendScopeGuidance` — the helper extracted in the fetch slice — so all three scope messages stay one implementation.
 
@@ -910,6 +990,21 @@ Expected: FAIL — no agent lanes are built.
 Build the two lanes **only when the header is `resolved` or `chosen`** — there is no item to ask about otherwise. Each lane's `render` delegates to `renderLaneBody` with that lane's state.
 
 Attach a `toggle` listener per lane: on open, send `agent-run`; start a ~1 s `agent-state` poll while the state is `running`; stop on any terminal state or when the panel closes.
+
+**Guard against a double invoke on rapid toggling.** Keep an in-memory
+`Set<AgentLane>` of lanes with a request in flight, add on send, remove on
+response, and ignore a `toggle` for a lane already in it.
+
+Without it: expand → collapse → expand before the worker has persisted
+`{kind:"running"}` sends a second `agent-run`, and `handleAgentRun`'s cached-state
+check still reads `null`, so it invokes again. That is **two agent runs and, on a
+configured gateway, two model calls** for one question — and it consumes two of the
+gateway's three run slots.
+
+`chrome.storage` is not transactional, so the handler's check cannot be made
+race-free on its own; it stays as defence in depth, but the panel-side set is the
+guard that actually holds. Add a test: three rapid toggles send exactly one
+`agent-run`.
 
 Keep the two cadences separate and say so in a comment: the worker→gateway poll is what completes a run and survives the panel closing; this panel→worker poll only repaints an open panel.
 
