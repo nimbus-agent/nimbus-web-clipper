@@ -84,6 +84,48 @@ const LANE_TITLES: Record<AgentLane, string> = {
  *  service-worker.ts's tickAgentPoll and keeps running after this panel closes). */
 const AGENT_POLL_MS = 1_000;
 
+/**
+ * Attaches a lane's `<details>` toggle listener — swallowing exactly the
+ * FIRST toggle event the element ever receives if it just repeats the `open`
+ * value the element was already created with, and delivering every other one
+ * (including a genuine SECOND toggle on the same still-mounted element) to
+ * `onToggle`.
+ *
+ * `renderLane` (panel-view.ts) sets `details.open = lane.expanded` on a
+ * FRESH element every repaint. Per the HTML spec — confirmed directly in
+ * jsdom, including on a still-detached element, regardless of when a
+ * listener is attached relative to it — that queues a "toggle" task exactly
+ * like a real click would, EVEN THOUGH nothing was clicked. Left unguarded,
+ * every repaint of an already-expanded lane would replay as a fresh "expand"
+ * — and if the caller's own state ever reads a value that its own toggle
+ * handler treats as "never asked yet" while the lane sits open, each replay
+ * would invoke a brand-new action, forever, from one real click. This
+ * function holds as an INVARIANT over any repaint of any open lane — a
+ * programmatic open that just repeats the element's own starting value is
+ * never a user action — independent of whatever the caller's state happens
+ * to be at the time.
+ *
+ * A pure DOM-level invariant, deliberately kept free of `AgentLane`/
+ * `LaneState`/panel closure state so it is testable one level down from the
+ * full panel: build an element with a starting `open` value, attach, and
+ * assert whether `onToggle` fires — no panel state, message scripting, or
+ * poll required. See its own tests in panel-in-page.test.ts.
+ */
+export function attachLaneToggle(el: HTMLDetailsElement, onToggle: (open: boolean) => void): void {
+  let startedOpen: boolean | null = el.open;
+  el.addEventListener("toggle", () => {
+    const open = el.open;
+    if (startedOpen !== null) {
+      const synthetic = open === startedOpen;
+      startedOpen = null;
+      if (synthetic) {
+        return;
+      }
+    }
+    onToggle(open);
+  });
+}
+
 // Inlined so the panel is fully self-contained. `:host { all: initial }` drops
 // inherited page styles; only our own --nimbus-* tokens are referenced, with a
 // dark set behind prefers-color-scheme (custom props survive `all: initial`).
@@ -637,49 +679,22 @@ function createPanel(body: HTMLElement): {
     // `renderShell`/`renderLane` build a fresh <details> every repaint — attach
     // this repaint's toggle listeners after the fact rather than threading a
     // callback through `Lane`, which every OTHER lane (including "related")
-    // does not need.
+    // does not need. `attachLaneToggle` (above) is what filters out the
+    // synthetic "toggle" a fresh, already-expanded element queues on its own
+    // — this loop only wires it to this lane's own handler.
+    //
+    // A `pollLane` answer of `collapsed` for a lane the user has open is
+    // converted to `failed`/`stale` before it is ever stored (see `pollLane`
+    // above), so that specific path can no longer reach `onLaneToggle`'s own
+    // `kind === "collapsed"` invoke condition while a lane sits open — but
+    // `attachLaneToggle`'s suppression is the general-purpose one underneath
+    // it, independent of whatever the caller's state happens to be.
     for (const lane of AGENT_LANES) {
       const el = body.querySelector<HTMLDetailsElement>(`[data-lane="${lane}"]`);
       if (el === null) {
         continue;
       }
-      // `renderLane` sets `details.open = lane.expanded` on this FRESH
-      // element. Per the HTML spec — confirmed directly in jsdom — that
-      // queues a "toggle" task exactly like a real click would, EVEN THOUGH
-      // nothing was clicked: the task fires later, asynchronously, and
-      // reaches whatever "toggle" listener is attached by then (this one),
-      // synthesising a user-open event out of a plain repaint. Left
-      // unguarded, every repaint of an already-expanded lane would replay as
-      // a fresh "expand" — and if `laneState[lane].kind` were ever
-      // `collapsed` while the lane sits open, each replay would invoke a
-      // brand-new gateway run, forever, from one real click. `pollLane`
-      // (below) now converts exactly that combination to `failed`/`stale`
-      // before it is ever stored, so this specific outcome is doubly guarded
-      // in practice — but THIS suppression is the general-purpose one: it
-      // holds as an invariant over any repaint of any open lane, regardless
-      // of what caused it, not only the one path `pollLane` closes.
-      //
-      // `startedOpen` records what THIS element was created with. The FIRST
-      // toggle event it ever receives, if it just repeats that value, has no
-      // user intent behind it and is swallowed once. A genuine SECOND toggle
-      // on this same still-mounted element (an actual click) is never
-      // suppressed — and when the lane was created collapsed, no synthetic
-      // task is ever queued in the first place (no attribute change happens
-      // when `open` is left at its default `false`), so a real first expand
-      // is never mistaken for one either.
-      let startedOpen: boolean | null = el.open;
-      el.addEventListener("toggle", () => {
-        const open = el.open;
-        if (startedOpen !== null) {
-          const synthetic = open === startedOpen;
-          startedOpen = null;
-          if (synthetic) {
-            laneOpen[lane] = open;
-            return;
-          }
-        }
-        onLaneToggle(lane, open);
-      });
+      attachLaneToggle(el, (open) => onLaneToggle(lane, open));
     }
   }
 

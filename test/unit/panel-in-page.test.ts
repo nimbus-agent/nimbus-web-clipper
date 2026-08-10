@@ -1137,41 +1137,37 @@ describe("panel-in-page agent lanes", () => {
       expect(sent.filter((k) => k === "agent-state").length).toBe(before);
     });
 
-    // CRITICAL 2 (review round 1): `renderLane` (panel-view.ts) sets
-    // `details.open = lane.expanded` on a FRESH element every repaint. Per the
-    // HTML spec — confirmed directly in jsdom — that queues a "toggle" task
-    // just like a real click, even on a still-detached element, regardless of
-    // when a listener is attached relative to it. So repainting an EXPANDED
-    // lane always synthesises an open event out of nothing. Left unguarded,
-    // once that lane's cached state has gone stale back to `collapsed` (a
-    // resumed run's TTL lapsing, or eviction past MAX_STORED_RUNS —
-    // handleAgentState's own `?? {kind:"collapsed"}` fallback), each repaint
-    // invokes a brand-new gateway run, WHOSE OWN optimistic+real repaints each
-    // queue their own synthetic toggle too — a tight, self-sustaining loop
-    // from one real click, confirmed directly against the unfixed code below
-    // (it did not merely grow linearly; it pegged the event loop until the
-    // test runner itself gave up). The 3rd scripted answer below is what
-    // makes an unfixed run bounded rather than an actual hang in this suite:
-    // `done` is neither `running` (nothing left to poll) nor `collapsed`
-    // (onLaneToggle's own guard then blocks any further synthetic re-invoke),
-    // so a regression here fails with a clean, finite assertion instead of
-    // timing out the whole file.
+    // This is an END-TO-END regression test for a USER-VISIBLE property, NOT
+    // a test of `attachLaneToggle`'s own suppression — see
+    // `describe("panel-in-page attachLaneToggle", …)` below for that. Do not
+    // read a failure here as proof `attachLaneToggle` broke: TWO independent
+    // fixes both prevent this specific outcome today (`attachLaneToggle`'s
+    // synthetic-toggle suppression, AND `pollLane` no longer ever storing
+    // `collapsed` for an open lane — see review round 2), so this test can
+    // no longer tell you WHICH one is doing the work. It is kept anyway
+    // because the property itself — repainting an expanded lane must never
+    // auto-invoke an agent on its own — is worth holding independently of
+    // which layer currently delivers it.
     //
-    // NOTE (review round 2): the fix below (pollLane converting a `collapsed`
-    // answer to `failed`/`stale` whenever the lane is open — see the next
-    // describe block) now ALSO makes this exact outcome unreachable on its
-    // own: `laneState[lane].kind` can no longer read `collapsed` while a lane
-    // is open, which is the one thing `onLaneToggle`'s pre-existing guard
-    // checks. Verified by mutation that this test, as scripted, no longer
-    // discriminates the `startedOpen` suppression in ISOLATION once that other
-    // fix is in place — removing `startedOpen` alone, with the `pollLane` fix
-    // still present, no longer fails it. Left in place regardless: it still
-    // pins a true, valuable property (no double-invoke from a stale poll
-    // answer), `startedOpen` remains a real, independently-reasoned invariant
-    // for ANY repaint of an open lane (not only this one path), and I did not
-    // want to manufacture an artificial scenario for a combination that may no
-    // longer be reachable through any live code path just to keep one test
-    // green in isolation.
+    // Original finding (review round 1, CRITICAL 2): `renderLane`
+    // (panel-view.ts) sets `details.open = lane.expanded` on a FRESH element
+    // every repaint. Per the HTML spec — confirmed directly in jsdom — that
+    // queues a "toggle" task just like a real click, even on a still-detached
+    // element, regardless of when a listener is attached relative to it. So
+    // repainting an EXPANDED lane always synthesises an open event out of
+    // nothing. Left unguarded, once a lane's cached state went stale back to
+    // `collapsed` (a resumed run's TTL lapsing, or eviction past
+    // MAX_STORED_RUNS — handleAgentState's own `?? {kind:"collapsed"}`
+    // fallback), each repaint invoked a brand-new gateway run, WHOSE OWN
+    // optimistic+real repaints queued their own synthetic toggle too — a
+    // tight, self-sustaining loop from one real click, confirmed directly
+    // against the unfixed code (it did not merely grow linearly; it pegged
+    // the event loop until the test runner itself gave up). The 3rd scripted
+    // answer below is what keeps an unfixed run bounded rather than an actual
+    // hang in this suite: `done` is neither `running` (nothing left to poll)
+    // nor `collapsed` (`onLaneToggle`'s own guard then blocks any further
+    // synthetic re-invoke), so a regression here fails with a clean, finite
+    // assertion instead of timing out the whole file.
     it("does not auto-re-invoke when a repaint reflects a lane that has gone stale back to collapsed", async () => {
       const sent: string[] = [];
       const panel = await mountResolvedPanel(sent, {}, [
@@ -1306,5 +1302,92 @@ describe("panel-in-page agent lanes", () => {
       await advanceTimers(10_000);
       expect(sent).toEqual(["agent-run", "agent-state"]);
     });
+  });
+});
+
+// Review round 3: `attachLaneToggle`'s own invariant, pinned one level down
+// from the full panel — no panel state, message scripting, or poll. The
+// end-to-end test above ("does not auto-re-invoke when a repaint reflects a
+// lane that has gone stale back to collapsed") no longer discriminates this
+// function in isolation, since a second, independent fix (pollLane never
+// storing `collapsed` for an open lane) now also prevents that outcome. THIS
+// describe block is what actually exercises `attachLaneToggle`'s own
+// contract: swallow exactly the first toggle that just repeats the value the
+// element was created with, and deliver every other one.
+describe("panel-in-page attachLaneToggle", () => {
+  /** `panel-in-page.ts` runs mount() as a module-level side effect on import
+   *  (see the file's own docblock) — there is no way to import it without
+   *  that side effect firing. `attachLaneToggle` itself needs none of that
+   *  side effect's state: it is a pure DOM-level helper, so the mounted panel
+   *  this leaves behind is inert clutter, cleaned up like every other test's
+   *  by the file's global `afterEach`. */
+  async function loadAttachLaneToggle(): Promise<
+    (el: HTMLDetailsElement, onToggle: (open: boolean) => void) => void
+  > {
+    vi.resetModules();
+    const mod = (await import(MODULE_PATH)) as {
+      attachLaneToggle: (el: HTMLDetailsElement, onToggle: (open: boolean) => void) => void;
+    };
+    return mod.attachLaneToggle;
+  }
+
+  it("swallows a toggle event whose open value matches what the element started with — a programmatic open is not a user action", async () => {
+    const attachLaneToggle = await loadAttachLaneToggle();
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    details.append(summary);
+    // As renderLane does for an already-expanded lane: `open` is set on a
+    // FRESH element BEFORE any listener is attached.
+    details.open = true;
+    document.body.append(details);
+
+    const calls: boolean[] = [];
+    attachLaneToggle(details, (open) => calls.push(open));
+
+    // Let the HTML-spec-queued "toggle" task fire — confirmed directly in
+    // jsdom that setting `open` on a fresh element queues this task even
+    // though nothing was clicked, and even on an element not yet attached to
+    // the document at the moment `open` was set.
+    await flush();
+
+    expect(calls).toEqual([]);
+  });
+
+  it("still delivers a genuine second toggle on the same element — the guard does not just swallow everything", async () => {
+    const attachLaneToggle = await loadAttachLaneToggle();
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    details.append(summary);
+    details.open = true;
+    document.body.append(details);
+
+    const calls: boolean[] = [];
+    attachLaneToggle(details, (open) => calls.push(open));
+    await flush(); // the synthetic one, swallowed — see the test above
+
+    summary.click(); // a REAL user click — flips `open` to a DIFFERENT value
+    await flush();
+
+    // A guard that simply swallowed every event would leave this empty too —
+    // this is the positive control that proves it does not.
+    expect(calls).toEqual([false]);
+  });
+
+  it("delivers the very first toggle when the element was created collapsed — a real first expand is never mistaken for a synthetic one", async () => {
+    const attachLaneToggle = await loadAttachLaneToggle();
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    details.append(summary);
+    // Left at the default `false` — no attribute change happens, so no
+    // synthetic task is ever queued for this element in the first place.
+    document.body.append(details);
+
+    const calls: boolean[] = [];
+    attachLaneToggle(details, (open) => calls.push(open));
+
+    summary.click(); // a REAL first expand
+    await flush();
+
+    expect(calls).toEqual([true]);
   });
 });
