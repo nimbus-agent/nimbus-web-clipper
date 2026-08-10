@@ -726,7 +726,7 @@ Expected: FAIL — `handleAgentRun` does not exist.
 
 - [ ] **Step 3: Implement**
 
-`handleAgentRun` resolves the page first (it needs the item id to key the cache, and the title for `expert`), returns any cached non-`collapsed` state without invoking, then invokes and persists `{kind:"running", runId}`. On `busy` it waits `retryAfterMs` and retries **once** before reporting `server_error` — a second 429 within a second means genuine contention, and the lane's own re-run affordance covers it.
+`handleAgentRun` resolves the page first (it needs the item id to key the cache, and the title for `expert`), returns any cached non-`collapsed` state without invoking, then invokes and persists `{kind:"running", runId}`. (Task 6 narrows that short-circuit to `running` and `done` once it starts persisting failures — a cached `failed` must not make Re-run inert.) On `busy` it waits `retryAfterMs` and retries **once**. Only a *second* `busy` becomes `server_error` — a second 429 within a second means genuine contention, and the lane's own re-run affordance covers it. Any other failure on the retry is reported **as itself**: collapsing a 403 into `server_error` would strip the `scopeGap` and tell the user Nimbus is broken when the answer is "grant a scope".
 
 Both refusal paths — an unrecognised page, and a resolve that misses or comes back
 ambiguous — report `not_resolved`, never `unsupported`. `unsupported` is a claim
@@ -822,6 +822,29 @@ const POLL_MAX_MS = 2_000;
 - In-worker loop: `setTimeout`, starting at `POLL_START_MS`, backing off (×1.5) to `POLL_MAX_MS`. Stops on terminal state or `expiresAtMs`.
 - Alarm handler: `listRunning(now)` → resume the loop for each.
 - A `stale` poll result is terminal: store `{kind:"failed", reason:"stale"}` and stop. Do **not** auto-re-invoke — that would fire a fresh agent run the user did not ask for.
+
+**Narrow `handleAgentRun`'s cache short-circuit to `running` and `done`.** Task 5 built
+it to return any cached non-`collapsed` state, which was right when nothing persisted
+a failure. This task is what starts persisting one — and with the wider check, the
+Re-run button that `AgentError`'s own doc comment promises ("One state, one Re-run")
+would be inert: the click re-sends `agent-run`, hits the cached `failed`, and returns
+it unchanged until the 10-minute TTL expires. Change the guard in
+`src/background/handlers.ts` to:
+
+```ts
+// Only `running` and `done` short-circuit. A `failed` state is not an answer, and
+// `agent-run` only arrives from an explicit user action — expanding a lane or
+// pressing Re-run — so re-asking is what the user just asked for. It also self-heals:
+// the moment they grant the missing scope, the next expand succeeds instead of
+// replaying a stale 403 for the rest of the TTL.
+if (cached !== null && (cached.state.kind === "running" || cached.state.kind === "done")) {
+```
+
+`handleAgentState` is unaffected — it is a passive read and must keep returning the
+cached `failed` state, or the panel would re-invoke on every state query.
+
+Add a test: a cached `{kind:"failed", reason:"stale"}` plus an `agent-run` DOES invoke,
+while a cached `done` still does not.
 
 **The alarm is PERIODIC, and this is not a detail.** Use the existing seam exactly as
 the clip queue does:
