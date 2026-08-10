@@ -368,5 +368,36 @@ describe("agent-lane guards", () => {
         }),
       ).toBe(false);
     });
+
+    it("accepts a failed state carrying a well-formed scopeGap", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: {
+            kind: "failed",
+            reason: "insufficient_scope",
+            scopeGap: { label: "chrome", required: "agents", granted: ["clip", "resolve"] },
+          },
+        }),
+      ).toBe(true);
+    });
+
+    it("rejects a failed state carrying a malformed scopeGap", () => {
+      for (const scopeGap of [
+        { label: "chrome", required: "agents" }, // missing granted
+        { label: "chrome", required: "agents", granted: [1, 2] }, // non-string granted
+        { required: "agents", granted: [] }, // missing label
+        "chrome",
+      ]) {
+        expect(
+          isAgentStateResponse({
+            kind: "agent-state",
+            lane: "impact",
+            state: { kind: "failed", reason: "insufficient_scope", scopeGap },
+          }),
+        ).toBe(false);
+      }
+    });
   });
 });

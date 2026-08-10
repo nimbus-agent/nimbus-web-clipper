@@ -265,10 +265,12 @@ describe("message routing — success shapes", () => {
       pageUrl: "https://example.com/nope",
     });
 
+    // `not_resolved`, never `unsupported` — this is a condition of the PAGE
+    // (nothing recognised), not a claim that the gateway lacks an agents surface.
     expect(res).toEqual({
       kind: "agent-state",
       lane: "impact",
-      state: { kind: "failed", reason: "unsupported" },
+      state: { kind: "failed", reason: "not_resolved" },
     });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
@@ -287,7 +289,7 @@ describe("message routing — success shapes", () => {
     expect(res).toEqual({
       kind: "agent-state",
       lane: "impact",
-      state: { kind: "failed", reason: "unsupported" },
+      state: { kind: "failed", reason: "not_resolved" },
     });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });

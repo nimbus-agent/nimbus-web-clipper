@@ -30,12 +30,14 @@ import type {
   Connection,
   FetchError,
   FetchOutcome,
+  LaneState,
   PairError,
   RelatedError,
   RelatedHit,
   ResolvedItem,
   ResolveError,
   ResolveOutcome,
+  ScopeGap,
 } from "../shared/types.ts";
 import type { StoredRun } from "./agent-run-store.ts";
 
@@ -220,22 +222,26 @@ export async function handleFetch(deps: FetchDeps, req: FetchRequest): Promise<F
   return { kind: "fetch", ok: true, recognition, outcome: r.outcome };
 }
 
+/** A scope gap as the gateway's 403 body carries it — before the device label
+ *  (only `handlers.ts` holds a `Connection`) is attached. */
+type RawScopeGap = { readonly required: string; readonly granted: string[] };
+
 /** The result of a call to `invokeAgent`, without the wire's `busy` reason — the
  *  retry loop below absorbs `busy` and never lets it escape as a lane state. */
 type InvokeResult =
   | { readonly ok: true; readonly runId: string }
-  | { readonly ok: false; readonly reason: AgentError };
+  | { readonly ok: false; readonly reason: AgentError; readonly scopeGap?: RawScopeGap };
 
 export interface AgentRunDeps {
   readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
-  readonly getConnection: () => Promise<{ origin: string; token: string } | null>;
+  readonly getConnection: () => Promise<{ origin: string; token: string; label: string } | null>;
   readonly resolveItem: (
     origin: string,
     token: string,
     pageUrl: string,
   ) => Promise<
     | { ok: true; outcome: ResolveOutcome }
-    | { ok: false; reason: ResolveError; scopeGap?: { required: string; granted: string[] } }
+    | { ok: false; reason: ResolveError; scopeGap?: RawScopeGap }
   >;
   readonly invokeAgent: (
     origin: string,
@@ -244,7 +250,7 @@ export interface AgentRunDeps {
     params: unknown,
   ) => Promise<
     | { ok: true; runId: string }
-    | { ok: false; reason: AgentError; scopeGap?: { required: string; granted: string[] } }
+    | { ok: false; reason: AgentError; scopeGap?: RawScopeGap }
     | { ok: false; reason: "busy"; retryAfterMs: number }
   >;
   readonly getRun: (itemId: string, lane: AgentLane) => Promise<StoredRun | null>;
@@ -253,7 +259,7 @@ export interface AgentRunDeps {
 
 export interface AgentStateDeps {
   readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
-  readonly getConnection: () => Promise<{ origin: string; token: string } | null>;
+  readonly getConnection: () => Promise<{ origin: string; token: string; label: string } | null>;
   readonly resolveItem: AgentRunDeps["resolveItem"];
   readonly getRun: (itemId: string, lane: AgentLane) => Promise<StoredRun | null>;
 }
@@ -291,11 +297,12 @@ type ResolveForAgent =
       readonly ok: true;
       readonly origin: string;
       readonly token: string;
+      readonly label: string;
       /** The URL sent to `resolve` — the same one `impact` is given. */
       readonly resolveUrl: string;
       readonly item: ResolvedItem;
     }
-  | { readonly ok: false; readonly reason: AgentError };
+  | { readonly ok: false; readonly reason: AgentError; readonly scopeGap?: ScopeGap };
 
 /**
  * Recognise the page, then resolve it to at most one indexed item — exactly the
@@ -303,9 +310,9 @@ type ResolveForAgent =
  * gate (no gateway call for a page we cannot classify) and the item id a lane is
  * cached under.
  *
- * There is no `AgentError` member for "recognised but no single item" — a
- * resolve miss and an unrecognised page both settle on `unsupported`: retrying
- * cannot help either one, only visiting an indexed page can.
+ * `not_resolved` is a condition of the PAGE — unrecognised, or a resolve
+ * miss/ambiguous answer — never of the gateway; it must not be confused with
+ * `unsupported`, which means the gateway itself has no agents surface.
  */
 async function resolveForAgent(
   deps: Pick<AgentStateDeps, "getOrigins" | "getConnection" | "resolveItem">,
@@ -315,7 +322,7 @@ async function resolveForAgent(
   if (!recognition.ok) {
     // Nothing to ask the gateway about — the recogniser is the boundary deciding
     // which URLs may reach it at all. No resolve call, no invoke.
-    return { ok: false, reason: "unsupported" };
+    return { ok: false, reason: "not_resolved" };
   }
   const conn = await deps.getConnection();
   if (conn === null) {
@@ -323,17 +330,24 @@ async function resolveForAgent(
   }
   const resolved = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!resolved.ok) {
-    return { ok: false, reason: resolved.reason };
+    return resolved.scopeGap === undefined
+      ? { ok: false, reason: resolved.reason }
+      : {
+          ok: false,
+          reason: resolved.reason,
+          scopeGap: { label: conn.label, ...resolved.scopeGap },
+        };
   }
   if (resolved.outcome.kind !== "found") {
     // A miss (not-indexed / unresolvable / ambiguous) means there is no single
     // item to ask about — refuse rather than guess.
-    return { ok: false, reason: "unsupported" };
+    return { ok: false, reason: "not_resolved" };
   }
   return {
     ok: true,
     origin: conn.origin,
     token: conn.token,
+    label: conn.label,
     resolveUrl: recognition.resolveUrl,
     item: resolved.outcome.item,
   };
@@ -345,6 +359,18 @@ async function resolveForAgent(
  *  broader question — the same people for every PR in the repo). */
 function agentParams(lane: AgentLane, resolveUrl: string, item: ResolvedItem): unknown {
   return lane === "impact" ? { fileOrPrUrl: resolveUrl } : { topicOrFile: item.title };
+}
+
+/** Build the response for a `failed` lane, attaching the scope gap only when
+ *  one is present — never a fabricated one. */
+function failedResponse(
+  lane: AgentLane,
+  reason: AgentError,
+  scopeGap?: ScopeGap,
+): AgentStateResponse {
+  const state: LaneState =
+    scopeGap === undefined ? { kind: "failed", reason } : { kind: "failed", reason, scopeGap };
+  return { kind: "agent-state", lane, state };
 }
 
 /**
@@ -360,13 +386,9 @@ export async function handleAgentRun(
 ): Promise<AgentStateResponse> {
   const resolved = await resolveForAgent(deps, req.pageUrl);
   if (!resolved.ok) {
-    return {
-      kind: "agent-state",
-      lane: req.lane,
-      state: { kind: "failed", reason: resolved.reason },
-    };
+    return failedResponse(req.lane, resolved.reason, resolved.scopeGap);
   }
-  const { origin, token, resolveUrl, item } = resolved;
+  const { origin, token, label, resolveUrl, item } = resolved;
 
   const cached = await deps.getRun(item.id, req.lane);
   if (cached !== null && cached.state.kind !== "collapsed") {
@@ -376,11 +398,10 @@ export async function handleAgentRun(
   const params = agentParams(req.lane, resolveUrl, item);
   const invoked = await invokeWithRetry(deps, origin, token, req.lane, params);
   if (!invoked.ok) {
-    return {
-      kind: "agent-state",
-      lane: req.lane,
-      state: { kind: "failed", reason: invoked.reason },
-    };
+    // Only `handlers.ts` holds a `Connection`, so the device label is attached
+    // here — exactly as `handleResolve` and `handleFetch` already do.
+    const scopeGap = invoked.scopeGap === undefined ? undefined : { label, ...invoked.scopeGap };
+    return failedResponse(req.lane, invoked.reason, scopeGap);
   }
   const state = { kind: "running" as const, runId: invoked.runId };
   await deps.putRun({ itemId: item.id, lane: req.lane, runId: invoked.runId, state });
@@ -395,11 +416,7 @@ export async function handleAgentState(
 ): Promise<AgentStateResponse> {
   const resolved = await resolveForAgent(deps, req.pageUrl);
   if (!resolved.ok) {
-    return {
-      kind: "agent-state",
-      lane: req.lane,
-      state: { kind: "failed", reason: resolved.reason },
-    };
+    return failedResponse(req.lane, resolved.reason, resolved.scopeGap);
   }
   const cached = await deps.getRun(resolved.item.id, req.lane);
   return { kind: "agent-state", lane: req.lane, state: cached?.state ?? { kind: "collapsed" } };

@@ -434,7 +434,11 @@ function isLaneState(v: unknown): v is LaneState {
   if (v["kind"] === "done") {
     return typeof v["brief"] === "string";
   }
-  return v["kind"] === "failed" && typeof v["reason"] === "string";
+  return (
+    v["kind"] === "failed" &&
+    typeof v["reason"] === "string" &&
+    (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"]))
+  );
 }
 
 export function isAgentStateResponse(v: unknown): v is AgentStateResponse {

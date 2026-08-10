@@ -243,7 +243,17 @@ export type LaneState =
   | { readonly kind: "collapsed" }
   | { readonly kind: "running"; readonly runId: string }
   | { readonly kind: "done"; readonly brief: string }
-  | { readonly kind: "failed"; readonly reason: AgentError };
+  | {
+      readonly kind: "failed";
+      readonly reason: AgentError;
+      /**
+       * Present only on `insufficient_scope`, and only when the gateway's 403
+       * carried the detail. `panel-view.ts` builds the exact
+       * `nimbus clip scopes … --set …` command from it via `scopeCommand`;
+       * absent, it falls back to generic guidance rather than inventing one.
+       */
+      readonly scopeGap?: ScopeGap;
+    };
 
 /**
  * `stale` collapses the poll's 404 and 410. Upstream distinguishes them —
@@ -261,6 +271,14 @@ export type AgentError =
   | "insufficient_scope"
   /** 404 — unknown agent, or this gateway has no agents surface. */
   | "unsupported"
+  /**
+   * There is no single indexed item for this page to ask an agent about — the
+   * page is unrecognised, or it resolved to a miss/ambiguous answer. A
+   * condition of the PAGE, never of the gateway: reporting it as `unsupported`
+   * would say "this gateway can't run agents yet" about a gateway that runs
+   * them fine.
+   */
+  | "not_resolved"
   | "stale"
   | "unreachable"
   | "server_error";

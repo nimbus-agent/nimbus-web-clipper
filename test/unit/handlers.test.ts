@@ -618,6 +618,9 @@ describe("handleAgentRun", () => {
     );
     expect(called).toBe(false);
     expect(res).toMatchObject({ kind: "agent-state", lane: "impact" });
+    // `not_resolved`, never `unsupported`: a page condition, not a gateway one —
+    // a weaker `toMatchObject({kind:"failed"})` alone would pass either way.
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
   });
 
   it("sends impact the page URL and expert the item title", async () => {
@@ -704,6 +707,8 @@ describe("handleAgentRun", () => {
       { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
     );
     expect(res.state).toMatchObject({ kind: "failed" });
+    // A resolve miss is a page condition, not a gateway one — `not_resolved`.
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
   });
 
   it("short-circuits before resolving when not paired", async () => {
@@ -813,6 +818,76 @@ describe("handleAgentRun", () => {
     expect(calls).toBe(2);
     expect(res.state).toEqual({ kind: "failed", reason: "server_error" });
   });
+
+  it("attaches the device label to a 403's scope gap from invokeAgent", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => ({
+          ok: false as const,
+          reason: "insufficient_scope" as const,
+          scopeGap: { required: "agents", granted: ["clip", "resolve"] },
+        }),
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toEqual({
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "agents", granted: ["clip", "resolve"] },
+    });
+  });
+
+  it("a 403 with no scope detail produces a failed state with no scopeGap, never a fabricated one", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => ({ ok: false as const, reason: "insufficient_scope" as const }),
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toEqual({ kind: "failed", reason: "insufficient_scope" });
+    expect("scopeGap" in res.state).toBe(false);
+  });
+
+  it("attaches the device label to a 403's scope gap from resolveItem too", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: false as const,
+          reason: "insufficient_scope" as const,
+          scopeGap: { required: "resolve", granted: ["clip"] },
+        }),
+        invokeAgent: async () => {
+          throw new Error("must not be called");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toEqual({
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "resolve", granted: ["clip"] },
+    });
+  });
 });
 
 describe("handleAgentState", () => {
@@ -885,6 +960,27 @@ describe("handleAgentState", () => {
       { kind: "agent-state", lane: "impact", pageUrl: "https://example.com/x" },
     );
     expect(getRunCalled).toBe(false);
-    expect(res.state).toMatchObject({ kind: "failed" });
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+
+  it("attaches the device label to a resolve 403's scope gap", async () => {
+    const res = await handleAgentState(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: false as const,
+          reason: "insufficient_scope" as const,
+          scopeGap: { required: "resolve", granted: [] },
+        }),
+        getRun: async () => null,
+      },
+      { kind: "agent-state", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toEqual({
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "resolve", granted: [] },
+    });
   });
 });
