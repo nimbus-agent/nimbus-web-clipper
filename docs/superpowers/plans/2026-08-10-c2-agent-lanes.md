@@ -170,7 +170,17 @@ export type LaneState =
   | { readonly kind: "collapsed" }
   | { readonly kind: "running"; readonly runId: string }
   | { readonly kind: "done"; readonly brief: string }
-  | { readonly kind: "failed"; readonly reason: AgentError };
+  | {
+      readonly kind: "failed";
+      readonly reason: AgentError;
+      /**
+       * Present only on `insufficient_scope`, and only when the gateway's 403 carried
+       * the detail. `panel-view.ts` builds the exact `nimbus clip scopes` command from
+       * it via `scopeCommand`; absent, it falls back to generic guidance rather than
+       * inventing a command.
+       */
+      readonly scopeGap?: ScopeGap;
+    };
 
 /**
  * `stale` collapses the poll's 404 and 410. Upstream distinguishes them —
@@ -188,6 +198,13 @@ export type AgentError =
   | "insufficient_scope"
   /** 404 — unknown agent, or this gateway has no agents surface. */
   | "unsupported"
+  /**
+   * There is no single indexed item for this page to ask an agent about — the page
+   * is unrecognised, or it resolved to a miss/ambiguous answer. A condition of the
+   * PAGE, never of the gateway: reporting it as `unsupported` would say "this
+   * gateway can't run agents yet" about a gateway that runs them fine.
+   */
+  | "not_resolved"
   | "stale"
   | "unreachable"
   | "server_error";
@@ -667,7 +684,37 @@ describe("handleAgentRun", () => {
         getRun: async () => null, putRun: async () => undefined },
       { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
     );
-    expect(res.state).toMatchObject({ kind: "failed" });
+    // Pin the REASON, not just the kind. `{kind:"failed"}` alone is satisfied by any
+    // member of the union, including `unsupported` — which renders "this gateway
+    // can't run agents yet" about a gateway that runs them fine. The page not being
+    // indexed is a fact about the page.
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+
+  it("attaches the device label to a scope failure so the panel can build the command", async () => {
+    const res = await handleAgentRun(
+      { getOrigins: async () => [], getConnection: async () => conn,
+        resolveItem: async () => ({ ok: true as const, outcome: { kind: "found" as const, item, matchKind: "exact" as const } }),
+        invokeAgent: async () => ({ ok: false as const, reason: "insufficient_scope" as const,
+                                    scopeGap: { required: "agents", granted: ["clip", "resolve"] } }),
+        getRun: async () => null, putRun: async () => undefined },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toEqual({
+      kind: "failed", reason: "insufficient_scope",
+      scopeGap: { label: conn.label, required: "agents", granted: ["clip", "resolve"] },
+    });
+  });
+
+  it("does not fabricate a scope gap when the 403 carried no detail", async () => {
+    const res = await handleAgentRun(
+      { getOrigins: async () => [], getConnection: async () => conn,
+        resolveItem: async () => ({ ok: true as const, outcome: { kind: "found" as const, item, matchKind: "exact" as const } }),
+        invokeAgent: async () => ({ ok: false as const, reason: "insufficient_scope" as const }),
+        getRun: async () => null, putRun: async () => undefined },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toEqual({ kind: "failed", reason: "insufficient_scope" });
   });
 });
 ```
@@ -680,6 +727,18 @@ Expected: FAIL — `handleAgentRun` does not exist.
 - [ ] **Step 3: Implement**
 
 `handleAgentRun` resolves the page first (it needs the item id to key the cache, and the title for `expert`), returns any cached non-`collapsed` state without invoking, then invokes and persists `{kind:"running", runId}`. On `busy` it waits `retryAfterMs` and retries **once** before reporting `server_error` — a second 429 within a second means genuine contention, and the lane's own re-run affordance covers it.
+
+Both refusal paths — an unrecognised page, and a resolve that misses or comes back
+ambiguous — report `not_resolved`, never `unsupported`. `unsupported` is a claim
+about the gateway; these are facts about the page. (The unrecognised branch is
+defensive and unreachable in practice, since Task 8 only renders lanes once the
+header is `resolved` or `chosen` — one member covers both; do not split it.)
+
+On a 403, `handleAgentRun` attaches the connection's device label to the gateway's
+gap and carries it into the `failed` state — the same move `handleResolve` and
+`handleFetch` already make, and for the same reason: `handlers.ts` is the only layer
+holding a `Connection`. That is the call site for the reused `isScopeGap`, which
+validates the optional `scopeGap` on the `agent-state` response.
 
 Guards in `messages.ts` validate the **domain** shape; `isScopeGap` is reused.
 
@@ -852,9 +911,12 @@ describe("renderLaneBody", () => {
   });
 
   it("withholds Re-run where retrying cannot help, and says what would", () => {
-    // Each of these needs a different action — pair, re-pair, grant a scope, or a
-    // gateway that has the surface at all. A Re-run button would just fail again.
-    for (const reason of ["not_paired", "unauthorized", "insufficient_scope", "unsupported"] as const) {
+    // Each of these needs a different action — pair, re-pair, grant a scope, index
+    // the page, or a gateway that has the surface at all. A Re-run button would just
+    // fail again.
+    for (const reason of [
+      "not_paired", "unauthorized", "insufficient_scope", "unsupported", "not_resolved",
+    ] as const) {
       const el = renderLaneBody(document, { kind: "failed", reason }, () => undefined);
       expect(el.querySelector("button")).toBeNull();
       expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
@@ -871,7 +933,9 @@ describe("renderLaneBody", () => {
 
   // C2.1's done-when: never a silent empty lane.
   it("renders a stated reason for every failure, never nothing", () => {
-    for (const reason of ["not_paired", "unauthorized", "unsupported", "unreachable", "server_error"] as const) {
+    for (const reason of [
+      "not_paired", "unauthorized", "unsupported", "not_resolved", "unreachable", "server_error",
+    ] as const) {
       const el = renderLaneBody(document, { kind: "failed", reason });
       expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
     }
@@ -911,7 +975,9 @@ pre.textContent = state.brief;
 
 Only Re-run-able failures get a button, per the tests above.
 
-The `failed`/`insufficient_scope` arm reuses `appendScopeGuidance` — the helper extracted in the fetch slice — so all three scope messages stay one implementation.
+The `failed`/`insufficient_scope` arm reuses `appendScopeGuidance` — the helper extracted in the fetch slice — so all four scope messages stay one implementation. It already handles the missing-gap case by falling back to generic guidance rather than printing a half-built command, which is why `scopeGap` is optional.
+
+`not_resolved` says the page is not indexed — "Nimbus hasn't indexed this page yet." Do **not** reuse `unsupported`'s copy: that one says the gateway has no agents surface, and saying it here blames the gateway for a page that simply has no row.
 
 `renderShell`'s lane loop stays untouched.
 
