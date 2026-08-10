@@ -586,6 +586,10 @@ describe("renderLaneBody", () => {
       },
       () => undefined,
     );
+    // The tag-stripped substring alone would also pass a lossy sanitiser — assert
+    // the raw markup survives verbatim in textContent, same discriminator as the
+    // brief's own XSS test above.
+    expect(el.textContent).toContain("<img src=x onerror=alert(1)> no LLM configured");
     expect(el.textContent).toContain("no LLM configured");
     expect(el.querySelector("img")).toBeNull();
   });

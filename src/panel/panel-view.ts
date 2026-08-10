@@ -555,7 +555,17 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
   if (state.reason === "not_resolved") {
     // A condition of the PAGE (unrecognised, or a resolve miss/ambiguous
     // answer) — never reused for `unsupported`, which blames the gateway.
-    box.append(line(doc, "nimbus-related__status", "Nimbus hasn't indexed this page yet."));
+    //
+    // The wording must hold for all THREE sub-cases `resolveForAgent` collapses
+    // into this reason (see handlers.ts): unrecognised, not-indexed/unresolvable,
+    // and AMBIGUOUS. On an ambiguous resolve the page IS indexed — under several
+    // items — and the header above is at that moment showing "Several indexed
+    // items match this page:" with a chooser. "Nimbus hasn't indexed this page
+    // yet." would then contradict its own header. Do not "clarify" this back to
+    // an indexed/not-indexed claim; say only what is true in all three cases.
+    box.append(
+      line(doc, "nimbus-related__status", "Nimbus couldn't pin this page to one indexed item."),
+    );
     return box;
   }
   if (state.reason === "stale") {
