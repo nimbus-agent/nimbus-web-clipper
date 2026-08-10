@@ -76,9 +76,9 @@ The clipper is a decent clipper. It is also in a fight it cannot win:
   connectors and an MCP server. Execution and the local-first guarantee are the
   difference, not the idea.
 
-What is *not* commodity is what sits behind the gateway: eleven working agents
-over an index that already spans your pull requests, builds, issues and docs.
-No clipper has that. Reaching it from the page you are already on is the
+What is *not* commodity is what sits behind the gateway: thirteen working
+agents over an index that already spans your pull requests, builds, issues and
+docs. No clipper has that. Reaching it from the page you are already on is the
 product.
 
 ### The name — proposed, not decided
@@ -115,12 +115,19 @@ Two things constrain any rename:
 
 ### Why this is credible, not aspirational
 
-Most of this is wiring existing capability to a new surface. Verified in the
-[Nimbus gateway repo](https://github.com/nimbus-agent/Nimbus):
+Most of this was wiring existing capability to a new surface — and by now most
+of that wiring has actually landed. Re-verified against merged upstream in the
+[Nimbus gateway repo](https://github.com/nimbus-agent/Nimbus) (`main` at
+commit `34601b24`, past the `v1.27.0` release), not against this roadmap's own
+earlier account of it:
 
-- **Eleven agents ship today** — catchup, conflicts, expert, ghost, glossary,
-  huddle, impact, janitor, preflight, why and why-peek, in
-  `packages/gateway/src/agents/`.
+- **Thirteen agents ship today**, not the eleven this section originally
+  counted — catchup, conflicts, decisions, expert, ghost, glossary, huddle,
+  impact, janitor, ownership, preflight, why and why-peek, in
+  `packages/gateway/src/agents/`. `ownership` and `decisions` are the two
+  added since: `agents.ownership` (reads the ownership graph derived from
+  already-indexed blame data, v1.24.0) and `agents.decisions` (the implicit
+  ADR extractor).
 - **An `agents.*` IPC namespace is already dispatched** — `agents.why`,
   `agents.impact`, `agents.expert`, `agents.whyPeek` and the rest, in
   `packages/gateway/src/ipc/agents-rpc.ts`.
@@ -131,18 +138,34 @@ Most of this is wiring existing capability to a new surface. Verified in the
   "ci_run"`, and `canonical_url` is a real column on `item`
   (`packages/gateway/src/index/unified-item-v3-sql.ts`).
 
-And what is honestly **not** built: nothing in the browser can reach `agents.*`
-today — the gateway's HTTP surface has no agents route — and there is no
-resolve-by-URL read (`GET /v1/items` filters by service/type/time only, and
-`/v1/items/<id>` matches `id` or `external_id`, never `canonical_url`, which
-also carries no SQL index, so the read brings a migration with it). Those are
-new gateway surfaces, owned upstream; every item that needs one is tagged 🟡
-below and names it. "Mostly wiring" is true of the *answers*, not of the two
-routes that let a browser ask for them.
+**Both gaps this section used to name as "honestly not built" are closed, and
+this client is what closed them:**
 
-The design spec for this client is planned in the gateway repo at
-`docs/superpowers/specs/2026-08-01-browser-gateway-client-design.md`; it is not
-written yet, so the briefs below are the current authority.
+- **The browser can reach `agents.*`.** `POST /v1/agents/{agent}` (202 +
+  `runId`) and `GET /v1/agents/runs/{id}` shipped on the gateway's HTTP API,
+  bearer-authed and recorded in the egress ledger (v1.23.0, "invoke read-only
+  agents over the HTTP API"). This client calls both — see **C2.1**, shipped.
+- **A resolve-by-URL read exists.** `GET /v1/items/resolve` shipped (v1.25.0),
+  and the prediction this section made about *how* was specific and correct:
+  it does bring a migration with it, but not an index on `canonical_url`
+  directly. `canonical_url` itself is still un-indexed today — the read
+  instead matches on a new **derived, indexed** `resolve_key` column (the
+  "V52" migration), computed server-side from `canonicalUrl ?? url` through
+  the same normalisation the client cannot run itself
+  (`packages/gateway/src/index/resolve-key-v52-sql.ts`,
+  `item-store.ts`). This client calls it — see **C1.1**, shipped.
+
+What is genuinely still open is downstream of both routes existing, not a
+missing route: the remaining 🟡 items below (**C2.3**, **C2.4**) are about
+which agent goes on which page and in what shape, not about whether the
+browser can reach the gateway's agents at all.
+
+The design spec for this client
+(`docs/superpowers/specs/2026-08-01-browser-gateway-client-design.md`) was
+written and merged in the gateway repo — then pruned from that repo once the
+feature it specified shipped (it lives on in that repo's git history, the same
+convention this repo's own `CLAUDE.md` documents for its own specs). The
+briefs below, not that now-pruned document, are the current authority.
 
 ### The local-first bet is unchanged
 
@@ -169,14 +192,14 @@ scope.
 
 ### 1. AI-native retrieval — the moat
 
-The Nimbus index is a semantic engine, not a bookmark list — and eleven agents
-already run on top of it. The client's job is to make that power feel like magic
-*where you already are*: recognise the page, resolve it to the indexed item, and
-put the agent lanes (why · impact · expert) one glance away. Related-items,
-never-save-twice detection, asking questions of your own reading, and
-auto-understanding every clip on arrival are the shallow end of the same
-capability. This is the axis no cloud tool can match privately, and no private
-tool can match on context.
+The Nimbus index is a semantic engine, not a bookmark list — and thirteen
+agents already run on top of it. The client's job is to make that power feel
+like magic *where you already are*: recognise the page, resolve it to the
+indexed item, and put the agent lanes (why · impact · expert) one glance away.
+Related-items, never-save-twice detection, asking questions of your own
+reading, and auto-understanding every clip on arrival are the shallow end of
+the same capability. This is the axis no cloud tool can match privately, and
+no private tool can match on context.
 
 ### 2. Capture quality & coverage — reach what the connectors can't
 
