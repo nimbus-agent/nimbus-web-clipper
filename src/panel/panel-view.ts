@@ -327,7 +327,16 @@ export function renderHeader(
       line(
         doc,
         "nimbus-related__status",
-        `Indexed ${formatAge(state.item.modifiedAt, state.nowMs)}`,
+        // "Updated", NOT "Indexed". `modifiedAt` is the ITEM's last-modified time
+        // as the source system reports it — for a synced PR that is GitHub's own
+        // `updated_at`, which can be days old on a row written seconds ago. Saying
+        // "Indexed 3 days ago" about an item just fetched is a false claim, and it
+        // is the kind this header exists to avoid making.
+        //
+        // The mislabel survived unit tests and a manual pass because every fixture
+        // used a web CLIP, whose `modified_at` IS its clip time — so "Indexed" was
+        // accurate by coincidence until the first connector-sourced item appeared.
+        `Updated ${formatAge(state.item.modifiedAt, state.nowMs)}`,
       ),
     );
     // Only rung 3 gets a hedge. Rungs 1 and 2 differ by query params, which carry
