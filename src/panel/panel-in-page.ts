@@ -651,11 +651,20 @@ function createPanel(body: HTMLElement): {
           ? { kind: "chosen", surface: header.surface, candidate: chosen }
           : header;
     // The two agent lanes ask a question about ONE resolved item — there is
-    // nothing to ask about on a miss, an error, or an ambiguous answer still
-    // awaiting a pick. `chosen` counts alongside `resolved`: the user has
-    // already pinned down which item this page is, even though it renders
-    // without a `modifiedAt`.
-    const showAgentLanes = shown.kind === "resolved" || shown.kind === "chosen";
+    // nothing to ask about on a miss, an error, or an ambiguous answer.
+    //
+    // `chosen` is deliberately NOT included, even though the user has by then
+    // pinned down which item this page is. `agent-run` carries only
+    // `{lane, pageUrl}` (messages.ts), so `handleAgentRun` re-runs the resolve
+    // itself — and that resolve returns the same AMBIGUOUS outcome the chooser
+    // came from, which `resolveForAgent` refuses with `not_resolved`
+    // (handlers.ts). Rendering the lanes here would put "Nimbus couldn't pin
+    // this page to one indexed item." directly under a header naming the exact
+    // item the user just picked, with no Re-run to escape it: a control that
+    // cannot ever succeed. Lanes on a chosen candidate need the picked id
+    // carried through `agent-run` and honoured instead of a re-resolve — see
+    // ROADMAP C2.5.
+    const showAgentLanes = shown.kind === "resolved";
     const agentLanes: Lane[] = showAgentLanes
       ? AGENT_LANES.map((lane) => ({
           id: lane,

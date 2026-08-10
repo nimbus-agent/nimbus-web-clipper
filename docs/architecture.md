@@ -388,8 +388,8 @@ not-indexed, fetchable ─{ click "Fetch this from GitHub" }─►  panel-in-pag
 
 ## The agent lanes (Phase C2.1)
 
-On a resolved page (`resolved` or `chosen` header state) the panel offers two
-collapsed lanes below Related — *what breaks if it lands* (`agents.impact`) and
+On a resolved page (the `resolved` header state, and only that one) the panel
+offers two collapsed lanes below Related — *what breaks if it lands* (`agents.impact`) and
 *who should review it* (`agents.expert`) — each answered by an agent that
 already exists behind the gateway. Two routes:
 
@@ -398,9 +398,23 @@ POST /v1/agents/{agent}        202 { runId }            · 404 unknown agent · 
 GET  /v1/agents/runs/{id}      200 { status, brief?, failureReason? } · 404 · 410
 ```
 
-Expanding a lane is the only trigger — nothing runs on panel open, and a second
-expand of an already-`running`/`done`/`failed` lane never re-invokes (only its
-Re-run button does). `impact` receives `recognition.resolveUrl` as
+Expanding a lane is the only trigger — nothing runs on panel open, and within
+one panel session a second expand of an already-`running`/`done`/`failed` lane
+never re-invokes (only its Re-run button does): `onLaneToggle` sends `agent-run`
+only while the lane's in-memory state is still `collapsed`. Across a panel
+*reopen* that in-memory state is gone and every lane starts `collapsed` again,
+so the first expand does send `agent-run` — and the handler's own cache decides:
+`running`/`done` short-circuit, `failed` re-invokes (see the store bullet
+below).
+
+A `chosen` header — a candidate the user picked out of an ambiguous answer —
+gets **no** lanes. `agent-run` carries only `{lane, pageUrl}`, so the handler
+re-resolves the page and gets the same ambiguous answer back, which
+`resolveForAgent` refuses as `not_resolved`; a lane there would contradict its
+own header with a refusal it could never retry past. Deferred as ROADMAP
+**C2.5**, which is where the picked id gets carried through the message.
+
+`impact` receives `recognition.resolveUrl` as
 `fileOrPrUrl`; `expert` receives the resolved item's `title` as `topicOrFile` —
 both request bodies pass through to the gateway's validator verbatim, so the
 client sends exactly the shape each agent's own scope expects, no more.
@@ -412,10 +426,17 @@ client sends exactly the shape each agent's own scope expects, no more.
   would be a distinction with no behavioral difference, so `AGENT_ERRORS`
   (`src/shared/types.ts`) has exactly one `stale` member and `getAgentRun`
   (`gateway-client.ts`) folds both statuses into it before the client ever sees
-  a difference. `renderLaneBody` gives `stale` a working Re-run button; every
-  other refusal reason needs a fix on a different surface first (re-pair, a
-  scope grant, an indexed page) and gets guidance instead of a button that
-  would just fail again identically.
+  a difference. `renderLaneBody` gives `stale` a working Re-run button — as it
+  does four other reasons: `not_paired`, `unreachable`, `server_error` and
+  `agent_failed`, five of the nine `AGENT_ERRORS` in all. The rule is whether a
+  retry *from this panel* can succeed, not whether the fix is local:
+  `unreachable`/`server_error`/`stale` are transport blips, `agent_failed`
+  reached the agent and may answer differently next time, and `not_paired` is
+  fixed in Options but retried here — its copy names pairing first, so the
+  button is never the whole instruction. The remaining four (`unauthorized`,
+  `insufficient_scope`, `unsupported`, `not_resolved`) get guidance and no
+  button: each needs re-authentication, a scope grant, a different gateway or a
+  different page before any retry could do anything but fail identically.
 - **`chrome.alarms` is the EVICTION NET, not the poll cadence.** The real
   cadence is an in-worker `setTimeout` loop (`tickAgentPoll`/`scheduleAgentPoll`
   in `service-worker.ts`) that backs off from 500ms toward a 2s ceiling while
@@ -434,9 +455,18 @@ client sends exactly the shape each agent's own scope expects, no more.
   (`agent-run-store.ts`), keyed by resolved item id + lane, with a TTL mirroring
   the gateway's own and a bounded, oldest-first eviction cap. Closing and
   reopening the panel — or the worker itself being evicted and restarted mid-run
-  — replays from that store: `handleAgentState` answers instantly from the
-  cached terminal state rather than re-invoking, which is also what makes a
-  second lane-expand a no-op instead of a second model call.
+  — replays from that store through `handleAgentRun`, NOT `handleAgentState`: a
+  reopened panel holds no lane state, so every lane starts `collapsed` and the
+  first expand sends `agent-run` exactly as a first-ever expand does.
+  (`handleAgentState` is only an OPEN panel's ~1s repaint poll — it never
+  invokes.) `handleAgentRun` then reads the store and short-circuits on a cached
+  `running` or `done`, which is what makes re-expanding a finished lane replay
+  the brief instead of spending a second model call. A cached `failed` is
+  deliberately NOT short-circuited: a failure is not an answer, `agent-run` only
+  ever arrives from an explicit user action, and re-invoking self-heals the
+  moment the cause is fixed (a scope granted, a gateway brought back up). Note
+  the panel paints one optimistic "Working…" frame on any expand that sends
+  `agent-run` — including a cached hit, since the paint precedes the round trip.
 - **The brief renders as `textContent`, never parsed, never `innerHTML`.** On a
   gateway with an LLM configured, the brief is model output rendered inside a
   Shadow DOM that overlays the user's authenticated session on the page it was

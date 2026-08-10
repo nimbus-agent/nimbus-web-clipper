@@ -19,10 +19,15 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
-- **Ask an agent about the pull request you are looking at.** On a resolved PR the
-  panel now offers two lanes — *what breaks if it lands*, and *who should review
-  it*. Expanding one runs the agent behind it; nothing runs until you ask. Answers
-  survive closing the panel and are shown again instantly if you reopen it.
+- **Ask an agent about the pull request you are looking at.** On a PR the panel
+  has resolved to a single indexed item, it now offers two lanes — *what breaks if
+  it lands*, and *who should review it*. Expanding one runs the agent behind it;
+  nothing runs until you ask. Answers survive closing the panel: reopening it and
+  expanding the lane shows the same brief again without running the agent a second
+  time. If a lane can't answer it says why, and offers a re-run only where one
+  could actually succeed. On a page that matches several indexed items the lanes
+  are not offered, even after you pick one — the run would resolve the page again
+  and hit the same ambiguity, so a lane there could only ever fail.
 - **On a resolve miss, fetch that one item.** On a page Nimbus recognises but has
   not yet indexed, the panel now offers to fetch that item through the connector
   that owns it — a GitHub PR, a Jira issue, a Jenkins build. Nothing is fetched

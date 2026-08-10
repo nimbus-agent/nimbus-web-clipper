@@ -558,21 +558,25 @@ describe("renderLaneBody", () => {
     }
   });
 
-  // `not_paired` is the one refusal whose remedy is already done by the time the
-  // user can see it. The handlers short-circuit on their OWN not_paired before ever
-  // reading a cached run, so this stored state is only ever visible to a user who
-  // has SINCE re-paired — and Task 6 narrowed the cache short-circuit to
-  // running/done, so a Re-run genuinely re-invokes and would now succeed.
-  // Withholding the button leaves the user told their result may be out of date
-  // with no way to refresh it: a dead end, and the only reason with no other action
-  // to offer.
-  it("offers Re-run on a result left over from an earlier pairing", () => {
+  // `not_paired` is PRODUCED by the user being unpaired right now:
+  // `resolveForAgent` (handlers.ts) short-circuits on its own missing connection
+  // before it reads any cached run, so this state means there is no pairing — not
+  // that an older one went stale. The copy must therefore say so and name pairing
+  // as the remedy; the earlier "this result is from before your current pairing"
+  // told an unpaired user a result existed and that it was merely out of date.
+  // The button stays because the retry belongs here once pairing is done (Task 6
+  // narrowed the cache short-circuit to running/done, so a Re-run re-invokes).
+  it("tells an unpaired user to pair, and still offers the re-run", () => {
     const seen: string[] = [];
     const el = renderLaneBody(document, { kind: "failed", reason: "not_paired" }, () =>
       seen.push("rerun"),
     );
-    // Must not tell an already-paired user to pair.
-    expect(el.textContent?.toLowerCase()).not.toContain("pair a browser");
+    const text = el.textContent?.toLowerCase() ?? "";
+    expect(text).toContain("pair");
+    expect(text).toContain("options");
+    // Must not claim a result exists, nor that it is merely stale.
+    expect(text).not.toContain("out of date");
+    expect(text).not.toContain("before your current pairing");
     (el.querySelector("button") as HTMLButtonElement).click();
     expect(seen).toEqual(["rerun"]);
   });

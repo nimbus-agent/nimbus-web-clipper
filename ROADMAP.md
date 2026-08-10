@@ -156,9 +156,9 @@ this client is what closed them:**
   `item-store.ts`). This client calls it — see **C1.1**, shipped.
 
 What is genuinely still open is downstream of both routes existing, not a
-missing route: the remaining 🟡 items below (**C2.3**, **C2.4**) are about
-which agent goes on which page and in what shape, not about whether the
-browser can reach the gateway's agents at all.
+missing route: the remaining items below (**C2.3**, **C2.4**, **C2.5**) are
+about which agent goes on which page, in what shape, and against which item —
+not about whether the browser can reach the gateway's agents at all.
 
 The design spec for this client
 (`docs/superpowers/specs/2026-08-01-browser-gateway-client-design.md`) was
@@ -484,7 +484,11 @@ need a browser-viable shape first; see C2.4.*
 > `chrome.alarms` exists purely as the **eviction net** (a real poll cadence
 > would need `chrome.alarms`' one-minute floor, which is far slower than an
 > agent run actually takes), and the panel closing never loses a result —
-> reopening it answers instantly from the cached terminal state.
+> reopening it and re-expanding the lane replays the stored `done` brief
+> instead of invoking the agent a second time. A lane left `failed`
+> deliberately does re-invoke on that expand (a failure is not an answer, and
+> the expand is an explicit user action) — see
+> [`docs/architecture.md`](./docs/architecture.md#the-agent-lanes-phase-c21).
 > **Abort is deferred, not shipped** — this roadmap item originally claimed
 > it. There is no upstream cancellation to hook into: `agents.*` has no
 > `AbortController` and runs are not tracked in any registry a cancel could
@@ -527,6 +531,40 @@ need a browser-viable shape first; see C2.4.*
 > **Done when** A lane answers "why does this change exist" for a resolved
 > pull request, without requiring the browser to have a local checkout of
 > anything.
+
+### C2.5 The lanes on a candidate you picked · 🟢 · S
+> **What** Offer the two C2.1 lanes on an **ambiguous** page once the user has
+> picked which indexed item it is — today they appear only under a `resolved`
+> header, so an ambiguous page shows no lanes at all, before or after the pick.
+> **Why it wows** Ambiguity is the one case where the user has told the panel
+> something it could not work out on its own. Throwing that answer away one
+> control later is exactly the kind of small betrayal that trains people to
+> stop using a panel.
+> **Why it is deferred, not shipped with C2.1** The `agent-run` message carries
+> only `{lane, pageUrl}` (`src/shared/messages.ts`), so `handleAgentRun`
+> re-resolves the page for itself — and on an ambiguous page that second
+> resolve is ambiguous again, which `resolveForAgent` refuses with
+> `not_resolved`. Rendering the lanes on a `chosen` header would therefore put
+> *"Nimbus couldn't pin this page to one indexed item."* directly under a
+> header naming the item the user had just picked, and `not_resolved` withholds
+> Re-run, so it would be terminal: two dead controls, every time. Carrying the
+> picked id through the message is a contract change, not a render tweak, so it
+> is its own slice.
+> **Touches** `src/shared/messages.ts` (`agent-run` / `agent-state` grow an
+> optional item id, plus its guard), `src/background/handlers.ts`
+> (`resolveForAgent` honours a supplied id instead of re-resolving),
+> `src/panel/panel-in-page.ts` (send the chosen id; render the lanes under
+> `chosen`).
+> **Approach** The id arrives from a content script, so it is untrusted input
+> like every other cross-boundary value: guard it in `messages.ts`, and have
+> the handler use it as the cache key and the `expert` lane's title source only
+> after the resolve it came from is re-checked or the id is confirmed present
+> in the ambiguous candidate set. Note a `chosen` candidate carries no
+> `modifiedAt` — that is why it is a separate header state — so nothing in the
+> lane path may assume a freshness it does not have.
+> **Done when** Picking a candidate on an ambiguous page offers both lanes, and
+> each answers about *that* item — never a re-resolve, and never a refusal
+> contradicting the header above it.
 
 ## Phase C3 — On a miss, sync — don't scrape 🟡
 

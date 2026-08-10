@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 // test/unit/panel-in-page.test.ts
 import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
-import type { AgentLane, LaneState, RelatedHit } from "../../src/shared/types.ts";
+import {
+  AGENT_LANES,
+  type AgentLane,
+  type LaneState,
+  type RelatedHit,
+} from "../../src/shared/types.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
 // panel-in-page.ts is an injected content script: it runs its mount/self-toggle
@@ -937,6 +942,79 @@ describe("panel-in-page agent lanes", () => {
   it("shows no lanes when the page is not resolved", async () => {
     const panel = await mountMissPanel();
     expect(panel.querySelector('details[data-lane="impact"]')).toBeNull();
+  });
+
+  it("shows both lanes when the page resolves to one item", async () => {
+    const panel = await mountResolvedPanel([]);
+    expect(panel.querySelector('details[data-lane="impact"]')).not.toBeNull();
+    expect(panel.querySelector('details[data-lane="expert"]')).not.toBeNull();
+  });
+
+  /**
+   * The other half of the pair above: an AMBIGUOUS answer offers no lanes either
+   * before or after the user picks a candidate.
+   *
+   * `agent-run` carries only `{lane, pageUrl}`, so `handleAgentRun` re-resolves
+   * the page and gets the same ambiguous answer back, which `resolveForAgent`
+   * refuses with `not_resolved`. A lane rendered on the `chosen` header would
+   * therefore read "Nimbus couldn't pin this page to one indexed item." directly
+   * under a header naming the item the user just picked — and `not_resolved`
+   * withholds Re-run, so it is terminal. Deferred to ROADMAP C2.5, which needs
+   * the picked id carried through the message.
+   */
+  it("shows no lanes on an ambiguous page, before or after a candidate is chosen", async () => {
+    const sent: string[] = [];
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const kind = (message as { kind?: string }).kind;
+      if (kind === "resolve") {
+        return {
+          kind: "resolve",
+          ok: true,
+          recognition,
+          outcome: {
+            kind: "ambiguous",
+            fetchable: false,
+            truncated: false,
+            candidates: [
+              { id: "a", service: "github", type: "pr", title: "One", url: null },
+              { id: "b", service: "github", type: "pr", title: "Two", url: null },
+            ],
+          },
+        };
+      }
+      if (kind === "related") {
+        return { kind: "related", ok: true, items: [] };
+      }
+      sent.push(String(kind));
+      throw new Error(`ambiguous panel must not send ${String(kind)}`);
+    });
+
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    const body = shadow()?.querySelector<HTMLElement>(".nimbus-related__body");
+    if (body === null || body === undefined) {
+      throw new Error("panel body not found");
+    }
+
+    // Before the pick: the chooser is up, and no lanes.
+    expect(body.querySelectorAll("button.nimbus-related__candidate")).toHaveLength(2);
+    for (const lane of AGENT_LANES) {
+      expect(body.querySelector(`details[data-lane="${lane}"]`)).toBeNull();
+    }
+
+    (body.querySelectorAll("button.nimbus-related__candidate")[1] as HTMLButtonElement).click();
+    await flush();
+
+    // After the pick: the header names the chosen candidate — and still no lanes.
+    expect(body.textContent).toContain("Two");
+    expect(body.querySelectorAll("button.nimbus-related__candidate")).toHaveLength(0);
+    for (const lane of AGENT_LANES) {
+      expect(body.querySelector(`details[data-lane="${lane}"]`)).toBeNull();
+    }
+    // Nothing was asked of the worker either — no agent-run, no agent-state.
+    expect(sent).toEqual([]);
   });
 
   // The rapid-toggle race the cached-state check alone cannot close: unlike the

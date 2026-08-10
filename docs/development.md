@@ -269,9 +269,14 @@ in "Working…" long enough to make a manual pass flaky.
    the mock gateway is too fast for this step), expand a lane, then close the
    panel (`Alt+Shift+R` or Esc) before it settles, and wait past however long
    the run takes. Reopen the panel and expand the same lane again. → The
-   finished brief is already there — no second "Working…", because the run
-   kept polling in the worker after the panel closed and the result was
-   cached in `chrome.storage.local`.
+   finished brief appears immediately, because the run kept polling in the
+   worker after the panel closed and the result was cached in
+   `chrome.storage.local`. **Expect a brief "Working…" flash first** — a
+   reopened panel has no lane state, so this expand does send `agent-run`, and
+   the panel paints "Working…" optimistically before the answer comes back;
+   that is not a second run. What must NOT happen is a second
+   `POST /v1/agents/<lane>` (confirm in the gateway's log or DevTools' Network
+   panel): the cached `done` short-circuits inside the worker.
 3. **Scope guidance, `resolve`+`fetch` only:** scope a token with `resolve` and
    `fetch` but not `agents` (`nimbus clip scopes <label> --set
    clip,briefs,resolve,fetch`), open a recognised, resolved page, and expand a

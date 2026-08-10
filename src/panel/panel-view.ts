@@ -466,16 +466,21 @@ export function renderHeader(
  * Renders the body of one C2 agent lane (`impact`/`expert`) — never the shared
  * "related" lane, which keeps its own `relatedBody` render path.
  *
- * Re-run is offered only for failure reasons a retry could plausibly fix:
- * `stale`/`unreachable`/`server_error` are transport-level blips, `agent_failed`
- * means the run reached the agent and it could not answer (which a retry may well
- * do differently — it is NOT `server_error`, because the call itself worked), and
- * `not_paired` is a leftover whose own remedy (pairing) is already done by the
- * time it can be seen — see its branch below for why that makes it retryable
- * where the others are not. Every other reason needs a DIFFERENT fix on ANOTHER
- * surface first (re-pair, grant a scope, index the page, or a gateway that has
- * the surface at all) — a Re-run there would just fail identically, so no button
- * is offered for it.
+ * Re-run is offered for five of the nine `AgentError` reasons — `not_paired`,
+ * `stale`, `unreachable`, `server_error`, `agent_failed` — and withheld for the
+ * other four (`unauthorized`, `insufficient_scope`, `unsupported`,
+ * `not_resolved`).
+ *
+ * `stale`/`unreachable`/`server_error` are transport-level blips, and
+ * `agent_failed` means the run reached the agent and it could not answer (which a
+ * retry may well do differently — it is NOT `server_error`, because the call
+ * itself worked). `not_paired` is the one whose remedy is on ANOTHER surface and
+ * still keeps the button: pairing happens in Options, but the retry belongs here,
+ * and the copy names pairing first so the button is never the whole instruction —
+ * see its branch below. The four without a button need a different fix elsewhere
+ * AND have nothing here to retry into (re-authenticate, grant a scope, index the
+ * page, or a gateway that has the agents surface at all) — a Re-run there would
+ * just fail identically.
  */
 export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => void): HTMLElement {
   const box = doc.createElement("div");
@@ -513,24 +518,32 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
 
   // state.kind === "failed" from here on.
   if (state.reason === "not_paired") {
-    // UNREACHABLE while the user is actually unpaired — `handleAgentState` (and
-    // `handleAgentRun`) resolve the page first and short-circuit on their OWN
-    // `not_paired` before ever reading a cached run. So this stored state can
-    // only be seen by a user who has since re-paired: it is a leftover from a
-    // run that failed under an EARLIER pairing, not a live gap. Saying "Pair a
-    // browser first" here would be a false claim to an already-paired user.
+    // This is a LIVE gap, not a leftover: `resolveForAgent` (handlers.ts) reads
+    // the connection itself and short-circuits with its own `not_paired` the
+    // moment there is none, so this reason is PRODUCED by the user being
+    // unpaired right now. Reachable because the panel's header resolved while a
+    // pairing existed and the pairing went away afterwards (unpaired in Options,
+    // storage cleared) — the lane's run or poll is the first thing to find out.
     //
-    // It gets a Re-run button, unlike the other refusal reasons below: its own
-    // remedy (pairing) is already done by the time it can even be seen, and
-    // `handleAgentRun`'s cache short-circuit only covers `running`/`done` (Task
-    // 6), so a Re-run here genuinely re-invokes and would now succeed. Every
-    // other reason below needs an action on ANOTHER surface first (re-pair,
-    // grant a scope, …); this is the only one with nothing left to ask for.
+    // A cached `not_paired` from an EARLIER pairing exists in the store (the
+    // worker's poll writes one when it wakes with no connection), but it cannot
+    // realistically surface: `handleAgentRun` re-invokes on any `failed` state
+    // rather than replaying it, and `handleAgentState` only reaches the cache
+    // when a connection exists — which would mean re-pairing inside the panel's
+    // ~1s poll gap. So there is exactly one state to be true about, and one
+    // string for it.
+    //
+    // It keeps a Re-run button, unlike the other refusal reasons below, because
+    // the remedy is on another surface but the retry is HERE: once the user
+    // pairs in Options, `handleAgentRun`'s cache short-circuit covers only
+    // `running`/`done` (Task 6), so this Re-run genuinely re-invokes and now
+    // succeeds. The copy names pairing first so the button is never the whole
+    // instruction.
     box.append(
       line(
         doc,
         "nimbus-related__status",
-        "This result is from before your current pairing — it may be out of date.",
+        "Nimbus isn't paired with this browser. Pair in Options, then re-run.",
       ),
     );
     box.append(actionButton(doc, "nimbus-related__action", "Re-run", () => onRerun?.()));
@@ -556,13 +569,21 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
     // A condition of the PAGE (unrecognised, or a resolve miss/ambiguous
     // answer) — never reused for `unsupported`, which blames the gateway.
     //
-    // The wording must hold for all THREE sub-cases `resolveForAgent` collapses
-    // into this reason (see handlers.ts): unrecognised, not-indexed/unresolvable,
-    // and AMBIGUOUS. On an ambiguous resolve the page IS indexed — under several
-    // items — and the header above is at that moment showing "Several indexed
-    // items match this page:" with a chooser. "Nimbus hasn't indexed this page
-    // yet." would then contradict its own header. Do not "clarify" this back to
-    // an indexed/not-indexed claim; say only what is true in all three cases.
+    // When is this visible? Lanes render ONLY under a `resolved` header
+    // (panel-in-page.ts), so this reason always appears beneath a header that
+    // names a single item — yet `handleAgentRun`/`handleAgentState` re-resolve
+    // the page themselves, later and independently, and that second answer
+    // disagreed: the item was re-indexed or removed, the resolve now comes back
+    // ambiguous or a miss, or the recogniser gate now rejects the URL (a
+    // recognised surface removed in Options since the panel opened).
+    //
+    // The wording must therefore hold for all THREE sub-cases `resolveForAgent`
+    // collapses into this reason (see handlers.ts): unrecognised,
+    // not-indexed/unresolvable, and AMBIGUOUS. On an ambiguous re-resolve the
+    // page IS indexed — under several items — so "Nimbus hasn't indexed this
+    // page yet." would be false, and it would contradict the resolved header
+    // still on screen above. Do not "clarify" this back to an
+    // indexed/not-indexed claim; say only what is true in all three cases.
     box.append(
       line(doc, "nimbus-related__status", "Nimbus couldn't pin this page to one indexed item."),
     );
