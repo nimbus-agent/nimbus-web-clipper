@@ -1156,6 +1156,22 @@ describe("panel-in-page agent lanes", () => {
     // (onLaneToggle's own guard then blocks any further synthetic re-invoke),
     // so a regression here fails with a clean, finite assertion instead of
     // timing out the whole file.
+    //
+    // NOTE (review round 2): the fix below (pollLane converting a `collapsed`
+    // answer to `failed`/`stale` whenever the lane is open — see the next
+    // describe block) now ALSO makes this exact outcome unreachable on its
+    // own: `laneState[lane].kind` can no longer read `collapsed` while a lane
+    // is open, which is the one thing `onLaneToggle`'s pre-existing guard
+    // checks. Verified by mutation that this test, as scripted, no longer
+    // discriminates the `startedOpen` suppression in ISOLATION once that other
+    // fix is in place — removing `startedOpen` alone, with the `pollLane` fix
+    // still present, no longer fails it. Left in place regardless: it still
+    // pins a true, valuable property (no double-invoke from a stale poll
+    // answer), `startedOpen` remains a real, independently-reasoned invariant
+    // for ANY repaint of an open lane (not only this one path), and I did not
+    // want to manufacture an artificial scenario for a combination that may no
+    // longer be reachable through any live code path just to keep one test
+    // green in isolation.
     it("does not auto-re-invoke when a repaint reflects a lane that has gone stale back to collapsed", async () => {
       const sent: string[] = [];
       const panel = await mountResolvedPanel(sent, {}, [
@@ -1175,6 +1191,47 @@ describe("panel-in-page agent lanes", () => {
       await advanceTimers(2_000);
 
       expect(sent.filter((k) => k === "agent-run")).toHaveLength(1);
+    });
+
+    // Review round 2: the empty render this closes pre-dated CRITICAL 2's own
+    // fix above — it just used to be masked, because the (buggy) synthetic
+    // re-invoke silently replaced the blank `collapsed` lane with a fresh
+    // `running` one before anyone could see it sitting empty. Once the
+    // synthetic toggle stopped re-invoking, a lane the user has open that
+    // polls back to `collapsed` (TTL lapse, eviction past MAX_STORED_RUNS, or
+    // a resolve landing on a different item id — handlers.ts's own
+    // `?? {kind:"collapsed"}` fallback) would otherwise sit open and
+    // PERMANENTLY BLANK: `renderLaneBody`'s `collapsed` arm is a deliberately
+    // empty box (correct for a lane never opened), and polling stops the
+    // moment the answer isn't `running`, so nothing would ever repaint it
+    // again without an invisible manual collapse+reopen. `pollLane` now
+    // stores `failed`/`stale` instead whenever this happens to an OPEN lane —
+    // the state that already exists for "this run is gone", with a Re-run
+    // button that genuinely works.
+    it("shows the stale message with a working Re-run — never a permanently blank lane — when a poll answers collapsed", async () => {
+      const sent: string[] = [];
+      const panel = await mountResolvedPanel(sent, {}, [
+        { kind: "running", runId: "r1" },
+        { kind: "collapsed" },
+        { kind: "running", runId: "r2" },
+      ]);
+      (panel.querySelector('details[data-lane="impact"] summary') as HTMLElement).click();
+      await advanceTimers(1_000); // fire the poll tick that answers `collapsed`
+
+      expect(panel.textContent).toContain("This run is gone — re-run it.");
+      const rerun = Array.from(panel.querySelectorAll("button")).find(
+        (b) => b.textContent === "Re-run",
+      );
+      expect(rerun).toBeDefined();
+      // No auto re-invoke — the one agent-run so far is the user's original
+      // click, not something the stale-recovery repaint fired on its own.
+      expect(sent.filter((k) => k === "agent-run")).toHaveLength(1);
+
+      // The button is not a dead control either: handleAgentRun does not
+      // short-circuit on a cached `failed` state, so this genuinely re-invokes.
+      (rerun as HTMLButtonElement).click();
+      await advanceTimers(0);
+      expect(sent.filter((k) => k === "agent-run")).toHaveLength(2);
     });
 
     // CRITICAL 1's other half: `pollLane` resumes after its OWN await, not

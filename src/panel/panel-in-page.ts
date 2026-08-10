@@ -471,6 +471,23 @@ function createPanel(body: HTMLElement): {
     if (!isAgentStateResponse(res)) {
       return;
     }
+    if (res.state.kind === "collapsed" && laneOpen[lane]) {
+      // A lane the user has OPEN going back to `collapsed` mid-poll means the
+      // run this poll was tracking is gone — its TTL lapsed, it was evicted
+      // past MAX_STORED_RUNS, or a resolve landed on a different item id
+      // (handlers.ts's own `?? {kind:"collapsed"}` fallback). Storing
+      // `collapsed` here would repaint straight into `renderLaneBody`'s
+      // `collapsed` arm, which is a deliberately EMPTY box for a lane never
+      // opened (Task 7) — correct there, but on an OPEN lane it reads as a
+      // permanently blank panel with no affordance, since `collapsed` is not
+      // `running` and this loop stops right after. `failed`/`stale` is the
+      // state that already exists for exactly this condition: "This run is
+      // gone — re-run it." with a working Re-run button that genuinely
+      // re-invokes (`handleAgentRun` does not short-circuit on `failed`).
+      laneState[lane] = { kind: "failed", reason: "stale" };
+      paint();
+      return;
+    }
     laneState[lane] = res.state;
     paint();
     if (res.state.kind === "running") {
@@ -633,10 +650,14 @@ function createPanel(body: HTMLElement): {
       // reaches whatever "toggle" listener is attached by then (this one),
       // synthesising a user-open event out of a plain repaint. Left
       // unguarded, every repaint of an already-expanded lane would replay as
-      // a fresh "expand" — and once that lane's state has gone stale back to
-      // `collapsed` (a resumed run's TTL lapsing, or eviction — see
-      // `handleAgentState`'s `?? {kind:"collapsed"}` fallback), each replay
-      // invokes a brand-new gateway run, forever, from one real click.
+      // a fresh "expand" — and if `laneState[lane].kind` were ever
+      // `collapsed` while the lane sits open, each replay would invoke a
+      // brand-new gateway run, forever, from one real click. `pollLane`
+      // (below) now converts exactly that combination to `failed`/`stale`
+      // before it is ever stored, so this specific outcome is doubly guarded
+      // in practice — but THIS suppression is the general-purpose one: it
+      // holds as an invariant over any repaint of any open lane, regardless
+      // of what caused it, not only the one path `pollLane` closes.
       //
       // `startedOpen` records what THIS element was created with. The FIRST
       // toggle event it ever receives, if it just repeats that value, has no
