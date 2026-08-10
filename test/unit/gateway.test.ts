@@ -1,20 +1,34 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import { endpointUrl, GATEWAY_PATHS, isLoopbackOrigin } from "../../src/shared/gateway.ts";
 
 describe("GATEWAY_PATHS", () => {
-  test("is the five contracted gateway paths", () => {
+  it("is the seven contracted gateway paths", () => {
     expect(GATEWAY_PATHS).toEqual({
       ingest: "/v1/clips",
       pairConfirm: "/v1/clips/pair/confirm",
       related: "/v1/clips/related",
       resolve: "/v1/items/resolve",
       itemsFetch: "/v1/items/fetch",
+      agents: "/v1/agents",
+      agentRuns: "/v1/agents/runs",
     });
   });
 
   test("builds a resolve URL under a trailing-slash origin", () => {
     expect(endpointUrl("http://127.0.0.1:8765/", "resolve")).toBe(
       "http://127.0.0.1:8765/v1/items/resolve",
+    );
+  });
+
+  it("builds an agent invoke URL from the base plus the agent name", () => {
+    expect(`${endpointUrl("http://127.0.0.1:8765/", "agents")}/impact`).toBe(
+      "http://127.0.0.1:8765/v1/agents/impact",
+    );
+  });
+
+  it("builds a run-poll URL from the base plus the run id", () => {
+    expect(`${endpointUrl("http://127.0.0.1:8765", "agentRuns")}/abc123`).toBe(
+      "http://127.0.0.1:8765/v1/agents/runs/abc123",
     );
   });
 });
