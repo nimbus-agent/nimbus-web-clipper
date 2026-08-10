@@ -224,3 +224,43 @@ export type FetchError =
   | "timeout"
   | "unreachable"
   | "server_error";
+
+/**
+ * The lanes this phase ships, and the agent each maps to.
+ *
+ * `why` is deliberately ABSENT. `agents.why` takes `{ ref, line? }` where `ref` is
+ * a LOCAL filesystem path resolved against configured `[[filesystem.roots]]` and
+ * answered by git blame on a local checkout — it answers "why does this line
+ * exist", not "why does this change exist", and a browser on a pull-request page
+ * has neither the path nor necessarily the repo. The roadmap's C2.1 brief names it
+ * (and `whyPeek`, which is HTTP-excluded); both are corrected there.
+ */
+export const AGENT_LANES = ["impact", "expert"] as const;
+export type AgentLane = (typeof AGENT_LANES)[number];
+
+/** What one lane is doing. `collapsed` is also the state of a lane never opened. */
+export type LaneState =
+  | { readonly kind: "collapsed" }
+  | { readonly kind: "running"; readonly runId: string }
+  | { readonly kind: "done"; readonly brief: string }
+  | { readonly kind: "failed"; readonly reason: AgentError };
+
+/**
+ * `stale` collapses the poll's 404 and 410. Upstream distinguishes them —
+ * unknown-or-lost-to-restart vs known-and-expired — but states the client response
+ * to both is to re-issue, never to keep waiting. One state, one "Re-run".
+ *
+ * There is no `busy`: a 429 is handled inside the client by backing off for
+ * `Retry-After` and retrying. Upstream sized that header at one second precisely
+ * because a slot frees when a run finishes, in seconds. Surfacing it would report
+ * a normal condition as a failure.
+ */
+export type AgentError =
+  | "not_paired"
+  | "unauthorized"
+  | "insufficient_scope"
+  /** 404 — unknown agent, or this gateway has no agents surface. */
+  | "unsupported"
+  | "stale"
+  | "unreachable"
+  | "server_error";
