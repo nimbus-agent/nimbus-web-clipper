@@ -180,6 +180,12 @@ export type LaneState =
        * inventing a command.
        */
       readonly scopeGap?: ScopeGap;
+      /**
+       * The gateway's own explanation, present only on `agent_failed` and only when
+       * the run carried one. Free text from the gateway — `panel-view.ts` renders it
+       * with `textContent`, never parsed, exactly as it does the brief.
+       */
+      readonly detail?: string;
     };
 
 /**
@@ -205,6 +211,16 @@ export type AgentError =
    * gateway can't run agents yet" about a gateway that runs them fine.
    */
   | "not_resolved"
+  /**
+   * The run reached a terminal `failed` status: the transport worked and the gateway
+   * is healthy, but the agent could not produce an answer. Distinct from
+   * `server_error`, which means the CALL failed. Upstream separates these
+   * deliberately — see the "`failureReason`, NOT `error`" comment on the run route in
+   * the gateway's `ipc/http-server.ts`, which exists precisely so a client does not
+   * misread a normal outcome as a transport error. Carries `detail` when the gateway
+   * explained why.
+   */
+  | "agent_failed"
   | "stale"
   | "unreachable"
   | "server_error";
@@ -927,10 +943,26 @@ describe("renderLaneBody", () => {
   // transient blip until the panel is reopened — the same dead-control shape the
   // rate-limited retry hit in the fetch slice.
   it("offers Re-run for transient failures", () => {
-    for (const reason of ["stale", "unreachable", "server_error"] as const) {
+    // `agent_failed` belongs here: the run reached the agent and the agent could not
+    // answer, which a retry may well fix. It is NOT `server_error` — the call worked.
+    for (const reason of ["stale", "unreachable", "server_error", "agent_failed"] as const) {
       const el = renderLaneBody(document, { kind: "failed", reason }, () => undefined);
       expect(el.querySelector("button")).not.toBeNull();
     }
+  });
+
+  it("shows the gateway's own explanation as text, never parsed", () => {
+    const el = renderLaneBody(document, {
+      kind: "failed", reason: "agent_failed",
+      detail: "<img src=x onerror=alert(1)> no LLM configured",
+    }, () => undefined);
+    expect(el.textContent).toContain("no LLM configured");
+    expect(el.querySelector("img")).toBeNull();
+  });
+
+  it("still states something when the gateway gave no explanation", () => {
+    const el = renderLaneBody(document, { kind: "failed", reason: "agent_failed" }, () => undefined);
+    expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
   });
 
   it("withholds Re-run where retrying cannot help, and says what would", () => {
@@ -957,7 +989,8 @@ describe("renderLaneBody", () => {
   // C2.1's done-when: never a silent empty lane.
   it("renders a stated reason for every failure, never nothing", () => {
     for (const reason of [
-      "not_paired", "unauthorized", "unsupported", "not_resolved", "unreachable", "server_error",
+      "not_paired", "unauthorized", "unsupported", "not_resolved",
+      "agent_failed", "unreachable", "server_error",
     ] as const) {
       const el = renderLaneBody(document, { kind: "failed", reason });
       expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
@@ -1001,6 +1034,8 @@ Only Re-run-able failures get a button, per the tests above.
 The `failed`/`insufficient_scope` arm reuses `appendScopeGuidance` — the helper extracted in the fetch slice — so all four scope messages stay one implementation. It already handles the missing-gap case by falling back to generic guidance rather than printing a half-built command, which is why `scopeGap` is optional.
 
 `not_resolved` says the page is not indexed — "Nimbus hasn't indexed this page yet." Do **not** reuse `unsupported`'s copy: that one says the gateway has no agents surface, and saying it here blames the gateway for a page that simply has no row.
+
+`agent_failed` says the agent could not answer — "The agent couldn't finish this run." Do **not** reuse `server_error`'s copy: `server_error` means the *call* failed, and this call succeeded. When `detail` is present, append it via **`textContent`** — it is free text from the gateway and gets the same no-parsing treatment as the brief, for the same reason. When it is absent, the base sentence stands alone; never render an empty trailing colon or a dangling separator.
 
 `renderShell`'s lane loop stays untouched.
 
