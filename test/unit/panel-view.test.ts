@@ -13,6 +13,7 @@ import {
   renderShell,
 } from "../../src/panel/panel-view.ts";
 import type { RelatedHit, ResolvedItem } from "../../src/shared/types.ts";
+import { AGENT_ERRORS } from "../../src/shared/types.ts";
 
 const base: RelatedHit = {
   id: "1",
@@ -642,6 +643,61 @@ describe("renderLaneBody", () => {
     ] as const) {
       const el = renderLaneBody(document, { kind: "failed", reason });
       expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  // These four reasons exist BECAUSE collapsing them told users falsehoods. The
+  // generic "every failure states something" loop cannot catch a regression here:
+  // a false-but-non-empty string passes it. Assert the PROPERTY, not the exact
+  // wording, so a future rewrite stays free while the false claim stays caught.
+  it("never claims the page is unindexed for not_resolved — it also covers the ambiguous case", () => {
+    const el = renderLaneBody(
+      document,
+      { kind: "failed", reason: "not_resolved" },
+      () => undefined,
+    );
+    const text = el.textContent?.toLowerCase() ?? "";
+    expect(text).not.toContain("hasn't indexed");
+    expect(text).not.toContain("not indexed");
+  });
+
+  it("blames the gateway for unsupported and the page for not_resolved, never the reverse", () => {
+    const gateway = renderLaneBody(
+      document,
+      { kind: "failed", reason: "unsupported" },
+      () => undefined,
+    );
+    const page = renderLaneBody(
+      document,
+      { kind: "failed", reason: "not_resolved" },
+      () => undefined,
+    );
+    expect(gateway.textContent?.toLowerCase()).toContain("gateway");
+    expect(page.textContent?.toLowerCase()).not.toContain("gateway");
+  });
+
+  it("does not report a finished-and-failed run as an error — the call succeeded", () => {
+    const el = renderLaneBody(
+      document,
+      { kind: "failed", reason: "agent_failed" },
+      () => undefined,
+    );
+    expect(el.textContent?.toLowerCase()).not.toContain("error");
+  });
+
+  // The strongest guard, and the one that survives every rewording: no two reasons
+  // may render the same sentence. Collapsing any two is how each of this branch's
+  // copy bugs began.
+  it("gives every AgentError its own distinct copy", () => {
+    const seen = new Map<string, string>();
+    for (const reason of AGENT_ERRORS) {
+      const text = (
+        renderLaneBody(document, { kind: "failed", reason }, () => undefined).textContent ?? ""
+      ).trim();
+      expect(text.length).toBeGreaterThan(0);
+      const clash = seen.get(text);
+      expect(clash, `"${reason}" renders the same text as "${clash}"`).toBeUndefined();
+      seen.set(text, reason);
     }
   });
 });
