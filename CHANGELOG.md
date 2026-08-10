@@ -8,6 +8,15 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Fixed
+
+- **The panel's freshness line said "Indexed" when it meant "Updated".** The time
+  shown is the item's own last-modified time as its source reports it — GitHub's
+  `updated_at` for a pull request — not when Nimbus indexed it. So a PR fetched
+  seconds ago could read "Indexed 3 days ago", which was simply untrue. The line
+  now reads "Updated 3 days ago". The value is unchanged and is the more useful
+  one: how stale the underlying item is, rather than when a row was written.
+
 ### Added
 
 - **On a resolve miss, fetch that one item.** On a page Nimbus recognises but has
@@ -44,7 +53,7 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 - The panel now resolves pages against the gateway's shipped
   `GET /v1/items/resolve` route instead of the guessed shape Phase C1 was built
-  against. It shows how fresh the indexed item is, marks a closest-match result
+  against. It shows when the item was last updated, marks a closest-match result
   as weaker than an exact one, and lets you pick when several indexed items match
   the page. The not-paired, pairing-rejected and can't-reach-Nimbus messages for
   resolve are reworded to match the new contract, and a malformed resolve

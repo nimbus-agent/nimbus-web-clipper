@@ -7,7 +7,14 @@ function plural(n: number, unit: string): string {
 }
 
 /**
- * How stale an indexed item is, in words.
+ * How long ago an item was last MODIFIED, in words.
+ *
+ * `modifiedAtMs` is the item's own last-modified time as its source system
+ * reports it — for a synced pull request that is GitHub's `updated_at`, not the
+ * moment Nimbus wrote the row. The two are unrelated: a targeted fetch can index
+ * a PR in under a second and still be told it was last touched three days ago.
+ *
+ * So callers must not label this "Indexed …". The panel says "Updated …".
  *
  * `nowMs` is injected rather than read from the clock so this stays pure and
  * testable — and so the panel takes one timestamp per repaint instead of a

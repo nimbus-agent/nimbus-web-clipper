@@ -661,7 +661,7 @@ describe("panel-in-page fetch state machine", () => {
     await flush();
 
     expect(sent).toEqual(["resolve", "fetch", "resolve"]);
-    expect(panel.textContent).toContain("Indexed just now");
+    expect(panel.textContent).toContain("Updated just now");
   });
 
   it("after a timeout, Check again re-resolves and does NOT fetch again", async () => {

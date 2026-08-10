@@ -225,7 +225,10 @@ describe("renderHeader — freshness and match confidence", () => {
     });
     expect(el.textContent).toContain("GitHub PR · a/b #1");
     expect(el.textContent).toContain("Fix the flake");
-    expect(el.textContent).toContain("Indexed 3 min ago");
+    expect(el.textContent).toContain("Updated 3 min ago");
+    // The value is the ITEM's last-modified time from the gateway, not when the row
+    // was written — so the label must not say "Indexed".
+    expect(el.textContent).not.toContain("Indexed");
     // An exact match makes no hedge.
     expect(el.textContent).not.toContain("Closest match");
     const link = el.querySelector("a");
@@ -373,7 +376,7 @@ describe("renderHeader — chosen", () => {
       candidate: { id: "a", service: "jira", type: "issue", title: "One", url: "https://j.test/a" },
     });
     expect(el.textContent).toContain("One");
-    expect(el.textContent).not.toContain("Indexed");
+    expect(el.textContent).not.toContain("Updated");
     expect(el.querySelectorAll("button")).toHaveLength(0);
   });
 });

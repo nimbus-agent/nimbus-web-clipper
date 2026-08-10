@@ -271,6 +271,16 @@ Four decisions worth knowing before you change any of it:
   exists to avoid. `truncated` renders no chooser at all: the gateway sends an
   empty candidate list on that arm specifically so the client cannot imply the
   right answer is sitting on a shortened menu.
+- **The freshness line says "Updated", not "Indexed", and the distinction is not
+  cosmetic.** `modified_at` is the item's own last-modified time as its source
+  system reports it — GitHub's `updated_at` for a pull request. It has no relation
+  to when the row was written: a targeted fetch can index a PR in under a second
+  and be told it was last touched three days ago. The header said "Indexed" until
+  the C3.1 manual pass caught it against a real connector item; every unit fixture
+  and the earlier manual pass had used web *clips*, whose `modified_at` IS the clip
+  time, so the wrong label was accurate by coincidence. When adding a fixture here,
+  prefer a connector-sourced item over a clip — the two agree on this field only
+  for clips, which is exactly what hid the bug.
 
 ### Page access is a different axis from network access
 
