@@ -3,10 +3,29 @@
 // panel. Mounts a Shadow-DOM overlay (inlined styles — no web_accessible_resources),
 // reads the page context, asks the SW for related items, and renders them.
 import { sendMessage } from "../browser/runtime.ts";
-import { isFetchResponse, isRelatedResponse, isResolveResponse } from "../shared/messages.ts";
+import {
+  isAgentStateResponse,
+  isFetchResponse,
+  isRelatedResponse,
+  isResolveResponse,
+} from "../shared/messages.ts";
 import { surfaceLine } from "../shared/recognise.ts";
-import type { Product, RelatedHit, ResolveCandidate } from "../shared/types.ts";
-import { type HeaderState, type Lane, renderError, renderHits, renderShell } from "./panel-view.ts";
+import {
+  AGENT_LANES,
+  type AgentLane,
+  type LaneState,
+  type Product,
+  type RelatedHit,
+  type ResolveCandidate,
+} from "../shared/types.ts";
+import {
+  type HeaderState,
+  type Lane,
+  renderError,
+  renderHits,
+  renderLaneBody,
+  renderShell,
+} from "./panel-view.ts";
 
 const HOST_ID = "nimbus-related-host";
 
@@ -51,6 +70,19 @@ const FETCH_MESSAGES: Record<string, string> = {
   unreachable: "Couldn't connect to Nimbus.",
   server_error: "Nimbus had an error fetching this page.",
 };
+
+/** The two C2 agent lanes' summary labels — each phrased as the question its
+ *  agent answers, matching the design spec's own naming
+ *  (docs/superpowers/specs/2026-08-10-c2-agent-lanes-design.md). */
+const LANE_TITLES: Record<AgentLane, string> = {
+  impact: "What breaks if it lands",
+  expert: "Who should review it",
+};
+
+/** How often an OPEN panel re-asks the worker for a running lane's state — a
+ *  repaint cadence, not the worker's own poll of the gateway (which lives in
+ *  service-worker.ts's tickAgentPoll and keeps running after this panel closes). */
+const AGENT_POLL_MS = 1_000;
 
 // Inlined so the panel is fully self-contained. `:host { all: initial }` drops
 // inherited page styles; only our own --nimbus-* tokens are referenced, with a
@@ -149,6 +181,15 @@ const STYLES = `
   font: inherit;
   margin: 0;
 }
+/* The single inset for an agent lane's body (impact/expert): 16px horizontal,
+   matching the panel's other insets (.nimbus-related__lane-title,
+   .nimbus-related__header-state), plus a little breathing room top and bottom.
+   The nested override below zeroes .nimbus-related__status's OWN 16px padding —
+   without it, a status line inside a lane body would get 32px on top of the
+   pre/button below it, which have no padding of their own and would otherwise
+   sit flush against the panel edge instead of lining up with it. */
+.nimbus-related__lane-body { padding: 4px 16px 12px; }
+.nimbus-related__lane-body .nimbus-related__status { padding: 0; }
 `;
 
 interface NimbusHost extends HTMLElement {
@@ -302,6 +343,7 @@ function createPanel(body: HTMLElement): {
   paint: () => void;
   loadHeader: () => Promise<void>;
   loadRelated: () => Promise<void>;
+  stopPolling: () => void;
 } {
   let header: HeaderState = { kind: "loading" };
   // The candidate the user picked out of an `ambiguous` header. Only meaningful
@@ -345,14 +387,149 @@ function createPanel(body: HTMLElement): {
   // <details> state before replacing it and carry it into the next render.
   let relatedExpanded = true;
 
+  // --- Agent lanes (impact/expert) ---------------------------------------
+  //
+  // Per-lane state, seeded to `collapsed` — "never opened" — for the life of
+  // this panel. Only rendered while the header names a single resolved item
+  // (`resolved`/`chosen`) — see `showAgentLanes` in paint() below.
+  const laneState: Record<AgentLane, LaneState> = {
+    impact: { kind: "collapsed" },
+    expert: { kind: "collapsed" },
+  };
+  // Whether each lane's own <details> is open, carried across repaints exactly
+  // like `relatedExpanded` above.
+  const laneOpen: Record<AgentLane, boolean> = { impact: false, expert: false };
+  /**
+   * Lanes with an `agent-run` genuinely IN FLIGHT — sent but not yet answered.
+   * Guards a double invoke on rapid toggling: expand -> collapse -> expand
+   * before the worker has persisted `{kind:"running"}` would otherwise send a
+   * SECOND `agent-run`, and `handleAgentRun`'s cached-state check would still
+   * read null at that point (`chrome.storage` is not transactional) and invoke
+   * a second time — two agent runs, and on a configured gateway two model
+   * calls, for one question, each consuming one of the gateway's three run
+   * slots. `chrome.storage` cannot be made race-free on its own; THIS set is
+   * what actually holds. `sendAgentRun` (the only sender of `agent-run`, called
+   * from both a lane's toggle-open and its Re-run button) adds on send and
+   * removes on response — never left set on a response, success or failure.
+   */
+  const laneInFlight = new Set<AgentLane>();
+  /**
+   * One poll timer handle per lane currently `running`. This is a SEPARATE
+   * cadence from the worker's own poll of the gateway (`tickAgentPoll` in
+   * service-worker.ts): that one is what completes a run and survives the
+   * panel closing; THIS one only repaints an open panel, and stops the moment
+   * the lane settles or this panel is torn down (see `stopAgentPolls`).
+   */
+  const lanePollTimers: Partial<Record<AgentLane, ReturnType<typeof setTimeout>>> = {};
+
+  function clearLanePoll(lane: AgentLane): void {
+    const handle = lanePollTimers[lane];
+    if (handle !== undefined) {
+      clearTimeout(handle);
+      delete lanePollTimers[lane];
+    }
+  }
+
+  function scheduleLanePoll(lane: AgentLane): void {
+    clearLanePoll(lane);
+    lanePollTimers[lane] = setTimeout(() => {
+      pollLane(lane).catch(() => undefined);
+    }, AGENT_POLL_MS);
+  }
+
+  /** Repaints an OPEN panel while a lane runs — never invokes (see
+   *  `AgentStateRequest`'s own doc comment). Reschedules itself while the
+   *  answer is still `running`; any terminal state (or an unreadable response)
+   *  stops the loop rather than polling forever. */
+  async function pollLane(lane: AgentLane): Promise<void> {
+    let res: unknown;
+    try {
+      res = await sendMessage({ kind: "agent-state", lane, pageUrl: window.location.href });
+    } catch {
+      // The worker itself is unreachable — nothing to retry against here; the
+      // next lane toggle or Re-run will find out again. Leave the last known
+      // state on screen rather than guessing a new one.
+      return;
+    }
+    if (!isAgentStateResponse(res)) {
+      return;
+    }
+    laneState[lane] = res.state;
+    paint();
+    if (res.state.kind === "running") {
+      scheduleLanePoll(lane);
+    }
+  }
+
+  /**
+   * Invokes a lane's agent. The ONLY sender of `agent-run` — called both from
+   * a lane's toggle-open (first expand) and from `renderLaneBody`'s Re-run
+   * button — so the `laneInFlight` guard here is what protects both paths at
+   * once.
+   */
+  async function sendAgentRun(lane: AgentLane): Promise<void> {
+    if (laneInFlight.has(lane)) {
+      return;
+    }
+    laneInFlight.add(lane);
+    let res: unknown;
+    try {
+      res = await sendMessage({ kind: "agent-run", lane, pageUrl: window.location.href });
+    } catch {
+      laneInFlight.delete(lane);
+      laneState[lane] = { kind: "failed", reason: "unreachable" };
+      paint();
+      return;
+    }
+    laneInFlight.delete(lane);
+    if (!isAgentStateResponse(res)) {
+      laneState[lane] = { kind: "failed", reason: "server_error" };
+      paint();
+      return;
+    }
+    laneState[lane] = res.state;
+    paint();
+    if (res.state.kind === "running") {
+      scheduleLanePoll(lane);
+    }
+  }
+
+  /** A lane's <details> toggle listener. Only the FIRST expand (state still
+   *  `collapsed`) invokes: once it has moved on (`running`/`done`/`failed`),
+   *  collapsing and re-expanding just shows what's already known — re-running
+   *  a `done` lane would waste a model call, and a `failed` lane's own remedy
+   *  is its Re-run button, not a silent auto-retry on toggle. */
+  function onLaneToggle(lane: AgentLane, open: boolean): void {
+    laneOpen[lane] = open;
+    if (!open || laneState[lane].kind !== "collapsed") {
+      return;
+    }
+    sendAgentRun(lane).catch(() => undefined);
+  }
+
+  /** Stops every lane's poll timer — called on panel teardown. The worker's own
+   *  poll of the gateway is untouched: it survives this panel closing by design. */
+  function stopAgentPolls(): void {
+    for (const lane of AGENT_LANES) {
+      clearLanePoll(lane);
+    }
+  }
+
   function paint(): void {
     const open = body.querySelector<HTMLDetailsElement>('[data-lane="related"]');
     if (open !== null) {
       relatedExpanded = open.open;
     }
-    const lanes: Lane[] = [
-      { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
-    ];
+    // Each repaint (resolve/related landing, a lane's own state changing, …)
+    // rebuilds every <details> from scratch — read the live open/closed state
+    // before replacing it, same as `relatedExpanded` above, so a lane the user
+    // toggled doesn't spring back to its previous state.
+    for (const lane of AGENT_LANES) {
+      const el = body.querySelector<HTMLDetailsElement>(`[data-lane="${lane}"]`);
+      if (el !== null) {
+        laneOpen[lane] = el.open;
+      }
+    }
     // `fetchState` wins whenever it is set — see its doc comment above for why a
     // recovery resolve that is still a miss must not displace it. A chosen
     // candidate renders via `chosen`, never `resolved` — candidates carry no
@@ -363,6 +540,31 @@ function createPanel(body: HTMLElement): {
         : chosen !== null && header.kind === "ambiguous"
           ? { kind: "chosen", surface: header.surface, candidate: chosen }
           : header;
+    // The two agent lanes ask a question about ONE resolved item — there is
+    // nothing to ask about on a miss, an error, or an ambiguous answer still
+    // awaiting a pick. `chosen` counts alongside `resolved`: the user has
+    // already pinned down which item this page is, even though it renders
+    // without a `modifiedAt`.
+    const showAgentLanes = shown.kind === "resolved" || shown.kind === "chosen";
+    const agentLanes: Lane[] = showAgentLanes
+      ? AGENT_LANES.map((lane) => ({
+          id: lane,
+          title: LANE_TITLES[lane],
+          expanded: laneOpen[lane],
+          render: (doc: Document) =>
+            // Every rendered lane gets a REAL Re-run handler — never omitted.
+            // `renderLaneBody`'s third argument is optional so it can be unit
+            // tested without one, but a lane rendered here without it would
+            // ship a Re-run button that silently does nothing.
+            renderLaneBody(doc, laneState[lane], () => {
+              sendAgentRun(lane).catch(() => undefined);
+            }),
+        }))
+      : [];
+    const lanes: Lane[] = [
+      { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
+      ...agentLanes,
+    ];
     body.replaceChildren(
       renderShell(
         document,
@@ -376,6 +578,14 @@ function createPanel(body: HTMLElement): {
         },
       ),
     );
+    // `renderShell`/`renderLane` build a fresh <details> every repaint — attach
+    // this repaint's toggle listeners after the fact rather than threading a
+    // callback through `Lane`, which every OTHER lane (including "related")
+    // does not need.
+    for (const lane of AGENT_LANES) {
+      const el = body.querySelector<HTMLDetailsElement>(`[data-lane="${lane}"]`);
+      el?.addEventListener("toggle", () => onLaneToggle(lane, el.open));
+    }
   }
 
   async function loadHeader(): Promise<void> {
@@ -489,7 +699,7 @@ function createPanel(body: HTMLElement): {
     paint();
   }
 
-  return { paint, loadHeader, loadRelated };
+  return { paint, loadHeader, loadRelated, stopPolling: stopAgentPolls };
 }
 
 function mount(): void {
@@ -533,6 +743,7 @@ function mount(): void {
   const { signal } = controller;
   const teardown = (): void => {
     controller.abort();
+    view.stopPolling();
     host.remove();
   };
   host.__nimbusClose = teardown;

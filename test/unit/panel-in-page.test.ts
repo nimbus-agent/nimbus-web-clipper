@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // test/unit/panel-in-page.test.ts
 import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
-import type { RelatedHit } from "../../src/shared/types.ts";
+import type { AgentLane, LaneState, RelatedHit } from "../../src/shared/types.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
 // panel-in-page.ts is an injected content script: it runs its mount/self-toggle
@@ -24,6 +24,16 @@ async function loadPanel(): Promise<void> {
  *  deep the awaited chain is (e.g. fetch -> re-resolve). */
 async function flush(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** Advances FAKE timers by `ms`, awaiting any promise chains a fired timer
+ *  kicks off along the way — the panel's agent-state poll reschedules its own
+ *  next tick from inside an async callback, so the plain synchronous
+ *  `vi.advanceTimersByTime` would fire a timer without ever letting that
+ *  callback's `await sendMessage(...)` resolve. Callers must have
+ *  `vi.useFakeTimers()` active already. */
+async function advanceTimers(ms: number): Promise<void> {
+  await vi.advanceTimersByTimeAsync(ms);
 }
 
 function host(): HTMLElement | null {
@@ -146,6 +156,12 @@ afterEach(() => {
   const closePanel = (el as unknown as { __nimbusClose?: () => void } | null)?.__nimbusClose;
   closePanel?.();
   harness.restore();
+  // A successful agent-run schedules a real in-worker poll timer via setTimeout;
+  // vi.resetModules() does not cancel it. Restoring real timers here — rather
+  // than as each fake-timer test's own last statement — means a test that fails
+  // (and exits before reaching that statement) does not leave setTimeout faked
+  // for every test that runs after it. Mirrors service-worker.test.ts's afterEach.
+  vi.useRealTimers();
 });
 
 describe("panel-in-page mount()", () => {
@@ -781,5 +797,265 @@ describe("panel-in-page fetch state machine", () => {
     expect(panel.textContent).toContain("GitHub PR · acme/web #1");
     expect(panel.textContent).toContain("Nimbus had an error fetching this page.");
     expect(panel.textContent).not.toContain("Not a recognised Nimbus surface");
+  });
+});
+
+describe("panel-in-page agent lanes", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #1",
+    resolveUrl: "https://github.com/acme/web/pull/1",
+  } as const;
+
+  const resolvedItem = {
+    id: "i1",
+    service: "github",
+    type: "pr",
+    title: "Add thing",
+    url: "https://github.com/acme/web/pull/1",
+    modifiedAt: 1_700_000_000_000,
+  };
+
+  const resolvedResponse = {
+    kind: "resolve",
+    ok: true,
+    recognition,
+    outcome: { kind: "found", matchKind: "exact", item: resolvedItem },
+  };
+
+  const missResponse = {
+    kind: "resolve",
+    ok: true,
+    recognition,
+    outcome: { kind: "not-indexed", fetchable: false },
+  };
+
+  /**
+   * Mounts the panel against a RESOLVED header — the only header kinds
+   * (`resolved`/`chosen`) that render the two agent lanes — and records each
+   * "agent-run"/"agent-state" message KIND sent into `sent`, in order.
+   *
+   * `initial` seeds the answer to a lane's FIRST "agent-run"/"agent-state" call
+   * (defaulting to a generic `done`, for a lane not under test in a given
+   * test). `runSequence`, when given, instead drives a whole SEQUENCE of
+   * per-lane answers — consumed in order per lane, repeating the last entry
+   * once exhausted — for a test that watches a lane progress through several
+   * states across both the initial run and subsequent polls.
+   */
+  async function mountResolvedPanel(
+    sent: string[],
+    initial: Partial<Record<AgentLane, LaneState>> = {},
+    runSequence?: readonly LaneState[],
+  ): Promise<HTMLElement> {
+    const counters: Partial<Record<AgentLane, number>> = {};
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const kind = (message as { kind?: string }).kind;
+      if (kind === "resolve") {
+        return resolvedResponse;
+      }
+      if (kind === "related") {
+        return { kind: "related", ok: true, items: [] };
+      }
+      if (kind !== "agent-run" && kind !== "agent-state") {
+        throw new Error(`mountResolvedPanel: unscripted message kind ${String(kind)}`);
+      }
+      sent.push(kind);
+      const lane = (message as { lane: AgentLane }).lane;
+      if (runSequence !== undefined) {
+        const i = counters[lane] ?? 0;
+        counters[lane] = i + 1;
+        const state = runSequence[Math.min(i, runSequence.length - 1)];
+        return { kind: "agent-state", lane, state };
+      }
+      const state: LaneState = initial[lane] ?? { kind: "done", brief: "ok" };
+      return { kind: "agent-state", lane, state };
+    });
+
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    const body = shadow()?.querySelector<HTMLElement>(".nimbus-related__body");
+    if (body === null || body === undefined) {
+      throw new Error("panel body not found");
+    }
+    return body;
+  }
+
+  /** Mounts the panel against a MISS header — there is no single resolved item
+   *  to ask an agent about, so neither lane is offered at all. */
+  async function mountMissPanel(): Promise<HTMLElement> {
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const kind = (message as { kind?: string }).kind;
+      if (kind === "resolve") {
+        return missResponse;
+      }
+      if (kind === "related") {
+        return { kind: "related", ok: true, items: [] };
+      }
+      throw new Error(`mountMissPanel: unscripted message kind ${String(kind)}`);
+    });
+
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    const body = shadow()?.querySelector<HTMLElement>(".nimbus-related__body");
+    if (body === null || body === undefined) {
+      throw new Error("panel body not found");
+    }
+    return body;
+  }
+
+  it("invokes a lane's agent when it is expanded, and only then", async () => {
+    const sent: string[] = [];
+    const panel = await mountResolvedPanel(sent);
+    expect(sent.filter((k) => k === "agent-run")).toHaveLength(0); // collapsed: nothing
+
+    (panel.querySelector('details[data-lane="impact"] summary') as HTMLElement).click();
+    await flush();
+
+    expect(sent.filter((k) => k === "agent-run")).toHaveLength(1);
+  });
+
+  it("does not re-invoke when a done lane is collapsed and expanded again", async () => {
+    const sent: string[] = [];
+    const panel = await mountResolvedPanel(sent, { impact: { kind: "done", brief: "b" } });
+    const summary = panel.querySelector('details[data-lane="impact"] summary') as HTMLElement;
+    summary.click();
+    await flush();
+    summary.click();
+    await flush();
+    summary.click();
+    await flush();
+    expect(sent.filter((k) => k === "agent-run")).toHaveLength(1);
+  });
+
+  it("shows no lanes when the page is not resolved", async () => {
+    const panel = await mountMissPanel();
+    expect(panel.querySelector('details[data-lane="impact"]')).toBeNull();
+  });
+
+  // The rapid-toggle race the cached-state check alone cannot close: unlike the
+  // "done, reopened" test above, the FIRST agent-run here never settles before
+  // the second and third toggles fire, so `laneState` is still `collapsed` each
+  // time — only the in-flight Set (see `laneInFlight`'s doc comment in
+  // panel-in-page.ts) stops the second and third from sending their own
+  // agent-run.
+  it("guards a double invoke on rapid toggling: three quick toggles send exactly one agent-run", async () => {
+    const sent: string[] = [];
+    let resolveAgentRun: (value: unknown) => void = () => {};
+    harness.sendMessage.mockImplementation((message: unknown) => {
+      const kind = (message as { kind?: string }).kind;
+      if (kind === "resolve") {
+        return Promise.resolve(resolvedResponse);
+      }
+      if (kind === "related") {
+        return Promise.resolve({ kind: "related", ok: true, items: [] });
+      }
+      if (kind === "agent-run") {
+        sent.push(kind);
+        // Held open deliberately: nothing has persisted `{kind:"running"}` yet
+        // when the second and third toggles below fire.
+        return new Promise((resolve) => {
+          resolveAgentRun = resolve;
+        });
+      }
+      throw new Error(`unscripted message kind ${String(kind)}`);
+    });
+
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    const body = shadow()?.querySelector<HTMLElement>(".nimbus-related__body");
+    if (body === null || body === undefined) {
+      throw new Error("panel body not found");
+    }
+
+    const summary = body.querySelector('details[data-lane="impact"] summary') as HTMLElement;
+    // Each click awaits a flush before the next: a real <details> queues its
+    // "toggle" event as its own task (jsdom included) rather than firing it
+    // synchronously, so three back-to-back clicks with no yield between them
+    // would coalesce into a single net "open" toggle — a false pass that
+    // would never exercise this guard at all. Awaiting between clicks is what
+    // makes each one its own genuine open/close/open transition, matching a
+    // real user's three separate clicks — while `resolveAgentRun` is what
+    // keeps the first request from ever settling, which is the actual race:
+    // `laneState` is still `collapsed` at every one of these three toggles.
+    summary.click(); // expand — sends the only agent-run
+    await flush();
+    summary.click(); // collapse — the request is still in flight
+    await flush();
+    summary.click(); // expand again — must be ignored, not sent
+    await flush();
+
+    expect(sent).toHaveLength(1);
+
+    // Let the held request settle so it doesn't leak into a later test.
+    resolveAgentRun({ kind: "agent-state", lane: "impact", state: { kind: "done", brief: "b" } });
+    await flush();
+  });
+
+  // The other half of the panel's two documented dead-control bugs (see the
+  // rate-limited "Try again" button and the related panel's single unreachable
+  // entry point): `renderLaneBody`'s onRerun is OPTIONAL so it stays testable
+  // without one, but every lane THIS panel renders must supply a real handler —
+  // never render one that quietly does nothing when clicked.
+  it("wires every rendered lane's Re-run button so it isn't a dead control", async () => {
+    const sent: string[] = [];
+    const panel = await mountResolvedPanel(sent, {
+      impact: { kind: "failed", reason: "unreachable" },
+      expert: { kind: "failed", reason: "unreachable" },
+    });
+
+    for (const lane of ["impact", "expert"] as const) {
+      (panel.querySelector(`details[data-lane="${lane}"] summary`) as HTMLElement).click();
+      await flush();
+    }
+    expect(sent.filter((k) => k === "agent-run")).toHaveLength(2);
+
+    const rerunButtons = Array.from(panel.querySelectorAll("button")).filter(
+      (b) => b.textContent === "Re-run",
+    );
+    expect(rerunButtons).toHaveLength(2);
+    for (const button of rerunButtons) {
+      (button as HTMLButtonElement).click();
+    }
+    await flush();
+
+    // A lane rendered WITHOUT a real onRerun handler would leave this at 2 —
+    // the click would be a dead control.
+    expect(sent.filter((k) => k === "agent-run")).toHaveLength(4);
+  });
+
+  describe("agent-state polling", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("polls agent-state while a lane is running and stops when it settles", async () => {
+      const sent: string[] = [];
+      const panel = await mountResolvedPanel(sent, {}, [
+        { kind: "running", runId: "r1" },
+        { kind: "running", runId: "r1" },
+        { kind: "done", brief: "answered" },
+      ]);
+      (panel.querySelector('details[data-lane="impact"] summary') as HTMLElement).click();
+      await advanceTimers(3_000);
+
+      expect(panel.textContent).toContain("answered");
+      const before = sent.filter((k) => k === "agent-state").length;
+      await advanceTimers(5_000);
+      // Settled: the panel must stop asking. A poll that never stops is a battery bug
+      // and keeps the worker alive for no reason.
+      expect(sent.filter((k) => k === "agent-state").length).toBe(before);
+    });
   });
 });
