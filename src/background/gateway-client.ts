@@ -2,6 +2,8 @@ import type { ClipPayload } from "../shared/clip.ts";
 import { endpointUrl, type GatewayEndpoint } from "../shared/gateway.ts";
 import { isRelatedHit, type RelatedQuery } from "../shared/related.ts";
 import {
+  type AgentError,
+  type AgentLane,
   type ClipPostResult,
   type FetchError,
   type FetchOutcome,
@@ -23,6 +25,7 @@ const CLIP_TIMEOUT_MS = 10_000;
 const RELATED_TIMEOUT_MS = 8_000;
 const RESOLVE_TIMEOUT_MS = 8_000;
 const FETCH_TIMEOUT_MS = 30_000;
+const AGENT_TIMEOUT_MS = 15_000;
 
 const DEFAULT_RETRY_AFTER_MS = 60_000; // the gateway's full rate-limit window
 const MAX_RETRY_AFTER_MS = 120_000;
@@ -454,6 +457,124 @@ export async function fetchItem(
   }
   if (res.status === 404) {
     return { ok: false, reason: "unsupported" };
+  }
+  return { ok: false, reason: "server_error" };
+}
+
+/** `POST /v1/agents/{agent}` — invoke, returning a run id to poll. */
+export async function invokeAgent(
+  origin: string,
+  token: string,
+  agent: AgentLane,
+  params: unknown,
+  doFetch: FetchLike = fetch,
+): Promise<
+  | { ok: true; runId: string }
+  | { ok: false; reason: AgentError; scopeGap?: { required: string; granted: string[] } }
+  | { ok: false; reason: "busy"; retryAfterMs: number }
+> {
+  let res: Response;
+  try {
+    res = await postJsonAt(
+      doFetch,
+      `${endpointUrl(origin, "agents")}/${encodeURIComponent(agent)}`,
+      params,
+      { authorization: `Bearer ${token}` },
+      AGENT_TIMEOUT_MS,
+    );
+  } catch {
+    return { ok: false, reason: "unreachable" };
+  }
+  if (res.status === 202) {
+    const data = await readJson(res);
+    return isObject(data) && typeof data["runId"] === "string"
+      ? { ok: true, runId: data["runId"] }
+      : { ok: false, reason: "server_error" };
+  }
+  if (res.status === 429) {
+    return {
+      ok: false,
+      reason: "busy",
+      retryAfterMs: parseRetryAfterMs(res.headers.get("retry-after")),
+    };
+  }
+  if (res.status === 401) {
+    return { ok: false, reason: "unauthorized" };
+  }
+  if (res.status === 403) {
+    const gap = parseScopeGap(await readJson(res));
+    return gap === null
+      ? { ok: false, reason: "insufficient_scope" }
+      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
+  }
+  if (res.status === 404) {
+    return { ok: false, reason: "unsupported" };
+  }
+  return { ok: false, reason: "server_error" };
+}
+
+/**
+ * `GET /v1/agents/runs/{id}` — poll a run. 404 (unknown) and 410 (expired) both
+ * collapse to `stale`: upstream distinguishes unknown-or-lost-to-restart from
+ * known-and-expired, but the client's answer to both is to re-issue, never to
+ * keep waiting — see `AgentError`'s doc comment.
+ */
+export async function getAgentRun(
+  origin: string,
+  token: string,
+  runId: string,
+  doFetch: FetchLike = fetch,
+): Promise<
+  | { ok: true; status: "running" }
+  | { ok: true; status: "done"; brief: string }
+  | { ok: true; status: "failed"; failureReason: string }
+  | { ok: false; reason: AgentError; scopeGap?: { required: string; granted: string[] } }
+> {
+  let res: Response;
+  try {
+    res = await getJsonAt(
+      doFetch,
+      `${endpointUrl(origin, "agentRuns")}/${encodeURIComponent(runId)}`,
+      { authorization: `Bearer ${token}` },
+      AGENT_TIMEOUT_MS,
+    );
+  } catch {
+    return { ok: false, reason: "unreachable" };
+  }
+  if (res.status === 200) {
+    const data = await readJson(res);
+    if (!isObject(data)) {
+      return { ok: false, reason: "server_error" };
+    }
+    if (data["status"] === "running") {
+      return { ok: true, status: "running" };
+    }
+    // A `done` run with no brief is malformed — rendering an empty lane would
+    // violate the phase's "never a silent empty lane" rule.
+    if (data["status"] === "done") {
+      return typeof data["brief"] === "string"
+        ? { ok: true, status: "done", brief: data["brief"] }
+        : { ok: false, reason: "server_error" };
+    }
+    if (data["status"] === "failed") {
+      return typeof data["failureReason"] === "string"
+        ? { ok: true, status: "failed", failureReason: data["failureReason"] }
+        : { ok: false, reason: "server_error" };
+    }
+    // Unknown status: never treated as a terminal answer.
+    return { ok: false, reason: "server_error" };
+  }
+  if (res.status === 401) {
+    return { ok: false, reason: "unauthorized" };
+  }
+  if (res.status === 403) {
+    const gap = parseScopeGap(await readJson(res));
+    return gap === null
+      ? { ok: false, reason: "insufficient_scope" }
+      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
+  }
+  if (res.status === 404 || res.status === 410) {
+    return { ok: false, reason: "stale" };
   }
   return { ok: false, reason: "server_error" };
 }

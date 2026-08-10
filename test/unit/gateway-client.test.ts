@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
 import {
   confirmPair,
   fetchItem,
+  getAgentRun,
+  invokeAgent,
   parseRetryAfterMs,
   postClip,
   postRelated,
@@ -673,6 +675,164 @@ describe("fetchItem", () => {
       expect(await p).toEqual({ ok: false, reason: "timeout" });
     } finally {
       vi.useRealTimers();
+    }
+  });
+});
+
+describe("invokeAgent", () => {
+  function jsonRes(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json", ...headers },
+    });
+  }
+
+  it("POSTs to /v1/agents/<agent> with the params verbatim and a bearer header", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const doFetch = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonRes({ runId: "r1" }, 202);
+    };
+    await invokeAgent(
+      "http://127.0.0.1:8765",
+      "tok",
+      "impact",
+      { fileOrPrUrl: "https://github.com/a/b/pull/1" },
+      doFetch,
+    );
+
+    const call = calls[0];
+    expect(call?.url).toBe("http://127.0.0.1:8765/v1/agents/impact");
+    expect(call?.init?.method).toBe("POST");
+    // Verbatim: the gateway owns validation, so we must not reshape the body.
+    expect(JSON.parse(String(call?.init?.body))).toEqual({
+      fileOrPrUrl: "https://github.com/a/b/pull/1",
+    });
+    expect((call?.init?.headers as Record<string, string> | undefined)?.["authorization"]).toBe(
+      "Bearer tok",
+    );
+    expect(call?.url).not.toContain("tok");
+    expect(String(call?.init?.body)).not.toContain("tok");
+  });
+
+  it("maps 202 to the run id", async () => {
+    const doFetch = async () => jsonRes({ runId: "run-42" }, 202);
+    expect(await invokeAgent("http://127.0.0.1:8765", "t", "expert", {}, doFetch)).toEqual({
+      ok: true,
+      runId: "run-42",
+    });
+  });
+
+  it("rejects a 202 with no runId rather than inventing one", async () => {
+    const doFetch = async () => jsonRes({}, 202);
+    expect(await invokeAgent("http://127.0.0.1:8765", "t", "expert", {}, doFetch)).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
+  it("maps 429 to busy and parses Retry-After", async () => {
+    const doFetch = async () => jsonRes({ error: "busy" }, 429, { "retry-after": "1" });
+    expect(await invokeAgent("http://127.0.0.1:8765", "t", "impact", {}, doFetch)).toEqual({
+      ok: false,
+      reason: "busy",
+      retryAfterMs: 1000,
+    });
+  });
+
+  it("maps 404 / 401 / 403 / 500", async () => {
+    const cases: Array<[unknown, number, string]> = [
+      [{ error: "unknown_agent" }, 404, "unsupported"],
+      [{ error: "unauthorized" }, 401, "unauthorized"],
+      [{}, 500, "server_error"],
+    ];
+    for (const [body, status, reason] of cases) {
+      const doFetch = async () => jsonRes(body, status);
+      expect(await invokeAgent("http://127.0.0.1:8765", "t", "impact", {}, doFetch)).toMatchObject({
+        ok: false,
+        reason,
+      });
+    }
+    const scoped = async () =>
+      jsonRes({ error: "insufficient_scope", required: "agents", granted: ["clip"] }, 403);
+    expect(await invokeAgent("http://127.0.0.1:8765", "t", "impact", {}, scoped)).toEqual({
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: { required: "agents", granted: ["clip"] },
+    });
+  });
+});
+
+describe("getAgentRun", () => {
+  function jsonRes(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  it("GETs /v1/agents/runs/<id>", async () => {
+    const calls: string[] = [];
+    const doFetch = async (url: string) => {
+      calls.push(url);
+      return jsonRes({ status: "running" });
+    };
+    await getAgentRun("http://127.0.0.1:8765", "t", "run-42", doFetch);
+    expect(calls[0]).toBe("http://127.0.0.1:8765/v1/agents/runs/run-42");
+  });
+
+  it("maps running, done and failed", async () => {
+    const running = async () => jsonRes({ status: "running", brief: null });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", running)).toEqual({
+      ok: true,
+      status: "running",
+    });
+
+    const done = async () => jsonRes({ status: "done", brief: "## Impact\n\nthings" });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", done)).toEqual({
+      ok: true,
+      status: "done",
+      brief: "## Impact\n\nthings",
+    });
+
+    const failed = async () => jsonRes({ status: "failed", failureReason: "no index" });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", failed)).toEqual({
+      ok: true,
+      status: "failed",
+      failureReason: "no index",
+    });
+  });
+
+  it("rejects done with no brief — a done run without one is malformed", async () => {
+    const doFetch = async () => jsonRes({ status: "done", brief: null });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
+  // THE collapse for this task: upstream distinguishes these two, and says the
+  // client's answer to both is to re-issue. One state, one affordance.
+  it("collapses poll 404 and 410 into `stale`", async () => {
+    for (const [body, status] of [
+      [{ error: "not_found" }, 404],
+      [{ error: "expired" }, 410],
+    ] as Array<[unknown, number]>) {
+      const doFetch = async () => jsonRes(body, status);
+      expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual({
+        ok: false,
+        reason: "stale",
+      });
+    }
+  });
+
+  it("treats an unknown status as server_error, never as a terminal answer", async () => {
+    for (const body of [null, {}, { status: "vibes" }]) {
+      const doFetch = async () => jsonRes(body);
+      expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual({
+        ok: false,
+        reason: "server_error",
+      });
     }
   });
 });
