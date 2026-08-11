@@ -13,6 +13,8 @@ import {
   isQueueRemoveRequest,
   isQueueResponse,
   isQueueRetryRequest,
+  isRecogniseRequest,
+  isRecognitionResponse,
   isRelatedRequest,
   isRelatedResponse,
   isResolveRequest,
@@ -151,6 +153,45 @@ describe("isConnectionResponse", () => {
     expect(isConnectionResponse({ kind: "connection", paired: true, label: "c" })).toBe(false);
     expect(isConnectionResponse({ kind: "clip", paired: false })).toBe(false);
     expect(isConnectionResponse({ kind: "connection" })).toBe(false);
+  });
+});
+
+describe("recognise message guards", () => {
+  it("accepts a well-formed request and rejects a malformed one", () => {
+    expect(isRecogniseRequest({ kind: "recognise", pageUrl: "https://x.test/" })).toBe(true);
+    expect(isRecogniseRequest({ kind: "recognise" })).toBe(false);
+    expect(isRecogniseRequest({ kind: "recognise", pageUrl: 42 })).toBe(false);
+    expect(isRecogniseRequest({ kind: "resolve", pageUrl: "https://x.test/" })).toBe(false);
+  });
+
+  it("accepts both arms of a recognition response", () => {
+    expect(
+      isRecognitionResponse({
+        kind: "recognition",
+        recognition: {
+          ok: true,
+          product: "github",
+          kind: "pr",
+          label: "GitHub PR",
+          ref: "acme/web #482",
+          resolveUrl: "https://github.com/acme/web/pull/482",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isRecognitionResponse({
+        kind: "recognition",
+        recognition: { ok: false, reason: "unknown-host" },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a response with no or a malformed recognition", () => {
+    expect(isRecognitionResponse({ kind: "recognition" })).toBe(false);
+    expect(isRecognitionResponse({ kind: "recognition", recognition: { ok: true } })).toBe(false);
+    expect(
+      isRecognitionResponse({ kind: "resolve", recognition: { ok: false, reason: "x" } }),
+    ).toBe(false);
   });
 });
 

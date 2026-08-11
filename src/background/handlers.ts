@@ -14,6 +14,8 @@ import type {
   QueueRemoveRequest,
   QueueResponse,
   QueueRetryRequest,
+  RecogniseRequest,
+  RecognitionResponse,
   RelatedRequest,
   RelatedResponse,
   ResolveRequest,
@@ -120,6 +122,28 @@ export async function handleRelated(
     return { kind: "related", ok: false, reason: r.reason };
   }
   return { kind: "related", ok: true, items: r.items };
+}
+
+export interface RecogniseDeps {
+  readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
+}
+
+/**
+ * Classify a page URL. The whole handler — no connection read, no gateway call,
+ * no token.
+ *
+ * It is `handleResolve`'s first line, exposed on its own so the panel's
+ * navigation watcher can ask "is the tab still showing the item my header names?"
+ * without asking the gateway anything. The panel cannot answer that itself: the
+ * configured origins live in the worker, and shipping them into a content script
+ * would expose the user's internal hostnames to save a message that costs no
+ * network.
+ */
+export async function handleRecognise(
+  deps: RecogniseDeps,
+  req: RecogniseRequest,
+): Promise<RecognitionResponse> {
+  return { kind: "recognition", recognition: recognise(req.pageUrl, await deps.getOrigins()) };
 }
 
 export interface ResolveDeps {

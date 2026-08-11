@@ -149,6 +149,15 @@ describe("message routing — success shapes", () => {
     expect(res).toEqual({ kind: "related", ok: true, items: [hit] });
   });
 
+  test("routes a recognise request and answers with a recognition", async () => {
+    await load();
+    const res = await harness.emitMessage({
+      kind: "recognise",
+      pageUrl: "https://github.com/acme/web/pull/482",
+    });
+    expect(res).toMatchObject({ kind: "recognition", recognition: { ok: true, kind: "pr" } });
+  });
+
   test("resolve: an unrecognised page answers without a fetch", async () => {
     await load();
     harness.storage.set(CONNECTION_KEY, conn);

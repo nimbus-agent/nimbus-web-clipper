@@ -73,6 +73,19 @@ export interface FetchRequest {
   readonly pageUrl: string;
 }
 
+/**
+ * Classify a URL — nothing more. The panel sends this while watching for a
+ * client-side navigation, to learn whether the tab is still showing the item its
+ * header names.
+ *
+ * Deliberately NOT a resolve: `handleRecognise` runs the pure recogniser and
+ * makes no gateway call, so a navigation check costs no network and no token.
+ */
+export interface RecogniseRequest {
+  readonly kind: "recognise";
+  readonly pageUrl: string;
+}
+
 /** Expand a lane: run its agent (or return the cached state if one already
  *  exists for this item and lane — expanding a `done` lane must not re-invoke). */
 export interface AgentRunRequest {
@@ -116,6 +129,7 @@ export type ExtensionRequest =
   | RelatedRequest
   | ResolveRequest
   | FetchRequest
+  | RecogniseRequest
   | AgentRunRequest
   | AgentStateRequest
   | QueueListRequest
@@ -160,6 +174,11 @@ export type ResolveResponse =
       readonly reason: ResolveError;
       readonly scopeGap?: ScopeGap;
     };
+
+export type RecognitionResponse = {
+  readonly kind: "recognition";
+  readonly recognition: Recognition;
+};
 
 export type FetchResponse =
   | {
@@ -277,6 +296,10 @@ export function isFetchRequest(v: unknown): v is FetchRequest {
   return isObject(v) && v["kind"] === "fetch" && typeof v["pageUrl"] === "string";
 }
 
+export function isRecogniseRequest(v: unknown): v is RecogniseRequest {
+  return isObject(v) && v["kind"] === "recognise" && typeof v["pageUrl"] === "string";
+}
+
 function isCandidate(v: unknown): v is ResolveCandidate {
   return (
     isObject(v) &&
@@ -365,6 +388,10 @@ export function isResolveResponse(v: unknown): v is ResolveResponse {
     typeof v["reason"] === "string" &&
     (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"]))
   );
+}
+
+export function isRecognitionResponse(v: unknown): v is RecognitionResponse {
+  return isObject(v) && v["kind"] === "recognition" && isRecognition(v["recognition"]);
 }
 
 /**
