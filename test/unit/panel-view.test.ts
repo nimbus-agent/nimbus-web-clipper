@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // test/unit/panel-view.test.ts
-import { describe, expect, it, test } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import {
   type HeaderState,
   type Lane,
@@ -703,5 +703,79 @@ describe("renderLaneBody", () => {
       expect(clash, `"${reason}" renders the same text as "${clash}"`).toBeUndefined();
       seen.set(text, reason);
     }
+  });
+});
+
+describe("the navigated-away notice", () => {
+  const LANES = [
+    {
+      id: "related",
+      title: "Related",
+      expanded: false,
+      render: (d: Document) => d.createElement("div"),
+    },
+  ];
+
+  it("names the pinned item so every lane below it is attributed", () => {
+    const shell = renderShell(document, {
+      header: { kind: "loading" },
+      lanes: LANES,
+      navAway: { pinnedRef: "acme/web #482", onReread: () => undefined },
+    });
+    const notice = shell.querySelector(".nimbus-related__navaway");
+    expect(notice?.textContent).toContain("You've moved on.");
+    expect(notice?.textContent).toContain("This panel is still about acme/web #482.");
+  });
+
+  it("falls back to generic copy when the pinned page had no ref", () => {
+    const shell = renderShell(document, {
+      header: { kind: "unrecognised" },
+      lanes: LANES,
+      navAway: { pinnedRef: null, onReread: () => undefined },
+    });
+    expect(shell.querySelector(".nimbus-related__navaway")?.textContent).toContain(
+      "This panel is still about the page you opened it on.",
+    );
+  });
+
+  // A screen-reader user must learn that the panel's subject no longer matches
+  // the tab; nothing else in the panel announces it.
+  it("announces itself as a status region", () => {
+    const shell = renderShell(document, {
+      header: { kind: "loading" },
+      lanes: LANES,
+      navAway: { pinnedRef: "acme/web #482", onReread: () => undefined },
+    });
+    expect(shell.querySelector(".nimbus-related__navaway")?.getAttribute("role")).toBe("status");
+  });
+
+  it("calls onReread once per click", () => {
+    const onReread = vi.fn();
+    const shell = renderShell(document, {
+      header: { kind: "loading" },
+      lanes: LANES,
+      navAway: { pinnedRef: "acme/web #482", onReread },
+    });
+    shell.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
+    expect(onReread).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders nothing when navAway is absent", () => {
+    const shell = renderShell(document, { header: { kind: "loading" }, lanes: LANES });
+    expect(shell.querySelector(".nimbus-related__navaway")).toBeNull();
+  });
+
+  // The notice sits between the header and the lanes so it coexists with every
+  // header state instead of replacing one.
+  it("sits after the header and before the lanes, and leaves the lanes enabled", () => {
+    const shell = renderShell(document, {
+      header: { kind: "loading" },
+      lanes: LANES,
+      navAway: { pinnedRef: "acme/web #482", onReread: () => undefined },
+    });
+    const classes = [...shell.children].map((c) => c.className);
+    expect(classes[0]).toContain("nimbus-related__header-state");
+    expect(classes[1]).toContain("nimbus-related__navaway");
+    expect(shell.querySelectorAll("[disabled]")).toHaveLength(0);
   });
 });

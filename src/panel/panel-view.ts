@@ -189,6 +189,20 @@ export interface Lane {
 export interface PanelState {
   readonly header: HeaderState;
   readonly lanes: readonly Lane[];
+  /**
+   * Set while the tab has navigated to a DIFFERENT indexed item than the one this
+   * panel describes. Rendered between the header and the lanes, so it coexists
+   * with every `HeaderState` arm rather than competing with them.
+   *
+   * `pinnedRef` names the item the panel is still about — one line that attributes
+   * every lane below it, which is why the lanes stay live and unstyled: they
+   * answer about the pinned item, exactly as the header says. Null when the
+   * pinned page was unrecognised and so has no ref.
+   *
+   * A callback on the state follows `Lane.render` above, rather than growing
+   * `renderShell` a fifth positional argument.
+   */
+  readonly navAway?: { readonly pinnedRef: string | null; readonly onReread: () => void };
 }
 
 function line(doc: Document, className: string, text: string): HTMLElement {
@@ -652,6 +666,33 @@ export function renderLane(doc: Document, lane: Lane): HTMLElement {
   return details;
 }
 
+/**
+ * The "you've moved on" notice. Coexists with every `HeaderState` arm — see
+ * `PanelState.navAway` — so it is rendered by `renderShell` as a sibling of the
+ * header, never as a branch inside `renderHeader`.
+ */
+function renderNavAway(
+  doc: Document,
+  navAway: { readonly pinnedRef: string | null; readonly onReread: () => void },
+): HTMLElement {
+  const box = doc.createElement("div");
+  box.className = "nimbus-related__navaway";
+  // The panel's subject no longer matches the tab, and nothing else announces it.
+  box.setAttribute("role", "status");
+  box.append(line(doc, "nimbus-related__navaway-lead", "You've moved on."));
+  box.append(
+    line(
+      doc,
+      "nimbus-related__status",
+      navAway.pinnedRef === null
+        ? "This panel is still about the page you opened it on."
+        : `This panel is still about ${navAway.pinnedRef}.`,
+    ),
+  );
+  box.append(actionButton(doc, "nimbus-related__action", "Re-read page", navAway.onReread));
+  return box;
+}
+
 export function renderShell(
   doc: Document,
   state: PanelState,
@@ -661,6 +702,9 @@ export function renderShell(
   const shell = doc.createElement("div");
   shell.className = "nimbus-related__shell";
   shell.append(renderHeader(doc, state.header, onChoose, onFetch));
+  if (state.navAway !== undefined) {
+    shell.append(renderNavAway(doc, state.navAway));
+  }
   for (const lane of state.lanes) {
     shell.append(renderLane(doc, lane));
   }

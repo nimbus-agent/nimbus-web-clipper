@@ -212,6 +212,9 @@ const STYLES = `
 .nimbus-related__shell { display: flex; flex-direction: column; }
 .nimbus-related__header-state { padding: 12px 16px; border-bottom: 1px solid var(--nimbus-border); }
 .nimbus-related__header-state .nimbus-related__status { padding: 4px 0 0; }
+.nimbus-related__navaway { padding: 10px 16px 12px; border-bottom: 1px solid var(--nimbus-border); }
+.nimbus-related__navaway .nimbus-related__status { padding: 2px 0 4px; }
+.nimbus-related__navaway-lead { margin: 0; font-weight: 600; }
 .nimbus-related__surface { margin: 0; font-weight: 600; }
 .nimbus-related__header-item { margin: 4px 0 0; }
 .nimbus-related__header-item a { color: var(--nimbus-accent); text-decoration: none; }
