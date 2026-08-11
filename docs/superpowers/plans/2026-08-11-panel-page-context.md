@@ -1195,6 +1195,107 @@ describe("following a client-side navigation", () => {
     expect(lane?.open).toBe(false);
   });
 
+  // A navigation check has no button and no error state, so the next tick is the
+  // only recovery there is — a failed check must not be recorded as a done one.
+  it("re-checks the same url after the worker was briefly unreachable", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    let failOnce = true;
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind !== "recognise") return { kind: "related", ok: true, items: [] };
+      if (failOnce) {
+        failOnce = false;
+        throw new Error("worker unreachable");
+      }
+      return { kind: "recognition", recognition: PR517 };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain("acme/web #482");
+  });
+
+  // clearLanePoll cancels a PENDING timer; only the generation guard can stop a
+  // poll whose answer is already in flight from starting a fresh loop for the item
+  // the panel has stopped describing.
+  it("a poll in flight during a re-read neither repaints nor reschedules", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    let releasePoll: ((value: unknown) => void) | null = null;
+    const kinds: string[] = [];
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      kinds.push(m.kind ?? "");
+      if (m.kind === "resolve") return resolvedFor(PR517);
+      if (m.kind === "recognise") return { kind: "recognition", recognition: PR517 };
+      if (m.kind === "agent-run") {
+        return { kind: "agent-state", lane: "impact", state: { kind: "running", runId: "r1" } };
+      }
+      if (m.kind === "agent-state") {
+        return await new Promise((resolve) => {
+          releasePoll = resolve;
+        });
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+
+    // Start impact on the pinned PR, then let its first poll go out and hang.
+    root
+      .querySelector<HTMLDetailsElement>('[data-lane="impact"]')
+      ?.dispatchEvent(new Event("toggle"));
+    await flush();
+    await advanceTimers(1200); // past AGENT_POLL_MS (1000) — the poll is now awaiting
+    expect(kinds).toContain("agent-state");
+
+    // Re-read while that poll is still in flight.
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
+    await flush();
+    const afterReread = kinds.length;
+
+    releasePoll?.({ kind: "agent-state", lane: "impact", state: { kind: "running", runId: "r1" } });
+    await advanceTimers(3000);
+    expect(kinds.slice(afterReread).filter((k) => k === "agent-state")).toEqual([]);
+    expect(headerText()).toContain("acme/web #517");
+  });
+
+  // Task 6 proves the view renders the generic copy for `pinnedRef: null`; this
+  // proves the panel actually produces null when the pinned page had no ref.
+  it("uses the generic copy when the pinned page was unrecognised", async () => {
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind === "resolve") {
+        return {
+          kind: "resolve",
+          ok: true,
+          recognition: { ok: false, reason: "unrecognised-path" },
+          outcome: { kind: "not-indexed", fetchable: false },
+        };
+      }
+      if (m.kind === "recognise") {
+        return {
+          kind: "recognition",
+          recognition: (m.pageUrl ?? "").includes("/pull/482")
+            ? PR482
+            : { ok: false, reason: "unrecognised-path" },
+        };
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+    window.history.pushState({}, "", "/acme/web");
+    await loadPanel();
+    await vi.waitFor(() => expect(headerText()).not.toContain("Checking Nimbus"));
+    const root = shadow();
+    if (root === null) throw new Error("panel shadow root not found");
+
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain(
+      "This panel is still about the page you opened it on.",
+    );
+  });
+
   it("sends the NEW pinned url after a re-read", async () => {
     const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
     window.history.pushState({}, "", "/acme/web/pull/517");
@@ -1289,14 +1390,29 @@ Place it next to `pollLane`:
     if (url === lastCheckedUrl) {
       return;
     }
+    // Marked BEFORE the send, so a round trip slower than NAV_CHECK_MS cannot
+    // stack duplicate requests for one URL — and rolled back below if the send
+    // fails, because a check that never got an answer is not a completed check.
+    const previous = lastCheckedUrl;
     lastCheckedUrl = url;
     const seq = ++recogniseSeq;
     let res: unknown;
     try {
       res = await sendMessage({ kind: "recognise", pageUrl: url });
     } catch {
-      // The worker is unreachable. Leaving the notice as it is beats guessing;
-      // the next navigation asks again.
+      // The worker is unreachable. Every OTHER sendMessage failure in this panel
+      // leaves the user a way back — an error header, a Re-run button — but a
+      // navigation check has no button, so the next tick is the only recovery
+      // there is. Leaving `lastCheckedUrl` marked would remove it: this URL would
+      // match on every future tick and never be re-checked, and the notice for it
+      // would never appear.
+      //
+      // Rolled back only while this is still the LATEST check. A newer navigation
+      // has already marked its own URL, and restoring an older value over it would
+      // send that newer check's URL a second time.
+      if (seq === recogniseSeq) {
+        lastCheckedUrl = previous;
+      }
       return;
     }
     if (closed || seq !== recogniseSeq || !isRecognitionResponse(res)) {
@@ -1382,6 +1498,22 @@ For `checkNavigation` the check folds into the condition added in Step 4:
     if (closed || gen !== generation || seq !== recogniseSeq || !isRecognitionResponse(res)) {
 ```
 
+**The position of the guard is load-bearing, not incidental.** In `pollLane` and
+`sendAgentRun` it must sit **before `scheduleLanePoll`** — which is exactly where
+the existing `closed` check already sits, immediately after the `await` and above
+the state assignment and the `paint()`. That ordering is what makes `reread`'s
+`clearLanePoll` sufficient: `clearLanePoll` cancels a *pending* timer, and only
+this guard can stop a poll whose answer is already in flight from starting a fresh
+timer for the item the panel has stopped describing. A guard placed after the state
+assignment would satisfy the letter of this step and still leak a poll loop —
+which, via `handleAgentState`'s own resolve call, means an unbounded gateway poll
+for a page nobody is looking at.
+
+The worker's own poll of the gateway (`tickAgentPoll` in `service-worker.ts`) is
+deliberately untouched by a re-read: a run completes even when the panel closes,
+which is how C2.2 shipped. That is not an orphaned loop — it is the one that makes
+a stored answer available on the next expand.
+
 - [ ] **Step 7: Start the timer, stop it on teardown, and wire the notice**
 
 At the end of `createPanel`'s body, before the returned object:
@@ -1456,7 +1588,7 @@ After the existing `keydown` listener, using the same `signal`:
 - [ ] **Step 9: Run the tests to verify they pass**
 
 Run: `bunx vitest run test/unit/panel-in-page.test.ts`
-Expected: PASS, whole file — the eight new cases plus every pre-existing one.
+Expected: PASS, whole file — the eleven new cases plus every pre-existing one.
 
 - [ ] **Step 10: Full gate, then commit**
 
@@ -1650,6 +1782,17 @@ and Firefox after Task 8, against a paired gateway:
    and nothing ran until you expanded one.
 7. Open the panel on an indexed Jira issue and an indexed Jenkins build. Each
    shows its header and **Related**, and no agent lane.
+
+## Review round, 2026-08-11
+
+Reviewed against `2026-08-11-panel-page-context-review.md`. One point was a real
+defect in the plan's code; two were verified correct and tightened.
+
+| Raised | Verdict |
+| --- | --- |
+| `lastCheckedUrl` is marked before the send and not rolled back on failure, so a failed check is never retried | **Fixed — real defect.** Task 7 Step 4 now captures `previous` and rolls back in the `catch`, guarded by `seq === recogniseSeq`. Rolling back unguarded would clobber a newer check's marker; moving the assignment after the `await` would break one-request-per-URL. New test: *"re-checks the same url after the worker was briefly unreachable"*. |
+| A poll in flight at re-read time could reschedule itself and orphan a loop | **Verified safe; requirement made explicit.** `pollLane`'s existing `closed` check already sits above `scheduleLanePoll`, so the generation guard added at that same point blocks the reschedule, and `clearLanePoll` covers the pending timer. Step 6 now states that the guard's *position* is load-bearing — a guard below the state assignment passes the step's letter and still leaks a gateway poll. New test: *"a poll in flight during a re-read neither repaints nor reschedules"*. The worker's own `tickAgentPoll` survives a re-read by design (C2.2) and is not a leak. |
+| Verify the notice handles `pinnedRef: null` when the pinned page was unrecognised | **Verified correct; test gap closed.** `handleResolve` returns `{ok: true, recognition: {ok: false, …}}` for an unrecognised page, so `pinnedRecognition` is set and `paint()`'s `?.ok === true ? … : null` yields null. `navAway === true` also implies `pinnedRecognition !== null`, so there is no third state. Task 6 tested the view with null; the panel producing null was untested. New test: *"uses the generic copy when the pinned page was unrecognised"*. |
 
 ## Self-review
 
