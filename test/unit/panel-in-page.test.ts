@@ -1469,3 +1469,51 @@ describe("panel-in-page attachLaneToggle", () => {
     expect(calls).toEqual([true]);
   });
 });
+
+describe("the panel pins the page it was opened on", () => {
+  const RESOLVED = {
+    kind: "resolve",
+    ok: true,
+    recognition: {
+      ok: true,
+      product: "github",
+      kind: "pr",
+      label: "GitHub PR",
+      ref: "acme/web #482",
+      resolveUrl: "https://github.com/acme/web/pull/482",
+    },
+    outcome: {
+      kind: "found",
+      matchKind: "exact",
+      item: {
+        id: "it-1",
+        service: "github",
+        type: "pr",
+        title: "Add retry budget",
+        url: "https://github.com/acme/web/pull/482",
+        modifiedAt: Date.now(),
+      },
+    },
+  };
+
+  it("sends the pinned url after a client-side navigation, not the live one", async () => {
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    const pinned = window.location.href;
+    const root = await mountPanelWithResolve(RESOLVED);
+
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    expect(window.location.href).not.toBe(pinned);
+
+    const lane = root.querySelector<HTMLDetailsElement>('[data-lane="impact"]');
+    expect(lane).not.toBeNull();
+    if (lane !== null) {
+      lane.open = true;
+    }
+    lane?.dispatchEvent(new Event("toggle"));
+    await flush();
+
+    expect(harness.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "agent-run", lane: "impact", pageUrl: pinned }),
+    );
+  });
+});

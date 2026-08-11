@@ -400,6 +400,17 @@ function createPanel(body: HTMLElement): {
   stopPolling: () => void;
 } {
   let header: HeaderState = { kind: "loading" };
+  /**
+   * The page this panel describes, captured ONCE at mount.
+   *
+   * Every message this panel sends carries this URL, never
+   * `window.location.href`: on an SPA the two diverge the moment the user
+   * navigates, and a lane answering about the tab's current page under a header
+   * naming the pinned one is precisely the defect this exists to make
+   * impossible. `reread()` is the only writer, from an explicit user click.
+   */
+  // biome-ignore lint/style/useConst: reread() is a genuine second writer the linter can't see from this file alone
+  let pinnedUrl = window.location.href;
   // The candidate the user picked out of an `ambiguous` header. Only meaningful
   // alongside an `ambiguous` header — see the `shown` narrowing in paint() below.
   let chosen: ResolveCandidate | null = null;
@@ -510,7 +521,7 @@ function createPanel(body: HTMLElement): {
   async function pollLane(lane: AgentLane): Promise<void> {
     let res: unknown;
     try {
-      res = await sendMessage({ kind: "agent-state", lane, pageUrl: window.location.href });
+      res = await sendMessage({ kind: "agent-state", lane, pageUrl: pinnedUrl });
     } catch {
       // The worker itself is unreachable — nothing to retry against here; the
       // next lane toggle or Re-run will find out again. Leave the last known
@@ -572,7 +583,7 @@ function createPanel(body: HTMLElement): {
     paint();
     let res: unknown;
     try {
-      res = await sendMessage({ kind: "agent-run", lane, pageUrl: window.location.href });
+      res = await sendMessage({ kind: "agent-run", lane, pageUrl: pinnedUrl });
     } catch {
       laneInFlight.delete(lane);
       if (closed) {
@@ -726,7 +737,7 @@ function createPanel(body: HTMLElement): {
     try {
       res = await sendMessage({
         kind: "resolve",
-        pageUrl: window.location.href,
+        pageUrl: pinnedUrl,
         title: document.title,
       });
     } catch {
@@ -771,7 +782,7 @@ function createPanel(body: HTMLElement): {
     paint();
     let res: unknown;
     try {
-      res = await sendMessage({ kind: "fetch", pageUrl: window.location.href });
+      res = await sendMessage({ kind: "fetch", pageUrl: pinnedUrl });
     } catch {
       fetchState = { kind: "error", surface, message: "Couldn't connect to Nimbus." };
       paint();
