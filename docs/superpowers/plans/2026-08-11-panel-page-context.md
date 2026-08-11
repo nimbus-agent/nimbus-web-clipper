@@ -365,10 +365,19 @@ In `createPanel`, immediately after `let header: HeaderState = { kind: "loading"
    * `window.location.href`: on an SPA the two diverge the moment the user
    * navigates, and a lane answering about the tab's current page under a header
    * naming the pinned one is precisely the defect this exists to make
-   * impossible. `reread()` is the only writer, from an explicit user click.
+   * impossible. Task 7's `reread()` becomes its only other writer, from an
+   * explicit user click.
    */
-  let pinnedUrl = window.location.href;
+  const pinnedUrl = window.location.href;
 ```
+
+**`const`, not `let`.** There is no second writer in this task, so `let` trips
+Biome's `useConst` — and suppressing that would plant the first `biome-ignore` in
+`src/` to justify a writer that does not exist yet. Task 7 promotes this to `let`
+in the same commit that adds `reread()`'s reassignment, where the promotion is
+self-evidently correct. The comment is written forward-looking for the same
+reason: a reader of this commit in isolation (`git show`, blame, bisect) must not
+be told to look for a function the repo does not contain.
 
 - [ ] **Step 4: Switch the four send sites to the pin**
 
@@ -1344,7 +1353,20 @@ describe("following a client-side navigation", () => {
 Run: `bunx vitest run test/unit/panel-in-page.test.ts -t "following a client-side navigation"`
 Expected: FAIL — no notice ever appears.
 
-- [ ] **Step 3: Add the constant and the watcher state**
+- [ ] **Step 3: Promote `pinnedUrl` to `let`, then add the constant and the watcher state**
+
+`reread()` (Step 5) is the second writer that makes this a variable. Task 3 left it
+`const` deliberately — see that task's note — so change the declaration now, in the
+same commit that introduces the reassignment, and update its doc comment's last
+line from *"Task 7's `reread()` becomes its only other writer"* to *"`reread()` is
+its only other writer"* now that the function exists:
+
+```ts
+  let pinnedUrl = window.location.href;
+```
+
+Do **not** add a `biome-ignore` for `useConst`: with `reread()` present, Biome sees
+the reassignment and the rule does not fire.
 
 Beside `AGENT_POLL_MS` (~line 100):
 
