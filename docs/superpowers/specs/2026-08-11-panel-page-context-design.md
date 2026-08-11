@@ -96,6 +96,34 @@ about the URL, not a different item. Without that rule, wandering between two
 unrecognised pages under an open panel would re-banner for no user-visible
 change.
 
+### Identity is URL-only — no DOM
+
+`recognise(url, origins)` parses a `URL` and matches path segments, and reads
+nothing from the page: Jira's one ambiguity (issue-key case) is normalised from
+the **path**, not from the title or any element (`recognise.ts:135-140`). The
+worker already classifies every resolve this way today (`handlers.ts:149`), so
+identity is fully derivable in the background from a URL string. The panel does
+read the DOM — `readContext()` takes the title, the canonical link and the
+selection — but only for the **related** query, never for identity. Nothing in
+this slice needs DOM state carried across the message boundary.
+
+### The pin is the last resolve response's `recognition`
+
+There is no separately-maintained pinned identity to keep in step. The panel pins
+the URL it mounted on, and its identity is the `recognition` on the resolve
+response — which rides on **both** arms of that response on purpose
+(`handlers.ts:141-144`, "a gateway failure must not erase the fact that we know
+what page this is"). One source, so the pin cannot disagree with the header
+painted from it, and **Re-read page** re-pins the identity as an ordinary
+consequence of re-running `loadHeader` rather than as a second thing to remember.
+
+### The banner clears if you come back
+
+The check compares the live identity against the pin every time, so it is not a
+latch: `#482` → `#517` shows the notice, and navigating back to `#482` (or
+`#482/files`) removes it. Nothing was re-read and nothing needs to be — the pinned
+page is the page again, and the panel was right about it the whole time.
+
 ## Detection
 
 Neither browser gives a content script a portable hook for this:
@@ -116,6 +144,43 @@ once per distinct URL** — not once per tick.
 The `popstate` listener goes on `mount`'s existing `AbortController` signal, with
 every other page listener; the interval is cleared in `stopPolling`, beside the
 lane poll timers it already clears. No new lifecycle.
+
+### Skipped while the tab is hidden
+
+The check does nothing while `document.hidden`, and a `visibilitychange` listener
+runs one **immediately** on becoming visible. Not a CPU measure — a string compare
+twice a second, which browsers already throttle to about 1 Hz in a background tab,
+is not worth managing. It is a latency measure: without it the banner can be up to
+500 ms stale at the exact moment the user switches back and looks at the panel,
+which is the one moment it has to be right.
+
+There is no other lifecycle to gate on. The panel has no minimized or collapsed
+state — its header is a heading and a close button, and the collapsible
+`<details>` are the *lanes*, whose open state says nothing about whether the
+panel's subject is still the tab's page. Closing the panel is not a state either:
+`teardown` aborts the listeners, calls `stopPolling` and removes the host, so a
+closed panel has no timer to pause.
+
+### Out-of-order responses must not decide the banner
+
+"At most one request per distinct URL" bounds how many requests go out. It says
+nothing about the order they come back in, and the difference is a real defect:
+
+> Pinned `#482`. Navigate to `#482/files`, then to `#517`. Two `recognise`
+> requests are in flight. `#517`'s answer (identity changed → show) lands first,
+> `#482/files`'s (identity unchanged → hide) lands second, and the banner is
+> cleared while the user is on `#517`.
+
+That is the same class of bug as the one this slice exists to remove — the panel
+confidently wrong about which page it is describing — reintroduced through the
+mechanism meant to prevent it. So each send takes a `recogniseSeq` ticket and a
+response is applied only while it is still the latest.
+
+A ticket, not a re-compare of `window.location.href` at response time: the latter
+also discards the freshest answer whenever a navigation lands mid-flight, leaving
+the banner wrong until the next tick happens to notice. `recogniseSeq` is separate
+from the reset generation counter below — one orders navigation checks, the other
+invalidates work belonging to a page the panel has stopped describing.
 
 ## One new message — `recognise`
 
@@ -145,7 +210,7 @@ them.
 `PanelState` grows one optional field:
 
 ```ts
-readonly navAway?: { readonly onReread: () => void };
+readonly navAway?: { readonly pinnedRef: string | null; readonly onReread: () => void };
 ```
 
 A function on the state follows `Lane.render`'s existing precedent in this type,
@@ -155,11 +220,30 @@ rather than making `renderShell` take a fifth positional callback after
 `renderShell` renders it **between the header and the lanes**, so it coexists
 with every header state — `resolved`, `ambiguous`, `chosen`, `needs-scope`,
 `error`, and all four fetch states — instead of competing with them as another
-`HeaderState` arm. Copy: *"You've navigated away from this page."* plus a
-**Re-read page** button.
+`HeaderState` arm.
 
 The notice is a `role="status"` region so a screen-reader user learns the panel's
 subject no longer matches the tab.
+
+### It names the pinned item, and the lanes stay live
+
+Copy: **"You've moved on."** then *"This panel is still about acme/web #482."*
+then **Re-read page**. `pinnedRef` is the pinned `Recognition`'s `ref`; `null`
+(an unrecognised pinned page has no ref) falls back to *"…still about the page you
+opened it on."*
+
+Every lane below the notice stays fully interactive and keeps answering about the
+pinned item. That is the design, not a gap in it: the header names that item, and
+the flow is ordinary — you are on `#482`, you open the panel, you follow a link to
+a referenced issue, and you still want *what breaks if it lands* for `#482`.
+
+Rejected: **disabling, dimming or overlaying the lanes until Re-read is clicked.**
+It removes a capability that works, to fix a labelling problem, and an overlay
+would make a deliberately non-modal `role="complementary"` landmark behave like a
+modal. Rejected too: **per-lane attribution** (styling each lane, or naming the
+item in each Re-run button) — four places repeating what one line above them
+already says. Naming the pinned item once, in the notice, attributes everything
+under it in a single string.
 
 ## Re-read resets the page-scoped state
 
@@ -222,7 +306,7 @@ exactly what ships today, so this is a correctness gate, not a boundary check.
 | `src/background/handlers.ts` | new pure `handleRecognise` |
 | `src/background/service-worker.ts` | route `recognise` |
 | `src/panel/panel-view.ts` | `PanelState.navAway`, rendered by `renderShell` |
-| `src/panel/panel-in-page.ts` | pin the URL; the four send sites above; the watcher; the reset + generation counter; the lane filter |
+| `src/panel/panel-in-page.ts` | pin the URL; the four send sites above; the watcher (interval + `popstate` + `visibilitychange`, `recogniseSeq`); the reset + generation counter; the lane filter |
 | `docs/architecture.md` | the pinned-context rule in the recognition-pipeline section |
 | `CHANGELOG.md` | the user-facing entry |
 | `ROADMAP.md` | the corrections below |
@@ -239,10 +323,15 @@ Vitest, node env except where the DOM is the subject (jsdom docblock, as today).
   origins, and makes **no** gateway call (injected deps assert it).
 - `messages.ts` guards — the new request/response round-trip, and rejection of a
   malformed `recognition`.
-- `renderShell` (jsdom) — the notice renders under each `HeaderState` arm,
-  carries `role="status"`, and its button calls `onReread` once.
+- `renderShell` (jsdom) — the notice renders under each `HeaderState` arm, names
+  the pinned ref, falls back to the no-ref copy on `pinnedRef: null`, carries
+  `role="status"`, leaves the lanes enabled, and its button calls `onReread` once.
 - The reset (jsdom) — clears lane state, `chosen`, `fetchState` and `fetchSent`;
   a response from before the reset neither stores nor paints.
+- The watcher (jsdom) — a stale `recognise` response landing after a newer one
+  does not change the banner (the `#482/files`-after-`#517` case above); the
+  banner clears on navigating back to the pinned item; no check runs while
+  `document.hidden`, and one runs on becoming visible.
 
 ## Out of scope
 
@@ -254,6 +343,26 @@ Vitest, node env except where the DOM is the subject (jsdom docblock, as today).
   `agent-run`; that is a message-contract change and its own slice. This slice's
   gate is layered *above* the `resolved`-only condition C2.5 will relax, so the
   two do not collide.
+- **`ResolveRequest.title` is dead and stays for now.** `handleResolve` reads only
+  `pageUrl` and the origins; nothing reads `req.title` (the sole `.title` use in
+  `handlers.ts` is `item.title`, feeding the `expert` lane). Noticed while
+  touching the resolve send site. Removing an unused optional field is a
+  message-shape change with no user-visible effect, so it does not belong in a
+  slice about page context — deferred, recorded here so the next person to open
+  `messages.ts` does not have to rediscover it.
+
+## Review round, 2026-08-11
+
+Reviewed against `2026-08-11-panel-page-context-design-review.md`. Two of five
+points changed the design; the rest are recorded so they are not re-litigated.
+
+| Raised | Verdict |
+| --- | --- |
+| Pause the interval when the panel is minimized or closed | **Partly taken.** No minimized state exists, and a closed panel is torn down (no timer to pause). Took the `document.hidden` skip + immediate check on becoming visible — for banner latency at the moment of return, not for cycles. |
+| Out-of-order `recognise` responses can apply a stale state | **Taken — real defect.** `recogniseSeq`; see "Out-of-order responses must not decide the banner". |
+| Recogniser may need DOM state | **No change.** Identity is URL-only; evidence in "Identity is URL-only — no DOM". |
+| Disable/dim the lanes while the banner shows | **Rejected, concern taken.** Lanes stay live and answer about the pinned item; the notice now names that item so one line attributes all of them. |
+| Unrecognised → unrecognised, then a manual re-read | **Premise cannot occur** (no banner means no Re-read button), but it exposed two unstated behaviours, now written down: the pin *is* the resolve response's `recognition`, and the banner clears on returning to the pinned item. |
 
 ## Roadmap corrections this slice records
 
@@ -287,8 +396,11 @@ this roadmap's own account of it.
 - Navigating under an open panel never produces a header and a lane that describe
   different items, in Chrome and Firefox, on a real GitHub PR.
 - Switching a PR's sub-tab produces no banner and no re-read.
-- Navigating to a different item shows the notice; **Re-read page** makes the
-  panel describe the new page with no lane running until expanded.
+- Navigating to a different item shows the notice, naming the item the panel is
+  still about; **Re-read page** makes the panel describe the new page with no lane
+  running until expanded.
+- Navigating back to the pinned item removes the notice without a re-read.
+- A rapid `A → B → C` click-through leaves the notice correct for `C`.
 - A resolved Jenkins build and a resolved Jira issue show the header and Related,
   and no agent lane.
 - `typecheck`, `lint`, `test`, `build`, `check-build` green.
