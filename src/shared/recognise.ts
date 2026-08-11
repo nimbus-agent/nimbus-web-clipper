@@ -220,3 +220,23 @@ export function recognise(url: string, origins: readonly ConfiguredOrigin[]): Re
 export function surfaceLine(r: Recognition): string | null {
   return r.ok ? `${r.label} · ${r.ref}` : null;
 }
+
+/**
+ * Whether two recognitions name the SAME indexed item.
+ *
+ * NOT a URL comparison, and it must not become one: `resolveUrl` above keeps
+ * sub-tab segments and the query string on purpose, so `/pull/482` and
+ * `/pull/482/files` differ as URLs while being one pull request. The identity is
+ * `(product, kind, ref)`, all three of which the matchers normalise.
+ *
+ * Two UNRECOGNISED pages compare EQUAL: both are "no item here", and their
+ * `reason` describes the URL, not a different item. The panel's navigation watcher
+ * relies on that — otherwise moving between two unrecognised pages under an open
+ * panel would announce a change the user cannot see.
+ */
+export function sameItem(a: Recognition, b: Recognition): boolean {
+  if (!a.ok || !b.ok) {
+    return !a.ok && !b.ok;
+  }
+  return a.product === b.product && a.kind === b.kind && a.ref === b.ref;
+}
