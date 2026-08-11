@@ -277,8 +277,13 @@ git commit -m "feat(shared): LANE_SURFACES — declare where each lane belongs"
 
 **Interfaces:**
 - Consumes: nothing new.
-- Produces: closure state `pinnedUrl` and `pinnedRecognition` inside
-  `createPanel`, read by Tasks 4 and 7. No exported surface changes.
+- Produces: closure state `pinnedUrl` inside `createPanel`, read by the four send
+  sites here and re-pinned by Task 7's `reread`. No exported surface changes.
+
+**Scope note:** the pinned *identity* (`pinnedRecognition`) belongs to Task 4, not
+here. Its only reader is the lane gate, and Biome's `noUnusedVariables` is an
+**error** on a variable that is assigned and never read — declaring it in this task
+would fail this task's own lint gate.
 
 **The defect:** the header is painted once from the URL at mount, but each of the
 four sites above reads `window.location.href` at **send** time. On an SPA
@@ -363,35 +368,9 @@ In `createPanel`, immediately after `let header: HeaderState = { kind: "loading"
    * impossible. `reread()` is the only writer, from an explicit user click.
    */
   let pinnedUrl = window.location.href;
-  /**
-   * The pinned page's identity, taken from the resolve response's `recognition`
-   * — which rides on BOTH arms of that response on purpose (see `handleResolve`).
-   * One source, so the pin cannot disagree with the header painted from the same
-   * response, and a re-read re-pins it as an ordinary consequence of re-running
-   * `loadHeader` rather than as a second thing to remember.
-   *
-   * Null until the first resolve lands.
-   */
-  let pinnedRecognition: Recognition | null = null;
 ```
 
-Add `type Recognition` to the existing `../shared/types.ts` import block.
-
-- [ ] **Step 4: Set the pin where the resolve response lands**
-
-In `loadHeader`, immediately before the existing `header = headerFrom(...)` line:
-
-```ts
-    if (isResolveResponse(res)) {
-      // The identity of the page this panel describes, from the same response the
-      // header is built from — never a second recognition of its own.
-      pinnedRecognition = res.recognition;
-    }
-```
-
-`isResolveResponse` is already imported in this file.
-
-- [ ] **Step 5: Switch the four send sites to the pin**
+- [ ] **Step 4: Switch the four send sites to the pin**
 
 Replace `window.location.href` with `pinnedUrl` in exactly these four calls:
 
@@ -408,14 +387,14 @@ res = await sendMessage({ kind: "fetch", pageUrl: pinnedUrl });
 
 Leave `readContext()` and the `related` send alone.
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `bunx vitest run test/unit/panel-in-page.test.ts`
 Expected: PASS, whole file — including the pre-existing assertion at ~line 401
 (`pageUrl: window.location.href`), which still holds because that test never
 navigates.
 
-- [ ] **Step 7: Full gate, then commit**
+- [ ] **Step 6: Full gate, then commit**
 
 ```bash
 bun run typecheck && bun run lint && bun run test
@@ -428,12 +407,19 @@ git commit -m "fix(panel): pin the page a panel describes at mount"
 ### Task 4: Gate the lanes on the pinned surface
 
 **Files:**
-- Modify: `src/panel/panel-in-page.ts` — `paint()`'s `showAgentLanes` (~line 669)
+- Modify: `src/panel/panel-in-page.ts` — new `pinnedRecognition` state beside
+  `pinnedUrl`, its assignment in `loadHeader`, and `paint()`'s `showAgentLanes`
+  (~line 669)
 - Test: `test/unit/panel-in-page.test.ts`
 
 **Interfaces:**
-- Consumes: `LANE_SURFACES` (Task 2), `pinnedRecognition` (Task 3).
-- Produces: nothing new.
+- Consumes: `LANE_SURFACES` (Task 2), `pinnedUrl` (Task 3).
+- Produces: closure state `pinnedRecognition: Recognition | null` inside
+  `createPanel` — read by the gate here and by Task 7's watcher and notice.
+
+**Why `pinnedRecognition` lands in this task and not with the URL pin:** its only
+reader is the gate below, and Biome's `noUnusedVariables` is an **error** on a
+variable assigned but never read. It ships with its first consumer.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -498,7 +484,38 @@ describe("lanes appear only where they can answer", () => {
 Run: `bunx vitest run test/unit/panel-in-page.test.ts -t "only where they can answer"`
 Expected: FAIL — the Jira and Jenkins cases find both lanes.
 
-- [ ] **Step 3: Implement the filter**
+- [ ] **Step 3: Add the pinned identity**
+
+In `createPanel`, directly below `pinnedUrl` (Task 3):
+
+```ts
+  /**
+   * The pinned page's identity, taken from the resolve response's `recognition` —
+   * which rides on BOTH arms of that response on purpose (see `handleResolve`).
+   * One source, so the pin cannot disagree with the header painted from the same
+   * response, and a re-read re-pins it as an ordinary consequence of re-running
+   * `loadHeader` rather than as a second thing to remember.
+   *
+   * Null until the first resolve lands.
+   */
+  let pinnedRecognition: Recognition | null = null;
+```
+
+Add `type Recognition` to the existing `../shared/types.ts` import block.
+
+In `loadHeader`, immediately before the existing `header = headerFrom(...)` line:
+
+```ts
+    if (isResolveResponse(res)) {
+      // The identity of the page this panel describes, from the same response the
+      // header is built from — never a second recognition of its own.
+      pinnedRecognition = res.recognition;
+    }
+```
+
+`isResolveResponse` is already imported in this file.
+
+- [ ] **Step 4: Implement the filter**
 
 In `paint()`, replace the `showAgentLanes` line and the `agentLanes` construction.
 Update the existing comment above it — it explains why `chosen` is excluded (keep
@@ -547,12 +564,12 @@ Add `LANE_SURFACES` to the existing `../shared/types.ts` import block.
 The two `for (const lane of AGENT_LANES)` loops elsewhere in `paint()` need no
 change: both already skip a lane whose element is absent (`if (el !== null)`).
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `bunx vitest run test/unit/panel-in-page.test.ts`
 Expected: PASS, whole file.
 
-- [ ] **Step 5: Full gate, then commit**
+- [ ] **Step 6: Full gate, then commit**
 
 ```bash
 bun run typecheck && bun run lint && bun run test
@@ -1019,7 +1036,8 @@ git commit -m "feat(panel): a notice that names the page the panel is still abou
 
 **Interfaces:**
 - Consumes: `sameItem` (Task 1), `isRecognitionResponse` (Task 5),
-  `PanelState.navAway` (Task 6), `pinnedUrl` / `pinnedRecognition` (Task 3).
+  `PanelState.navAway` (Task 6), `pinnedUrl` (Task 3), `pinnedRecognition`
+  (Task 4).
 - Produces: `createPanel` returns one more member,
   `checkNavigation: () => Promise<void>`, called by `mount`'s `popstate` and
   `visibilitychange` listeners.
@@ -1800,7 +1818,8 @@ Checked against the spec.
 
 **Spec coverage.** Pin the page at mount → Task 3. Identity not URL equality →
 Task 1. URL-only recognition (evidence) → Task 5's rationale. The pin is the
-resolve response's `recognition` → Task 3, Step 4. Banner clears on return →
+resolve response's `recognition` → Task 4, Step 3 (it ships with its first reader;
+see that task's scope note). Banner clears on return →
 Task 7, test 3. Detection mechanism and its rejected alternatives → Task 7.
 Hidden-tab skip → Task 7, Steps 4 and 8. Out-of-order guard → Task 7,
 `recogniseSeq`. The `recognise` message → Task 5. `navAway` on `PanelState` and
