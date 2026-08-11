@@ -22,6 +22,15 @@ export const GATEWAY_PATHS = {
   related: "/v1/clips/related",
   resolve: "/v1/items/resolve",
   itemsFetch: "/v1/items/fetch",
+  /**
+   * BASES, not complete paths: both agent routes carry a path parameter
+   * (`/v1/agents/{agent}`, `/v1/agents/runs/{id}`) which this static map cannot
+   * express. Callers append the segment. Kept here anyway so every contracted
+   * path still has exactly one home — a second map is what Task 1 of the resolve
+   * slice existed to delete.
+   */
+  agents: "/v1/agents",
+  agentRuns: "/v1/agents/runs",
 } as const;
 
 export type GatewayEndpoint = keyof typeof GATEWAY_PATHS;

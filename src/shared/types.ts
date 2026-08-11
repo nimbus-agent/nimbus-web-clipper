@@ -224,3 +224,92 @@ export type FetchError =
   | "timeout"
   | "unreachable"
   | "server_error";
+
+/**
+ * The lanes this phase ships, and the agent each maps to.
+ *
+ * `why` is deliberately ABSENT. `agents.why` takes `{ ref, line? }` where `ref` is
+ * a LOCAL filesystem path resolved against configured `[[filesystem.roots]]` and
+ * answered by git blame on a local checkout — it answers "why does this line
+ * exist", not "why does this change exist", and a browser on a pull-request page
+ * has neither the path nor necessarily the repo. The roadmap's C2.1 brief names it
+ * (and `whyPeek`, which is HTTP-excluded); both are corrected there.
+ */
+export const AGENT_LANES = ["impact", "expert"] as const;
+export type AgentLane = (typeof AGENT_LANES)[number];
+
+/**
+ * What one lane is doing. `collapsed` is also the state of a lane never opened.
+ *
+ * The run route's `findings` field is deliberately NOT modelled on the `done`
+ * arm below. Upstream types it `unknown` — "the shape is per-agent" — and
+ * nothing in the panel renders it; the resolve slice already had to prune
+ * exactly such a per-item catch-all. Recorded here so a future reader editing
+ * this type alone has the reasoning: add `findings` back only alongside a
+ * concrete renderer for it, never as a passthrough `unknown`.
+ */
+export type LaneState =
+  | { readonly kind: "collapsed" }
+  | { readonly kind: "running"; readonly runId: string }
+  | { readonly kind: "done"; readonly brief: string }
+  | {
+      readonly kind: "failed";
+      readonly reason: AgentError;
+      /**
+       * Present only on `insufficient_scope`, and only when the gateway's 403
+       * carried the detail. `panel-view.ts` builds the exact
+       * `nimbus clip scopes … --set …` command from it via `scopeCommand`;
+       * absent, it falls back to generic guidance rather than inventing one.
+       */
+      readonly scopeGap?: ScopeGap;
+      /**
+       * The gateway's own explanation, present only on `agent_failed` and only
+       * when the run carried one. Free text from the gateway — Task 7 renders it
+       * with `textContent`, never parsed, exactly as it does the brief.
+       */
+      readonly detail?: string;
+    };
+
+/**
+ * `stale` collapses the poll's 404 and 410. Upstream distinguishes them —
+ * unknown-or-lost-to-restart vs known-and-expired — but states the client response
+ * to both is to re-issue, never to keep waiting. One state, one "Re-run".
+ *
+ * There is no `busy`: a 429 is handled inside the client by backing off for
+ * `Retry-After` and retrying. Upstream sized that header at one second precisely
+ * because a slot frees when a run finishes, in seconds. Surfacing it would report
+ * a normal condition as a failure.
+ *
+ * Single-sourced here, same shape as `RESOLVE_MATCH_KINDS` and `AGENT_LANES`:
+ * `agent-run-store.ts`'s storage guard reads `AGENT_ERRORS` rather than
+ * declaring its own literal list, so the type and its guard cannot drift apart —
+ * `satisfies readonly AgentError[]` on a hand-duplicated list does NOT check
+ * exhaustiveness, so adding a member there but not here would typecheck green
+ * while silently dropping any stored run carrying the new reason on read.
+ */
+export const AGENT_ERRORS = [
+  "not_paired",
+  "unauthorized",
+  "insufficient_scope",
+  // 404 — unknown agent, or this gateway has no agents surface.
+  "unsupported",
+  // There is no single indexed item for this page to ask an agent about — the
+  // page is unrecognised, or it resolved to a miss/ambiguous answer. A
+  // condition of the PAGE, never of the gateway: reporting it as `unsupported`
+  // would say "this gateway can't run agents yet" about a gateway that runs
+  // them fine.
+  "not_resolved",
+  "stale",
+  "unreachable",
+  "server_error",
+  /**
+   * The run reached a terminal `failed` status: the transport worked and the
+   * gateway is healthy, but the agent could not produce an answer. Distinct from
+   * `server_error`, which means the CALL failed. Upstream separates these
+   * deliberately — see the `failureReason`, NOT `error` comment on the run route
+   * in the gateway's http-server.ts — so that a normal outcome is not misread as
+   * a transport error. Carries `detail` when the gateway explained why.
+   */
+  "agent_failed",
+] as const;
+export type AgentError = (typeof AGENT_ERRORS)[number];

@@ -9,9 +9,11 @@ import {
   renderHit,
   renderHits,
   renderLane,
+  renderLaneBody,
   renderShell,
 } from "../../src/panel/panel-view.ts";
 import type { RelatedHit, ResolvedItem } from "../../src/shared/types.ts";
+import { AGENT_ERRORS } from "../../src/shared/types.ts";
 
 const base: RelatedHit = {
   id: "1",
@@ -508,5 +510,198 @@ describe("renderHeader — fetch outcomes", () => {
     (el.querySelector("button") as HTMLButtonElement).click();
     // The whole point: a recovery click must not fire a second outbound request.
     expect(seen).toEqual(["resolve"]);
+  });
+});
+
+describe("renderLaneBody", () => {
+  it("renders a brief as TEXT, never as markup", () => {
+    const el = renderLaneBody(document, {
+      kind: "done",
+      brief: "## Impact\n\n<img src=x onerror=alert(1)>\n\n- a\n- b",
+    });
+    // The brief is gateway-generated and, on a configured gateway, LLM-generated.
+    // Parsing it would be an XSS path from model output into a Shadow DOM over the
+    // user's authenticated session.
+    expect(el.querySelector("img")).toBeNull();
+    expect(el.querySelector("h2")).toBeNull();
+    expect(el.querySelector("li")).toBeNull();
+    expect(el.textContent).toContain("<img src=x onerror=alert(1)>");
+    expect(el.textContent).toContain("## Impact");
+  });
+
+  it("shows progress while running, with no result text", () => {
+    const el = renderLaneBody(document, { kind: "running", runId: "r1" });
+    expect(el.textContent).toContain("Working");
+  });
+
+  it("offers Re-run on a stale run, and states why", () => {
+    const seen: string[] = [];
+    const el = renderLaneBody(document, { kind: "failed", reason: "stale" }, () =>
+      seen.push("rerun"),
+    );
+    expect(el.textContent?.toLowerCase()).toContain("gone");
+    (el.querySelector("button") as HTMLButtonElement).click();
+    expect(seen).toEqual(["rerun"]);
+  });
+
+  // Re-run is offered for failures a retry could actually fix, and withheld for
+  // ones it cannot. Offering it everywhere would invite a click that fails
+  // identically; withholding it everywhere but `stale` would strand a lane on a
+  // transient blip until the panel is reopened — the same dead-control shape the
+  // rate-limited retry hit in the fetch slice.
+  it("offers Re-run for transient failures", () => {
+    // `agent_failed` belongs here: the run reached the agent and the agent could not
+    // answer, which a retry may well fix. It is NOT `server_error` — the call worked.
+    for (const reason of ["stale", "unreachable", "server_error", "agent_failed"] as const) {
+      const el = renderLaneBody(document, { kind: "failed", reason }, () => undefined);
+      expect(el.querySelector("button")).not.toBeNull();
+    }
+  });
+
+  // `not_paired` is PRODUCED by the user being unpaired right now:
+  // `resolveForAgent` (handlers.ts) short-circuits on its own missing connection
+  // before it reads any cached run, so this state means there is no pairing — not
+  // that an older one went stale. The copy must therefore say so and name pairing
+  // as the remedy; the earlier "this result is from before your current pairing"
+  // told an unpaired user a result existed and that it was merely out of date.
+  // The button stays because the retry belongs here once pairing is done (Task 6
+  // narrowed the cache short-circuit to running/done, so a Re-run re-invokes).
+  it("tells an unpaired user to pair, and still offers the re-run", () => {
+    const seen: string[] = [];
+    const el = renderLaneBody(document, { kind: "failed", reason: "not_paired" }, () =>
+      seen.push("rerun"),
+    );
+    const text = el.textContent?.toLowerCase() ?? "";
+    expect(text).toContain("pair");
+    expect(text).toContain("options");
+    // Must not claim a result exists, nor that it is merely stale.
+    expect(text).not.toContain("out of date");
+    expect(text).not.toContain("before your current pairing");
+    (el.querySelector("button") as HTMLButtonElement).click();
+    expect(seen).toEqual(["rerun"]);
+  });
+
+  it("shows the gateway's own explanation as text, never parsed", () => {
+    const el = renderLaneBody(
+      document,
+      {
+        kind: "failed",
+        reason: "agent_failed",
+        detail: "<img src=x onerror=alert(1)> no LLM configured",
+      },
+      () => undefined,
+    );
+    // The tag-stripped substring alone would also pass a lossy sanitiser — assert
+    // the raw markup survives verbatim in textContent, same discriminator as the
+    // brief's own XSS test above.
+    expect(el.textContent).toContain("<img src=x onerror=alert(1)> no LLM configured");
+    expect(el.textContent).toContain("no LLM configured");
+    expect(el.querySelector("img")).toBeNull();
+  });
+
+  it("still states something when the gateway gave no explanation", () => {
+    const el = renderLaneBody(
+      document,
+      { kind: "failed", reason: "agent_failed" },
+      () => undefined,
+    );
+    expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+  });
+
+  it("withholds Re-run where retrying cannot help, and says what would", () => {
+    // Each of these needs a different action on ANOTHER surface first — re-pair,
+    // grant a scope, index the page, or a gateway that has the surface at all. A
+    // Re-run button would just fail again. `not_paired` is NOT here: see the
+    // dedicated test above for why it is the one exception.
+    for (const reason of [
+      "unauthorized",
+      "insufficient_scope",
+      "unsupported",
+      "not_resolved",
+    ] as const) {
+      const el = renderLaneBody(document, { kind: "failed", reason }, () => undefined);
+      expect(el.querySelector("button")).toBeNull();
+      expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  it("names the agents scope on a scope failure, not resolve or fetch", () => {
+    const el = renderLaneBody(document, {
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "agents", granted: ["clip", "resolve"] },
+    });
+    expect(el.textContent).toContain("nimbus clip scopes chrome --set clip,resolve,agents");
+  });
+
+  // C2.1's done-when: never a silent empty lane.
+  it("renders a stated reason for every failure, never nothing", () => {
+    for (const reason of [
+      "not_paired",
+      "unauthorized",
+      "unsupported",
+      "not_resolved",
+      "agent_failed",
+      "unreachable",
+      "server_error",
+    ] as const) {
+      const el = renderLaneBody(document, { kind: "failed", reason });
+      expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
+  // These four reasons exist BECAUSE collapsing them told users falsehoods. The
+  // generic "every failure states something" loop cannot catch a regression here:
+  // a false-but-non-empty string passes it. Assert the PROPERTY, not the exact
+  // wording, so a future rewrite stays free while the false claim stays caught.
+  it("never claims the page is unindexed for not_resolved — it also covers the ambiguous case", () => {
+    const el = renderLaneBody(
+      document,
+      { kind: "failed", reason: "not_resolved" },
+      () => undefined,
+    );
+    const text = el.textContent?.toLowerCase() ?? "";
+    expect(text).not.toContain("hasn't indexed");
+    expect(text).not.toContain("not indexed");
+  });
+
+  it("blames the gateway for unsupported and the page for not_resolved, never the reverse", () => {
+    const gateway = renderLaneBody(
+      document,
+      { kind: "failed", reason: "unsupported" },
+      () => undefined,
+    );
+    const page = renderLaneBody(
+      document,
+      { kind: "failed", reason: "not_resolved" },
+      () => undefined,
+    );
+    expect(gateway.textContent?.toLowerCase()).toContain("gateway");
+    expect(page.textContent?.toLowerCase()).not.toContain("gateway");
+  });
+
+  it("does not report a finished-and-failed run as an error — the call succeeded", () => {
+    const el = renderLaneBody(
+      document,
+      { kind: "failed", reason: "agent_failed" },
+      () => undefined,
+    );
+    expect(el.textContent?.toLowerCase()).not.toContain("error");
+  });
+
+  // The strongest guard, and the one that survives every rewording: no two reasons
+  // may render the same sentence. Collapsing any two is how each of this branch's
+  // copy bugs began.
+  it("gives every AgentError its own distinct copy", () => {
+    const seen = new Map<string, string>();
+    for (const reason of AGENT_ERRORS) {
+      const text = (
+        renderLaneBody(document, { kind: "failed", reason }, () => undefined).textContent ?? ""
+      ).trim();
+      expect(text.length).toBeGreaterThan(0);
+      const clash = seen.get(text);
+      expect(clash, `"${reason}" renders the same text as "${clash}"`).toBeUndefined();
+      seen.set(text, reason);
+    }
   });
 });

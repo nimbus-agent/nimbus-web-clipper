@@ -55,4 +55,24 @@ describe("mock gateway fixtures — locked contract shape", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: "indexed", itemId: expect.any(String) });
   });
+
+  it("serves POST /v1/agents/impact with a run id, and the run as done", async () => {
+    const invoke = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/agents/impact", {
+        method: "POST",
+        headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+        body: JSON.stringify({ fileOrPrUrl: "https://github.com/acme/web/pull/482" }),
+      }),
+    );
+    expect(invoke.status).toBe(202);
+    const { runId } = (await invoke.json()) as { runId: string };
+
+    const poll = await handleRequest(
+      new Request(`http://127.0.0.1:8765/v1/agents/runs/${runId}`, {
+        headers: { authorization: "Bearer test-token" },
+      }),
+    );
+    expect(poll.status).toBe(200);
+    expect(await poll.json()).toMatchObject({ status: "done" });
+  });
 });

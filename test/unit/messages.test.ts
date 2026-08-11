@@ -1,5 +1,8 @@
 import { describe, expect, it, test } from "vitest";
 import {
+  isAgentRunRequest,
+  isAgentStateRequest,
+  isAgentStateResponse,
   isClipRequest,
   isConnectionResponse,
   isConnectionStatusRequest,
@@ -305,5 +308,140 @@ describe("isFetchResponse", () => {
         scopeGap: { label: "chrome", required: "fetch", granted: ["clip"] },
       }),
     ).toBe(true);
+  });
+});
+
+describe("agent-lane guards", () => {
+  test("isAgentRunRequest accepts a well-formed request", () => {
+    expect(isAgentRunRequest({ kind: "agent-run", lane: "impact", pageUrl: "https://x/y" })).toBe(
+      true,
+    );
+  });
+  test("isAgentRunRequest rejects an unknown lane", () => {
+    expect(isAgentRunRequest({ kind: "agent-run", lane: "why", pageUrl: "https://x/y" })).toBe(
+      false,
+    );
+  });
+  test("isAgentRunRequest rejects a missing pageUrl", () => {
+    expect(isAgentRunRequest({ kind: "agent-run", lane: "expert" })).toBe(false);
+  });
+
+  test("isAgentStateRequest accepts a well-formed request", () => {
+    expect(
+      isAgentStateRequest({ kind: "agent-state", lane: "expert", pageUrl: "https://x/y" }),
+    ).toBe(true);
+  });
+  test("isAgentStateRequest rejects an unknown lane", () => {
+    expect(isAgentStateRequest({ kind: "agent-state", lane: "why", pageUrl: "https://x/y" })).toBe(
+      false,
+    );
+  });
+
+  describe("isAgentStateResponse", () => {
+    it("accepts every LaneState arm", () => {
+      const states = [
+        { kind: "collapsed" },
+        { kind: "running", runId: "r1" },
+        { kind: "done", brief: "b" },
+        { kind: "failed", reason: "stale" },
+      ];
+      for (const state of states) {
+        expect(isAgentStateResponse({ kind: "agent-state", lane: "impact", state })).toBe(true);
+      }
+    });
+
+    it("rejects a running/done state missing its required field", () => {
+      for (const state of [{ kind: "running" }, { kind: "done" }]) {
+        expect(isAgentStateResponse({ kind: "agent-state", lane: "impact", state })).toBe(false);
+      }
+    });
+
+    it("rejects an unknown lane or an unknown state kind", () => {
+      expect(
+        isAgentStateResponse({ kind: "agent-state", lane: "why", state: { kind: "collapsed" } }),
+      ).toBe(false);
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "elsewhere" },
+        }),
+      ).toBe(false);
+    });
+
+    it("accepts a failed state carrying a well-formed scopeGap", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: {
+            kind: "failed",
+            reason: "insufficient_scope",
+            scopeGap: { label: "chrome", required: "agents", granted: ["clip", "resolve"] },
+          },
+        }),
+      ).toBe(true);
+    });
+
+    it("rejects a failed state carrying a malformed scopeGap", () => {
+      for (const scopeGap of [
+        { label: "chrome", required: "agents" }, // missing granted
+        { label: "chrome", required: "agents", granted: [1, 2] }, // non-string granted
+        { required: "agents", granted: [] }, // missing label
+        "chrome",
+      ]) {
+        expect(
+          isAgentStateResponse({
+            kind: "agent-state",
+            lane: "impact",
+            state: { kind: "failed", reason: "insufficient_scope", scopeGap },
+          }),
+        ).toBe(false);
+      }
+    });
+
+    it("accepts an agent_failed state carrying a string detail, and one with no detail at all", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "agent_failed", detail: "no LLM configured" },
+        }),
+      ).toBe(true);
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "agent_failed" },
+        }),
+      ).toBe(true);
+    });
+
+    it("rejects a failed state carrying a non-string detail", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "agent_failed", detail: 42 },
+        }),
+      ).toBe(false);
+    });
+
+    // Review finding (round 1, IMPORTANT): this guard used to accept ANY
+    // string as `reason`, not just a member of `AGENT_ERRORS` — so a reason
+    // outside the union could pass validation, fall through every branch of
+    // `renderLaneBody`'s `AgentError` if-chain, and hit its exhaustiveness
+    // backstop, which returned the raw string where an `HTMLElement` was
+    // promised. `isAgentError` (also used by `agent-run-store.ts`'s own
+    // storage guard, so there is exactly one copy of this check) closes that.
+    it("rejects a failed state whose reason is not a known AgentError", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "not_a_real_reason" },
+        }),
+      ).toBe(false);
+    });
   });
 });

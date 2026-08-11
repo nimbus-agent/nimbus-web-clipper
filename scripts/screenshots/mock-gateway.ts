@@ -4,7 +4,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { GATEWAY_PATHS } from "../../src/shared/gateway.ts";
+import { AGENT_LANES } from "../../src/shared/types.ts";
 import {
+  AGENT_INVOKE,
+  AGENT_RUN_DONE,
   CLIP_INGEST,
   FETCH_FIXTURE,
   PAIR_CONFIRM,
@@ -55,8 +58,28 @@ export async function handleRequest(req: Request): Promise<Response> {
   if (req.method === "GET" && url.pathname === GATEWAY_PATHS.resolve) {
     return jsonResponse(RESOLVE_FIXTURE);
   }
+  // `GET /v1/agents/runs/{id}` — the poll route. Checked ahead of the
+  // POST-only gate below because it is the one GET route under `/v1/agents`;
+  // every run reports `done` immediately (see AGENT_RUN_DONE's doc comment).
+  if (req.method === "GET" && url.pathname.startsWith(`${GATEWAY_PATHS.agentRuns}/`)) {
+    return jsonResponse(AGENT_RUN_DONE);
+  }
   if (req.method !== "POST") {
     return new Response(null, { status: 405 });
+  }
+  // `POST /v1/agents/{agent}` — the invoke route. Carries a path parameter
+  // (the agent name), which the exact-match switch below cannot express, so
+  // it is checked ahead of it. 404s on any agent this phase does not ship —
+  // mirroring the real gateway's "unknown agent" 404 — rather than accepting
+  // an arbitrary lane name.
+  if (url.pathname.startsWith(`${GATEWAY_PATHS.agents}/`)) {
+    const agent = url.pathname.slice(GATEWAY_PATHS.agents.length + 1);
+    return (AGENT_LANES as readonly string[]).includes(agent)
+      ? new Response(JSON.stringify(AGENT_INVOKE), {
+          status: 202,
+          headers: { "content-type": "application/json" },
+        })
+      : new Response(null, { status: 404 });
   }
   switch (url.pathname) {
     case GATEWAY_PATHS.pairConfirm:
