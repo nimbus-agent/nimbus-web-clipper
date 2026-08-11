@@ -190,7 +190,9 @@ The panel cannot classify a URL itself: origins live in the worker
 URL classified.
 
 ```ts
-{ kind: "recognise", pageUrl: string }   →   { kind: "recognition", recognition: Recognition }
+{ kind: "recognise", pageUrl: string }
+  →  { kind: "recognition", ok: true,  recognition: Recognition }
+  |  { kind: "recognition", ok: false, reason: "server_error" }
 ```
 
 `handleRecognise(deps, req)` is `recognise(req.pageUrl, await deps.getOrigins())`
@@ -198,6 +200,19 @@ and nothing else: **no gateway call, no token read, no network**. It is the same
 pure function `handleResolve` and `resolveForAgent` already gate on, exposed on
 its own so the panel can ask "is this still the same item?" without asking the
 gateway anything.
+
+**The outer `ok` is load-bearing, not ceremony** (added after Task 5's review).
+The route's own `catch` — a `chrome.storage` read failing inside `getOrigins()` —
+has no recognition to report, and the obvious fallback of a fabricated
+`{ ok: false, reason: "unknown-host" }` recognition is byte-identical to a
+legitimately unrecognised page. The watcher would compare that against the pinned
+identity, find them different, and raise the notice on a page the user never
+left: the panel asserting something untrue about where it is, which is the exact
+defect class this slice exists to remove. So the watcher must be able to tell
+"there is no item here" from "I could not look", and on the latter it changes
+nothing and waits for the next navigation. `ResolveResponse` and `FetchResponse`
+already carry an outer `reason` for the same reason; a narrower shape here would
+have been a regression against its siblings rather than parity with them.
 
 Rejected: **shipping the origins list to the panel** so it can recognise locally.
 It would put the user's configured internal hostnames into a content script on

@@ -606,7 +606,24 @@ git commit -m "fix(panel): agent lanes only on the surfaces they can answer"
   `messages.ts:338`.
 - Produces:
   - `export interface RecogniseRequest { readonly kind: "recognise"; readonly pageUrl: string }`
-  - `export type RecognitionResponse = { readonly kind: "recognition"; readonly recognition: Recognition }`
+  - `export type RecognitionResponse` — a two-arm union carrying an outer
+    `ok`, mirroring `ResolveResponse` and `FetchResponse`:
+    ```ts
+    export type RecognitionResponse =
+      | { readonly kind: "recognition"; readonly ok: true; readonly recognition: Recognition }
+      | { readonly kind: "recognition"; readonly ok: false; readonly reason: "server_error" };
+    ```
+    **Why the envelope.** Without it, the route's own `catch` — a real
+    `chrome.storage.local` read failure in `getOrigins()` — has nothing to
+    report but a fabricated `{ ok: false, reason: "unknown-host" }`
+    recognition, which is byte-identical to a legitimately unrecognised page.
+    Task 7's watcher compares that against the pinned identity, so a transient
+    storage hiccup on the *same* item would read as "you navigated away" and
+    raise a **false notice** — the panel asserting something untrue about where
+    the user is, which is the exact defect class this whole slice exists to
+    remove. `handleResolve` already carries an outer `reason` for this reason;
+    a narrower shape here would be a regression against its siblings, not
+    parity with them.
   - `export function isRecogniseRequest(v: unknown): v is RecogniseRequest`
   - `export function isRecognitionResponse(v: unknown): v is RecognitionResponse`
   - `export async function handleRecognise(deps: RecogniseDeps, req: RecogniseRequest): Promise<RecognitionResponse>`
@@ -632,6 +649,7 @@ describe("handleRecognise", () => {
     );
     expect(res).toEqual({
       kind: "recognition",
+      ok: true,
       recognition: {
         ok: true,
         product: "github",
@@ -648,15 +666,25 @@ describe("handleRecognise", () => {
       { getOrigins: async () => [{ origin: "https://corp.example/jira", product: "jira" }] },
       { kind: "recognise", pageUrl: "https://corp.example/jira/browse/abc-12" },
     );
-    expect(res.recognition).toMatchObject({ ok: true, product: "jira", ref: "ABC-12" });
+    expect(res).toMatchObject({
+      ok: true,
+      recognition: { ok: true, product: "jira", ref: "ABC-12" },
+    });
   });
 
+  // An unrecognised page is a successful ANSWER — `ok: true` carrying an
+  // `ok: false` recognition. Only a failure to look is `ok: false`, which is the
+  // distinction the watcher depends on.
   it("reports an unrecognised page as a miss, not an error", async () => {
     const res = await handleRecognise(
       { getOrigins: async () => [] },
       { kind: "recognise", pageUrl: "https://example.com/whatever" },
     );
-    expect(res.recognition).toEqual({ ok: false, reason: "unknown-host" });
+    expect(res).toEqual({
+      kind: "recognition",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+    });
   });
 
   // This route exists so the panel can ask "same item?" on every navigation. If it
@@ -704,10 +732,18 @@ Add `RecogniseRequest` to the `ExtensionRequest` union (after `FetchRequest`).
 After the `ResolveResponse` type, add:
 
 ```ts
-export type RecognitionResponse = {
-  readonly kind: "recognition";
-  readonly recognition: Recognition;
-};
+/**
+ * The outer `ok` is not ceremony. The route's own `catch` — a `chrome.storage`
+ * read failing in `getOrigins()` — has no recognition to report, and inventing
+ * one would be indistinguishable from a legitimately unrecognised page. The
+ * watcher that consumes this must be able to tell "there is no item here" from
+ * "I could not look", because reading the second as the first raises a notice
+ * claiming the user navigated away when they did not. Same reason
+ * `ResolveResponse` and `FetchResponse` carry one.
+ */
+export type RecognitionResponse =
+  | { readonly kind: "recognition"; readonly ok: true; readonly recognition: Recognition }
+  | { readonly kind: "recognition"; readonly ok: false; readonly reason: "server_error" };
 ```
 
 Beside `isFetchRequest` (~line 276):
@@ -719,11 +755,17 @@ export function isRecogniseRequest(v: unknown): v is RecogniseRequest {
 ```
 
 And beside `isResolveResponse` (~line 368), reusing the existing private
-`isRecognition`:
+`isRecognition` and mirroring how `isResolveResponse` guards its own two arms:
 
 ```ts
 export function isRecognitionResponse(v: unknown): v is RecognitionResponse {
-  return isObject(v) && v["kind"] === "recognition" && isRecognition(v["recognition"]);
+  if (!isObject(v) || v["kind"] !== "recognition") {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return isRecognition(v["recognition"]);
+  }
+  return v["ok"] === false && typeof v["reason"] === "string";
 }
 ```
 
@@ -775,9 +817,11 @@ branch directly above the `isResolveRequest` branch (~line 424):
       .then(respond)
       .catch(() => {
         // The recogniser itself cannot throw, so this is the storage read
-        // failing. Answering "no item here" is the honest degraded answer and
-        // matches the fallback the resolve and fetch routes already use.
-        respond({ kind: "recognition", recognition: { ok: false, reason: "unknown-host" } });
+        // failing. Report THAT — never a fabricated `{ok:false}` recognition,
+        // which the watcher could not tell apart from a genuinely unrecognised
+        // page and would render as "you navigated away" on a page the user
+        // never left.
+        respond({ kind: "recognition", ok: false, reason: "server_error" });
       });
     return true;
   }
@@ -791,9 +835,26 @@ message-dispatch pattern:
 ```ts
 it("routes a recognise request and answers with a recognition", async () => {
   const res = await dispatch({ kind: "recognise", pageUrl: "https://github.com/acme/web/pull/482" });
-  expect(res).toMatchObject({ kind: "recognition", recognition: { ok: true, kind: "pr" } });
+  expect(res).toMatchObject({ kind: "recognition", ok: true, recognition: { ok: true, kind: "pr" } });
+});
+
+// The branch that motivated the outer envelope: a storage failure must report
+// itself as a failure, NOT as a fabricated "unrecognised page" that the
+// navigation watcher would render as "you navigated away".
+it("reports a storage failure as server_error, not as an unrecognised page", async () => {
+  // Make the origin store's read reject for this dispatch only, however this
+  // file's harness stubs `chrome.storage.local.get`.
+  const res = await dispatchWithFailingOriginStore({
+    kind: "recognise",
+    pageUrl: "https://github.com/acme/web/pull/482",
+  });
+  expect(res).toEqual({ kind: "recognition", ok: false, reason: "server_error" });
 });
 ```
+
+Write `dispatchWithFailingOriginStore` against whatever stubbing mechanism the
+file already uses for `chrome.storage` (see its existing harness setup) rather
+than inventing a new one — the point is that `getOrigins()` rejects, not how.
 
 Add to `test/unit/messages.test.ts`:
 
@@ -806,10 +867,11 @@ describe("recognise message guards", () => {
     expect(isRecogniseRequest({ kind: "resolve", pageUrl: "https://x.test/" })).toBe(false);
   });
 
-  it("accepts both arms of a recognition response", () => {
+  it("accepts an ok response carrying either arm of a recognition", () => {
     expect(
       isRecognitionResponse({
         kind: "recognition",
+        ok: true,
         recognition: {
           ok: true,
           product: "github",
@@ -821,14 +883,32 @@ describe("recognise message guards", () => {
       }),
     ).toBe(true);
     expect(
-      isRecognitionResponse({ kind: "recognition", recognition: { ok: false, reason: "unknown-host" } }),
+      isRecognitionResponse({
+        kind: "recognition",
+        ok: true,
+        recognition: { ok: false, reason: "unknown-host" },
+      }),
     ).toBe(true);
   });
 
-  it("rejects a response with no or a malformed recognition", () => {
+  it("accepts the failure arm", () => {
+    expect(isRecognitionResponse({ kind: "recognition", ok: false, reason: "server_error" })).toBe(
+      true,
+    );
+  });
+
+  it("rejects a malformed response", () => {
     expect(isRecognitionResponse({ kind: "recognition" })).toBe(false);
-    expect(isRecognitionResponse({ kind: "recognition", recognition: { ok: true } })).toBe(false);
-    expect(isRecognitionResponse({ kind: "resolve", recognition: { ok: false, reason: "x" } })).toBe(false);
+    // ok:true demands a well-formed recognition …
+    expect(isRecognitionResponse({ kind: "recognition", ok: true })).toBe(false);
+    expect(
+      isRecognitionResponse({ kind: "recognition", ok: true, recognition: { ok: true } }),
+    ).toBe(false);
+    // … and ok:false demands a reason, not a recognition.
+    expect(isRecognitionResponse({ kind: "recognition", ok: false })).toBe(false);
+    expect(isRecognitionResponse({ kind: "resolve", ok: true, recognition: { ok: false, reason: "x" } })).toBe(
+      false,
+    );
   });
 });
 ```
@@ -1199,6 +1279,23 @@ describe("following a client-side navigation", () => {
     expect(notice(root)).not.toBeNull();
   });
 
+  // The false-notice path the response envelope exists to prevent: a storage
+  // failure in the worker must not read as "you navigated away" on a page the
+  // user never left.
+  it("does not raise the notice when the worker could not classify the url", async () => {
+    const root = await mountWatching({ "/pull/482": PR482 });
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind === "recognise") return { kind: "recognition", ok: false, reason: "server_error" };
+      return { kind: "related", ok: true, items: [] };
+    });
+    // Same item, only the sub-tab changed — so even a successful check would not
+    // notify. The failure arm must not notify either.
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+  });
+
   it("re-reads on request: new header, lanes reset, nothing running", async () => {
     const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
     window.history.pushState({}, "", "/acme/web/pull/517");
@@ -1458,6 +1555,13 @@ Place it next to `pollLane`:
     if (closed || seq !== recogniseSeq || !isRecognitionResponse(res)) {
       return;
     }
+    if (!res.ok) {
+      // The worker could not classify the URL — its storage read failed. "I
+      // could not look" is not "there is no item here": treating it as the
+      // latter would raise the notice on a page the user never left. Leave the
+      // notice exactly as it is; the next navigation asks again.
+      return;
+    }
     // Before the first resolve lands there is no pinned identity to compare
     // against, so there is nothing honest to announce.
     const away = pinnedRecognition !== null && !sameItem(pinnedRecognition, res.recognition);
@@ -1628,7 +1732,7 @@ After the existing `keydown` listener, using the same `signal`:
 - [ ] **Step 9: Run the tests to verify they pass**
 
 Run: `bunx vitest run test/unit/panel-in-page.test.ts`
-Expected: PASS, whole file — the eleven new cases plus every pre-existing one.
+Expected: PASS, whole file — the twelve new cases plus every pre-existing one.
 
 - [ ] **Step 10: Full gate, then commit**
 
