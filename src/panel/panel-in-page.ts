@@ -13,8 +13,10 @@ import { surfaceLine } from "../shared/recognise.ts";
 import {
   AGENT_LANES,
   type AgentLane,
+  LANE_SURFACES,
   type LaneState,
   type Product,
+  type Recognition,
   type RelatedHit,
   type ResolveCandidate,
 } from "../shared/types.ts";
@@ -411,6 +413,16 @@ function createPanel(body: HTMLElement): {
    * explicit user click.
    */
   const pinnedUrl = window.location.href;
+  /**
+   * The pinned page's identity, taken from the resolve response's `recognition` —
+   * which rides on BOTH arms of that response on purpose (see `handleResolve`).
+   * One source, so the pin cannot disagree with the header painted from the same
+   * response, and a re-read re-pins it as an ordinary consequence of re-running
+   * `loadHeader` rather than as a second thing to remember.
+   *
+   * Null until the first resolve lands.
+   */
+  let pinnedRecognition: Recognition | null = null;
   // The candidate the user picked out of an `ambiguous` header. Only meaningful
   // alongside an `ambiguous` header — see the `shown` narrowing in paint() below.
   let chosen: ResolveCandidate | null = null;
@@ -663,36 +675,41 @@ function createPanel(body: HTMLElement): {
         : chosen !== null && header.kind === "ambiguous"
           ? { kind: "chosen", surface: header.surface, candidate: chosen }
           : header;
-    // The two agent lanes ask a question about ONE resolved item — there is
-    // nothing to ask about on a miss, an error, or an ambiguous answer.
+    // The two agent lanes ask a question about ONE resolved item, on a surface
+    // where that question applies — see LANE_SURFACES (shared/types.ts). There is
+    // nothing to ask about on a miss, an error, or an ambiguous answer, and
+    // nothing worth asking `impact` about on a build or an issue.
     //
     // `chosen` is deliberately NOT included, even though the user has by then
     // pinned down which item this page is. `agent-run` carries only
     // `{lane, pageUrl}` (messages.ts), so `handleAgentRun` re-runs the resolve
-    // itself — and that resolve returns the same AMBIGUOUS outcome the chooser
-    // came from, which `resolveForAgent` refuses with `not_resolved`
-    // (handlers.ts). Rendering the lanes here would put "Nimbus couldn't pin
-    // this page to one indexed item." directly under a header naming the exact
-    // item the user just picked, with no Re-run to escape it: a control that
-    // cannot ever succeed. Lanes on a chosen candidate need the picked id
-    // carried through `agent-run` and honoured instead of a re-resolve — see
-    // ROADMAP C2.5.
-    const showAgentLanes = shown.kind === "resolved";
-    const agentLanes: Lane[] = showAgentLanes
-      ? AGENT_LANES.map((lane) => ({
-          id: lane,
-          title: LANE_TITLES[lane],
-          expanded: laneOpen[lane],
-          render: (doc: Document) =>
-            // Every rendered lane gets a REAL Re-run handler — never omitted.
-            // `renderLaneBody`'s third argument is optional so it can be unit
-            // tested without one, but a lane rendered here without it would
-            // ship a Re-run button that silently does nothing.
-            renderLaneBody(doc, laneState[lane], () => {
-              sendAgentRun(lane).catch(() => undefined);
-            }),
-        }))
-      : [];
+    // itself — and on an ambiguous page that second resolve is ambiguous again,
+    // which `resolveForAgent` refuses with `not_resolved` (handlers.ts).
+    // Rendering the lanes here would put "Nimbus couldn't pin this page to one
+    // indexed item." under a header naming the item the user just picked, with no
+    // Re-run to escape it. Lanes on a chosen candidate need the picked id carried
+    // through `agent-run` — see ROADMAP C2.5.
+    //
+    // The surface kind comes from `pinnedRecognition`, not from the header: the
+    // `resolved` HeaderState carries only the human surface LINE ("GitHub PR ·
+    // acme/web #482"), not the typed kind.
+    const surfaceKind = pinnedRecognition?.ok === true ? pinnedRecognition.kind : null;
+    const agentLanes: Lane[] =
+      shown.kind === "resolved" && surfaceKind !== null
+        ? AGENT_LANES.filter((lane) => LANE_SURFACES[lane].includes(surfaceKind)).map((lane) => ({
+            id: lane,
+            title: LANE_TITLES[lane],
+            expanded: laneOpen[lane],
+            render: (doc: Document) =>
+              // Every rendered lane gets a REAL Re-run handler — never omitted.
+              // `renderLaneBody`'s third argument is optional so it can be unit
+              // tested without one, but a lane rendered here without it would
+              // ship a Re-run button that silently does nothing.
+              renderLaneBody(doc, laneState[lane], () => {
+                sendAgentRun(lane).catch(() => undefined);
+              }),
+          }))
+        : [];
     const lanes: Lane[] = [
       { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
       ...agentLanes,
@@ -745,6 +762,11 @@ function createPanel(body: HTMLElement): {
       fetchState = null;
       paint();
       return;
+    }
+    if (isResolveResponse(res)) {
+      // The identity of the page this panel describes, from the same response the
+      // header is built from — never a second recognition of its own.
+      pinnedRecognition = res.recognition;
     }
     // Taken ONCE per repaint here, not re-read per rendered line — see the
     // `resolved` state's `nowMs` doc comment in panel-view.ts.

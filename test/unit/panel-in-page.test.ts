@@ -1517,3 +1517,54 @@ describe("the panel pins the page it was opened on", () => {
     );
   });
 });
+
+describe("lanes appear only where they can answer", () => {
+  function resolved(product: string, kind: string, ref: string): unknown {
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition: {
+        ok: true,
+        product,
+        kind,
+        label: `${product} ${kind}`,
+        ref,
+        resolveUrl: "https://example.test/x",
+      },
+      outcome: {
+        kind: "found",
+        matchKind: "exact",
+        item: {
+          id: "it-1",
+          service: product,
+          type: kind,
+          title: "An indexed item",
+          url: "https://example.test/x",
+          modifiedAt: Date.now(),
+        },
+      },
+    };
+  }
+
+  it("offers both lanes on a resolved pull request", async () => {
+    const root = await mountPanelWithResolve(resolved("github", "pr", "acme/web #482"));
+    expect(root.querySelector('[data-lane="impact"]')).not.toBeNull();
+    expect(root.querySelector('[data-lane="expert"]')).not.toBeNull();
+  });
+
+  // Before LANE_SURFACES these appeared here too, and expanding one handed the
+  // issue/build URL to agents.impact as its `fileOrPrUrl`.
+  it("offers no agent lane on a resolved Jira issue", async () => {
+    const root = await mountPanelWithResolve(resolved("jira", "issue", "ABC-12"));
+    expect(root.querySelector('[data-lane="impact"]')).toBeNull();
+    expect(root.querySelector('[data-lane="expert"]')).toBeNull();
+    // The Related lane is unaffected — it works in every header state.
+    expect(root.querySelector('[data-lane="related"]')).not.toBeNull();
+  });
+
+  it("offers no agent lane on a resolved Jenkins build", async () => {
+    const root = await mountPanelWithResolve(resolved("jenkins", "build", "web #482"));
+    expect(root.querySelector('[data-lane="impact"]')).toBeNull();
+    expect(root.querySelector('[data-lane="expert"]')).toBeNull();
+  });
+});
