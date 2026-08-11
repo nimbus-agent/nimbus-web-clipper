@@ -407,10 +407,10 @@ function createPanel(body: HTMLElement): {
    * `window.location.href`: on an SPA the two diverge the moment the user
    * navigates, and a lane answering about the tab's current page under a header
    * naming the pinned one is precisely the defect this exists to make
-   * impossible. `reread()` is the only writer, from an explicit user click.
+   * impossible. Task 7's `reread()` becomes its only other writer, from an
+   * explicit user click.
    */
-  // biome-ignore lint/style/useConst: reread() is a genuine second writer the linter can't see from this file alone
-  let pinnedUrl = window.location.href;
+  const pinnedUrl = window.location.href;
   // The candidate the user picked out of an `ambiguous` header. Only meaningful
   // alongside an `ambiguous` header — see the `shown` narrowing in paint() below.
   let chosen: ResolveCandidate | null = null;
