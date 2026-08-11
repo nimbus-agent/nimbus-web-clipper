@@ -1568,3 +1568,317 @@ describe("lanes appear only where they can answer", () => {
     expect(root.querySelector('[data-lane="expert"]')).toBeNull();
   });
 });
+
+describe("following a client-side navigation", () => {
+  const PR482 = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #482",
+    resolveUrl: "https://github.com/acme/web/pull/482",
+  };
+  const PR517 = {
+    ...PR482,
+    ref: "acme/web #517",
+    resolveUrl: "https://github.com/acme/web/pull/517",
+  };
+
+  function resolvedFor(recognition: unknown): unknown {
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: {
+        kind: "found",
+        matchKind: "exact",
+        item: {
+          id: "it-1",
+          service: "github",
+          type: "pr",
+          title: "Add retry budget",
+          url: "https://github.com/acme/web/pull/482",
+          modifiedAt: Date.now(),
+        },
+      },
+    };
+  }
+
+  /** Mounts on #482 with `recognise` answered from a URL→recognition table. */
+  async function mountWatching(table: Record<string, unknown>): Promise<ShadowRoot> {
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind === "resolve") return resolvedFor(PR482);
+      if (m.kind === "recognise") {
+        const hit = Object.entries(table).find(([path]) => (m.pageUrl ?? "").includes(path));
+        return {
+          kind: "recognition",
+          ok: true,
+          recognition: hit?.[1] ?? { ok: false, reason: "unrecognised-path" },
+        };
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    await loadPanel();
+    await vi.waitFor(() => expect(headerText()).not.toContain("Checking Nimbus"));
+    const root = shadow();
+    if (root === null) throw new Error("panel shadow root not found");
+    return root;
+  }
+
+  function notice(root: ShadowRoot): Element | null {
+    return root.querySelector(".nimbus-related__navaway");
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("says nothing when only the sub-tab changed", async () => {
+    const root = await mountWatching({ "/pull/482": PR482 });
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+  });
+
+  it("names the pinned item once the tab shows a different one", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain("acme/web #482");
+  });
+
+  it("clears itself when the user comes back, with no re-read", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(notice(root)).not.toBeNull();
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+  });
+
+  it("checks nothing while the tab is hidden, and immediately once it is visible", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(2000);
+    expect(notice(root)).toBeNull();
+    hidden.mockReturnValue(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    expect(notice(root)).not.toBeNull();
+  });
+
+  // The ordering guard. A -> B(same item) -> C(different item) with B's answer
+  // deliberately delivered LAST must leave the notice correct for C.
+  it("ignores a stale recognition answer that lands after a newer one", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    // Matches the file's own `resolveAgentRun`/`resolvePoll` pattern above: a
+    // no-op initial value, not `null` — a `let` reassigned only inside a
+    // nested Promise executor narrows to `never` at a later read otherwise
+    // (a TypeScript control-flow limitation, not a runtime concern).
+    let releaseStale: () => void = () => {};
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind !== "recognise") return { kind: "related", ok: true, items: [] };
+      if ((m.pageUrl ?? "").includes("/files")) {
+        await new Promise<void>((resolve) => {
+          releaseStale = resolve;
+        });
+        return { kind: "recognition", ok: true, recognition: PR482 };
+      }
+      return { kind: "recognition", ok: true, recognition: PR517 };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(notice(root)).not.toBeNull();
+    releaseStale();
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    expect(notice(root)).not.toBeNull();
+  });
+
+  // The false-notice path the response envelope exists to prevent: a storage
+  // failure in the worker must not read as "you navigated away" on a page the
+  // user never left.
+  it("does not raise the notice when the worker could not classify the url", async () => {
+    const root = await mountWatching({ "/pull/482": PR482 });
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind === "recognise") return { kind: "recognition", ok: false, reason: "server_error" };
+      return { kind: "related", ok: true, items: [] };
+    });
+    // Same item, only the sub-tab changed — so even a successful check would not
+    // notify. The failure arm must not notify either.
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+  });
+
+  it("re-reads on request: new header, lanes reset, nothing running", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind === "resolve") return resolvedFor(PR517);
+      if (m.kind === "recognise") return { kind: "recognition", ok: true, recognition: PR517 };
+      return { kind: "related", ok: true, items: [] };
+    });
+    root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+
+    expect(notice(root)).toBeNull();
+    expect(headerText()).toContain("acme/web #517");
+    expect(harness.sendMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "agent-run" }),
+    );
+    const lane = root.querySelector<HTMLDetailsElement>('[data-lane="impact"]');
+    expect(lane?.open).toBe(false);
+  });
+
+  // A navigation check has no button and no error state, so the next tick is the
+  // only recovery there is — a failed check must not be recorded as a done one.
+  it("re-checks the same url after the worker was briefly unreachable", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    let failOnce = true;
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind !== "recognise") return { kind: "related", ok: true, items: [] };
+      if (failOnce) {
+        failOnce = false;
+        throw new Error("worker unreachable");
+      }
+      return { kind: "recognition", ok: true, recognition: PR517 };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain("acme/web #482");
+  });
+
+  // clearLanePoll cancels a PENDING timer; only the generation guard can stop a
+  // poll whose answer is already in flight from starting a fresh loop for the item
+  // the panel has stopped describing.
+  it("a poll in flight during a re-read neither repaints nor reschedules", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    // No-op initial value, not `null` — see the identical note on `releaseStale`
+    // above.
+    let releasePoll: (value: unknown) => void = () => {};
+    const kinds: string[] = [];
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      kinds.push(m.kind ?? "");
+      if (m.kind === "resolve") return resolvedFor(PR517);
+      if (m.kind === "recognise") return { kind: "recognition", ok: true, recognition: PR517 };
+      if (m.kind === "agent-run") {
+        return { kind: "agent-state", lane: "impact", state: { kind: "running", runId: "r1" } };
+      }
+      if (m.kind === "agent-state") {
+        return await new Promise((resolve) => {
+          releasePoll = resolve;
+        });
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+
+    // Start impact on the pinned PR, then let its first poll go out and hang.
+    // `el.open = true` BEFORE dispatching: attachLaneToggle swallows a toggle
+    // that merely repeats the element's own starting value (see its doc
+    // comment) — this is what makes the dispatch below a genuine expand.
+    const impactLane = root.querySelector<HTMLDetailsElement>('[data-lane="impact"]');
+    if (impactLane !== null) {
+      impactLane.open = true;
+    }
+    impactLane?.dispatchEvent(new Event("toggle"));
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    await advanceTimers(1200); // past AGENT_POLL_MS (1000) — the poll is now awaiting
+    expect(kinds).toContain("agent-state");
+
+    // Re-read while that poll is still in flight.
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    const afterReread = kinds.length;
+
+    releasePoll({ kind: "agent-state", lane: "impact", state: { kind: "running", runId: "r1" } });
+    await advanceTimers(3000);
+    expect(kinds.slice(afterReread).filter((k) => k === "agent-state")).toEqual([]);
+    expect(headerText()).toContain("acme/web #517");
+  });
+
+  // Task 6 proves the view renders the generic copy for `pinnedRef: null`; this
+  // proves the panel actually produces null when the pinned page had no ref.
+  it("uses the generic copy when the pinned page was unrecognised", async () => {
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind === "resolve") {
+        return {
+          kind: "resolve",
+          ok: true,
+          recognition: { ok: false, reason: "unrecognised-path" },
+          outcome: { kind: "not-indexed", fetchable: false },
+        };
+      }
+      if (m.kind === "recognise") {
+        return {
+          kind: "recognition",
+          ok: true,
+          recognition: (m.pageUrl ?? "").includes("/pull/482")
+            ? PR482
+            : { ok: false, reason: "unrecognised-path" },
+        };
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+    window.history.pushState({}, "", "/acme/web");
+    await loadPanel();
+    await vi.waitFor(() => expect(headerText()).not.toContain("Checking Nimbus"));
+    const root = shadow();
+    if (root === null) throw new Error("panel shadow root not found");
+
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain(
+      "This panel is still about the page you opened it on.",
+    );
+  });
+
+  it("sends the NEW pinned url after a re-read", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    const newPin = window.location.href;
+
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind === "resolve") return resolvedFor(PR517);
+      if (m.kind === "recognise") return { kind: "recognition", ok: true, recognition: PR517 };
+      if (m.kind === "agent-run")
+        return { kind: "agent-state", lane: "impact", state: { kind: "done", brief: "b" } };
+      return { kind: "related", ok: true, items: [] };
+    });
+    root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    // `el.open = true` BEFORE dispatching — see the identical note above.
+    const impactLane = root.querySelector<HTMLDetailsElement>('[data-lane="impact"]');
+    if (impactLane !== null) {
+      impactLane.open = true;
+    }
+    impactLane?.dispatchEvent(new Event("toggle"));
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+
+    expect(harness.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "agent-run", pageUrl: newPin }),
+    );
+  });
+});
