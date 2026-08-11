@@ -357,6 +357,7 @@ describe("handleRecognise", () => {
     );
     expect(res).toEqual({
       kind: "recognition",
+      ok: true,
       recognition: {
         ok: true,
         product: "github",
@@ -373,7 +374,10 @@ describe("handleRecognise", () => {
       { getOrigins: async () => [{ origin: "https://corp.example/jira", product: "jira" }] },
       { kind: "recognise", pageUrl: "https://corp.example/jira/browse/abc-12" },
     );
-    expect(res.recognition).toMatchObject({ ok: true, product: "jira", ref: "ABC-12" });
+    expect(res).toMatchObject({
+      ok: true,
+      recognition: { ok: true, product: "jira", ref: "ABC-12" },
+    });
   });
 
   it("reports an unrecognised page as a miss, not an error", async () => {
@@ -381,7 +385,11 @@ describe("handleRecognise", () => {
       { getOrigins: async () => [] },
       { kind: "recognise", pageUrl: "https://example.com/whatever" },
     );
-    expect(res.recognition).toEqual({ ok: false, reason: "unknown-host" });
+    expect(res).toEqual({
+      kind: "recognition",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+    });
   });
 
   // This route exists so the panel can ask "same item?" on every navigation. If it

@@ -428,9 +428,11 @@ addMessageListener((message, respond) => {
       .then(respond)
       .catch(() => {
         // The recogniser itself cannot throw, so this is the storage read
-        // failing. Answering "no item here" is the honest degraded answer and
-        // matches the fallback the resolve and fetch routes already use.
-        respond({ kind: "recognition", recognition: { ok: false, reason: "unknown-host" } });
+        // failing. Report THAT — never a fabricated `{ok:false}` recognition,
+        // which the watcher could not tell apart from a genuinely unrecognised
+        // page and would render as "you navigated away" on a page the user
+        // never left.
+        respond({ kind: "recognition", ok: false, reason: "server_error" });
       });
     return true;
   }

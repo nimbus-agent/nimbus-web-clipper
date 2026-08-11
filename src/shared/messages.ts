@@ -175,10 +175,18 @@ export type ResolveResponse =
       readonly scopeGap?: ScopeGap;
     };
 
-export type RecognitionResponse = {
-  readonly kind: "recognition";
-  readonly recognition: Recognition;
-};
+/**
+ * The outer `ok` is not ceremony. The route's own `catch` — a `chrome.storage`
+ * read failing in `getOrigins()` — has no recognition to report, and inventing
+ * one would be indistinguishable from a legitimately unrecognised page. The
+ * watcher that consumes this must be able to tell "there is no item here" from
+ * "I could not look", because reading the second as the first raises a notice
+ * claiming the user navigated away when they did not. Same reason
+ * `ResolveResponse` and `FetchResponse` carry one.
+ */
+export type RecognitionResponse =
+  | { readonly kind: "recognition"; readonly ok: true; readonly recognition: Recognition }
+  | { readonly kind: "recognition"; readonly ok: false; readonly reason: "server_error" };
 
 export type FetchResponse =
   | {
@@ -221,6 +229,7 @@ export type ExtensionResponse =
   | RelatedResponse
   | ResolveResponse
   | FetchResponse
+  | RecognitionResponse
   | AgentStateResponse
   | QueueResponse
   | ConnectionResponse;
@@ -391,7 +400,13 @@ export function isResolveResponse(v: unknown): v is ResolveResponse {
 }
 
 export function isRecognitionResponse(v: unknown): v is RecognitionResponse {
-  return isObject(v) && v["kind"] === "recognition" && isRecognition(v["recognition"]);
+  if (!isObject(v) || v["kind"] !== "recognition") {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return isRecognition(v["recognition"]);
+  }
+  return v["ok"] === false && typeof v["reason"] === "string";
 }
 
 /**

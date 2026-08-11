@@ -155,7 +155,27 @@ describe("message routing — success shapes", () => {
       kind: "recognise",
       pageUrl: "https://github.com/acme/web/pull/482",
     });
-    expect(res).toMatchObject({ kind: "recognition", recognition: { ok: true, kind: "pr" } });
+    expect(res).toMatchObject({
+      kind: "recognition",
+      ok: true,
+      recognition: { ok: true, kind: "pr" },
+    });
+  });
+
+  // The catch branch: `getOrigins()` reads chrome.storage.local, and that read
+  // can fail (the recogniser itself cannot throw). The response must report the
+  // failure honestly rather than fabricate an `{ok:false}` recognition a future
+  // navigation watcher could not tell apart from a genuinely unrecognised page.
+  test("recognise: a storage read failure answers ok:false, never a fabricated recognition", async () => {
+    await load();
+    harness.storageGet.mockRejectedValueOnce(new Error("storage unavailable"));
+
+    const res = await harness.emitMessage({
+      kind: "recognise",
+      pageUrl: "https://github.com/acme/web/pull/482",
+    });
+
+    expect(res).toEqual({ kind: "recognition", ok: false, reason: "server_error" });
   });
 
   test("resolve: an unrecognised page answers without a fetch", async () => {

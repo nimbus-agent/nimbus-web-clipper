@@ -143,7 +143,11 @@ export async function handleRecognise(
   deps: RecogniseDeps,
   req: RecogniseRequest,
 ): Promise<RecognitionResponse> {
-  return { kind: "recognition", recognition: recognise(req.pageUrl, await deps.getOrigins()) };
+  return {
+    kind: "recognition",
+    ok: true,
+    recognition: recognise(req.pageUrl, await deps.getOrigins()),
+  };
 }
 
 export interface ResolveDeps {

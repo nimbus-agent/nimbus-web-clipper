@@ -164,10 +164,11 @@ describe("recognise message guards", () => {
     expect(isRecogniseRequest({ kind: "resolve", pageUrl: "https://x.test/" })).toBe(false);
   });
 
-  it("accepts both arms of a recognition response", () => {
+  it("accepts an ok:true response carrying either arm of the recognition", () => {
     expect(
       isRecognitionResponse({
         kind: "recognition",
+        ok: true,
         recognition: {
           ok: true,
           product: "github",
@@ -181,16 +182,33 @@ describe("recognise message guards", () => {
     expect(
       isRecognitionResponse({
         kind: "recognition",
+        ok: true,
         recognition: { ok: false, reason: "unknown-host" },
       }),
     ).toBe(true);
   });
 
-  it("rejects a response with no or a malformed recognition", () => {
+  it("accepts the ok:false storage-failure arm", () => {
+    expect(isRecognitionResponse({ kind: "recognition", ok: false, reason: "server_error" })).toBe(
+      true,
+    );
+  });
+
+  it("rejects a malformed response on either arm", () => {
     expect(isRecognitionResponse({ kind: "recognition" })).toBe(false);
-    expect(isRecognitionResponse({ kind: "recognition", recognition: { ok: true } })).toBe(false);
+    // ok:true with a malformed (or missing) recognition.
     expect(
-      isRecognitionResponse({ kind: "resolve", recognition: { ok: false, reason: "x" } }),
+      isRecognitionResponse({ kind: "recognition", ok: true, recognition: { ok: true } }),
+    ).toBe(false);
+    expect(isRecognitionResponse({ kind: "recognition", ok: true })).toBe(false);
+    // ok:false with no reason.
+    expect(isRecognitionResponse({ kind: "recognition", ok: false })).toBe(false);
+    expect(
+      isRecognitionResponse({
+        kind: "resolve",
+        ok: true,
+        recognition: { ok: false, reason: "x" },
+      }),
     ).toBe(false);
   });
 });
