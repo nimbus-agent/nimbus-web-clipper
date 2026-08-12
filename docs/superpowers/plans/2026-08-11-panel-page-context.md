@@ -1880,12 +1880,16 @@ gap: recognition does not follow client-side (SPA) navigation") with:
 Add to the C2.3 brief, after its **What** line:
 
 ```markdown
-> **Correction (2026-08-11), read from upstream source at `34601b24`+:** two of
+> **Correction (2026-08-11), read from upstream source at `34601b24`+:** three of
 > the agents named above are not reachable from a browser.
-> `agents.preflight` is excluded from the HTTP surface deliberately —
-> `HTTP_EXCLUDED_AGENT_METHODS` in `packages/gateway/src/ipc/agents-rpc.ts`,
-> alongside `agents.premortem` and `agents.whyPeek` — because it has side effects
-> on the owner's machine an external caller should not trigger unprompted. So the
+> `agents.preflight` is excluded from the HTTP surface deliberately — it is one of
+> the three members of `HTTP_EXCLUDED_AGENT_METHODS` in
+> `packages/gateway/src/ipc/agents-rpc.ts`, with `agents.premortem` and
+> `agents.whyPeek`, though each is excluded for its own reason: `preflight`'s and
+> `premortem`'s is side effects on the owner's machine an external caller should
+> not trigger unprompted, while `whyPeek`'s is the one C2.1 already records above
+> (it is the namespace's only synchronous method, so it cannot be represented on
+> the `{runId}` + poll contract). So the
 > deploy/build lane above cannot be built as briefed. `agents.ghost` and
 > `agents.conflicts` both take `{ file: string }` (`requireFileParam`), the same
 > local-checkout requirement that sent "why" to C2.4. What *is* browser-viable is
