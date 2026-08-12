@@ -1527,6 +1527,16 @@ Place it next to `pollLane`:
     if (url === lastCheckedUrl) {
       return;
     }
+    if (pinnedRecognition === null) {
+      // No pinned identity to compare against yet, so there is nothing this
+      // check could conclude. Return WITHOUT marking: marking would burn the
+      // check and leave this URL matching on every later tick, so the notice for
+      // it could never appear. That window is real and not rare — the interval
+      // starts at mount, before the first resolve lands, and `reread` nulls the
+      // pin again for its whole round trip. Same principle as the `catch` below:
+      // a check that reached no conclusion is not a completed check.
+      return;
+    }
     // Marked BEFORE the send, so a round trip slower than NAV_CHECK_MS cannot
     // stack duplicate requests for one URL — and rolled back below if the send
     // fails, because a check that never got an answer is not a completed check.
@@ -1562,8 +1572,10 @@ Place it next to `pollLane`:
       // notice exactly as it is; the next navigation asks again.
       return;
     }
-    // Before the first resolve lands there is no pinned identity to compare
-    // against, so there is nothing honest to announce.
+    // The pin is guaranteed non-null here — the early return above refuses to
+    // spend a check without one — but a `reread` could have nulled it while this
+    // answer was in flight, and the generation guard above has already returned
+    // in that case.
     const away = pinnedRecognition !== null && !sameItem(pinnedRecognition, res.recognition);
     if (away === navAway) {
       return;
@@ -1596,6 +1608,14 @@ Place it directly after `checkNavigation`:
    */
   async function reread(): Promise<void> {
     generation += 1;
+    // Drop the old page's <details> BEFORE resetting the flags below. `paint()`
+    // opens by carrying over each lane's live open/closed state from the mounted
+    // elements — correct on every ordinary repaint, and fatal here: it would
+    // restore the very flags this function is clearing, and a lane left expanded
+    // on the old item would reopen EMPTY on the new one (its `laneState` is now
+    // `collapsed`, whose rendered body is deliberately blank, and
+    // `attachLaneToggle` swallows the programmatic re-open, so no run starts).
+    body.replaceChildren();
     pinnedUrl = window.location.href;
     lastCheckedUrl = pinnedUrl;
     pinnedRecognition = null;
@@ -1732,7 +1752,7 @@ After the existing `keydown` listener, using the same `signal`:
 - [ ] **Step 9: Run the tests to verify they pass**
 
 Run: `bunx vitest run test/unit/panel-in-page.test.ts`
-Expected: PASS, whole file — the twelve new cases plus every pre-existing one.
+Expected: PASS, whole file — the eleven new cases plus every pre-existing one.
 
 - [ ] **Step 10: Full gate, then commit**
 
