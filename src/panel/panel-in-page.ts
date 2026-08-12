@@ -632,6 +632,16 @@ function createPanel(body: HTMLElement): {
       return;
     }
     const gen = generation;
+    if (pinnedRecognition === null) {
+      // No pinned identity to compare against yet, so there is nothing this
+      // check could conclude. Return WITHOUT marking: marking would burn the
+      // check and leave this URL matching on every later tick, so the notice for
+      // it could never appear. That window is real and not rare — the interval
+      // starts at mount, before the first resolve lands, and `reread` nulls the
+      // pin again for its whole round trip. Same principle as the `catch` below:
+      // a check that reached no conclusion is not a completed check.
+      return;
+    }
     // Marked BEFORE the send, so a round trip slower than NAV_CHECK_MS cannot
     // stack duplicate requests for one URL — and rolled back below if the send
     // fails, because a check that never got an answer is not a completed check.
@@ -649,10 +659,10 @@ function createPanel(body: HTMLElement): {
       // match on every future tick and never be re-checked, and the notice for it
       // would never appear.
       //
-      // Rolled back only while this is still the LATEST check. A newer navigation
-      // has already marked its own URL, and restoring an older value over it would
-      // send that newer check's URL a second time.
-      if (seq === recogniseSeq) {
+      // Rolled back only while this is still the LATEST check AND still this same
+      // generation — `generation`'s own doc comment says a stale response must
+      // neither store nor paint, and this is a store.
+      if (gen === generation && seq === recogniseSeq) {
         lastCheckedUrl = previous;
       }
       return;
@@ -667,8 +677,10 @@ function createPanel(body: HTMLElement): {
       // notice exactly as it is; the next navigation asks again.
       return;
     }
-    // Before the first resolve lands there is no pinned identity to compare
-    // against, so there is nothing honest to announce.
+    // The pin is guaranteed non-null here — the early return above refuses to
+    // spend a check without one — but a `reread` could have nulled it while this
+    // answer was in flight, and the generation guard above has already returned
+    // in that case.
     const away = pinnedRecognition !== null && !sameItem(pinnedRecognition, res.recognition);
     if (away === navAway) {
       return;
@@ -692,6 +704,14 @@ function createPanel(body: HTMLElement): {
    */
   async function reread(): Promise<void> {
     generation += 1;
+    // Drop the old page's <details> BEFORE resetting the flags below. `paint()`
+    // opens by carrying over each lane's live open/closed state from the mounted
+    // elements — correct on every ordinary repaint, and fatal here: it would
+    // restore the very flags this function is clearing, and a lane left expanded
+    // on the old item would reopen EMPTY on the new one (its `laneState` is now
+    // `collapsed`, whose rendered body is deliberately blank, and
+    // `attachLaneToggle` swallows the programmatic re-open, so no run starts).
+    body.replaceChildren();
     pinnedUrl = window.location.href;
     lastCheckedUrl = pinnedUrl;
     pinnedRecognition = null;
@@ -740,15 +760,19 @@ function createPanel(body: HTMLElement): {
     try {
       res = await sendMessage({ kind: "agent-run", lane, pageUrl: pinnedUrl });
     } catch {
-      laneInFlight.delete(lane);
       if (closed || gen !== generation) {
+        // Checked BEFORE the delete below: a `reread` already cleared this
+        // lane's OLD entry (see `reread`) and a fresh toggle may since have
+        // added a NEW one for a genuinely in-flight run. Deleting here
+        // unconditionally would clear that newer run's latch instead of this
+        // stale one's, defeating the guard `laneInFlight` exists to be.
         return;
       }
+      laneInFlight.delete(lane);
       laneState[lane] = { kind: "failed", reason: "unreachable" };
       paint();
       return;
     }
-    laneInFlight.delete(lane);
     if (closed || gen !== generation) {
       // See `closed`'s own doc comment: a response landing after teardown
       // must not repaint a detached body or start a fresh poll timer that
@@ -756,8 +780,12 @@ function createPanel(body: HTMLElement): {
       // is the same hazard for a panel that stays mounted but has moved on to
       // a different item — this is the guard `reread`'s own `clearLanePoll`
       // relies on to make a poll already in flight harmless (see `reread`).
+      // The `laneInFlight` delete below is skipped for the same reason as the
+      // `catch` arm above: this stale response must not clear a newer run's
+      // latch.
       return;
     }
+    laneInFlight.delete(lane);
     if (!isAgentStateResponse(res)) {
       laneState[lane] = { kind: "failed", reason: "server_error" };
       paint();

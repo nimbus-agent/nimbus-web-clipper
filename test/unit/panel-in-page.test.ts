@@ -1674,6 +1674,28 @@ describe("following a client-side navigation", () => {
     expect(notice(root)).not.toBeNull();
   });
 
+  // Property 1: `paint()` is response-driven, never tick-driven. A tick whose
+  // `recognise` answer leaves `navAway` unchanged (same item, only the sub-tab
+  // differs) must not repaint at all — only an actual flip may.
+  it("paints on a navAway flip, and only on a flip", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    const body = root.querySelector<HTMLElement>(".nimbus-related__body");
+    if (body === null) throw new Error("panel body not found");
+    const replaceChildren = vi.spyOn(body, "replaceChildren");
+    replaceChildren.mockClear(); // drop the mount-time paints; count only from here
+
+    // Same item, only the sub-tab changed: checkNavigation's own
+    // `away === navAway` (false === false) returns before paint() runs.
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    expect(replaceChildren).not.toHaveBeenCalled();
+
+    // A genuine identity change is the one tick that must paint — exactly once.
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(replaceChildren).toHaveBeenCalledTimes(1);
+  });
+
   // The ordering guard. A -> B(same item) -> C(different item) with B's answer
   // deliberately delivered LAST must leave the notice correct for C.
   it("ignores a stale recognition answer that lands after a newer one", async () => {
@@ -1683,10 +1705,16 @@ describe("following a client-side navigation", () => {
     // nested Promise executor narrows to `never` at a later read otherwise
     // (a TypeScript control-flow limitation, not a runtime concern).
     let releaseStale: () => void = () => {};
+    // Without this, the test can pass vacuously: if the "/files" branch below
+    // were never reached (e.g. a regression that skips sending it, or coalesces
+    // it away), `releaseStale` would stay the initial no-op and the test would
+    // still see the notice stand — for the wrong reason.
+    let staleBranchEntered = false;
     harness.sendMessage.mockImplementation(async (message: unknown) => {
       const m = message as { kind?: string; pageUrl?: string };
       if (m.kind !== "recognise") return { kind: "related", ok: true, items: [] };
       if ((m.pageUrl ?? "").includes("/files")) {
+        staleBranchEntered = true;
         await new Promise<void>((resolve) => {
           releaseStale = resolve;
         });
@@ -1698,6 +1726,7 @@ describe("following a client-side navigation", () => {
     await advanceTimers(600);
     window.history.pushState({}, "", "/acme/web/pull/517");
     await advanceTimers(600);
+    expect(staleBranchEntered).toBe(true);
     expect(notice(root)).not.toBeNull();
     releaseStale();
     await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
@@ -1721,8 +1750,72 @@ describe("following a client-side navigation", () => {
     expect(notice(root)).toBeNull();
   });
 
+  // Every OTHER test in this file mounts via `mountWatching`, which awaits the
+  // header settling past "Checking Nimbus…" before doing anything else — so
+  // none of them ever navigates while `pinnedRecognition` is still null. This
+  // one does, deliberately: the interval starts at `createPanel`, before the
+  // first resolve is even sent, and `reread()` nulls the pin again for its own
+  // whole round trip — both are real windows, not edge cases.
+  it("does not permanently suppress the notice for a navigation that lands before the pin exists", async () => {
+    let resolveHeader: (value: unknown) => void = () => {};
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind === "resolve") {
+        return await new Promise((resolve) => {
+          resolveHeader = resolve;
+        });
+      }
+      if (m.kind === "recognise") {
+        return {
+          kind: "recognition",
+          ok: true,
+          recognition: (m.pageUrl ?? "").includes("/pull/517") ? PR517 : PR482,
+        };
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    await loadPanel();
+    expect(headerText()).toContain("Checking Nimbus");
+
+    // Navigate away WHILE the pin does not exist yet. Without the fix, this
+    // tick marks `lastCheckedUrl` as "/pull/517" and never rolls it back
+    // (there is no pin to compare against, so `away` is trivially false) —
+    // burning the only check this URL will ever get.
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+
+    // Let the header resolve now, for the originally pinned page (#482).
+    resolveHeader(resolvedFor(PR482));
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    await vi.waitFor(() => expect(headerText()).not.toContain("Checking Nimbus"));
+    const root = shadow();
+    if (root === null) throw new Error("panel shadow root not found");
+
+    // The tab is still on #517 and a pin now exists — this tick must still be
+    // free to notice it. Without the fix, `lastCheckedUrl` already equals the
+    // current URL from the burned check above, so this tick is a no-op and the
+    // notice never appears.
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain("acme/web #482");
+  });
+
   it("re-reads on request: new header, lanes reset, nothing running", async () => {
     const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    const impactLane = (): HTMLDetailsElement | null =>
+      root.querySelector<HTMLDetailsElement>('[data-lane="impact"]');
+
+    // Expand impact on the PINNED item before the re-read. Without this, the
+    // "lanes reset" assertion below passes vacuously — a lane that was never
+    // open stays "closed" whether or not reread() actually resets anything.
+    const beforeReread = impactLane();
+    if (beforeReread !== null) {
+      beforeReread.open = true;
+    }
+    beforeReread?.dispatchEvent(new Event("toggle"));
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    expect(impactLane()?.open).toBe(true);
+
     window.history.pushState({}, "", "/acme/web/pull/517");
     await advanceTimers(600);
 
@@ -1732,16 +1825,21 @@ describe("following a client-side navigation", () => {
       if (m.kind === "recognise") return { kind: "recognition", ok: true, recognition: PR517 };
       return { kind: "related", ok: true, items: [] };
     });
+    const callsBeforeReread = harness.sendMessage.mock.calls.length;
     root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
     await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
 
     expect(notice(root)).toBeNull();
     expect(headerText()).toContain("acme/web #517");
-    expect(harness.sendMessage).not.toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "agent-run" }),
-    );
-    const lane = root.querySelector<HTMLDetailsElement>('[data-lane="impact"]');
-    expect(lane?.open).toBe(false);
+    // Scoped to calls made AFTER the re-read click: the pre-reread expand above
+    // genuinely sent its own "agent-run", so an unscoped `not.toHaveBeenCalledWith`
+    // would fail for the wrong reason. What "nothing running" actually claims is
+    // that the re-read itself starts no run on the new item.
+    const sentAfterReread = harness.sendMessage.mock.calls
+      .slice(callsBeforeReread)
+      .map((call) => (call[0] as { kind?: string }).kind);
+    expect(sentAfterReread).not.toContain("agent-run");
+    expect(impactLane()?.open).toBe(false);
   });
 
   // A navigation check has no button and no error state, so the next tick is the
