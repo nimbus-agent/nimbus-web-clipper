@@ -5,3 +5,17 @@ coverage/
 *.zip
 *.tsbuildinfo
 .DS_Store
+
+# Claude Code scratch. Deliberately NOT a blanket `.claude/` ignore: a
+# project-shared `.claude/settings.json` is meant to be committable, while
+# `settings.local.json` is personal and `worktrees/` is scratch.
+#
+# `worktrees/` earns its line: each git worktree created there carries a full
+# copy of the repo, including its own `biome.json`. Biome walks the tree from
+# the root, finds a nested root config, and aborts with "Found a nested root
+# configuration" — a configuration error, so `bun run lint` exits non-zero
+# WITHOUT having linted anything. `biome.json` also excludes this path
+# explicitly; this entry is the belt to that brace, and it keeps the directory
+# out of `git status` besides.
+.claude/worktrees/
+.claude/settings.local.json
