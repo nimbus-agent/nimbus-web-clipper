@@ -23,6 +23,7 @@ import {
   isQueueListRequest,
   isQueueRemoveRequest,
   isQueueRetryRequest,
+  isRecogniseRequest,
   isRelatedRequest,
   isResolveRequest,
   isUnpairRequest,
@@ -57,6 +58,7 @@ import {
   handleQueueList,
   handleQueueRemove,
   handleQueueRetry,
+  handleRecognise,
   handleRelated,
   handleResolve,
   handleUnpair,
@@ -418,6 +420,19 @@ addMessageListener((message, respond) => {
       .then(respond)
       .catch(() => {
         respond({ kind: "related", ok: false, reason: "server_error" });
+      });
+    return true;
+  }
+  if (isRecogniseRequest(message)) {
+    handleRecognise({ getOrigins }, message)
+      .then(respond)
+      .catch(() => {
+        // The recogniser itself cannot throw, so this is the storage read
+        // failing. Report THAT — never a fabricated `{ok:false}` recognition,
+        // which the watcher could not tell apart from a genuinely unrecognised
+        // page and would render as "you navigated away" on a page the user
+        // never left.
+        respond({ kind: "recognition", ok: false, reason: "server_error" });
       });
     return true;
   }

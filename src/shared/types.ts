@@ -239,6 +239,25 @@ export const AGENT_LANES = ["impact", "expert"] as const;
 export type AgentLane = (typeof AGENT_LANES)[number];
 
 /**
+ * Which recognised surfaces each lane belongs on.
+ *
+ * The panel renders only the lanes whose entry contains the page's recognised
+ * `SurfaceKind`. Before this table, lanes were gated on "the page resolved to an
+ * item" alone, so a resolved Jira issue offered *What breaks if it lands* and
+ * handed the issue URL to `agents.impact` as its `fileOrPrUrl` — a question that
+ * does not apply, answered from an input the agent was not built for.
+ *
+ * Keyed by `AgentLane`, so adding a lane without declaring its surfaces is a type
+ * error rather than a lane that silently appears everywhere. Gated on the
+ * RECOGNISER's kind — a closed union this repo owns — not on `ResolvedItem.type`,
+ * which is a free-form string from the wire.
+ */
+export const LANE_SURFACES: Record<AgentLane, readonly SurfaceKind[]> = {
+  impact: ["pr"],
+  expert: ["pr"],
+};
+
+/**
  * What one lane is doing. `collapsed` is also the state of a lane never opened.
  *
  * The run route's `findings` field is deliberately NOT modelled on the `done`

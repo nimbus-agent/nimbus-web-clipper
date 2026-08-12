@@ -1469,3 +1469,621 @@ describe("panel-in-page attachLaneToggle", () => {
     expect(calls).toEqual([true]);
   });
 });
+
+describe("the panel pins the page it was opened on", () => {
+  const RESOLVED = {
+    kind: "resolve",
+    ok: true,
+    recognition: {
+      ok: true,
+      product: "github",
+      kind: "pr",
+      label: "GitHub PR",
+      ref: "acme/web #482",
+      resolveUrl: "https://github.com/acme/web/pull/482",
+    },
+    outcome: {
+      kind: "found",
+      matchKind: "exact",
+      item: {
+        id: "it-1",
+        service: "github",
+        type: "pr",
+        title: "Add retry budget",
+        url: "https://github.com/acme/web/pull/482",
+        modifiedAt: Date.now(),
+      },
+    },
+  };
+
+  it("sends the pinned url after a client-side navigation, not the live one", async () => {
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    const pinned = window.location.href;
+    const root = await mountPanelWithResolve(RESOLVED);
+
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    expect(window.location.href).not.toBe(pinned);
+
+    const lane = root.querySelector<HTMLDetailsElement>('[data-lane="impact"]');
+    expect(lane).not.toBeNull();
+    if (lane !== null) {
+      lane.open = true;
+    }
+    lane?.dispatchEvent(new Event("toggle"));
+    await flush();
+
+    expect(harness.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "agent-run", lane: "impact", pageUrl: pinned }),
+    );
+  });
+});
+
+describe("lanes appear only where they can answer", () => {
+  function resolved(product: string, kind: string, ref: string): unknown {
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition: {
+        ok: true,
+        product,
+        kind,
+        label: `${product} ${kind}`,
+        ref,
+        resolveUrl: "https://example.test/x",
+      },
+      outcome: {
+        kind: "found",
+        matchKind: "exact",
+        item: {
+          id: "it-1",
+          service: product,
+          type: kind,
+          title: "An indexed item",
+          url: "https://example.test/x",
+          modifiedAt: Date.now(),
+        },
+      },
+    };
+  }
+
+  it("offers both lanes on a resolved pull request", async () => {
+    const root = await mountPanelWithResolve(resolved("github", "pr", "acme/web #482"));
+    expect(root.querySelector('[data-lane="impact"]')).not.toBeNull();
+    expect(root.querySelector('[data-lane="expert"]')).not.toBeNull();
+  });
+
+  // Before LANE_SURFACES these appeared here too, and expanding one handed the
+  // issue/build URL to agents.impact as its `fileOrPrUrl`.
+  it("offers no agent lane on a resolved Jira issue", async () => {
+    const root = await mountPanelWithResolve(resolved("jira", "issue", "ABC-12"));
+    expect(root.querySelector('[data-lane="impact"]')).toBeNull();
+    expect(root.querySelector('[data-lane="expert"]')).toBeNull();
+    // The Related lane is unaffected — it works in every header state.
+    expect(root.querySelector('[data-lane="related"]')).not.toBeNull();
+  });
+
+  it("offers no agent lane on a resolved Jenkins build", async () => {
+    const root = await mountPanelWithResolve(resolved("jenkins", "build", "web #482"));
+    expect(root.querySelector('[data-lane="impact"]')).toBeNull();
+    expect(root.querySelector('[data-lane="expert"]')).toBeNull();
+  });
+});
+
+describe("following a client-side navigation", () => {
+  const PR482 = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #482",
+    resolveUrl: "https://github.com/acme/web/pull/482",
+  };
+  const PR517 = {
+    ...PR482,
+    ref: "acme/web #517",
+    resolveUrl: "https://github.com/acme/web/pull/517",
+  };
+
+  function resolvedFor(recognition: unknown): unknown {
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: {
+        kind: "found",
+        matchKind: "exact",
+        item: {
+          id: "it-1",
+          service: "github",
+          type: "pr",
+          title: "Add retry budget",
+          url: "https://github.com/acme/web/pull/482",
+          modifiedAt: Date.now(),
+        },
+      },
+    };
+  }
+
+  /** Mounts on #482 with `recognise` answered from a URL→recognition table. */
+  async function mountWatching(table: Record<string, unknown>): Promise<ShadowRoot> {
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind === "resolve") return resolvedFor(PR482);
+      if (m.kind === "recognise") {
+        const hit = Object.entries(table).find(([path]) => (m.pageUrl ?? "").includes(path));
+        return {
+          kind: "recognition",
+          ok: true,
+          recognition: hit?.[1] ?? { ok: false, reason: "unrecognised-path" },
+        };
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    await loadPanel();
+    await vi.waitFor(() => expect(headerText()).not.toContain("Checking Nimbus"));
+    const root = shadow();
+    if (root === null) throw new Error("panel shadow root not found");
+    return root;
+  }
+
+  function notice(root: ShadowRoot): Element | null {
+    return root.querySelector(".nimbus-related__navaway");
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("says nothing when only the sub-tab changed", async () => {
+    const root = await mountWatching({ "/pull/482": PR482 });
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+  });
+
+  it("names the pinned item once the tab shows a different one", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain("acme/web #482");
+  });
+
+  it("clears itself when the user comes back, with no re-read", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(notice(root)).not.toBeNull();
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+  });
+
+  it("checks nothing while the tab is hidden, and immediately once it is visible", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(2000);
+    expect(notice(root)).toBeNull();
+    hidden.mockReturnValue(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    expect(notice(root)).not.toBeNull();
+  });
+
+  // Property 1: `paint()` is response-driven, never tick-driven. A tick whose
+  // `recognise` answer leaves `navAway` unchanged (same item, only the sub-tab
+  // differs) must not repaint at all — only an actual flip may.
+  it("paints on a navAway flip, and only on a flip", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    const body = root.querySelector<HTMLElement>(".nimbus-related__body");
+    if (body === null) throw new Error("panel body not found");
+    const replaceChildren = vi.spyOn(body, "replaceChildren");
+    replaceChildren.mockClear(); // drop the mount-time paints; count only from here
+
+    // Same item, only the sub-tab changed: checkNavigation's own
+    // `away === navAway` (false === false) returns before paint() runs.
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    expect(replaceChildren).not.toHaveBeenCalled();
+
+    // A genuine identity change is the one tick that must paint — exactly once.
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(replaceChildren).toHaveBeenCalledTimes(1);
+  });
+
+  // The ordering guard. A -> B(same item) -> C(different item) with B's answer
+  // deliberately delivered LAST must leave the notice correct for C.
+  it("ignores a stale recognition answer that lands after a newer one", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    // Matches the file's own `resolveAgentRun`/`resolvePoll` pattern above: a
+    // no-op initial value, not `null` — a `let` reassigned only inside a
+    // nested Promise executor narrows to `never` at a later read otherwise
+    // (a TypeScript control-flow limitation, not a runtime concern).
+    let releaseStale: () => void = () => {};
+    // Without this, the test can pass vacuously: if the "/files" branch below
+    // were never reached (e.g. a regression that skips sending it, or coalesces
+    // it away), `releaseStale` would stay the initial no-op and the test would
+    // still see the notice stand — for the wrong reason.
+    let staleBranchEntered = false;
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind !== "recognise") return { kind: "related", ok: true, items: [] };
+      if ((m.pageUrl ?? "").includes("/files")) {
+        staleBranchEntered = true;
+        await new Promise<void>((resolve) => {
+          releaseStale = resolve;
+        });
+        return { kind: "recognition", ok: true, recognition: PR482 };
+      }
+      return { kind: "recognition", ok: true, recognition: PR517 };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(staleBranchEntered).toBe(true);
+    expect(notice(root)).not.toBeNull();
+    releaseStale();
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    expect(notice(root)).not.toBeNull();
+  });
+
+  // The false-notice path the response envelope exists to prevent: a storage
+  // failure in the worker must not read as "you navigated away" on a page the
+  // user never left.
+  it("does not raise the notice when the worker could not classify the url", async () => {
+    const root = await mountWatching({ "/pull/482": PR482 });
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind === "recognise") return { kind: "recognition", ok: false, reason: "server_error" };
+      return { kind: "related", ok: true, items: [] };
+    });
+    // Same item, only the sub-tab changed — so even a successful check would not
+    // notify. The failure arm must not notify either.
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+  });
+
+  // Every OTHER test in this file mounts via `mountWatching`, which awaits the
+  // header settling past "Checking Nimbus…" before doing anything else — so
+  // none of them ever navigates while `pinnedRecognition` is still null. This
+  // one does, deliberately: the interval starts at `createPanel`, before the
+  // first resolve is even sent, and `reread()` nulls the pin again for its own
+  // whole round trip — both are real windows, not edge cases.
+  it("does not permanently suppress the notice for a navigation that lands before the pin exists", async () => {
+    let resolveHeader: (value: unknown) => void = () => {};
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind === "resolve") {
+        return await new Promise((resolve) => {
+          resolveHeader = resolve;
+        });
+      }
+      if (m.kind === "recognise") {
+        return {
+          kind: "recognition",
+          ok: true,
+          recognition: (m.pageUrl ?? "").includes("/pull/517") ? PR517 : PR482,
+        };
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    await loadPanel();
+    expect(headerText()).toContain("Checking Nimbus");
+
+    // Navigate away WHILE the pin does not exist yet. Without the fix, this
+    // tick marks `lastCheckedUrl` as "/pull/517" and never rolls it back
+    // (there is no pin to compare against, so `away` is trivially false) —
+    // burning the only check this URL will ever get.
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+
+    // Let the header resolve now, for the originally pinned page (#482).
+    resolveHeader(resolvedFor(PR482));
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    await vi.waitFor(() => expect(headerText()).not.toContain("Checking Nimbus"));
+    const root = shadow();
+    if (root === null) throw new Error("panel shadow root not found");
+
+    // The tab is still on #517 and a pin now exists — this tick must still be
+    // free to notice it. Without the fix, `lastCheckedUrl` already equals the
+    // current URL from the burned check above, so this tick is a no-op and the
+    // notice never appears.
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain("acme/web #482");
+  });
+
+  it("re-reads on request: new header, lanes reset, nothing running", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    const impactLane = (): HTMLDetailsElement | null =>
+      root.querySelector<HTMLDetailsElement>('[data-lane="impact"]');
+
+    // Expand impact on the PINNED item before the re-read. Without this, the
+    // "lanes reset" assertion below passes vacuously — a lane that was never
+    // open stays "closed" whether or not reread() actually resets anything.
+    const beforeReread = impactLane();
+    if (beforeReread !== null) {
+      beforeReread.open = true;
+    }
+    beforeReread?.dispatchEvent(new Event("toggle"));
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    expect(impactLane()?.open).toBe(true);
+
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind === "resolve") return resolvedFor(PR517);
+      if (m.kind === "recognise") return { kind: "recognition", ok: true, recognition: PR517 };
+      return { kind: "related", ok: true, items: [] };
+    });
+    const callsBeforeReread = harness.sendMessage.mock.calls.length;
+    root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+
+    expect(notice(root)).toBeNull();
+    expect(headerText()).toContain("acme/web #517");
+    // Scoped to calls made AFTER the re-read click: the pre-reread expand above
+    // genuinely sent its own "agent-run", so an unscoped `not.toHaveBeenCalledWith`
+    // would fail for the wrong reason. What "nothing running" actually claims is
+    // that the re-read itself starts no run on the new item.
+    const sentAfterReread = harness.sendMessage.mock.calls
+      .slice(callsBeforeReread)
+      .map((call) => (call[0] as { kind?: string }).kind);
+    expect(sentAfterReread).not.toContain("agent-run");
+    expect(impactLane()?.open).toBe(false);
+  });
+
+  // A navigation check has no button and no error state, so the next tick is the
+  // only recovery there is — a failed check must not be recorded as a done one.
+  it("re-checks the same url after the worker was briefly unreachable", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    let failOnce = true;
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind !== "recognise") return { kind: "related", ok: true, items: [] };
+      if (failOnce) {
+        failOnce = false;
+        throw new Error("worker unreachable");
+      }
+      return { kind: "recognition", ok: true, recognition: PR517 };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain("acme/web #482");
+  });
+
+  // IMPORTANT 1 regression: `ok: false` means the worker could not classify the
+  // URL — a check that reached no conclusion — not "nothing changed here". The
+  // existing "worker unreachable" test above navigates to the SAME item, so it
+  // cannot tell a burned check from a correct one: no notice is due either way.
+  // This one navigates to a DIFFERENT item, so a bug here is directly
+  // observable: if the first (ok:false) check is wrongly treated as completed,
+  // `lastCheckedUrl` stays marked at the new URL forever and the second,
+  // real answer is never even asked for.
+  it("re-checks the same url after the worker answered ok:false, and still raises the notice", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    let failOnce = true;
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind !== "recognise") return { kind: "related", ok: true, items: [] };
+      if (failOnce) {
+        failOnce = false;
+        return { kind: "recognition", ok: false, reason: "server_error" };
+      }
+      return { kind: "recognition", ok: true, recognition: PR517 };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain("acme/web #482");
+  });
+
+  // clearLanePoll cancels a PENDING timer; only the generation guard can stop a
+  // poll whose answer is already in flight from starting a fresh loop for the item
+  // the panel has stopped describing.
+  it("a poll in flight during a re-read neither repaints nor reschedules", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    // No-op initial value, not `null` — see the identical note on `releaseStale`
+    // above.
+    let releasePoll: (value: unknown) => void = () => {};
+    const kinds: string[] = [];
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      kinds.push(m.kind ?? "");
+      if (m.kind === "resolve") return resolvedFor(PR517);
+      if (m.kind === "recognise") return { kind: "recognition", ok: true, recognition: PR517 };
+      if (m.kind === "agent-run") {
+        return { kind: "agent-state", lane: "impact", state: { kind: "running", runId: "r1" } };
+      }
+      if (m.kind === "agent-state") {
+        return await new Promise((resolve) => {
+          releasePoll = resolve;
+        });
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+
+    // Start impact on the pinned PR, then let its first poll go out and hang.
+    // `el.open = true` BEFORE dispatching: attachLaneToggle swallows a toggle
+    // that merely repeats the element's own starting value (see its doc
+    // comment) — this is what makes the dispatch below a genuine expand.
+    const impactLane = root.querySelector<HTMLDetailsElement>('[data-lane="impact"]');
+    if (impactLane !== null) {
+      impactLane.open = true;
+    }
+    impactLane?.dispatchEvent(new Event("toggle"));
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    await advanceTimers(1200); // past AGENT_POLL_MS (1000) — the poll is now awaiting
+    expect(kinds).toContain("agent-state");
+
+    // Re-read while that poll is still in flight.
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    const afterReread = kinds.length;
+
+    releasePoll({ kind: "agent-state", lane: "impact", state: { kind: "running", runId: "r1" } });
+    await advanceTimers(3000);
+    expect(kinds.slice(afterReread).filter((k) => k === "agent-state")).toEqual([]);
+    expect(headerText()).toContain("acme/web #517");
+  });
+
+  // Task 6 proves the view renders the generic copy for `pinnedRef: null`; this
+  // proves the panel actually produces null when the pinned page had no ref.
+  it("uses the generic copy when the pinned page was unrecognised", async () => {
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind === "resolve") {
+        return {
+          kind: "resolve",
+          ok: true,
+          recognition: { ok: false, reason: "unrecognised-path" },
+          outcome: { kind: "not-indexed", fetchable: false },
+        };
+      }
+      if (m.kind === "recognise") {
+        return {
+          kind: "recognition",
+          ok: true,
+          recognition: (m.pageUrl ?? "").includes("/pull/482")
+            ? PR482
+            : { ok: false, reason: "unrecognised-path" },
+        };
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+    window.history.pushState({}, "", "/acme/web");
+    await loadPanel();
+    await vi.waitFor(() => expect(headerText()).not.toContain("Checking Nimbus"));
+    const root = shadow();
+    if (root === null) throw new Error("panel shadow root not found");
+
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain(
+      "This panel is still about the page you opened it on.",
+    );
+  });
+
+  it("sends the NEW pinned url after a re-read", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    const newPin = window.location.href;
+
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind === "resolve") return resolvedFor(PR517);
+      if (m.kind === "recognise") return { kind: "recognition", ok: true, recognition: PR517 };
+      if (m.kind === "agent-run")
+        return { kind: "agent-state", lane: "impact", state: { kind: "done", brief: "b" } };
+      return { kind: "related", ok: true, items: [] };
+    });
+    root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    // `el.open = true` BEFORE dispatching — see the identical note above.
+    const impactLane = root.querySelector<HTMLDetailsElement>('[data-lane="impact"]');
+    if (impactLane !== null) {
+      impactLane.open = true;
+    }
+    impactLane?.dispatchEvent(new Event("toggle"));
+    await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+
+    expect(harness.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "agent-run", pageUrl: newPin }),
+    );
+  });
+
+  // IMPORTANT 2: the design spec's reset test promised coverage of "lane state,
+  // `chosen`, `fetchState` and `fetchSent`" — the shipped tests cover only lane
+  // state and the header. If `reread()` ever dropped `fetchState = null`,
+  // `paint()`'s `fetchState !== null` precedence would keep showing the OLD
+  // page's fetch-in-progress header over a panel now pinned to a different
+  // item; if it dropped `fetchSent = false`, `headerFrom` would force
+  // `fetchable: false` on every resolve for the rest of the panel's life.
+  // Neither has a dedicated test today.
+  it("reread resets fetchState and fetchSent — the new page's own miss offers a fresh Fetch button", async () => {
+    const missPR482 = {
+      kind: "resolve",
+      ok: true,
+      recognition: PR482,
+      outcome: { kind: "not-indexed", fetchable: true },
+    };
+    const missPR517 = {
+      kind: "resolve",
+      ok: true,
+      recognition: PR517,
+      outcome: { kind: "not-indexed", fetchable: true },
+    };
+    const timedOutFetch = {
+      kind: "fetch",
+      ok: false,
+      recognition: PR482,
+      reason: "timeout",
+    };
+
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind === "resolve") {
+        return (m.pageUrl ?? "").includes("/pull/517") ? missPR517 : missPR482;
+      }
+      if (m.kind === "fetch") {
+        return timedOutFetch;
+      }
+      if (m.kind === "recognise") {
+        return {
+          kind: "recognition",
+          ok: true,
+          recognition: (m.pageUrl ?? "").includes("/pull/517") ? PR517 : PR482,
+        };
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    await loadPanel();
+    await vi.waitFor(() => expect(headerText()).not.toContain("Checking Nimbus"));
+    const root = shadow();
+    if (root === null) throw new Error("panel shadow root not found");
+
+    // Fetch on the pinned page. It times out — `fetchState` latches to
+    // `fetch-retry`/`still-working` and `fetchSent` latches `true`, per
+    // `sendFetch`'s own doc comment, for the life of THIS page.
+    root.querySelector<HTMLButtonElement>(".nimbus-related__header-state button")?.click();
+    await advanceTimers(0);
+    expect(headerText()).toContain("Still working");
+
+    // Navigate to a different item and re-read.
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
+    await advanceTimers(0);
+
+    // (a) the header describes the NEW item and shows no fetch-in-progress
+    // text — a stale `fetchState` would keep "Still working" (or "Fetching…")
+    // as the header of a panel now pinned to a different item entirely.
+    expect(headerText()).toContain("acme/web #517");
+    expect(headerText()).not.toContain("Still working");
+    expect(headerText()).not.toContain("Fetching");
+
+    // (b) the Fetch affordance is available again for the new page — a stale
+    // `fetchSent` would force `fetchable: false` on every resolve for the rest
+    // of the panel's life.
+    expect(
+      root.querySelector<HTMLButtonElement>(".nimbus-related__header-state button")?.textContent,
+    ).toBe("Fetch this from GitHub");
+  });
+});

@@ -9,6 +9,7 @@ import {
   handleQueueList,
   handleQueueRemove,
   handleQueueRetry,
+  handleRecognise,
   handleRelated,
   handleResolve,
   handleUnpair,
@@ -345,6 +346,64 @@ describe("handleUnpair", () => {
     });
     expect(cleared).toBe(true);
     expect(res).toEqual({ kind: "connection", paired: false });
+  });
+});
+
+describe("handleRecognise", () => {
+  it("classifies a built-in origin", async () => {
+    const res = await handleRecognise(
+      { getOrigins: async () => [] },
+      { kind: "recognise", pageUrl: "https://github.com/acme/web/pull/482" },
+    );
+    expect(res).toEqual({
+      kind: "recognition",
+      ok: true,
+      recognition: {
+        ok: true,
+        product: "github",
+        kind: "pr",
+        label: "GitHub PR",
+        ref: "acme/web #482",
+        resolveUrl: "https://github.com/acme/web/pull/482",
+      },
+    });
+  });
+
+  it("classifies a configured self-hosted origin", async () => {
+    const res = await handleRecognise(
+      { getOrigins: async () => [{ origin: "https://corp.example/jira", product: "jira" }] },
+      { kind: "recognise", pageUrl: "https://corp.example/jira/browse/abc-12" },
+    );
+    expect(res).toMatchObject({
+      ok: true,
+      recognition: { ok: true, product: "jira", ref: "ABC-12" },
+    });
+  });
+
+  it("reports an unrecognised page as a miss, not an error", async () => {
+    const res = await handleRecognise(
+      { getOrigins: async () => [] },
+      { kind: "recognise", pageUrl: "https://example.com/whatever" },
+    );
+    expect(res).toEqual({
+      kind: "recognition",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+    });
+  });
+
+  // This route exists so the panel can ask "same item?" on every navigation. If it
+  // ever touched the gateway or the token it would be a per-navigation network
+  // call under a client whose whole story is that nothing leaves without asking.
+  it("never reads a connection and never calls the gateway", async () => {
+    const getConnection = vi.fn();
+    const resolveItem = vi.fn();
+    await handleRecognise(
+      { getOrigins: async () => [], ...({ getConnection, resolveItem } as object) },
+      { kind: "recognise", pageUrl: "https://github.com/acme/web/pull/482" },
+    );
+    expect(getConnection).not.toHaveBeenCalled();
+    expect(resolveItem).not.toHaveBeenCalled();
   });
 });
 

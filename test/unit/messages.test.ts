@@ -13,6 +13,8 @@ import {
   isQueueRemoveRequest,
   isQueueResponse,
   isQueueRetryRequest,
+  isRecogniseRequest,
+  isRecognitionResponse,
   isRelatedRequest,
   isRelatedResponse,
   isResolveRequest,
@@ -151,6 +153,63 @@ describe("isConnectionResponse", () => {
     expect(isConnectionResponse({ kind: "connection", paired: true, label: "c" })).toBe(false);
     expect(isConnectionResponse({ kind: "clip", paired: false })).toBe(false);
     expect(isConnectionResponse({ kind: "connection" })).toBe(false);
+  });
+});
+
+describe("recognise message guards", () => {
+  it("accepts a well-formed request and rejects a malformed one", () => {
+    expect(isRecogniseRequest({ kind: "recognise", pageUrl: "https://x.test/" })).toBe(true);
+    expect(isRecogniseRequest({ kind: "recognise" })).toBe(false);
+    expect(isRecogniseRequest({ kind: "recognise", pageUrl: 42 })).toBe(false);
+    expect(isRecogniseRequest({ kind: "resolve", pageUrl: "https://x.test/" })).toBe(false);
+  });
+
+  it("accepts an ok:true response carrying either arm of the recognition", () => {
+    expect(
+      isRecognitionResponse({
+        kind: "recognition",
+        ok: true,
+        recognition: {
+          ok: true,
+          product: "github",
+          kind: "pr",
+          label: "GitHub PR",
+          ref: "acme/web #482",
+          resolveUrl: "https://github.com/acme/web/pull/482",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isRecognitionResponse({
+        kind: "recognition",
+        ok: true,
+        recognition: { ok: false, reason: "unknown-host" },
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts the ok:false storage-failure arm", () => {
+    expect(isRecognitionResponse({ kind: "recognition", ok: false, reason: "server_error" })).toBe(
+      true,
+    );
+  });
+
+  it("rejects a malformed response on either arm", () => {
+    expect(isRecognitionResponse({ kind: "recognition" })).toBe(false);
+    // ok:true with a malformed (or missing) recognition.
+    expect(
+      isRecognitionResponse({ kind: "recognition", ok: true, recognition: { ok: true } }),
+    ).toBe(false);
+    expect(isRecognitionResponse({ kind: "recognition", ok: true })).toBe(false);
+    // ok:false with no reason.
+    expect(isRecognitionResponse({ kind: "recognition", ok: false })).toBe(false);
+    expect(
+      isRecognitionResponse({
+        kind: "resolve",
+        ok: true,
+        recognition: { ok: false, reason: "x" },
+      }),
+    ).toBe(false);
   });
 });
 

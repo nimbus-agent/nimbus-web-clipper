@@ -6,15 +6,18 @@ import { sendMessage } from "../browser/runtime.ts";
 import {
   isAgentStateResponse,
   isFetchResponse,
+  isRecognitionResponse,
   isRelatedResponse,
   isResolveResponse,
 } from "../shared/messages.ts";
-import { surfaceLine } from "../shared/recognise.ts";
+import { sameItem, surfaceLine } from "../shared/recognise.ts";
 import {
   AGENT_LANES,
   type AgentLane,
+  LANE_SURFACES,
   type LaneState,
   type Product,
+  type Recognition,
   type RelatedHit,
   type ResolveCandidate,
 } from "../shared/types.ts";
@@ -95,6 +98,11 @@ const LANE_TITLES: Record<AgentLane, string> = {
  *  repaint cadence, not the worker's own poll of the gateway (which lives in
  *  service-worker.ts's tickAgentPoll and keeps running after this panel closes). */
 const AGENT_POLL_MS = 1_000;
+
+/** How often an OPEN, VISIBLE panel checks whether the tab has moved to a
+ *  different indexed item. A string compare per tick; a `recognise` message goes
+ *  out only when the URL has actually changed since the last check. */
+const NAV_CHECK_MS = 500;
 
 /**
  * Attaches a lane's `<details>` toggle listener — swallowing exactly the
@@ -210,6 +218,9 @@ const STYLES = `
 .nimbus-related__shell { display: flex; flex-direction: column; }
 .nimbus-related__header-state { padding: 12px 16px; border-bottom: 1px solid var(--nimbus-border); }
 .nimbus-related__header-state .nimbus-related__status { padding: 4px 0 0; }
+.nimbus-related__navaway { padding: 10px 16px 12px; border-bottom: 1px solid var(--nimbus-border); }
+.nimbus-related__navaway .nimbus-related__status { padding: 2px 0 4px; }
+.nimbus-related__navaway-lead { margin: 0; font-weight: 600; }
 .nimbus-related__surface { margin: 0; font-weight: 600; }
 .nimbus-related__header-item { margin: 4px 0 0; }
 .nimbus-related__header-item a { color: var(--nimbus-accent); text-decoration: none; }
@@ -398,8 +409,57 @@ function createPanel(body: HTMLElement): {
   loadHeader: () => Promise<void>;
   loadRelated: () => Promise<void>;
   stopPolling: () => void;
+  checkNavigation: () => Promise<void>;
 } {
   let header: HeaderState = { kind: "loading" };
+  /**
+   * The page this panel describes, captured ONCE at mount.
+   *
+   * Every message this panel sends carries this URL, never
+   * `window.location.href`: on an SPA the two diverge the moment the user
+   * navigates, and a lane answering about the tab's current page under a header
+   * naming the pinned one is precisely the defect this exists to make
+   * impossible. `reread()` is its only other writer, from an explicit user
+   * click.
+   */
+  let pinnedUrl = window.location.href;
+  /**
+   * The pinned page's identity, taken from the resolve response's `recognition` —
+   * which rides on BOTH arms of that response on purpose (see `handleResolve`).
+   * One source, so the pin cannot disagree with the header painted from the same
+   * response, and a re-read re-pins it as an ordinary consequence of re-running
+   * `loadHeader` rather than as a second thing to remember.
+   *
+   * Null until a resolve RESPONSE lands, not merely attempted: `loadHeader`'s
+   * own `catch` arm leaves it null on a rejected send, and a failed re-read
+   * leaves it null for as long as resolve keeps failing — there is no separate
+   * retry, only whatever resolve `reread` or the initial mount already sent.
+   * While it is null, `checkNavigation`'s own early return means the watcher
+   * cannot conclude anything about a navigation, no matter how many happen,
+   * until a later resolve actually succeeds.
+   */
+  let pinnedRecognition: Recognition | null = null;
+  /** The last URL `checkNavigation` looked at — so a tick on an unchanged URL
+   *  costs a string compare and nothing else. */
+  let lastCheckedUrl = pinnedUrl;
+  /** Whether the tab is currently showing a DIFFERENT item than the pinned one.
+   *  Not a latch: navigating back to the pinned item clears it. */
+  let navAway = false;
+  /**
+   * Orders `recognise` answers. Rapid navigation puts several in flight, and a
+   * LATE answer about an earlier URL would otherwise decide the notice — pinned
+   * #482 -> /files -> #517 could clear the notice while the user sits on #517.
+   * Each send takes a ticket; only the latest may act.
+   */
+  let recogniseSeq = 0;
+  /**
+   * Bumped by `reread()`. Every async function here resumes after a real round
+   * trip, and a response belonging to the page the panel has stopped describing
+   * must neither store nor paint — the same reasoning as `closed` below, for a
+   * panel that stays mounted instead of going away.
+   */
+  let generation = 0;
+  let navCheckTimer: ReturnType<typeof setInterval> | undefined;
   // The candidate the user picked out of an `ambiguous` header. Only meaningful
   // alongside an `ambiguous` header — see the `shown` narrowing in paint() below.
   let chosen: ResolveCandidate | null = null;
@@ -444,10 +504,11 @@ function createPanel(body: HTMLElement): {
   // --- Agent lanes (impact/expert) ---------------------------------------
   //
   // Per-lane state, seeded to `collapsed` — "never opened" — for the life of
-  // this panel. Rendered ONLY in the `resolved` state — see `showAgentLanes` in
-  // paint() below. Not on `chosen`: that state is reachable only from an
-  // ambiguous resolve, and the handler re-resolves and refuses anything that is
-  // not `found`, so a lane there could never succeed. Deferred as ROADMAP C2.5.
+  // this panel. Rendered ONLY when the header is `resolved` AND the pinned
+  // page's surface is listed in `LANE_SURFACES` — see the gate in paint()
+  // below. Not on `chosen`: that state is reachable only from an ambiguous
+  // resolve, and the handler re-resolves and refuses anything that is not
+  // `found`, so a lane there could never succeed. Deferred as ROADMAP C2.5.
   const laneState: Record<AgentLane, LaneState> = {
     impact: { kind: "collapsed" },
     expert: { kind: "collapsed" },
@@ -508,20 +569,23 @@ function createPanel(body: HTMLElement): {
    *  answer is still `running`; any terminal state (or an unreadable response)
    *  stops the loop rather than polling forever. */
   async function pollLane(lane: AgentLane): Promise<void> {
+    const gen = generation;
     let res: unknown;
     try {
-      res = await sendMessage({ kind: "agent-state", lane, pageUrl: window.location.href });
+      res = await sendMessage({ kind: "agent-state", lane, pageUrl: pinnedUrl });
     } catch {
       // The worker itself is unreachable — nothing to retry against here; the
       // next lane toggle or Re-run will find out again. Leave the last known
       // state on screen rather than guessing a new one.
       return;
     }
-    if (closed) {
-      // The panel was torn down while this poll was in flight. There's
-      // nothing left to repaint, and scheduling another tick would poll — and,
-      // via handleAgentState's own resolve call, hit the gateway — forever on
-      // a panel that no longer exists. See `closed`'s own doc comment.
+    if (closed || gen !== generation) {
+      // The panel was torn down while this poll was in flight, OR a re-read
+      // moved it on to a different item — either way, there's nothing left to
+      // repaint, and scheduling another tick would poll — and, via
+      // handleAgentState's own resolve call, hit the gateway — forever for a
+      // page nobody is describing anymore. See `closed`'s own doc comment; a
+      // re-read is the same reasoning for a panel that stays mounted.
       return;
     }
     if (!isAgentStateResponse(res)) {
@@ -552,6 +616,156 @@ function createPanel(body: HTMLElement): {
   }
 
   /**
+   * Compare the tab's item identity against the pinned one, and flip `navAway`
+   * when it differs. Identity, NOT the URL: `resolveUrl` keeps sub-tab segments
+   * and the query string on purpose, so a PR's Files tab is a different URL and
+   * the same item — announcing that would be a lie in the other direction.
+   *
+   * Paints ONLY when `navAway` actually changes. A `paint()` per tick would make
+   * this panel's repaints timer-driven, which `HeaderState.resolved`'s `nowMs`
+   * doc comment (panel-view.ts) explicitly rules out while that value is frozen
+   * at response time.
+   */
+  async function checkNavigation(): Promise<void> {
+    if (!body.isConnected) {
+      // The self-toggle fallback path at the file's own end (`existing.remove()`
+      // when `__nimbusClose` is absent) removes a stale host directly, without
+      // going through `stopAgentPolls` — so this interval would otherwise keep
+      // firing forever with nothing left to paint into. Unreachable today (a
+      // host left by a real Nimbus panel always carries `__nimbusClose`), but
+      // the check is cheap insurance against a timer that never self-terminates.
+      if (navCheckTimer !== undefined) {
+        clearInterval(navCheckTimer);
+        navCheckTimer = undefined;
+      }
+      return;
+    }
+    if (document.hidden) {
+      // Nothing to be right about while the panel cannot be seen. The
+      // visibilitychange listener in mount() runs one check on the way back, so
+      // the notice is correct the moment the user looks at it.
+      return;
+    }
+    const url = window.location.href;
+    if (url === lastCheckedUrl) {
+      return;
+    }
+    const gen = generation;
+    if (pinnedRecognition === null) {
+      // No pinned identity to compare against yet, so there is nothing this
+      // check could conclude. Return WITHOUT marking: marking would burn the
+      // check and leave this URL matching on every later tick, so the notice for
+      // it could never appear. That window is real and not rare — the interval
+      // starts at mount, before the first resolve lands, and `reread` nulls the
+      // pin again for its whole round trip. Same principle as below: a check
+      // that reached no conclusion is not a completed check.
+      return;
+    }
+    // Marked BEFORE the send, so a round trip slower than NAV_CHECK_MS cannot
+    // stack duplicate requests for one URL — and rolled back below if the check
+    // reaches no conclusion, because a check that never got an answer is not a
+    // completed check.
+    const previous = lastCheckedUrl;
+    lastCheckedUrl = url;
+    const seq = ++recogniseSeq;
+    let res: unknown;
+    try {
+      res = await sendMessage({ kind: "recognise", pageUrl: url });
+    } catch {
+      // The worker is unreachable. Every OTHER sendMessage failure in this panel
+      // leaves the user a way back — an error header, a Re-run button — but a
+      // navigation check has no button, so the next tick is the only recovery
+      // there is. Leaving `lastCheckedUrl` marked would remove it: this URL would
+      // match on every future tick and never be re-checked, and the notice for it
+      // would never appear.
+      //
+      // Rolled back only while this is still the LATEST check AND still this same
+      // generation — `generation`'s own doc comment says a stale response must
+      // neither store nor paint, and this is a store.
+      if (gen === generation && seq === recogniseSeq) {
+        lastCheckedUrl = previous;
+      }
+      return;
+    }
+    if (closed || gen !== generation || seq !== recogniseSeq) {
+      // A newer check — a later tick, or a `reread` — already owns the marker.
+      // Restoring an older URL over it here would make that newer check re-send
+      // for a URL it has already moved past.
+      return;
+    }
+    if (!isRecognitionResponse(res) || !res.ok) {
+      // The worker reached no conclusion — the response was unreadable, or (on
+      // `ok: false`) its storage read failed. "I could not look" is not "there
+      // is no item here": treating either as a completed check would leave this
+      // URL sitting in `lastCheckedUrl` forever, matching on every later tick, so
+      // the notice for it could never appear — the exact defect class this
+      // watcher exists to remove. Roll the marker back to `previous` so the
+      // NEXT TICK re-asks about this same URL instead. No second guard is needed
+      // on the rollback itself: the check just above has already established
+      // this is still the latest ticket and the current generation.
+      lastCheckedUrl = previous;
+      return;
+    }
+    // `pinnedRecognition` cannot actually be null here — the early return above
+    // already refused to spend a check without one — but TypeScript does not
+    // retain that narrowing of a closure `let` across the `await` on the send
+    // above, so it still types as `Recognition | null` at this line.
+    const away = pinnedRecognition !== null && !sameItem(pinnedRecognition, res.recognition);
+    if (away === navAway) {
+      return;
+    }
+    navAway = away;
+    paint();
+  }
+
+  /**
+   * Re-pin to the page the tab is on now and describe THAT page instead.
+   *
+   * Only reachable from the notice's own button — an explicit user action, which
+   * is why it is allowed to spend two gateway calls when nothing else in this
+   * panel re-reads on its own.
+   *
+   * `fetchSent` resets deliberately: the one-fetch-per-panel rule exists to stop
+   * a second outbound provider request for the SAME item, and this is a different
+   * item behind a click. A lane whose new item was already answered still replays
+   * from the worker's store on first expand (`agent-run-store` keys by item id),
+   * so resetting `laneState` here costs no re-run.
+   */
+  async function reread(): Promise<void> {
+    generation += 1;
+    // Drop the old page's <details> BEFORE resetting the flags below. `paint()`
+    // opens by carrying over each lane's live open/closed state from the mounted
+    // elements — correct on every ordinary repaint, and fatal here: it would
+    // restore the very flags this function is clearing, and a lane left expanded
+    // on the old item would reopen EMPTY on the new one (its `laneState` is now
+    // `collapsed`, whose rendered body is deliberately blank, and
+    // `attachLaneToggle` swallows the programmatic re-open, so no run starts).
+    body.replaceChildren();
+    pinnedUrl = window.location.href;
+    lastCheckedUrl = pinnedUrl;
+    pinnedRecognition = null;
+    navAway = false;
+    header = { kind: "loading" };
+    chosen = null;
+    fetchState = null;
+    fetchSent = false;
+    relatedBody = (doc) => renderError(doc, "Loading…");
+    relatedExpanded = true;
+    for (const lane of AGENT_LANES) {
+      clearLanePoll(lane);
+      laneState[lane] = { kind: "collapsed" };
+      laneOpen[lane] = false;
+      // A run genuinely in flight for the OLD item is not cancelled — there is
+      // nothing upstream to cancel (ROADMAP C2.2) — but its answer is dropped by
+      // the generation guard, and clearing the latch lets the new item's lane be
+      // expanded straight away.
+      laneInFlight.delete(lane);
+    }
+    paint();
+    await Promise.all([loadHeader(), loadRelated()]);
+  }
+
+  /**
    * Invokes a lane's agent. The ONLY sender of `agent-run` — called both from
    * a lane's toggle-open (first expand) and from `renderLaneBody`'s Re-run
    * button — so the `laneInFlight` guard here is what protects both paths at
@@ -561,6 +775,7 @@ function createPanel(body: HTMLElement): {
     if (laneInFlight.has(lane)) {
       return;
     }
+    const gen = generation;
     laneInFlight.add(lane);
     // Optimistic: show progress immediately rather than leaving the lane
     // blank for a first expand, or leaving a stale failure message and its
@@ -572,23 +787,34 @@ function createPanel(body: HTMLElement): {
     paint();
     let res: unknown;
     try {
-      res = await sendMessage({ kind: "agent-run", lane, pageUrl: window.location.href });
+      res = await sendMessage({ kind: "agent-run", lane, pageUrl: pinnedUrl });
     } catch {
-      laneInFlight.delete(lane);
-      if (closed) {
+      if (closed || gen !== generation) {
+        // Checked BEFORE the delete below: a `reread` already cleared this
+        // lane's OLD entry (see `reread`) and a fresh toggle may since have
+        // added a NEW one for a genuinely in-flight run. Deleting here
+        // unconditionally would clear that newer run's latch instead of this
+        // stale one's, defeating the guard `laneInFlight` exists to be.
         return;
       }
+      laneInFlight.delete(lane);
       laneState[lane] = { kind: "failed", reason: "unreachable" };
       paint();
       return;
     }
-    laneInFlight.delete(lane);
-    if (closed) {
+    if (closed || gen !== generation) {
       // See `closed`'s own doc comment: a response landing after teardown
       // must not repaint a detached body or start a fresh poll timer that
-      // `stopAgentPolls` has already run past.
+      // `stopAgentPolls` has already run past. A re-read bumping `generation`
+      // is the same hazard for a panel that stays mounted but has moved on to
+      // a different item — this is the guard `reread`'s own `clearLanePoll`
+      // relies on to make a poll already in flight harmless (see `reread`).
+      // The `laneInFlight` delete below is skipped for the same reason as the
+      // `catch` arm above: this stale response must not clear a newer run's
+      // latch.
       return;
     }
+    laneInFlight.delete(lane);
     if (!isAgentStateResponse(res)) {
       laneState[lane] = { kind: "failed", reason: "server_error" };
       paint();
@@ -614,8 +840,12 @@ function createPanel(body: HTMLElement): {
     sendAgentRun(lane).catch(() => undefined);
   }
 
-  /** Stops every lane's poll timer and marks this panel closed — called on
-   *  panel teardown. The worker's own poll of the gateway is untouched: it
+  /** Stops every lane's poll timer, clears the navigation-check interval, and
+   *  marks this panel closed — called on panel teardown. Clearing
+   *  `navCheckTimer` here is not incidental: it is the only thing standing
+   *  between a closed panel and a 2 Hz (`NAV_CHECK_MS`) `checkNavigation` loop
+   *  that would otherwise keep messaging the worker forever with nothing left
+   *  to paint into. The worker's own poll of the gateway is untouched: it
    *  survives this panel closing by design. Setting `closed` here (not just
    *  clearing pending timers) is what stops an invoke or poll already in
    *  flight from starting a brand-new timer once its response lands — see
@@ -624,6 +854,10 @@ function createPanel(body: HTMLElement): {
     closed = true;
     for (const lane of AGENT_LANES) {
       clearLanePoll(lane);
+    }
+    if (navCheckTimer !== undefined) {
+      clearInterval(navCheckTimer);
+      navCheckTimer = undefined;
     }
   }
 
@@ -652,44 +886,61 @@ function createPanel(body: HTMLElement): {
         : chosen !== null && header.kind === "ambiguous"
           ? { kind: "chosen", surface: header.surface, candidate: chosen }
           : header;
-    // The two agent lanes ask a question about ONE resolved item — there is
-    // nothing to ask about on a miss, an error, or an ambiguous answer.
+    // The two agent lanes ask a question about ONE resolved item, on a surface
+    // where that question applies — see LANE_SURFACES (shared/types.ts). There is
+    // nothing to ask about on a miss, an error, or an ambiguous answer, and
+    // nothing worth asking `impact` about on a build or an issue.
     //
     // `chosen` is deliberately NOT included, even though the user has by then
     // pinned down which item this page is. `agent-run` carries only
     // `{lane, pageUrl}` (messages.ts), so `handleAgentRun` re-runs the resolve
-    // itself — and that resolve returns the same AMBIGUOUS outcome the chooser
-    // came from, which `resolveForAgent` refuses with `not_resolved`
-    // (handlers.ts). Rendering the lanes here would put "Nimbus couldn't pin
-    // this page to one indexed item." directly under a header naming the exact
-    // item the user just picked, with no Re-run to escape it: a control that
-    // cannot ever succeed. Lanes on a chosen candidate need the picked id
-    // carried through `agent-run` and honoured instead of a re-resolve — see
-    // ROADMAP C2.5.
-    const showAgentLanes = shown.kind === "resolved";
-    const agentLanes: Lane[] = showAgentLanes
-      ? AGENT_LANES.map((lane) => ({
-          id: lane,
-          title: LANE_TITLES[lane],
-          expanded: laneOpen[lane],
-          render: (doc: Document) =>
-            // Every rendered lane gets a REAL Re-run handler — never omitted.
-            // `renderLaneBody`'s third argument is optional so it can be unit
-            // tested without one, but a lane rendered here without it would
-            // ship a Re-run button that silently does nothing.
-            renderLaneBody(doc, laneState[lane], () => {
-              sendAgentRun(lane).catch(() => undefined);
-            }),
-        }))
-      : [];
+    // itself — and on an ambiguous page that second resolve is ambiguous again,
+    // which `resolveForAgent` refuses with `not_resolved` (handlers.ts).
+    // Rendering the lanes here would put "Nimbus couldn't pin this page to one
+    // indexed item." under a header naming the item the user just picked, with no
+    // Re-run to escape it. Lanes on a chosen candidate need the picked id carried
+    // through `agent-run` — see ROADMAP C2.5.
+    //
+    // The surface kind comes from `pinnedRecognition`, not from the header: the
+    // `resolved` HeaderState carries only the human surface LINE ("GitHub PR ·
+    // acme/web #482"), not the typed kind.
+    const surfaceKind = pinnedRecognition?.ok === true ? pinnedRecognition.kind : null;
+    const agentLanes: Lane[] =
+      shown.kind === "resolved" && surfaceKind !== null
+        ? AGENT_LANES.filter((lane) => LANE_SURFACES[lane].includes(surfaceKind)).map((lane) => ({
+            id: lane,
+            title: LANE_TITLES[lane],
+            expanded: laneOpen[lane],
+            render: (doc: Document) =>
+              // Every rendered lane gets a REAL Re-run handler — never omitted.
+              // `renderLaneBody`'s third argument is optional so it can be unit
+              // tested without one, but a lane rendered here without it would
+              // ship a Re-run button that silently does nothing.
+              renderLaneBody(doc, laneState[lane], () => {
+                sendAgentRun(lane).catch(() => undefined);
+              }),
+          }))
+        : [];
     const lanes: Lane[] = [
       { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
       ...agentLanes,
     ];
+    const navAwayState = navAway
+      ? {
+          pinnedRef: pinnedRecognition?.ok === true ? pinnedRecognition.ref : null,
+          onReread: () => {
+            reread().catch(() => undefined);
+          },
+        }
+      : undefined;
     body.replaceChildren(
       renderShell(
         document,
-        { header: shown, lanes },
+        {
+          header: shown,
+          lanes,
+          ...(navAwayState === undefined ? {} : { navAway: navAwayState }),
+        },
         (c) => {
           chosen = c;
           paint();
@@ -722,18 +973,33 @@ function createPanel(body: HTMLElement): {
   }
 
   async function loadHeader(): Promise<void> {
+    const gen = generation;
     let res: unknown;
     try {
       res = await sendMessage({
         kind: "resolve",
-        pageUrl: window.location.href,
+        pageUrl: pinnedUrl,
         title: document.title,
       });
     } catch {
+      if (gen !== generation) {
+        // A re-read moved this panel on to a different page while this resolve
+        // was in flight — the error belongs to the page nobody is describing
+        // anymore, and the re-read's own loadHeader call owns `header` now.
+        return;
+      }
       header = { kind: "error", surface: null, message: "Couldn't connect to Nimbus." };
       fetchState = null;
       paint();
       return;
+    }
+    if (gen !== generation) {
+      return;
+    }
+    if (isResolveResponse(res)) {
+      // The identity of the page this panel describes, from the same response the
+      // header is built from — never a second recognition of its own.
+      pinnedRecognition = res.recognition;
     }
     // Taken ONCE per repaint here, not re-read per rendered line — see the
     // `resolved` state's `nowMs` doc comment in panel-view.ts.
@@ -765,16 +1031,25 @@ function createPanel(body: HTMLElement): {
     if (fetchSent || header.kind !== "not-indexed") {
       return;
     }
+    const gen = generation;
     const { surface, product } = header;
     fetchSent = true;
     fetchState = { kind: "fetching", surface, product };
     paint();
     let res: unknown;
     try {
-      res = await sendMessage({ kind: "fetch", pageUrl: window.location.href });
+      res = await sendMessage({ kind: "fetch", pageUrl: pinnedUrl });
     } catch {
+      if (gen !== generation) {
+        // A re-read moved this panel on while the fetch was in flight — this
+        // page's fetch state is no longer what the panel describes.
+        return;
+      }
       fetchState = { kind: "error", surface, message: "Couldn't connect to Nimbus." };
       paint();
+      return;
+    }
+    if (gen !== generation) {
       return;
     }
     if (isFetchResponse(res) && res.ok && res.outcome.kind === "indexed") {
@@ -812,12 +1087,21 @@ function createPanel(body: HTMLElement): {
   }
 
   async function loadRelated(): Promise<void> {
+    const gen = generation;
     let res: unknown;
     try {
       res = await sendMessage({ kind: "related", ...readContext() });
     } catch {
+      if (gen !== generation) {
+        // A re-read moved this panel on while this request was in flight — the
+        // re-read's own loadRelated call owns `relatedBody` now.
+        return;
+      }
       relatedBody = (doc) => renderError(doc, "Couldn't connect to Nimbus.");
       paint();
+      return;
+    }
+    if (gen !== generation) {
       return;
     }
     if (!isRelatedResponse(res)) {
@@ -832,7 +1116,17 @@ function createPanel(body: HTMLElement): {
     paint();
   }
 
-  return { paint, loadHeader, loadRelated, stopPolling: stopAgentPolls };
+  navCheckTimer = setInterval(() => {
+    checkNavigation().catch(() => undefined);
+  }, NAV_CHECK_MS);
+
+  return {
+    paint,
+    loadHeader,
+    loadRelated,
+    stopPolling: stopAgentPolls,
+    checkNavigation,
+  };
 }
 
 function mount(): void {
@@ -892,6 +1186,25 @@ function mount(): void {
       }
     },
     { signal, capture: true },
+  );
+  // popstate covers back/forward, which the interval would otherwise only notice
+  // up to NAV_CHECK_MS later. It does NOT cover pushState — that is what the
+  // interval is for (see NAV_CHECK_MS).
+  window.addEventListener(
+    "popstate",
+    () => {
+      view.checkNavigation().catch(() => undefined);
+    },
+    { signal },
+  );
+  // The interval skips hidden tabs, so this is what makes the notice correct at
+  // the moment the user switches back and looks at the panel.
+  document.addEventListener(
+    "visibilitychange",
+    () => {
+      view.checkNavigation().catch(() => undefined);
+    },
+    { signal },
   );
 
   // Land keyboard/screen-reader users inside the panel (focus only — no trap).

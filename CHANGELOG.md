@@ -16,6 +16,19 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   seconds ago could read "Indexed 3 days ago", which was simply untrue. The line
   now reads "Updated 3 days ago". The value is unchanged and is the more useful
   one: how stale the underlying item is, rather than when a row was written.
+- **The panel could describe one page and answer about another.** On sites that
+  navigate without reloading — GitHub, GitLab and Jira all do — moving to a
+  different pull request while the panel was open left the header naming the page
+  you started on, while expanding a lane answered about the page you had moved to.
+  The panel now sticks to the page you opened it on, says so when you navigate
+  away — *"You've moved on. This panel is still about acme/web #482."* — and
+  offers one button to re-read the page you are on now. Its lanes keep working on
+  the item the header names the whole time, and the notice disappears by itself if
+  you navigate back.
+- **Agent lanes appeared on pages they could not answer about.** A Jira issue or a
+  Jenkins build that Nimbus had indexed offered *What breaks if it lands* and *Who
+  should review it*, which are questions about a change under review. Both lanes
+  now appear on pull requests only.
 
 ### Added
 

@@ -73,6 +73,19 @@ export interface FetchRequest {
   readonly pageUrl: string;
 }
 
+/**
+ * Classify a URL — nothing more. The panel sends this while watching for a
+ * client-side navigation, to learn whether the tab is still showing the item its
+ * header names.
+ *
+ * Deliberately NOT a resolve: `handleRecognise` runs the pure recogniser and
+ * makes no gateway call, so a navigation check costs no network and no token.
+ */
+export interface RecogniseRequest {
+  readonly kind: "recognise";
+  readonly pageUrl: string;
+}
+
 /** Expand a lane: run its agent (or return the cached state if one already
  *  exists for this item and lane — expanding a `done` lane must not re-invoke). */
 export interface AgentRunRequest {
@@ -116,6 +129,7 @@ export type ExtensionRequest =
   | RelatedRequest
   | ResolveRequest
   | FetchRequest
+  | RecogniseRequest
   | AgentRunRequest
   | AgentStateRequest
   | QueueListRequest
@@ -161,6 +175,19 @@ export type ResolveResponse =
       readonly scopeGap?: ScopeGap;
     };
 
+/**
+ * The outer `ok` is not ceremony. The route's own `catch` — a `chrome.storage`
+ * read failing in `getOrigins()` — has no recognition to report, and inventing
+ * one would be indistinguishable from a legitimately unrecognised page. The
+ * watcher that consumes this must be able to tell "there is no item here" from
+ * "I could not look", because reading the second as the first raises a notice
+ * claiming the user navigated away when they did not. Same reason
+ * `ResolveResponse` and `FetchResponse` carry one.
+ */
+export type RecognitionResponse =
+  | { readonly kind: "recognition"; readonly ok: true; readonly recognition: Recognition }
+  | { readonly kind: "recognition"; readonly ok: false; readonly reason: "server_error" };
+
 export type FetchResponse =
   | {
       readonly kind: "fetch";
@@ -202,6 +229,7 @@ export type ExtensionResponse =
   | RelatedResponse
   | ResolveResponse
   | FetchResponse
+  | RecognitionResponse
   | AgentStateResponse
   | QueueResponse
   | ConnectionResponse;
@@ -275,6 +303,10 @@ export function isResolveRequest(v: unknown): v is ResolveRequest {
 
 export function isFetchRequest(v: unknown): v is FetchRequest {
   return isObject(v) && v["kind"] === "fetch" && typeof v["pageUrl"] === "string";
+}
+
+export function isRecogniseRequest(v: unknown): v is RecogniseRequest {
+  return isObject(v) && v["kind"] === "recognise" && typeof v["pageUrl"] === "string";
 }
 
 function isCandidate(v: unknown): v is ResolveCandidate {
@@ -365,6 +397,16 @@ export function isResolveResponse(v: unknown): v is ResolveResponse {
     typeof v["reason"] === "string" &&
     (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"]))
   );
+}
+
+export function isRecognitionResponse(v: unknown): v is RecognitionResponse {
+  if (!isObject(v) || v["kind"] !== "recognition") {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return isRecognition(v["recognition"]);
+  }
+  return v["ok"] === false && typeof v["reason"] === "string";
 }
 
 /**

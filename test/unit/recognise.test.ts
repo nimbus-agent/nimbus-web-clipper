@@ -1,6 +1,6 @@
 // test/unit/recognise.test.ts
 import { describe, expect, it, test } from "vitest";
-import { recognise, surfaceLine } from "../../src/shared/recognise.ts";
+import { recognise, sameItem, surfaceLine } from "../../src/shared/recognise.ts";
 import type { ConfiguredOrigin } from "../../src/shared/types.ts";
 
 const NONE: readonly ConfiguredOrigin[] = [];
@@ -212,5 +212,51 @@ describe("surfaceLine", () => {
   });
   test("an unrecognised page has no surface line", () => {
     expect(surfaceLine({ ok: false, reason: "unknown-host" })).toBeNull();
+  });
+});
+
+describe("sameItem", () => {
+  const gh = (path: string) => recognise(`https://github.com${path}`, NONE);
+
+  it("is true across a PR's sub-tabs", () => {
+    expect(sameItem(gh("/acme/web/pull/482"), gh("/acme/web/pull/482/files"))).toBe(true);
+    expect(sameItem(gh("/acme/web/pull/482"), gh("/acme/web/pull/482/commits"))).toBe(true);
+  });
+
+  it("is true across query strings and fragments", () => {
+    expect(sameItem(gh("/acme/web/pull/482"), gh("/acme/web/pull/482?diff=split"))).toBe(true);
+    expect(sameItem(gh("/acme/web/pull/482"), gh("/acme/web/pull/482#issuecomment-1"))).toBe(true);
+  });
+
+  it("is false for a different number or repo", () => {
+    expect(sameItem(gh("/acme/web/pull/482"), gh("/acme/web/pull/517"))).toBe(false);
+    expect(sameItem(gh("/acme/web/pull/482"), gh("/acme/api/pull/482"))).toBe(false);
+  });
+
+  it("is false between a recognised and an unrecognised page", () => {
+    expect(sameItem(gh("/acme/web/pull/482"), gh("/acme/web"))).toBe(false);
+    expect(sameItem(gh("/acme/web"), gh("/acme/web/pull/482"))).toBe(false);
+  });
+
+  // Both are "no item here". Their `reason` (unknown-host vs unrecognised-path) is
+  // a diagnostic about the URL, not a different item — without this rule, wandering
+  // between two unrecognised pages under an open panel would re-notify for no
+  // user-visible change.
+  it("treats any two unrecognised pages as the same non-item", () => {
+    expect(sameItem(gh("/acme/web"), gh("/acme/api"))).toBe(true);
+    expect(sameItem(gh("/acme/web"), recognise("https://example.com/x", NONE))).toBe(true);
+  });
+
+  // The Jira matcher upper-cases the key, so one issue has one identity however
+  // the link was typed (recognise.ts's own reasoning).
+  it("ignores Jira issue-key case", () => {
+    const a = recognise("https://corp.example/jira/browse/abc-12", SELF_HOSTED);
+    const b = recognise("https://corp.example/jira/browse/ABC-12", SELF_HOSTED);
+    expect(sameItem(a, b)).toBe(true);
+  });
+
+  it("distinguishes two products that resolve the same ref shape", () => {
+    const jenkins = recognise("https://corp.example/jenkins/job/web/482", SELF_HOSTED);
+    expect(sameItem(gh("/acme/web/pull/482"), jenkins)).toBe(false);
   });
 });
