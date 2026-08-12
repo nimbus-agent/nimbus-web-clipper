@@ -380,10 +380,11 @@ is worthless without this — and half of C1 is buildable today.*
 > pure view code under unit tests, with no lane content yet.
 > **Status** Shipped with related-items as the first lane. The panel stays
 > **user-summoned** — ambient auto-surfacing waits
-> until C2 gives the lanes real answers. Known gap: recognition does not follow
-> client-side (SPA) navigation, so an open panel keeps describing the page it was
-> opened on; that needs C1.4's gesture-free access and is the first candidate for
-> the C2 slice.
+> until C2 gives the lanes real answers.
+> Closed: the panel pins the page it was opened on, so its header and its lanes
+> can no longer describe different items, and it offers a deliberate re-read when
+> you navigate away — see
+> `docs/superpowers/specs/2026-08-11-panel-page-context-design.md`.
 
 ### C1.4 Per-origin, opt-in recognition · 🟢 · S — ✅ shipped
 > **What** Recognition needs to see the URL of pages that are not the gateway —
@@ -406,9 +407,15 @@ is worthless without this — and half of C1 is buildable today.*
 > the optional pattern is broad (self-hosted hostnames are not enumerable).
 
 ### C1.5 A second way into the panel · 🟢 · S
-> **What** The related panel has exactly **one** entry point: the `show_related`
-> command (`Alt+Shift+R`). Add a fallback the browser cannot silently withhold —
-> a context-menu item, a popup button, or both.
+> **What** Add a panel entry point the browser cannot silently withhold — a
+> context-menu item, and Options surfacing whether the `show_related` shortcut is
+> actually bound.
+> **Correction (2026-08-11):** this brief claimed the panel had "exactly **one**
+> entry point". It did not. The popup's *Show related* button has existed since
+> Slice 2 (`src/popup/popup.html`, commit `e99749b`), which is also why the
+> `Alt+Shift+R` failure below was survivable rather than fatal. What remains is
+> the context-menu trigger and the shortcut's visibility — the keyboard-only risk
+> is real, the "unreachable" framing was not.
 > **Why it wows** It stops the feature from disappearing. `suggested_key` is a
 > *suggestion*: when something else already claims the combo, Chrome leaves the
 > command unbound, reports nothing, and the keystroke goes to the page instead.
@@ -504,6 +511,24 @@ need a browser-viable shape first; see C2.4.*
 > `agents.conflicts` and `agents.ghost` where ownership is unclear,
 > `agents.preflight` on a deploy/build page, `agents.glossary` on an unfamiliar
 > term, plus `agents.huddle` and `agents.janitor`.
+> **Correction (2026-08-11), read from upstream source at `34601b24`+:** two of
+> the agents named above are not reachable from a browser.
+> `agents.preflight` is excluded from the HTTP surface deliberately —
+> `HTTP_EXCLUDED_AGENT_METHODS` in `packages/gateway/src/ipc/agents-rpc.ts`,
+> alongside `agents.premortem` and `agents.whyPeek` — because it has side effects
+> on the owner's machine an external caller should not trigger unprompted. So the
+> deploy/build lane above cannot be built as briefed. `agents.ghost` and
+> `agents.conflicts` both take `{ file: string }` (`requireFileParam`), the same
+> local-checkout requirement that sent "why" to C2.4. What *is* browser-viable is
+> the service-scoped set — `agents.catchup`, `agents.decisions` and
+> `agents.ownership` all accept `{ service }`, which the recogniser already knows
+> — plus `agents.glossary` (`{ term }`), which a selection supplies. Same class of
+> error C2.1 had to correct for `agents.why`/`whyPeek`; recorded rather than
+> silently edited.
+> **The rule is now written down.** `LANE_SURFACES` (`src/shared/types.ts`) is
+> where a new lane declares the surfaces it belongs on; adding a lane without one
+> is a type error. This phase's done-when asked for that, and it shipped early
+> with the page-context slice.
 > **Why it wows** Each surface grows its own reason to keep the panel open.
 > **Approach** One lane at a time, each earning its place on a real page. A lane
 > that fires everywhere is noise, and noise is how ambient UI dies.

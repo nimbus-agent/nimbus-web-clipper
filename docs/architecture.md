@@ -306,6 +306,40 @@ Today the panel works without any grant at all: `Alt+Shift+R` and the popup
 button are user gestures, which give `activeTab`. The grant buys gesture-free
 recognition, which Phase C2 is the first to need.
 
+### One panel, one page
+
+An injected panel captures `window.location.href` **once**, at mount, and sends
+that URL with every message it makes — resolve, fetch, `agent-run` and
+`agent-state`. It never re-reads `window.location.href` per send.
+
+The reason is that the header is painted from one resolve response while the
+lanes are expanded later, and GitHub, GitLab and Jira are all SPAs: reading the
+live URL per send let a lane answer about the tab's current page under a header
+naming the page the panel was opened on. Pinning makes that divergence
+unrepresentable rather than unlikely.
+
+A 500 ms watcher (plus `popstate`, and skipped while `document.hidden`) compares
+the tab's **item identity** against the pin — `(product, kind, ref)` from
+`recognise()`, not the URL, because `resolveUrl` keeps sub-tab segments and the
+query string on purpose, so a pull request's Files tab is a different URL and the
+same item. On a real change the panel renders a notice naming the item it is
+still about, and **Re-read page** re-pins and resets the page-scoped state. It
+never re-resolves on its own: nothing in this panel reaches the gateway without
+being asked.
+
+Two rules hold the mechanism together. The watcher paints **only when the notice
+appears or disappears**, never per tick, because `HeaderState.resolved`'s `nowMs`
+is frozen at response time and timer-driven repaints would hide real staleness.
+And every `recognise` send takes a `recogniseSeq` ticket: rapid navigation puts
+several in flight, and a late answer about an earlier URL would otherwise clear a
+notice that a newer answer had just raised.
+
+The classification itself rides on a dedicated `recognise` message
+(`handleRecognise`) that runs the pure recogniser and makes **no gateway call and
+no token read** — the panel cannot classify a URL itself, because the configured
+origins live in the worker, and shipping that list into a content script would
+expose the user's internal hostnames to save a message that costs no network.
+
 ## The targeted-fetch path
 
 A resolve miss (`not-indexed`) can mean the gateway has a connector for this
@@ -495,6 +529,22 @@ client sends exactly the shape each agent's own scope expects, no more.
   registry a cancel could target. A UI-only "abort" that just stopped polling
   would claim to cancel a run that is, in fact, still going. See ROADMAP.md's
   C2.2 entry for the correction.
+
+### Which lanes appear where
+
+`LANE_SURFACES` (`src/shared/types.ts`) maps each lane to the `SurfaceKind`s it
+belongs on; the panel renders only the lanes matching the recognised kind. Both
+shipped lanes are `["pr"]`.
+
+They were previously gated on "the page resolved to an item" alone, so a resolved
+Jira issue or Jenkins build offered *What breaks if it lands* and handed that
+page's URL to `agents.impact` as its `fileOrPrUrl` — a question that does not
+apply, from an input the agent was not built for.
+
+The table is keyed by `AgentLane`, so adding a lane without declaring its
+surfaces is a type error. It is gated on the recogniser's `kind` — a closed union
+this repo owns — and not on `ResolvedItem.type`, which is a free-form string from
+the wire.
 
 ## Two state machines worth understanding
 
