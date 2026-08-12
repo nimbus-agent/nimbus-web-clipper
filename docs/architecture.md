@@ -308,9 +308,13 @@ recognition, which Phase C2 is the first to need.
 
 ### One panel, one page
 
-An injected panel captures `window.location.href` **once**, at mount, and sends
-that URL with every message it makes — resolve, fetch, `agent-run` and
-`agent-state`. It never re-reads `window.location.href` per send.
+An injected panel captures `window.location.href` at mount, and re-pins it only
+on an explicit re-read — the notice's own **Re-read page** button, described
+below. The pinned URL is sent with the four messages that carry a page URL:
+resolve, fetch, `agent-run` and `agent-state`. Two messages deliberately do not
+carry it: `related` carries no URL at all, and `recognise` — the watcher's own
+probe, described next — deliberately carries the LIVE `window.location.href`,
+because its whole job is comparing the pin against where the tab actually is.
 
 The reason is that the header is painted from one resolve response while the
 lanes are expanded later, and GitHub, GitLab and Jira are all SPAs: reading the

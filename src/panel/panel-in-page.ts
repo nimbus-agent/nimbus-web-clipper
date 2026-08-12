@@ -430,7 +430,13 @@ function createPanel(body: HTMLElement): {
    * response, and a re-read re-pins it as an ordinary consequence of re-running
    * `loadHeader` rather than as a second thing to remember.
    *
-   * Null until the first resolve lands.
+   * Null until a resolve RESPONSE lands, not merely attempted: `loadHeader`'s
+   * own `catch` arm leaves it null on a rejected send, and a failed re-read
+   * leaves it null for as long as resolve keeps failing — there is no separate
+   * retry, only whatever resolve `reread` or the initial mount already sent.
+   * While it is null, `checkNavigation`'s own early return means the watcher
+   * cannot conclude anything about a navigation, no matter how many happen,
+   * until a later resolve actually succeeds.
    */
   let pinnedRecognition: Recognition | null = null;
   /** The last URL `checkNavigation` looked at — so a tick on an unchanged URL
@@ -621,6 +627,19 @@ function createPanel(body: HTMLElement): {
    * at response time.
    */
   async function checkNavigation(): Promise<void> {
+    if (!body.isConnected) {
+      // The self-toggle fallback path at the file's own end (`existing.remove()`
+      // when `__nimbusClose` is absent) removes a stale host directly, without
+      // going through `stopAgentPolls` — so this interval would otherwise keep
+      // firing forever with nothing left to paint into. Unreachable today (a
+      // host left by a real Nimbus panel always carries `__nimbusClose`), but
+      // the check is cheap insurance against a timer that never self-terminates.
+      if (navCheckTimer !== undefined) {
+        clearInterval(navCheckTimer);
+        navCheckTimer = undefined;
+      }
+      return;
+    }
     if (document.hidden) {
       // Nothing to be right about while the panel cannot be seen. The
       // visibilitychange listener in mount() runs one check on the way back, so
@@ -638,13 +657,14 @@ function createPanel(body: HTMLElement): {
       // check and leave this URL matching on every later tick, so the notice for
       // it could never appear. That window is real and not rare — the interval
       // starts at mount, before the first resolve lands, and `reread` nulls the
-      // pin again for its whole round trip. Same principle as the `catch` below:
-      // a check that reached no conclusion is not a completed check.
+      // pin again for its whole round trip. Same principle as below: a check
+      // that reached no conclusion is not a completed check.
       return;
     }
     // Marked BEFORE the send, so a round trip slower than NAV_CHECK_MS cannot
-    // stack duplicate requests for one URL — and rolled back below if the send
-    // fails, because a check that never got an answer is not a completed check.
+    // stack duplicate requests for one URL — and rolled back below if the check
+    // reaches no conclusion, because a check that never got an answer is not a
+    // completed check.
     const previous = lastCheckedUrl;
     lastCheckedUrl = url;
     const seq = ++recogniseSeq;
@@ -667,20 +687,29 @@ function createPanel(body: HTMLElement): {
       }
       return;
     }
-    if (closed || gen !== generation || seq !== recogniseSeq || !isRecognitionResponse(res)) {
+    if (closed || gen !== generation || seq !== recogniseSeq) {
+      // A newer check — a later tick, or a `reread` — already owns the marker.
+      // Restoring an older URL over it here would make that newer check re-send
+      // for a URL it has already moved past.
       return;
     }
-    if (!res.ok) {
-      // The worker could not classify the URL — its storage read failed. "I
-      // could not look" is not "there is no item here": treating it as the
-      // latter would raise the notice on a page the user never left. Leave the
-      // notice exactly as it is; the next navigation asks again.
+    if (!isRecognitionResponse(res) || !res.ok) {
+      // The worker reached no conclusion — the response was unreadable, or (on
+      // `ok: false`) its storage read failed. "I could not look" is not "there
+      // is no item here": treating either as a completed check would leave this
+      // URL sitting in `lastCheckedUrl` forever, matching on every later tick, so
+      // the notice for it could never appear — the exact defect class this
+      // watcher exists to remove. Roll the marker back to `previous` so the
+      // NEXT TICK re-asks about this same URL instead. No second guard is needed
+      // on the rollback itself: the check just above has already established
+      // this is still the latest ticket and the current generation.
+      lastCheckedUrl = previous;
       return;
     }
-    // The pin is guaranteed non-null here — the early return above refuses to
-    // spend a check without one — but a `reread` could have nulled it while this
-    // answer was in flight, and the generation guard above has already returned
-    // in that case.
+    // `pinnedRecognition` cannot actually be null here — the early return above
+    // already refused to spend a check without one — but TypeScript does not
+    // retain that narrowing of a closure `let` across the `await` on the send
+    // above, so it still types as `Recognition | null` at this line.
     const away = pinnedRecognition !== null && !sameItem(pinnedRecognition, res.recognition);
     if (away === navAway) {
       return;
@@ -811,8 +840,12 @@ function createPanel(body: HTMLElement): {
     sendAgentRun(lane).catch(() => undefined);
   }
 
-  /** Stops every lane's poll timer and marks this panel closed — called on
-   *  panel teardown. The worker's own poll of the gateway is untouched: it
+  /** Stops every lane's poll timer, clears the navigation-check interval, and
+   *  marks this panel closed — called on panel teardown. Clearing
+   *  `navCheckTimer` here is not incidental: it is the only thing standing
+   *  between a closed panel and a 2 Hz (`NAV_CHECK_MS`) `checkNavigation` loop
+   *  that would otherwise keep messaging the worker forever with nothing left
+   *  to paint into. The worker's own poll of the gateway is untouched: it
    *  survives this panel closing by design. Setting `closed` here (not just
    *  clearing pending timers) is what stops an invoke or poll already in
    *  flight from starting a brand-new timer once its response lands — see

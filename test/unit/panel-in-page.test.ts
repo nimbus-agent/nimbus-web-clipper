@@ -1863,6 +1863,33 @@ describe("following a client-side navigation", () => {
     expect(notice(root)?.textContent).toContain("acme/web #482");
   });
 
+  // IMPORTANT 1 regression: `ok: false` means the worker could not classify the
+  // URL — a check that reached no conclusion — not "nothing changed here". The
+  // existing "worker unreachable" test above navigates to the SAME item, so it
+  // cannot tell a burned check from a correct one: no notice is due either way.
+  // This one navigates to a DIFFERENT item, so a bug here is directly
+  // observable: if the first (ok:false) check is wrongly treated as completed,
+  // `lastCheckedUrl` stays marked at the new URL forever and the second,
+  // real answer is never even asked for.
+  it("re-checks the same url after the worker answered ok:false, and still raises the notice", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    let failOnce = true;
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind !== "recognise") return { kind: "related", ok: true, items: [] };
+      if (failOnce) {
+        failOnce = false;
+        return { kind: "recognition", ok: false, reason: "server_error" };
+      }
+      return { kind: "recognition", ok: true, recognition: PR517 };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(notice(root)).toBeNull();
+    await advanceTimers(600);
+    expect(notice(root)?.textContent).toContain("acme/web #482");
+  });
+
   // clearLanePoll cancels a PENDING timer; only the generation guard can stop a
   // poll whose answer is already in flight from starting a fresh loop for the item
   // the panel has stopped describing.
@@ -1978,5 +2005,85 @@ describe("following a client-side navigation", () => {
     expect(harness.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "agent-run", pageUrl: newPin }),
     );
+  });
+
+  // IMPORTANT 2: the design spec's reset test promised coverage of "lane state,
+  // `chosen`, `fetchState` and `fetchSent`" — the shipped tests cover only lane
+  // state and the header. If `reread()` ever dropped `fetchState = null`,
+  // `paint()`'s `fetchState !== null` precedence would keep showing the OLD
+  // page's fetch-in-progress header over a panel now pinned to a different
+  // item; if it dropped `fetchSent = false`, `headerFrom` would force
+  // `fetchable: false` on every resolve for the rest of the panel's life.
+  // Neither has a dedicated test today.
+  it("reread resets fetchState and fetchSent — the new page's own miss offers a fresh Fetch button", async () => {
+    const missPR482 = {
+      kind: "resolve",
+      ok: true,
+      recognition: PR482,
+      outcome: { kind: "not-indexed", fetchable: true },
+    };
+    const missPR517 = {
+      kind: "resolve",
+      ok: true,
+      recognition: PR517,
+      outcome: { kind: "not-indexed", fetchable: true },
+    };
+    const timedOutFetch = {
+      kind: "fetch",
+      ok: false,
+      recognition: PR482,
+      reason: "timeout",
+    };
+
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind === "resolve") {
+        return (m.pageUrl ?? "").includes("/pull/517") ? missPR517 : missPR482;
+      }
+      if (m.kind === "fetch") {
+        return timedOutFetch;
+      }
+      if (m.kind === "recognise") {
+        return {
+          kind: "recognition",
+          ok: true,
+          recognition: (m.pageUrl ?? "").includes("/pull/517") ? PR517 : PR482,
+        };
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    await loadPanel();
+    await vi.waitFor(() => expect(headerText()).not.toContain("Checking Nimbus"));
+    const root = shadow();
+    if (root === null) throw new Error("panel shadow root not found");
+
+    // Fetch on the pinned page. It times out — `fetchState` latches to
+    // `fetch-retry`/`still-working` and `fetchSent` latches `true`, per
+    // `sendFetch`'s own doc comment, for the life of THIS page.
+    root.querySelector<HTMLButtonElement>(".nimbus-related__header-state button")?.click();
+    await advanceTimers(0);
+    expect(headerText()).toContain("Still working");
+
+    // Navigate to a different item and re-read.
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
+    await advanceTimers(0);
+
+    // (a) the header describes the NEW item and shows no fetch-in-progress
+    // text — a stale `fetchState` would keep "Still working" (or "Fetching…")
+    // as the header of a panel now pinned to a different item entirely.
+    expect(headerText()).toContain("acme/web #517");
+    expect(headerText()).not.toContain("Still working");
+    expect(headerText()).not.toContain("Fetching");
+
+    // (b) the Fetch affordance is available again for the new page — a stale
+    // `fetchSent` would force `fetchable: false` on every resolve for the rest
+    // of the panel's life.
+    expect(
+      root.querySelector<HTMLButtonElement>(".nimbus-related__header-state button")?.textContent,
+    ).toBe("Fetch this from GitHub");
   });
 });

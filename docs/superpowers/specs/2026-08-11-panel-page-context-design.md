@@ -322,7 +322,7 @@ exactly what ships today, so this is a correctness gate, not a boundary check.
 | `src/background/service-worker.ts` | route `recognise` |
 | `src/panel/panel-view.ts` | `PanelState.navAway`, rendered by `renderShell` |
 | `src/panel/panel-in-page.ts` | pin the URL; the four send sites above; the watcher (interval + `popstate` + `visibilitychange`, `recogniseSeq`); the reset + generation counter; the lane filter |
-| `docs/architecture.md` | the pinned-context rule in the recognition-pipeline section |
+| `docs/architecture.md` | the pinned-context rule in the recognition-pipeline section, and the lane-surface filter under the agent-lanes section |
 | `CHANGELOG.md` | the user-facing entry |
 | `ROADMAP.md` | the corrections below |
 
@@ -388,22 +388,26 @@ recording a corrected claim rather than quietly editing it:
 1. **C2.3 names `agents.preflight` for a deploy/build page. It is not reachable.**
    Upstream excludes it from the HTTP surface deliberately —
    `HTTP_EXCLUDED_AGENT_METHODS` in `packages/gateway/src/ipc/agents-rpc.ts:799`,
-   alongside `agents.premortem` and `agents.whyPeek` — because it has side
-   effects on the owner's machine that an external caller should not be able to
-   trigger unprompted. Same class of error C2.1 already had to correct for
-   `agents.why` / `agents.whyPeek`.
+   alongside `agents.premortem` and `agents.whyPeek` — but each of the three is
+   excluded for its own reason: `preflight`'s and `premortem`'s is side effects
+   on the owner's machine that an external caller should not be able to trigger
+   unprompted; `whyPeek`'s is that it is the namespace's only SYNCHRONOUS method,
+   so it cannot be represented on the `{runId}` + poll contract. Same class of
+   error C2.1 already had to correct for `agents.why` / `agents.whyPeek`.
 2. **C2.3 names `agents.ghost` and `agents.conflicts`. Both take a local file
    path.** `requireFileParam` (`agents-rpc.ts:239`) requires `{ file: string }`,
    the same local-checkout wall that put "why" into C2.4. What *is* browser-viable
    over the HTTP surface is the service-scoped set — `catchup`, `decisions`,
    `ownership` (all accept `{ service }`, which the recogniser already knows) and
-   `glossary` (`{ term }`, which a selection supplies).
+   `glossary` (`{ term }`, which a selection supplies). Between this and (1)
+   above, three named agents turn out to be unreachable from a browser:
+   `preflight`, `ghost` and `conflicts`.
 3. **C1.5 says the panel has "exactly one entry point".** The popup's
    *Show related* button has existed since Slice 2 (`src/popup/popup.html:18`,
    commit `e99749b`). What C1.5 actually still buys is a context-menu trigger and
    surfacing the bound-or-unbound shortcut in Options.
 
-Verified against `C:/gitrep/Nimbus` at `aaa637d0`, read from source — not from
+Verified against `C:/gitrep/Nimbus` at `34601b24`+, read from source — not from
 this roadmap's own account of it.
 
 ## Done when
