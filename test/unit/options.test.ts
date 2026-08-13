@@ -77,13 +77,46 @@ function select(id: string): HTMLSelectElement {
   return found;
 }
 
+/**
+ * Click the surface-row control for exactly one origin.
+ *
+ * Matches `data-origin` by EQUALITY, never by substring. A substring match on a
+ * host is the pattern CodeQL flags as `js/incomplete-url-substring-sanitization`
+ * — "github.com" is a substring of "evil-github.com.example" too — and although
+ * these are test selectors rather than a security check, the exact match is also
+ * the more precise selector: built-in rows carry their label verbatim
+ * ("github.com", "*.atlassian.net") and stored rows carry their full origin.
+ *
+ * Throws on a miss rather than no-opping. `find(...)?.click()` silently does
+ * nothing when a selector breaks, which turns "the row moved" into a confusing
+ * assertion failure somewhere else.
+ */
+function clickFor(action: string, origin: string): void {
+  const match = [...document.querySelectorAll(`[data-action="${action}"]`)].find(
+    (node) => node instanceof HTMLElement && node.dataset["origin"] === origin,
+  );
+  if (!(match instanceof HTMLElement)) {
+    throw new Error(`no [data-action="${action}"] control for origin ${origin}`);
+  }
+  match.click();
+}
+
+/**
+ * Seeds the fixture DOM and fires DOMContentLoaded — assumes the chrome mock
+ * (and any harness state a test wants pre-seeded, e.g. `harness.grantedOrigins`
+ * or `harness.storage`) is already installed by the caller.
+ */
+async function bootOptions(): Promise<void> {
+  document.body.innerHTML = FIXTURE;
+  document.dispatchEvent(new Event("DOMContentLoaded"));
+  await flush();
+}
+
 /** Installs the chrome mock, seeds the fixture DOM, and fires DOMContentLoaded. */
 async function boot(initialConnection: unknown = unpaired): Promise<void> {
   harness = installChromeMock();
   harness.sendMessage.mockResolvedValue(initialConnection);
-  document.body.innerHTML = FIXTURE;
-  document.dispatchEvent(new Event("DOMContentLoaded"));
-  await flush();
+  await bootOptions();
 }
 
 afterEach(() => {
@@ -330,7 +363,11 @@ describe("recognised surfaces", () => {
     button("surface-add").click();
     await flush();
 
-    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='grant']")?.click();
+    // Built-in rows are always in the list too now, so target the newly added
+    // entry's own Grant button rather than the first one in the list.
+    [...el("surface-list").querySelectorAll<HTMLButtonElement>("button[data-action='grant']")]
+      .find((b) => b.dataset["origin"] === "https://corp.example/jenkins")
+      ?.click();
     await flush();
 
     expect(harness.permissionsRequest).toHaveBeenCalledWith({
@@ -371,11 +408,17 @@ describe("recognised surfaces", () => {
     input("surface-origin").value = "https://corp.example/jenkins";
     button("surface-add").click();
     await flush();
-    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='grant']")?.click();
+    // Built-in rows are always in the list too now, so target the newly added
+    // entry's own Grant/Revoke buttons rather than the first ones in the list.
+    [...el("surface-list").querySelectorAll<HTMLButtonElement>("button[data-action='grant']")]
+      .find((b) => b.dataset["origin"] === "https://corp.example/jenkins")
+      ?.click();
     await flush();
 
     harness.permissionsRemove.mockResolvedValueOnce(false);
-    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='revoke']")?.click();
+    [...el("surface-list").querySelectorAll<HTMLButtonElement>("button[data-action='revoke']")]
+      .find((b) => b.dataset["origin"] === "https://corp.example/jenkins")
+      ?.click();
     await flush();
 
     expect(el("surface-status").textContent).toBe("Page access could not be revoked.");
@@ -391,5 +434,149 @@ describe("recognised surfaces", () => {
     await flush();
 
     expect(harness.storage.get("origins")).toEqual([]);
+  });
+});
+
+describe("built-in surfaces in the list", () => {
+  test("built-ins are listed even with no stored origins, so they can be granted at all", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    const text = document.getElementById("surface-list")?.textContent ?? "";
+    expect(text).toContain("github.com");
+    expect(text).toContain("gitlab.com");
+    expect(text).toContain("bitbucket.org");
+    expect(text).toContain("*.atlassian.net");
+  });
+
+  test("granting a built-in requests exactly its host pattern", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    clickFor("grant", "github.com");
+    await flush();
+    expect(harness.permissionsRequest).toHaveBeenCalledWith({
+      origins: ["https://github.com/*"],
+    });
+  });
+
+  test("the Jira Cloud row asks for the tenant wildcard", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    clickFor("grant", "*.atlassian.net");
+    await flush();
+    expect(harness.permissionsRequest).toHaveBeenCalledWith({
+      origins: ["https://*.atlassian.net/*"],
+    });
+  });
+
+  test("the remove action is inert for a built-in row even if a crafted click reaches it", async () => {
+    // renderSurfaceList never emits a Remove button for a built-in row — this
+    // pins the handler's own defence-in-depth guard against a future change to
+    // that renderer, by reaching the handler directly with a fabricated one.
+    harness = installChromeMock();
+    await bootOptions();
+    const crafted = document.createElement("button");
+    crafted.type = "button";
+    crafted.dataset["action"] = "remove";
+    crafted.dataset["origin"] = "github.com";
+    document.getElementById("surface-list")?.append(crafted);
+
+    crafted.click();
+    await flush();
+
+    expect(harness.storage.get("origins")).toBeUndefined();
+  });
+});
+
+describe("the ambient toggle", () => {
+  test("checking it stores the pattern", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    await bootOptions();
+    const toggle = [...document.querySelectorAll('[data-action="ambient"]')].find(
+      (el) => (el as HTMLInputElement).dataset["pattern"] === "https://github.com/*",
+    ) as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(harness.storage.get("ambient-hosts")).toEqual(["https://github.com/*"]);
+  });
+
+  test("revoking page access switches the cue off for that host", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await bootOptions();
+    clickFor("revoke", "github.com");
+    await flush();
+    expect(harness.storage.get("ambient-hosts")).toEqual([]);
+  });
+
+  test("a revoke that failed leaves the preference alone", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.permissionsRemove.mockResolvedValueOnce(false);
+    await bootOptions();
+    clickFor("revoke", "github.com");
+    await flush();
+    expect(harness.storage.get("ambient-hosts")).toEqual(["https://github.com/*"]);
+  });
+
+  test("unchecking it removes the pattern", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await bootOptions();
+    const toggle = [...document.querySelectorAll('[data-action="ambient"]')].find(
+      (el) => (el as HTMLInputElement).dataset["pattern"] === "https://github.com/*",
+    ) as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(harness.storage.get("ambient-hosts")).toEqual([]);
+  });
+
+  test("a toggle write issued immediately before a revoke is not lost", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.grantedOrigins.add("https://gitlab.com/*");
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await bootOptions();
+
+    // Delay the storage READ so the revoke's write can be requested before the
+    // toggle's write lands — the interleaving that, without both call sites
+    // sharing the ambientWrites chain, would drop one of the two edits.
+    harness.storageGet.mockImplementation((key: string) => {
+      const snapshot = harness.storage.get(key);
+      return new Promise((r) => setTimeout(() => r({ [key]: snapshot }), 5));
+    });
+
+    // Fake timers make the delayed storageGet calls above — and everything
+    // chained after them, including onSurfaceClick's own trailing
+    // refreshSurfaces() re-read — settle on a virtual clock we advance
+    // ourselves, rather than on a guessed real-time upper bound. That is what
+    // makes the drain below exact instead of a wall-clock race against
+    // afterEach's harness.restore() on a loaded runner.
+    vi.useFakeTimers();
+    try {
+      const gitlabToggle = [...document.querySelectorAll('[data-action="ambient"]')].find(
+        (el) => (el as HTMLInputElement).dataset["pattern"] === "https://gitlab.com/*",
+      ) as HTMLInputElement;
+      gitlabToggle.checked = true;
+      gitlabToggle.dispatchEvent(new Event("change", { bubbles: true }));
+
+      clickFor("revoke", "github.com");
+
+      // Advances the virtual clock (and drains the microtasks interleaved with
+      // it) well past every pending 5ms storageGet timer — however many hops
+      // deep the chained writes and the trailing refreshSurfaces() turn out to
+      // be — with no wall-clock cost and no timer left dangling for afterEach.
+      await vi.advanceTimersByTimeAsync(1000);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(harness.storage.get("ambient-hosts")).toEqual(["https://gitlab.com/*"]);
   });
 });

@@ -25,6 +25,11 @@ export interface ChromeHarness {
   readonly alarmsGet: ReturnType<typeof vi.fn>;
   readonly alarmsClear: ReturnType<typeof vi.fn>;
   readonly tabsQuery: ReturnType<typeof vi.fn>;
+  readonly tabsGet: ReturnType<typeof vi.fn>;
+  readonly tabsUpdatedListeners: Array<
+    (tabId: number, changeInfo: { url?: string | undefined }, tab: { active?: boolean }) => void
+  >;
+  readonly tabsRemovedListeners: Array<(tabId: number) => void>;
   readonly storageGet: ReturnType<typeof vi.fn>;
   readonly storageSet: ReturnType<typeof vi.fn>;
   readonly storageRemove: ReturnType<typeof vi.fn>;
@@ -42,6 +47,21 @@ export interface ChromeHarness {
   readonly grantedOrigins: Set<string>;
   /** Fire a runtime message through the first listener; resolves its response. */
   emitMessage(message: unknown): Promise<unknown>;
+  /** Same as `emitMessage`, but with a sender of `{ tab: { id: tabId } }` — the
+   *  shape a message sent FROM a content script (e.g. the injected cue) carries.
+   *  `emitMessage` itself delegates here with `tabId: undefined`, exercising the
+   *  no-tab sender a popup/options message carries. */
+  emitMessageFromTab(message: unknown, tabId: number): Promise<unknown>;
+  /**
+   * Make the NEXT gateway resolve call the ambient describe block's own fetch
+   * stub answers wait on `gate` before returning its stubbed response — lets two
+   * navigations' resolves genuinely overlap instead of merely being scheduled
+   * apart. `takeResolveGate` is how that fetch stub consumes it: one-shot, and
+   * cleared on read so only the NEXT call is held.
+   */
+  holdNextResolve(gate: Promise<void>): void;
+  /** Consume (and clear) the gate set by `holdNextResolve`, if any is pending. */
+  takeResolveGate(): Promise<void> | undefined;
   /** Fire a keyboard command through every registered command listener. */
   emitCommand(command: string): void;
   /** Fire an alarm through every registered alarm listener. */
@@ -50,6 +70,14 @@ export interface ChromeHarness {
   emitMenuClick(menuItemId: string, tabId?: number): void;
   /** Fire runtime.onInstalled. */
   emitInstalled(): void;
+  /** Fire a tab update through every registered listener. */
+  emitTabUpdated(
+    tabId: number,
+    changeInfo: { url?: string | undefined },
+    tab: { active?: boolean },
+  ): void;
+  /** Fire a tab removal through every registered listener. */
+  emitTabRemoved(tabId: number): void;
   /** Remove the fake from `globalThis.chrome`. */
   restore(): void;
 }
@@ -88,6 +116,9 @@ export function installChromeMock(): ChromeHarness {
       { id: 1, url: "https://example.com/", title: "Example" },
     ],
   );
+  const tabsGet = vi.fn(async (_id: number) => ({ url: "https://github.com/acme/web/pull/482" }));
+  const tabsUpdatedListeners: ChromeHarness["tabsUpdatedListeners"] = [];
+  const tabsRemovedListeners: ChromeHarness["tabsRemovedListeners"] = [];
   const storageGet = vi.fn(
     async (key: string): Promise<Record<string, unknown>> => ({
       [key]: storage.get(key),
@@ -163,7 +194,26 @@ export function installChromeMock(): ChromeHarness {
       },
     },
     scripting: { executeScript },
-    tabs: { query: tabsQuery },
+    tabs: {
+      query: tabsQuery,
+      get: tabsGet,
+      onUpdated: {
+        addListener: (
+          cb: (
+            tabId: number,
+            changeInfo: { url?: string | undefined },
+            tab: { active?: boolean },
+          ) => void,
+        ): void => {
+          tabsUpdatedListeners.push(cb);
+        },
+      },
+      onRemoved: {
+        addListener: (cb: (tabId: number) => void): void => {
+          tabsRemovedListeners.push(cb);
+        },
+      },
+    },
     storage: { local: { get: storageGet, set: storageSet, remove: storageRemove } },
     permissions: {
       contains: permissionsContains,
@@ -183,10 +233,11 @@ export function installChromeMock(): ChromeHarness {
 
   (globalThis as unknown as { chrome: unknown }).chrome = fakeChrome;
 
-  function emitMessage(message: unknown): Promise<unknown> {
+  function emitMessageWithSender(message: unknown, tabId: number | undefined): Promise<unknown> {
     if (messageListeners.length === 0) {
       throw new Error("no runtime.onMessage listener registered");
     }
+    const sender = tabId === undefined ? {} : { tab: { id: tabId } };
     return new Promise<unknown>((resolve) => {
       // Real Chrome invokes every registered onMessage listener; whichever one
       // returns `true` first owns the async response (subsequent sendResponse
@@ -200,7 +251,7 @@ export function installChromeMock(): ChromeHarness {
       };
       let anyKeptOpen = false;
       for (const listener of messageListeners) {
-        const keptOpen = listener(message, {}, sendResponse);
+        const keptOpen = listener(message, sender, sendResponse);
         if (keptOpen === true) {
           anyKeptOpen = true;
         }
@@ -209,6 +260,14 @@ export function installChromeMock(): ChromeHarness {
         resolve(undefined);
       }
     });
+  }
+
+  function emitMessage(message: unknown): Promise<unknown> {
+    return emitMessageWithSender(message, undefined);
+  }
+
+  function emitMessageFromTab(message: unknown, tabId: number): Promise<unknown> {
+    return emitMessageWithSender(message, tabId);
   }
 
   function emitCommand(command: string): void {
@@ -235,8 +294,37 @@ export function installChromeMock(): ChromeHarness {
     }
   }
 
+  function emitTabUpdated(
+    tabId: number,
+    changeInfo: { url?: string | undefined },
+    tab: { active?: boolean },
+  ): void {
+    for (const cb of tabsUpdatedListeners) {
+      cb(tabId, changeInfo, tab);
+    }
+  }
+
+  function emitTabRemoved(tabId: number): void {
+    for (const cb of tabsRemovedListeners) {
+      cb(tabId);
+    }
+  }
+
   function restore(): void {
     (globalThis as unknown as { chrome?: unknown }).chrome = undefined;
+  }
+
+  // One-shot gate for holdNextResolve/takeResolveGate — see the interface doc.
+  let resolveGate: Promise<void> | undefined;
+
+  function holdNextResolve(gate: Promise<void>): void {
+    resolveGate = gate;
+  }
+
+  function takeResolveGate(): Promise<void> | undefined {
+    const gate = resolveGate;
+    resolveGate = undefined;
+    return gate;
   }
 
   return {
@@ -248,6 +336,9 @@ export function installChromeMock(): ChromeHarness {
     alarmsGet,
     alarmsClear,
     tabsQuery,
+    tabsGet,
+    tabsUpdatedListeners,
+    tabsRemovedListeners,
     storageGet,
     storageSet,
     storageRemove,
@@ -262,10 +353,15 @@ export function installChromeMock(): ChromeHarness {
     permissionsRemove,
     grantedOrigins,
     emitMessage,
+    emitMessageFromTab,
+    holdNextResolve,
+    takeResolveGate,
     emitCommand,
     emitAlarm,
     emitMenuClick,
     emitInstalled,
+    emitTabUpdated,
+    emitTabRemoved,
     restore,
   };
 }

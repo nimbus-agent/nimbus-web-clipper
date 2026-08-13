@@ -5,7 +5,8 @@
 // Importing the module registers its listeners against `globalThis.chrome`, so
 // each test installs a FRESH chrome mock and resets the module cache *before*
 // importing, then drives the freshly-registered listeners via the harness.
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { addNavigationListener } from "../../src/browser/tabs.ts";
 import type { QueuedClip } from "../../src/shared/queue.ts";
 import type { CaptureResult, Connection } from "../../src/shared/types.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
@@ -1464,6 +1465,283 @@ describe("agent run polling — survives eviction", () => {
     expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
       kind: "failed",
       reason: "unreachable",
+    });
+  });
+});
+
+describe("ambient surfacing", () => {
+  const PR_URL = "https://github.com/acme/web/pull/482";
+  const OTHER_PR_URL = "https://github.com/acme/web/pull/517";
+
+  /** A `found` resolve answer for the given page, same shape as the existing
+   *  "resolve: a recognised page GETs…" test above. */
+  function resolveFoundResponse(pageUrl: string): Response {
+    return jsonRes(200, {
+      found: true,
+      matchKind: "exact",
+      item: {
+        id: pageUrl,
+        service: "github",
+        type: "pr",
+        title: "Add thing",
+        url: pageUrl,
+        modified_at: 5,
+      },
+    });
+  }
+
+  /** Load the worker module fresh, registering its listeners against the
+   *  already-installed harness. Unlike the file's own `load()`, this does not
+   *  flush via a real setTimeout: fake timers are already active for this whole
+   *  describe block (see beforeEach), and every listener this task cares about
+   *  is registered synchronously at import time, before the fire-and-forget
+   *  startup sequence even begins. */
+  async function loadWorker(): Promise<void> {
+    vi.resetModules();
+    await import("../../src/background/service-worker.ts");
+  }
+
+  /** Advance past the 600ms debounce and let the resulting resolve settle. */
+  async function settleAmbient(): Promise<void> {
+    await vi.advanceTimersByTimeAsync(700);
+  }
+
+  beforeEach(() => {
+    harness = installChromeMock();
+    harness.storage.set(CONNECTION_KEY, conn);
+    // Keep tabsGet truthful across navigations: decideAmbient re-reads the tab's
+    // CURRENT url via tabUrl only after its resolve settles, and the overtaken-run
+    // test needs that read to reflect whichever navigation happened most recently,
+    // not a fixed fixture value.
+    addNavigationListener((nav) => {
+      harness.tabsGet.mockResolvedValue({ url: nav.url });
+    });
+    // The gateway stub for /v1/items/resolve: a `found` outcome for either PR,
+    // gated through takeResolveGate so holdNextResolve can hold one call open.
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const gate = harness.takeResolveGate();
+      if (gate !== undefined) {
+        await gate;
+      }
+      const u = String(url);
+      if (u.includes(encodeURIComponent(PR_URL))) {
+        return resolveFoundResponse(PR_URL);
+      }
+      if (u.includes(encodeURIComponent(OTHER_PR_URL))) {
+        return resolveFoundResponse(OTHER_PR_URL);
+      }
+      return jsonRes(404, {});
+    });
+    // Fake timers from the START of the test — the debounce's setTimeout is
+    // scheduled synchronously inside emitTabUpdated, so the clock it runs on
+    // must already be the fake one by the time that call happens.
+    vi.useFakeTimers();
+  });
+
+  test("a navigation to a resolved page on an enabled host mounts the cue", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    const files = harness.executeScript.mock.calls.map((c) => (c[0] as { files?: string[] }).files);
+    expect(files).toContainEqual(["cue.js"]);
+  });
+
+  test("a navigation on a host that is not switched on injects nothing", async () => {
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    expect(harness.executeScript).not.toHaveBeenCalled();
+  });
+
+  // The preference alone is not enough: a grant withdrawn from
+  // chrome://extensions never touches the "ambient-hosts" list, so a stored,
+  // switched-on pattern that the browser no longer grants must produce no
+  // cue. `harness.grantedOrigins` is deliberately left empty here — the
+  // pattern is enabled in storage but not (or no longer) granted.
+  test("a host enabled in storage but not granted by the browser injects nothing", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    expect(harness.executeScript).not.toHaveBeenCalled();
+  });
+
+  test("a host enabled in storage AND granted by the browser mounts the cue", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    const files = harness.executeScript.mock.calls.map((c) => (c[0] as { files?: string[] }).files);
+    expect(files).toContainEqual(["cue.js"]);
+  });
+
+  test("the same item twice in one tab injects the cue once", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    harness.emitTabUpdated(7, { url: `${PR_URL}/files` }, { active: true });
+    await settleAmbient();
+    const cueInjections = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    expect(cueInjections).toHaveLength(1);
+  });
+
+  test("closing the tab forgets it, so returning to the same PR cues again", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    harness.emitTabRemoved(7);
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    const cueInjections = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    expect(cueInjections).toHaveLength(2);
+  });
+
+  test("a run overtaken by a newer navigation in the same tab drops its result", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    // Hold the first resolve open past the second navigation, so the two runs
+    // genuinely overlap rather than merely being scheduled apart.
+    let release: (() => void) | undefined;
+    harness.holdNextResolve(new Promise<void>((r) => (release = r)));
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    harness.emitTabUpdated(7, { url: OTHER_PR_URL }, { active: true });
+    await settleAmbient();
+    release?.();
+    await settleAmbient();
+    const cued = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    // Exactly one cue, and it is the newer page's.
+    expect(cued).toHaveLength(1);
+  });
+
+  // The test above overlaps runs for two DIFFERENT items, so ambient.ts's own
+  // post-resolve recheck (comparing `currentUrl` against the recognition it
+  // resolved) already kills the stale run on its own — that test would still
+  // pass with the generation check deleted. Pin the generation check itself by
+  // overlapping two navigations to the SAME item (a PR's Conversation tab, then
+  // its Files tab): the post-resolve recheck PASSES for the stale run (same
+  // product/kind/ref), and the already-cued gate can't save it either, because
+  // it reads `lastCued` before the resolve — before the second nav's run has had
+  // a chance to record anything there. Only the generation check stops the stale
+  // run from calling showCue a second time.
+  test("a run overtaken by a navigation to the SAME item also drops its result", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    let release: (() => void) | undefined;
+    harness.holdNextResolve(new Promise<void>((r) => (release = r)));
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    harness.emitTabUpdated(7, { url: `${PR_URL}/files` }, { active: true });
+    await settleAmbient();
+    release?.();
+    await settleAmbient();
+    const cued = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    expect(cued).toHaveLength(1);
+  });
+
+  // If a tab closes while the winning run is still inside `showCue`'s await, the
+  // close handler clears `ambientGeneration`/`lastCuedByTab` for that tab BEFORE
+  // the pending run resumes and writes its own `lastCuedByTab` entry — a stale
+  // write for a tab nothing is tracking any more. Reusing the same tab id for a
+  // fresh navigation to the SAME PR is the observable proxy: a leaked entry would
+  // wrongly read as "already cued" and suppress the second cue.
+  test("a tab closed while showCue is in flight leaves no stale dedupe entry", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    let releaseInject: (() => void) | undefined;
+    harness.executeScript.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseInject = () => resolve([{ result: undefined }]);
+        }),
+    );
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    // decideAmbient has resolved "show"; showCue's cue.js inject is now pending.
+    harness.emitTabRemoved(7);
+    releaseInject?.();
+    await settleAmbient();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    const cued = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    expect(cued).toHaveLength(2);
+  });
+
+  // The tab-close test above proves the guard skips the write for a DEAD tab.
+  // This is the other half: a run whose tab is still open, but whose generation
+  // was superseded by a newer navigation while showCue was still in flight, must
+  // still WRITE its dedupe entry — the cue it mounted is a true fact regardless
+  // of what navigated next, and it can never wrongly suppress a cue for a
+  // DIFFERENT item (the dedupe check compares with sameItem). The superseding
+  // navigation here is INACTIVE, so it bumps the generation without itself
+  // reaching a resolve/showCue — isolating the guard's effect on the first run's
+  // own write.
+  test("a same-item navigation superseding an in-flight showCue does not block that run's dedupe write", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    let releaseInject: (() => void) | undefined;
+    harness.executeScript.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseInject = () => resolve([{ result: undefined }]);
+        }),
+    );
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    // Supersedes the generation without producing a cue of its own (inactive tab
+    // — decideAmbient's cheapest gate returns before any resolve).
+    harness.emitTabUpdated(7, { url: `${PR_URL}/files` }, { active: false });
+    await settleAmbient();
+    releaseInject?.();
+    await settleAmbient();
+    // The tab is still open, so the first run's write went through despite being
+    // superseded. A third navigation to the same item must find it already-cued.
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    const cued = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    expect(cued).toHaveLength(1);
+  });
+
+  test("an injection failure on a restricted page is swallowed, not thrown", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.executeScript.mockRejectedValue(new Error("Cannot access contents of the page"));
+    await loadWorker();
+    expect(() => {
+      harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    }).not.toThrow();
+    await settleAmbient();
+  });
+
+  test("cue-open injects the panel into the sender's own tab", async () => {
+    await loadWorker();
+    await harness.emitMessageFromTab({ kind: "cue-open" }, 7);
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 7 },
+      files: ["panel.js"],
     });
   });
 });

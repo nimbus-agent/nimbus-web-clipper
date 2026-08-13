@@ -5,6 +5,7 @@ import {
   isConfiguredOrigin,
   matchOrigin,
   parseConfiguredOrigin,
+  patternMatchesUrl,
   removeConfiguredOrigin,
   splitOrigin,
   upsertOrigin,
@@ -142,5 +143,51 @@ describe("isConfiguredOrigin", () => {
   });
   test("rejects a non-object", () => {
     expect(isConfiguredOrigin("https://github.com")).toBe(false);
+  });
+});
+
+describe("patternMatchesUrl", () => {
+  test("exact host pattern matches its own host, any port and any path", () => {
+    expect(patternMatchesUrl("https://github.com/*", "https://github.com/acme/web/pull/1")).toBe(
+      true,
+    );
+    expect(
+      patternMatchesUrl("http://corp.example/*", "http://corp.example:8080/jenkins/job/x"),
+    ).toBe(true);
+  });
+
+  test("exact host pattern does not match a subdomain", () => {
+    expect(patternMatchesUrl("https://github.com/*", "https://gist.github.com/x")).toBe(false);
+  });
+
+  test("scheme must match", () => {
+    expect(patternMatchesUrl("https://github.com/*", "http://github.com/x")).toBe(false);
+  });
+
+  test("subdomain wildcard matches any tenant and the bare host", () => {
+    expect(
+      patternMatchesUrl("https://*.atlassian.net/*", "https://acme.atlassian.net/browse/ABC-1"),
+    ).toBe(true);
+    expect(patternMatchesUrl("https://*.atlassian.net/*", "https://atlassian.net/x")).toBe(true);
+  });
+
+  test("subdomain wildcard does not match a lookalike suffix", () => {
+    expect(patternMatchesUrl("https://*.atlassian.net/*", "https://evilatlassian.net/x")).toBe(
+      false,
+    );
+  });
+
+  test("host comparison is case-insensitive", () => {
+    expect(patternMatchesUrl("https://github.com/*", "https://GitHub.com/x")).toBe(true);
+  });
+
+  test("rejects anything that is not a plain host pattern", () => {
+    expect(patternMatchesUrl("<all_urls>", "https://github.com/x")).toBe(false);
+    expect(patternMatchesUrl("*://github.com/*", "https://github.com/x")).toBe(false);
+    expect(patternMatchesUrl("https://github.com/acme/*", "https://github.com/acme/x")).toBe(false);
+  });
+
+  test("a non-URL never matches", () => {
+    expect(patternMatchesUrl("https://github.com/*", "not a url")).toBe(false);
   });
 });

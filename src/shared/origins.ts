@@ -122,3 +122,46 @@ export function hostPermissionPattern(origin: string): string | null {
   const url = new URL(split.base);
   return `${url.protocol}//${url.hostname}/*`;
 }
+
+/**
+ * Does a host permission pattern cover this URL?
+ *
+ * Deliberately NOT a general match-pattern implementation. The only patterns
+ * this extension can produce are `scheme://host/*` (hostPermissionPattern
+ * above) and the ONE subdomain-wildcard form Jira Cloud needs, because its
+ * tenant hosts are not enumerable. `<all_urls>`, scheme wildcards and path
+ * components are rejected rather than interpreted: nothing here may create
+ * them, so accepting them could only ever widen a match by accident.
+ *
+ * The PORT is ignored, exactly as the browser does — a pattern's host may not
+ * carry one (see hostPermissionPattern), so a granted host is granted on every
+ * port it serves.
+ */
+export function patternMatchesUrl(pattern: string, url: string): boolean {
+  const parts = /^(https?):\/\/(\*\.)?([^/*:]+)\/\*$/.exec(pattern);
+  if (parts === null) {
+    return false;
+  }
+  const [, scheme, wildcard, host] = parts;
+  if (scheme === undefined || host === undefined) {
+    return false;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== `${scheme}:`) {
+    return false;
+  }
+  const found = parsed.hostname.toLowerCase();
+  const want = host.toLowerCase();
+  if (wildcard === undefined) {
+    return found === want;
+  }
+  // The `.` boundary is what stops "*.atlassian.net" matching
+  // "evilatlassian.net"; the bare host itself is included, matching how the
+  // browser reads the same pattern.
+  return found === want || found.endsWith(`.${want}`);
+}

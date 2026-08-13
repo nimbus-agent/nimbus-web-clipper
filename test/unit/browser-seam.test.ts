@@ -1,11 +1,19 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { setBadgeCount } from "../../src/browser/action.ts";
 import { clearAlarm, ensureAlarm, rearmAlarm } from "../../src/browser/alarms.ts";
-import { injectPanel, runCapture } from "../../src/browser/scripting.ts";
+import { injectPanel, runCapture, showCue } from "../../src/browser/scripting.ts";
 import { storageGet, storageRemove, storageSet } from "../../src/browser/storage.ts";
-import { activeTab } from "../../src/browser/tabs.ts";
+import {
+  activeTab,
+  addNavigationListener,
+  addTabClosedListener,
+  type TabNavigation,
+  tabUrl,
+} from "../../src/browser/tabs.ts";
 import { installChromeStub } from "./chrome-stub.ts";
+import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
+let harness: ChromeHarness;
 afterEach(() => {
   (globalThis as unknown as { chrome?: unknown }).chrome = undefined;
 });
@@ -50,6 +58,19 @@ describe("injectPanel", () => {
     const { executeCalls } = installChromeStub();
     await injectPanel(7);
     expect(executeCalls).toEqual([{ target: { tabId: 7 }, files: ["panel.js"] }]);
+  });
+});
+
+describe("showCue", () => {
+  test("showCue injects cue.js then calls its global with the state", async () => {
+    harness = installChromeMock();
+    await showCue(7, { label: "GitHub PR", ref: "acme/web #482" });
+    expect(harness.executeScript).toHaveBeenNthCalledWith(1, {
+      target: { tabId: 7 },
+      files: ["cue.js"],
+    });
+    const second = harness.executeScript.mock.calls[1]?.[0] as { args?: unknown[] };
+    expect(second.args).toEqual([{ label: "GitHub PR", ref: "acme/web #482" }]);
   });
 });
 
@@ -100,5 +121,68 @@ describe("action badge seam", () => {
     await setBadgeCount(3);
     await setBadgeCount(0);
     expect(badgeTexts).toEqual(["3", ""]);
+  });
+});
+
+describe("browser/tabs navigation seam", () => {
+  test("a URL change on an active tab reaches the listener", () => {
+    harness = installChromeMock();
+    const seen: TabNavigation[] = [];
+    addNavigationListener((nav) => seen.push(nav));
+    harness.emitTabUpdated(7, { url: "https://github.com/acme/web/pull/482" }, { active: true });
+    expect(seen).toEqual([{ tabId: 7, url: "https://github.com/acme/web/pull/482", active: true }]);
+  });
+
+  test("an update with no url is not a navigation and is dropped", () => {
+    harness = installChromeMock();
+    const seen: TabNavigation[] = [];
+    addNavigationListener((nav) => seen.push(nav));
+    // The browser omits changeInfo.url for hosts we hold no permission on — the
+    // permission boundary is enforced here, by the browser, not by our own check.
+    harness.emitTabUpdated(7, {}, { active: true });
+    harness.emitTabUpdated(7, { url: undefined }, { active: true });
+    expect(seen).toEqual([]);
+  });
+
+  test("an inactive tab is reported as inactive rather than dropped here", () => {
+    harness = installChromeMock();
+    const seen: TabNavigation[] = [];
+    addNavigationListener((nav) => seen.push(nav));
+    harness.emitTabUpdated(7, { url: "https://github.com/x" }, { active: false });
+    expect(seen[0]?.active).toBe(false);
+  });
+
+  test("a missing active flag is treated as inactive, never assumed active", () => {
+    harness = installChromeMock();
+    const seen: TabNavigation[] = [];
+    addNavigationListener((nav) => seen.push(nav));
+    harness.emitTabUpdated(7, { url: "https://github.com/x" }, {});
+    expect(seen[0]?.active).toBe(false);
+  });
+
+  test("tab closure reaches its listener", () => {
+    harness = installChromeMock();
+    const closed: number[] = [];
+    addTabClosedListener((tabId) => closed.push(tabId));
+    harness.emitTabRemoved(7);
+    expect(closed).toEqual([7]);
+  });
+
+  test("tabUrl returns the tab's url", async () => {
+    harness = installChromeMock();
+    harness.tabsGet.mockResolvedValueOnce({ url: "https://github.com/acme/web/pull/517" });
+    expect(await tabUrl(7)).toBe("https://github.com/acme/web/pull/517");
+  });
+
+  test("tabUrl is null for a tab that has gone away", async () => {
+    harness = installChromeMock();
+    harness.tabsGet.mockRejectedValueOnce(new Error("No tab with id: 7"));
+    expect(await tabUrl(7)).toBeNull();
+  });
+
+  test("tabUrl is null when the url is not visible to us", async () => {
+    harness = installChromeMock();
+    harness.tabsGet.mockResolvedValueOnce({});
+    expect(await tabUrl(7)).toBeNull();
   });
 });

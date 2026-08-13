@@ -5,10 +5,14 @@ export async function sendMessage(req: ExtensionRequest): Promise<unknown> {
 }
 
 export function addMessageListener(
-  fn: (message: unknown, respond: (response: unknown) => void) => boolean,
+  fn: (
+    message: unknown,
+    respond: (response: unknown) => void,
+    sender: { readonly tabId?: number },
+  ) => boolean,
 ): void {
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) =>
-    fn(message, sendResponse),
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) =>
+    fn(message, sendResponse, sender.tab?.id === undefined ? {} : { tabId: sender.tab.id }),
   );
 }
 

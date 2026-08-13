@@ -10,6 +10,12 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Fixed
 
+- **The built-in sites could not be granted page access at all.** Options listed
+  only the self-hosted instances you had added, and the Grant button lives on a
+  row — so `github.com`, `gitlab.com`, `bitbucket.org` and Jira Cloud, which
+  Nimbus recognises without any setup, had no row and no way to be granted. They
+  are now listed alongside your own entries, each with its own page-access
+  control (and no Remove — they are not yours to delete).
 - **The panel's freshness line said "Indexed" when it meant "Updated".** The time
   shown is the item's own last-modified time as its source reports it — GitHub's
   `updated_at` for a pull request — not when Nimbus indexed it. So a PR fetched
@@ -32,6 +38,15 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **Nimbus can now tell you it knows this page, before you ask.** On a site you
+  have granted page access to and switched **Surface automatically** on for,
+  landing on a pull request, build or issue that Nimbus has already indexed puts
+  a small cue in the corner naming it. Click it and the panel opens on that item;
+  dismiss it and it stays quiet for that item in that tab. Nothing runs until you
+  click — no agent, no lane. And the cue only appears when there is a real answer
+  behind it: a page Nimbus has not indexed, a page it cannot pin to one item, or
+  a gateway that is not running all produce silence rather than a cue that leads
+  nowhere.
 - **Ask an agent about the pull request you are looking at.** When the panel has
   resolved a PR to a single indexed item, it now offers two lanes — *what breaks
   if it lands*, and *who should review it*. Expanding one runs the agent behind

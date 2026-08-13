@@ -368,7 +368,7 @@ is worthless without this — and half of C1 is buildable today.*
 > ambiguous pages classify as unknown, and adding a surface is one pure module
 > plus tests.
 
-### C1.3 The ambient panel shell · 🟢 · M — ✅ shipped (user-summoned)
+### C1.3 The ambient panel shell · 🟢 · M — ✅ shipped (panel user-summoned; ambient cue shipped opt-in, per host)
 > **What** Grow the injected related-items panel into a lane-based shell: a
 > header naming the resolved item, then one collapsed lane per available action.
 > **Why it wows** It reads as *a client for this page*, not a results list that
@@ -379,12 +379,20 @@ is worthless without this — and half of C1 is buildable today.*
 > **Done when** Resolved / unresolved / loading / error states all render from
 > pure view code under unit tests, with no lane content yet.
 > **Status** Shipped with related-items as the first lane. The panel stays
-> **user-summoned** — ambient auto-surfacing waits
-> until C2 gives the lanes real answers.
+> **user-summoned** — opening it is still always a click or a hotkey, never
+> automatic.
 > Closed: the panel pins the page it was opened on, so its header and its lanes
 > can no longer describe different items, and it offers a deliberate re-read when
 > you navigate away — see
 > `docs/superpowers/specs/2026-08-11-panel-page-context-design.md`.
+> **The deferred ambient half has now landed too:** on a host the user has
+> granted page access to and separately switched a per-host "Surface
+> automatically" toggle on for, landing on a page that resolves to exactly one
+> indexed item mounts a small corner cue naming it — before any click. Clicking
+> it opens this same user-summoned panel; the panel itself is unchanged. Every
+> non-`found` resolve outcome is silence, not a cue that leads nowhere, and
+> nothing is invoked ambiently — no agent, no lane. See
+> `docs/superpowers/specs/2026-08-13-ambient-surfacing-design.md`.
 
 ### C1.4 Per-origin, opt-in recognition · 🟢 · S — ✅ shipped
 > **What** Recognition needs to see the URL of pages that are not the gateway —
@@ -405,6 +413,15 @@ is worthless without this — and half of C1 is buildable today.*
 > works on `activeTab` alone today, so the grant currently buys only gesture-free
 > recognition, which **C2** is the first to need. The store listing explains why
 > the optional pattern is broad (self-hosted hostnames are not enumerable).
+> **The grant now buys something concrete:** the ambient half of **C1.3**
+> (shipped) is the first thing that actually consumes gesture-free recognition —
+> it is what a granted, toggled-on host makes possible. That slice also closed a
+> real gap this phase had left open: the **Recognised surfaces** list built its
+> rows from the user's own stored, self-hosted origins only, so `github.com`,
+> `gitlab.com`, `bitbucket.org` and Jira Cloud — recognised with no configuration
+> — had no row at all. Since the Grant button lives on a row, there was until
+> then no way to grant page access to any of them. Built-in rows (with grant/
+> revoke and no Remove) now close that gap.
 
 ### C1.5 A second way into the panel · 🟢 · S
 > **What** Add a panel entry point the browser cannot silently withhold — a
@@ -845,7 +862,7 @@ organizing after.*
 > **Reframe** Lower priority — tagging is a filing behaviour, and filing is not
 > what the client is for. Connector-sourced items arrive with their own metadata.
 
-### 3.4 Proactive related-on-landing · 🟢 · M
+### 3.4 Proactive related-on-landing · 🟢 · M — superseded, shipped as C1.3's ambient half
 > **What** An unobtrusive ambient signal when you land on a page you have context
 > for ("3 related items in Nimbus"), expandable into the panel.
 > **Why it wows** Recall that finds *you* — the core magic, surfaced without a click.
@@ -858,6 +875,13 @@ organizing after.*
 > **Reframe** Superseded, not dropped — this is the ancestor of the ambient
 > panel. Build it as the related lane of **C1.3**, on **C1.4**'s per-origin
 > permission, rather than as a standalone cue with its own opt-in.
+> **Status** Shipped, exactly as the reframe directed: built on **C1.4**'s
+> per-origin permission (a per-host toggle, off by default), as part of the
+> **C1.3** panel's ambient half rather than a standalone feature with its own
+> opt-in. It resolves the page to a single indexed item and names it, rather
+> than counting related hits — a stronger, narrower claim than "3 related items
+> in Nimbus" that only fires when there is one real answer. See **C1.3** above
+> and `docs/superpowers/specs/2026-08-13-ambient-surfacing-design.md`.
 
 ### 3.5 Zero-config gateway discovery · 🟢 · S
 > **What** Find the local gateway automatically so pairing is the only setup step.

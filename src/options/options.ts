@@ -1,3 +1,4 @@
+import { getAmbientHosts, setAmbientHost } from "../background/ambient-prefs.ts";
 import { getOrigins, setOrigins } from "../background/origin-store.ts";
 import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.ts";
 import { sendMessage } from "../browser/runtime.ts";
@@ -9,6 +10,7 @@ import {
   removeConfiguredOrigin,
   upsertOrigin,
 } from "../shared/origins.ts";
+import { BUILT_IN_SURFACES } from "../shared/recognise.ts";
 import type { ConfiguredOrigin } from "../shared/types.ts";
 import { formatPairedSince } from "./connection-view.ts";
 import { renderSurfaceList, type SurfaceRow, sharedHostNote } from "./surfaces-view.ts";
@@ -172,16 +174,54 @@ function mutateOrigins(transform: (list: ConfiguredOrigin[]) => ConfiguredOrigin
   return originWrites;
 }
 
-/** Storage is the source of truth for entries; the browser is for grants. */
+/** Serialise prefs writes for the same reason origin writes are serialised: two
+ *  toggles flipped in quick succession both read the pre-change list, and the
+ *  second write would silently drop the first one's edit. Both the toggle
+ *  handler and the revoke path fall through here — `setAmbientHost` does no
+ *  serialisation of its own, so a second call site bypassing this chain would
+ *  reopen the same lost-update window this chain exists to close. */
+let ambientWrites: Promise<void> = Promise.resolve();
+
+function mutateAmbient(pattern: string, on: boolean): Promise<void> {
+  ambientWrites = ambientWrites
+    .catch(() => undefined)
+    .then(async () => {
+      await setAmbientHost(pattern, on);
+    });
+  return ambientWrites;
+}
+
+/**
+ * Storage is the source of truth for the user's own entries; the browser is the
+ * source of truth for grants; the prefs store is for the ambient toggle.
+ *
+ * Built-ins come FIRST and are always present. Until this existed there was no
+ * row for github.com, gitlab.com, bitbucket.org or Jira Cloud — and since the
+ * Grant button lives on a row, there was no way to grant page access to them at
+ * all. See the design spec's "The prerequisite this slice discovered".
+ */
 async function surfaceRows(): Promise<SurfaceRow[]> {
-  const stored = await getOrigins();
+  const ambient = await getAmbientHosts();
   const rows: SurfaceRow[] = [];
-  for (const entry of stored) {
+  for (const surface of BUILT_IN_SURFACES) {
+    rows.push({
+      origin: surface.label,
+      product: surface.product,
+      granted: await hasOrigin(surface.pattern),
+      builtIn: true,
+      pattern: surface.pattern,
+      ambient: ambient.includes(surface.pattern),
+    });
+  }
+  for (const entry of await getOrigins()) {
     const pattern = hostPermissionPattern(entry.origin);
     rows.push({
       origin: entry.origin,
       product: entry.product,
       granted: pattern !== null && (await hasOrigin(pattern)),
+      builtIn: false,
+      pattern,
+      ambient: pattern !== null && ambient.includes(pattern),
     });
   }
   return rows;
@@ -226,8 +266,12 @@ async function onSurfaceClick(event: Event): Promise<void> {
   if (action === undefined || origin === undefined) {
     return;
   }
-  const pattern = hostPermissionPattern(origin);
-  if (action === "remove") {
+  // A built-in row's `origin` is a display label, not a URL — its pattern comes
+  // from the table, not from parsing. Fall back to parsing for the user's own
+  // entries, which are always absolute origins.
+  const builtIn = BUILT_IN_SURFACES.find((s) => s.label === origin);
+  const pattern = builtIn?.pattern ?? hostPermissionPattern(origin);
+  if (action === "remove" && builtIn === undefined) {
     await mutateOrigins((list) => removeConfiguredOrigin(list, origin));
     setSurfaceStatus("");
   } else if (action === "grant" && pattern !== null) {
@@ -239,12 +283,30 @@ async function onSurfaceClick(event: Event): Promise<void> {
     // happened — otherwise the note would say access was withdrawn from a host
     // that still has it.
     if (await removeOrigin(pattern)) {
+      // Page access is what the cue runs on, so revoking it turns the cue off
+      // rather than leaving a stored "on" that cannot happen. Without this, a
+      // later re-grant would silently resurrect a preference the user last saw
+      // being withdrawn. Routed through mutateAmbient — same storage key the
+      // toggle handler writes, so it must go through the same chain.
+      await mutateAmbient(pattern, false);
       setSurfaceStatus(sharedHostNote(await surfaceRows(), origin) ?? "");
     } else {
       setSurfaceStatus("Page access could not be revoked.");
     }
   }
   await refreshSurfaces();
+}
+
+function onAmbientChange(event: Event): Promise<void> {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) || target.dataset["action"] !== "ambient") {
+    return Promise.resolve();
+  }
+  const pattern = target.dataset["pattern"] ?? "";
+  if (pattern === "") {
+    return Promise.resolve();
+  }
+  return mutateAmbient(pattern, target.checked);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -255,6 +317,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document
     .getElementById("surface-list")
     ?.addEventListener("click", (event) => void onSurfaceClick(event));
+  document
+    .getElementById("surface-list")
+    ?.addEventListener("change", (event) => void onAmbientChange(event));
   void refreshConnection();
   void refreshSurfaces();
 });

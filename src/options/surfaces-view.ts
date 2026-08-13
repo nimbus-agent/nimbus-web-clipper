@@ -8,6 +8,12 @@ export interface SurfaceRow {
   readonly product: Product;
   /** Whether page access has been granted for this row's HOST. */
   readonly granted: boolean;
+  /** Built-in rows are not the user's entries: no Remove button. */
+  readonly builtIn: boolean;
+  /** Host permission pattern this row's grant and toggle are keyed by. */
+  readonly pattern: string | null;
+  /** Whether the ambient cue is switched on for this row's host. */
+  readonly ambient: boolean;
 }
 
 const PRODUCT_NAMES: Record<Product, string> = {
@@ -25,6 +31,41 @@ function button(doc: Document, action: string, origin: string, text: string): HT
   el.dataset["origin"] = origin;
   el.textContent = text;
   return el;
+}
+
+/**
+ * The per-host ambient switch. Keyed by PATTERN, not origin: two configured
+ * origins can share a host (a /jira and a /jenkins on one box), and the cue —
+ * like the grant — is a per-host decision, so both rows drive the same switch.
+ *
+ * Disabled without page access, because the cue is exactly the capability the
+ * grant buys: offering the switch on a host we may not read would be offering
+ * something that cannot happen.
+ */
+function ambientToggle(doc: Document, row: SurfaceRow): HTMLLabelElement {
+  const label = doc.createElement("label");
+  label.className = "surfaces__ambient";
+
+  const disabled = !row.granted || row.pattern === null;
+
+  const input = doc.createElement("input");
+  input.type = "checkbox";
+  input.dataset["action"] = "ambient";
+  input.dataset["pattern"] = row.pattern ?? "";
+  // Ticked means "this is happening", never "this is stored". A disabled tick
+  // would be ambiguous exactly when it matters — after page access is revoked,
+  // is the cue still on? It is not, so it does not show as on. The stored
+  // preference is separately cleared on the revoke path (options.ts), so the two
+  // cannot disagree; this rule additionally covers a revoke made from the
+  // browser's own extension settings, which never reaches our click handler.
+  input.checked = row.ambient && !disabled;
+  input.disabled = disabled;
+
+  const text = doc.createElement("span");
+  text.textContent = "Surface automatically";
+
+  label.append(input, text);
+  return label;
 }
 
 export function renderSurfaceList(doc: Document, rows: readonly SurfaceRow[]): HTMLElement {
@@ -52,11 +93,16 @@ export function renderSurfaceList(doc: Document, rows: readonly SurfaceRow[]): H
     item.append(
       origin,
       product,
+      ambientToggle(doc, row),
       row.granted
         ? button(doc, "revoke", row.origin, "Revoke page access")
         : button(doc, "grant", row.origin, "Grant page access"),
-      button(doc, "remove", row.origin, "Remove"),
     );
+    // Built-in surfaces are recognised without configuration — they are not the
+    // user's entries to delete, only to grant or silence.
+    if (!row.builtIn) {
+      item.append(button(doc, "remove", row.origin, "Remove"));
+    }
     list.append(item);
   }
   return list;

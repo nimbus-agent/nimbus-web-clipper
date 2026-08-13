@@ -17,6 +17,7 @@ const REQUIRED_FILES = [
   "capture.js",
   "panel.js",
   "toast.js",
+  "cue.js",
   "popup.js",
   "popup.html",
   "popup.css",

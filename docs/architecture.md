@@ -44,7 +44,7 @@ token is the *only* secret, revocation is simple — unpair locally, or
 ### 3. Bundled, no runtime dependencies
 
 [`esbuild.mjs`](../esbuild.mjs) bundles each entry point (`background`, `popup`,
-`options`, `capture`, and the injected panel/toast) into `dist/<target>/` as a
+`options`, `capture`, and the injected panel/toast/cue) into `dist/<target>/` as a
 fully-inlined IIFE. `@mozilla/readability` is a *devDependency* inlined into the
 capture bundle. The shipped extension has **no `node_modules`** — which keeps it
 bundle-size-honest and auditable, the same discipline the proposed Nimbus SDK is
@@ -423,6 +423,146 @@ not-indexed, fetchable ─{ click "Fetch this from GitHub" }─►  panel-in-pag
   happens, so nothing is in flight and a second click is exactly as safe as the
   first. Reopening the panel is the deliberate escape hatch — a fresh resolve by
   then either finds the item or offers the button again.
+
+## The ambient path (Phase C1.3, the deferred half)
+
+C1.3 shipped the panel **user-summoned** and said why: ambient auto-surfacing
+waits until the lanes have real answers. C2 gave them real answers, so this
+slice adds the other half — a small cue that tells you the panel would have
+something to say, before you ask it. Full reasoning, including the four
+decisions behind the shape of it:
+[`docs/superpowers/specs/2026-08-13-ambient-surfacing-design.md`](./superpowers/specs/2026-08-13-ambient-surfacing-design.md).
+
+On a host the user has **granted page access to** and **switched "Surface
+automatically" on for**, landing on a page that resolves to exactly one
+indexed item mounts a small corner cue naming it. Clicking it opens the
+existing panel on that item; dismissing it silences that item in that tab.
+Nothing runs — no agent, no lane. Everything that is not a resolved item is
+silence: not-indexed, ambiguous, unresolvable, every resolve error, an
+unpaired gateway, a restricted page.
+
+```
+chrome.tabs.onUpdated (changeInfo.url present)   ← lock #1: the browser omits
+      │                                             this field on ungranted hosts
+      ▼
+addNavigationListener (src/browser/tabs.ts)
+      │
+      ▼
+~600ms debounce, per tab (AMBIENT_DEBOUNCE_MS, service-worker.ts) — SPA URL churn
+      │
+      ▼
+decideAmbient (src/background/ambient.ts) — PURE, the whole decision
+      │
+      ├─ tab active? ──────────────────────────────── no ──→ silence
+      ├─ host granted AND toggled on? (isAmbientUrl) ─ no ──→ silence   ← lock #2
+      ├─ recognise(url, origins)  [pure, no gateway call] ── no ──→ silence
+      ├─ already cued for this item, this tab? (sameItem) ─ yes ─→ silence
+      ├─ resolve()  [one loopback call]
+      │    ├─ found ──→ re-check the tab still exists and is still on this URL
+      │    └─ anything else (miss / ambiguous / any error) ──→ silence
+      └─ "show" → showCue(tabId, cue) injects cue.js, calls __nimbusCue(state)
+```
+
+- **The trigger chain.** `chrome.tabs.onUpdated` (wrapped as
+  `addNavigationListener`) fires on history-API navigations too, which is what
+  lets an SPA — GitHub, GitLab, Jira all rewrite the URL without a page load —
+  reach the listener at all. Each firing resets a ~600ms per-tab debounce
+  (`AMBIENT_DEBOUNCE_MS`) before `decideAmbient` runs, so a client-side
+  navigation that rewrites the URL twice costs one resolve, not two. On a
+  `"show"` decision, the worker calls `showCue` (`src/browser/scripting.ts`),
+  which injects `cue.js` and then calls its `__nimbusCue` global — the same
+  two-step pattern `toast.js` already uses.
+
+- **Why the decision lives in a pure module, and the worker only wires.**
+  `decideAmbient` (`src/background/ambient.ts`) takes every dependency
+  injected — `enabledHosts`, `getOrigins`, `lastCued`, `resolve`, `currentUrl`
+  — and imports no `chrome.*` API. That is what makes the feature's actual
+  behavior a Vitest decision table in a node environment: granted × enabled ×
+  active × recognised × each resolve outcome × dedupe × dismissal, run without
+  a browser. `service-worker.ts` supplies the real deps and does exactly the
+  two things a pure function cannot: hold a real per-tab debounce timer and
+  call `chrome.scripting.executeScript`. This is the same split the rest of
+  `src/background/` follows (see "Why the pure core is testable" below) —
+  applied here to a decision with more branches than most.
+
+- **The two permission locks.** The first is the browser's own, not ours:
+  `chrome.tabs.onUpdated`'s `changeInfo.url` is populated only for tabs the
+  extension holds host permission on (`addNavigationListener`'s doc comment
+  states this explicitly), so a page on a host the user never granted is
+  invisible to the listener by construction — no code of ours runs at all.
+  The second is `isAmbientUrl` inside `decideAmbient`, checking the user's
+  **"Surface automatically"** toggle. The two are deliberately independent:
+  the grant is what makes gesture-free recognition possible; the toggle is
+  the separate decision to be interrupted about it. Someone may want the
+  first on `github.com` and the second only on their team's Jira. Because the
+  first lock is enforced by the platform and the second is enforced by this
+  code, only the second is a property this repo can assert in a test — which
+  is exactly what keeps the first from silently becoming a coincidence rather
+  than a guarantee (see the design spec's framing of the same point).
+
+- **Why the dedupe map is in memory, keyed by item rather than URL.**
+  `lastCuedByTab` (`service-worker.ts`, a module-scope
+  `Map<tabId, Recognition>`) is cleared on `chrome.tabs.onRemoved` and never
+  written to `chrome.storage.local`. Not persisting it is deliberate: a
+  service-worker eviction re-cues the same item once, and that is a better
+  failure than a suppression that outlives the reason for it — the same
+  reasoning decision 4 in the design spec applies to permanent dismissal.
+  It is keyed by `sameItem` (`product` + `kind` + `ref`, from
+  `shared/recognise.ts`) rather than by URL because `resolveUrl` deliberately
+  keeps sub-tab path segments and the query string (see "the recognition
+  pipeline" above) — a pull request's *Files changed* tab is a different URL
+  and the same item. Keying the dedupe map by URL would re-cue on every
+  sub-tab switch, which is precisely the nagging the per-item key exists to
+  prevent. The entry is written only **after** `showCue` actually mounts the
+  cue, never when an attempt merely starts — so a run abandoned because the
+  tab closed or navigated mid-resolve leaves no trace, and the very next
+  landing on that item still gets a cue.
+
+- **The generation counter, not cancellation.** A per-tab
+  `ambientGeneration` counter increments on every navigation; after the
+  `resolve` await returns, `runAmbient` checks its own generation is still
+  current and drops the result if a newer navigation has since started. This
+  is deliberately not an `AbortController` — see the design spec's
+  "Deferred, with reasons" — because caller-side cancellation would mean
+  threading a signal through `resolveItem`/`handleResolve`, a seam the panel
+  shares, to save a request whose work the gateway may have already begun.
+  What actually matters is correctness, and the generation check plus the
+  post-resolve re-check of the tab's URL buys that without the plumbing.
+
+- **Why every non-`found` outcome is silence.** `not_indexed`,
+  `unresolvable_url`, `ambiguous`, every `ResolveError`, a throw from the
+  resolve route, an unpaired gateway, a restricted page that rejects
+  injection — all of them collapse to no cue and no trace. The panel is
+  where errors get *spoken*, because the user asked it something directly;
+  the ambient path never earned the right to interrupt a page someone is
+  reading with a problem report. The deliberate cost: a user who grants,
+  toggles on, and is not paired sees nothing and is not told why. That state
+  is answered where it lives — the Options row shows the toggle as on, next
+  to the existing connection status that already reports the pairing.
+
+- **The cue retracts itself.** Once mounted, `cue-in-page.ts` runs the same
+  500ms URL watch the panel already uses (`NAV_CHECK_MS`, mirroring
+  `panel-in-page.ts`) and tears itself down on a URL change — the identical
+  defect the panel-page-context slice (2026-08-11) fixed for the panel,
+  paid for once here rather than re-learned. It also tears down if the panel
+  appears by any other route (the hotkey, the popup button, the context
+  menu all inject it directly): a mounted `#nimbus-related-host` means the
+  cue has nothing left to add, and two surfaces answering the same question
+  is worse than one.
+
+- **Clicking through carries no page URL.** The `cue-open` message
+  (`shared/messages.ts`) is a bare signal — the tab id comes from the
+  message's own `sender`, never from the payload, because the cue runs in an
+  untrusted page and a payload-supplied tab id would be forgeable. The
+  worker calls the same `injectPanel` every other entry point uses; the cue
+  tears itself down first so the cue and the panel are never on screen
+  together.
+
+The Options prerequisite this slice discovered — that `github.com`,
+`gitlab.com`, `bitbucket.org` and Jira Cloud had no row at all, and so no way
+to be granted page access, because the Grant button lives on a row — is C1.4's
+gap, not this feature's; see C1.4 in [`ROADMAP.md`](../ROADMAP.md) for what
+closed it.
 
 ## The agent lanes (Phase C2.1)
 
