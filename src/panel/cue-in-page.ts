@@ -106,6 +106,13 @@ function show(state: CueState): void {
 
   const el = renderCue(document, state);
   el.addEventListener("click", (event) => {
+    // A page can reach into an open shadow root and synthesize a click on the
+    // open control — `.shadowRoot.querySelector(...).click()` — to make the
+    // panel mount without the user asking. A synthesized event is untrusted;
+    // only a real user click carries `isTrusted === true`.
+    if (!event.isTrusted) {
+      return;
+    }
     const target = event.target;
     if (!(target instanceof Element)) {
       return;

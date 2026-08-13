@@ -26,6 +26,27 @@ function cueEl(): Element | null {
   return host?.shadowRoot?.querySelector(".nimbus-cue") ?? null;
 }
 
+/**
+ * `isTrusted` is an [Unforgeable] DOM property: jsdom (like real browsers)
+ * defines it as non-configurable on every event instance, and its own
+ * `dispatchEvent` unconditionally stamps `isTrusted: false` on anything
+ * script hands it — so there is no way to make a *dispatched* event trusted
+ * from test code. Instead we capture the actual listener cue-in-page.ts
+ * registers (via this addEventListener spy) and invoke it directly with a
+ * hand-built event carrying `isTrusted: true`, which is exactly what the
+ * handler under test reads.
+ */
+const clickListeners: Array<{ target: EventTarget; listener: EventListener }> = [];
+
+function trustedClick(actionEl: Element): void {
+  const root = cueEl();
+  const entry = [...clickListeners].reverse().find((c) => c.target === root);
+  if (entry === undefined) {
+    throw new Error("no click listener captured for the mounted cue");
+  }
+  entry.listener({ isTrusted: true, target: actionEl } as unknown as MouseEvent);
+}
+
 beforeEach(() => {
   harness = installChromeMock();
   document.body.innerHTML = "";
@@ -38,10 +59,24 @@ beforeEach(() => {
   )) {
     el.remove();
   }
+  clickListeners.length = 0;
+  const originalAdd = Element.prototype.addEventListener;
+  vi.spyOn(Element.prototype, "addEventListener").mockImplementation(function (
+    this: Element,
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ) {
+    if (type === "click" && typeof listener === "function") {
+      clickListeners.push({ target: this, listener });
+    }
+    return originalAdd.call(this, type, listener, options);
+  });
 });
 afterEach(() => {
   harness.restore();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe("the injected cue", () => {
@@ -64,7 +99,7 @@ describe("the injected cue", () => {
     const show = await loadCue();
     show(STATE);
     const open = cueEl()?.querySelector('[data-action="open"]') as HTMLButtonElement;
-    open.click();
+    trustedClick(open);
     await Promise.resolve();
     expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "cue-open" });
     expect(document.getElementById("nimbus-cue-host")).toBeNull();
@@ -74,9 +109,24 @@ describe("the injected cue", () => {
     const show = await loadCue();
     show(STATE);
     const dismiss = cueEl()?.querySelector('[data-action="dismiss"]') as HTMLButtonElement;
-    dismiss.click();
+    trustedClick(dismiss);
     expect(document.getElementById("nimbus-cue-host")).toBeNull();
     expect(harness.sendMessage).not.toHaveBeenCalled();
+  });
+
+  test("a page-synthesized click on the open control is ignored: no message, cue stays mounted", async () => {
+    const show = await loadCue();
+    show(STATE);
+    const open = cueEl()?.querySelector('[data-action="open"]') as HTMLButtonElement;
+    // What a hostile page does through the open shadow root:
+    // `host.shadowRoot.querySelector('[data-action=open]').click()`. Both
+    // `.click()` and a plain `dispatchEvent(new MouseEvent(...))` produce an
+    // untrusted event — this must not open the panel or retract the cue.
+    open.click();
+    await Promise.resolve();
+    expect(harness.sendMessage).not.toHaveBeenCalled();
+    expect(document.getElementById("nimbus-cue-host")).not.toBeNull();
+    expect(cueEl()).not.toBeNull();
   });
 
   test("retracts itself when the page navigates to something else", async () => {
@@ -154,7 +204,7 @@ describe("the injected cue", () => {
     show(STATE);
     expect(vi.getTimerCount()).toBeGreaterThan(0);
     const open = cueEl()?.querySelector('[data-action="open"]') as HTMLButtonElement;
-    open.click();
+    trustedClick(open);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -164,7 +214,7 @@ describe("the injected cue", () => {
     show(STATE);
     expect(vi.getTimerCount()).toBeGreaterThan(0);
     const dismiss = cueEl()?.querySelector('[data-action="dismiss"]') as HTMLButtonElement;
-    dismiss.click();
+    trustedClick(dismiss);
     expect(vi.getTimerCount()).toBe(0);
   });
 
