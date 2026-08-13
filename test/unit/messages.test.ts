@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "vitest";
+import type { CueOpenRequest } from "../../src/shared/messages.ts";
 import {
   isAgentRunRequest,
   isAgentStateRequest,
@@ -6,6 +7,7 @@ import {
   isClipRequest,
   isConnectionResponse,
   isConnectionStatusRequest,
+  isCueOpenRequest,
   isFetchResponse,
   isPairRequest,
   isPingMessage,
@@ -502,5 +504,22 @@ describe("agent-lane guards", () => {
         }),
       ).toBe(false);
     });
+  });
+});
+
+describe("isCueOpenRequest", () => {
+  test("accepts the envelope the cue sends", () => {
+    expect(isCueOpenRequest({ kind: "cue-open" })).toBe(true);
+  });
+
+  test("rejects other kinds, non-objects and null", () => {
+    expect(isCueOpenRequest({ kind: "resolve", pageUrl: "https://x/" })).toBe(false);
+    expect(isCueOpenRequest("cue-open")).toBe(false);
+    expect(isCueOpenRequest(null)).toBe(false);
+    expect(isCueOpenRequest(undefined)).toBe(false);
+  });
+
+  test("carries no page-supplied payload — there is nothing for a hostile page to forge", () => {
+    expect(Object.keys({ kind: "cue-open" } satisfies CueOpenRequest)).toEqual(["kind"]);
   });
 });

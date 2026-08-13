@@ -68,6 +68,17 @@ export interface ResolveRequest {
   readonly title?: string;
 }
 
+/**
+ * The ambient cue asking for the panel on the tab it is mounted in.
+ *
+ * Carries NO payload on purpose. The cue runs in the page, so anything it sent
+ * would be attacker-controllable on a hostile site; the worker instead uses the
+ * sender's own tab, which the browser supplies and the page cannot forge.
+ */
+export interface CueOpenRequest {
+  readonly kind: "cue-open";
+}
+
 export interface FetchRequest {
   readonly kind: "fetch";
   readonly pageUrl: string;
@@ -128,6 +139,7 @@ export type ExtensionRequest =
   | ClipRequest
   | RelatedRequest
   | ResolveRequest
+  | CueOpenRequest
   | FetchRequest
   | RecogniseRequest
   | AgentRunRequest
@@ -299,6 +311,10 @@ export function isResolveRequest(v: unknown): v is ResolveRequest {
     typeof v["pageUrl"] === "string" &&
     (v["title"] === undefined || typeof v["title"] === "string")
   );
+}
+
+export function isCueOpenRequest(v: unknown): v is CueOpenRequest {
+  return isObject(v) && v["kind"] === "cue-open";
 }
 
 export function isFetchRequest(v: unknown): v is FetchRequest {
