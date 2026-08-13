@@ -176,8 +176,20 @@ function mutateOrigins(transform: (list: ConfiguredOrigin[]) => ConfiguredOrigin
 
 /** Serialise prefs writes for the same reason origin writes are serialised: two
  *  toggles flipped in quick succession both read the pre-change list, and the
- *  second write would silently drop the first one's edit. */
+ *  second write would silently drop the first one's edit. Both the toggle
+ *  handler and the revoke path fall through here — `setAmbientHost` does no
+ *  serialisation of its own, so a second call site bypassing this chain would
+ *  reopen the same lost-update window this chain exists to close. */
 let ambientWrites: Promise<void> = Promise.resolve();
+
+function mutateAmbient(pattern: string, on: boolean): Promise<void> {
+  ambientWrites = ambientWrites
+    .catch(() => undefined)
+    .then(async () => {
+      await setAmbientHost(pattern, on);
+    });
+  return ambientWrites;
+}
 
 /**
  * Storage is the source of truth for the user's own entries; the browser is the
@@ -274,8 +286,9 @@ async function onSurfaceClick(event: Event): Promise<void> {
       // Page access is what the cue runs on, so revoking it turns the cue off
       // rather than leaving a stored "on" that cannot happen. Without this, a
       // later re-grant would silently resurrect a preference the user last saw
-      // being withdrawn.
-      await setAmbientHost(pattern, false);
+      // being withdrawn. Routed through mutateAmbient — same storage key the
+      // toggle handler writes, so it must go through the same chain.
+      await mutateAmbient(pattern, false);
       setSurfaceStatus(sharedHostNote(await surfaceRows(), origin) ?? "");
     } else {
       setSurfaceStatus("Page access could not be revoked.");
@@ -293,13 +306,7 @@ function onAmbientChange(event: Event): Promise<void> {
   if (pattern === "") {
     return Promise.resolve();
   }
-  const on = target.checked;
-  ambientWrites = ambientWrites
-    .catch(() => undefined)
-    .then(async () => {
-      await setAmbientHost(pattern, on);
-    });
-  return ambientWrites;
+  return mutateAmbient(pattern, target.checked);
 }
 
 document.addEventListener("DOMContentLoaded", () => {

@@ -449,6 +449,24 @@ describe("built-in surfaces in the list", () => {
       origins: ["https://*.atlassian.net/*"],
     });
   });
+
+  test("the remove action is inert for a built-in row even if a crafted click reaches it", async () => {
+    // renderSurfaceList never emits a Remove button for a built-in row — this
+    // pins the handler's own defence-in-depth guard against a future change to
+    // that renderer, by reaching the handler directly with a fabricated one.
+    harness = installChromeMock();
+    await bootOptions();
+    const crafted = document.createElement("button");
+    crafted.type = "button";
+    crafted.dataset["action"] = "remove";
+    crafted.dataset["origin"] = "github.com";
+    document.getElementById("surface-list")?.append(crafted);
+
+    crafted.click();
+    await flush();
+
+    expect(harness.storage.get("origins")).toBeUndefined();
+  });
 });
 
 describe("the ambient toggle", () => {
@@ -505,5 +523,41 @@ describe("the ambient toggle", () => {
     toggle.dispatchEvent(new Event("change", { bubbles: true }));
     await flush();
     expect(harness.storage.get("ambient-hosts")).toEqual([]);
+  });
+
+  test("a toggle write issued immediately before a revoke is not lost", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.grantedOrigins.add("https://gitlab.com/*");
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await bootOptions();
+
+    // Delay the storage READ so the revoke's write can be requested before the
+    // toggle's write lands — the interleaving that, without both call sites
+    // sharing the ambientWrites chain, would drop one of the two edits.
+    harness.storageGet.mockImplementation((key: string) => {
+      const snapshot = harness.storage.get(key);
+      return new Promise((r) => setTimeout(() => r({ [key]: snapshot }), 5));
+    });
+
+    const gitlabToggle = [...document.querySelectorAll('[data-action="ambient"]')].find(
+      (el) => (el as HTMLInputElement).dataset["pattern"] === "https://gitlab.com/*",
+    ) as HTMLInputElement;
+    gitlabToggle.checked = true;
+    gitlabToggle.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const revoke = [...document.querySelectorAll('[data-action="revoke"]')].find((el) =>
+      (el as HTMLElement).dataset["origin"]?.includes("github.com"),
+    ) as HTMLButtonElement;
+    revoke.click();
+
+    await vi.waitFor(() => {
+      expect(harness.storage.get("ambient-hosts")).toEqual(["https://gitlab.com/*"]);
+    });
+    // onSurfaceClick's own trailing refreshSurfaces() re-reads storage (through
+    // the same delayed mock) after the assertion above is already satisfied —
+    // drain it here so no timer is left pending when afterEach tears the chrome
+    // mock down, which would otherwise surface as an unhandled rejection.
+    await new Promise((resolve) => setTimeout(resolve, 30));
   });
 });
