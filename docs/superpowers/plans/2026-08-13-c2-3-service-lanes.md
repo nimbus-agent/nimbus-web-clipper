@@ -395,10 +395,12 @@ export interface StoredRun {
   readonly expiresAtMs: number;
 }
 
-// Keyed by `${kind} ${value} ${lane}` — a separator that cannot occur
+// Keyed by `${kind}\u0000${value}\u0000${lane}` — a separator that cannot occur
 // in any of the three parts — so neither an item id that looks like a lane name
-// nor a service id equal to some item id can collide.
-const KEY_SEP = " ";
+// nor a service id equal to some item id can collide. UNCHANGED from the
+// pre-subject store: keep the escape sequence, never a literal control
+// character typed into source.
+const KEY_SEP = "\u0000";
 
 function subjectValue(subject: RunSubject): string {
   return subject.kind === "item" ? subject.id : subject.service;
@@ -659,7 +661,7 @@ The handler change that makes a service lane possible: on a home page, recognise
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `test/unit/handlers.test.ts`, following the file's existing dep-fake style:
+Append to `test/unit/handlers.test.ts`, following the file's existing dep-fake style. Add `PRODUCT_SERVICE_ID` to that file's import from `../../src/shared/types.ts` — the distinctness test below reads it directly:
 
 ```ts
 describe("service lanes on a home page", () => {
@@ -739,6 +741,15 @@ describe("service lanes on a home page", () => {
 
     expect(invokes).toBe(0);
     expect(res.state).toEqual({ kind: "done", brief: "Yesterday: 3 merges." });
+  });
+
+  it("maps every product to a distinct service id", () => {
+    // The one mistake in this map a compiler cannot see: a copy-paste typo
+    // like `github: "gitlab"` typechecks fine and silently asks the wrong
+    // connector. An upstream RENAME is still undetectable here — see the map's
+    // own doc comment — so this asserts distinctness, not correctness.
+    const ids = Object.values(PRODUCT_SERVICE_ID);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("refuses a service lane when the page is not recognised", async () => {
@@ -1358,7 +1369,132 @@ git commit -m "feat(panel): the dashboard panel — three service lanes, no rela
 
 ---
 
-### Task 8: Documentation and roadmap corrections
+### Task 8: Forget cached runs when the pairing changes
+
+`handleUnpair` clears the connection and nothing else, so cached agent answers
+outlive the gateway they came from. Re-pair to a different gateway inside the
+ten-minute TTL and a lane can replay the previous gateway's answer.
+
+This is pre-existing — it is already true of item-scoped runs — but the service
+lanes make it materially easier to hit, which is why it lands here. An item
+subject is `{kind:"item", id:"github:482"}`, at least somewhat specific; a
+service subject is `{kind:"service", service:"github"}`, which is **identical on
+every gateway**. Any two gateways that both index GitHub collide on it.
+
+**Files:**
+- Modify: `src/background/agent-run-store.ts` (add `clearRuns`)
+- Modify: `src/background/handlers.ts:524-529` (`UnpairDeps`, `handleUnpair`)
+- Modify: `src/background/service-worker.ts:563` (the unpair route's deps)
+- Test: `test/unit/agent-run-store.test.ts`, `test/unit/handlers.test.ts`
+
+**Interfaces:**
+- Consumes: `RunSubject` and the store from Task 2.
+- Produces: `export function clearRuns(): Promise<void>` in `agent-run-store.ts`. `UnpairDeps` grows `readonly clearRuns: () => Promise<void>`.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `test/unit/agent-run-store.test.ts`:
+
+```ts
+it("clears every stored run", async () => {
+  await putRun(
+    { subject: { kind: "service", service: "github" }, lane: "catchup", runId: "r1", state: { kind: "done", brief: "B" }, expiresAtMs: NOW + 1000 },
+    NOW,
+  );
+  await clearRuns();
+  expect(await getRun({ kind: "service", service: "github" }, "catchup", NOW)).toBeNull();
+});
+```
+
+In `test/unit/handlers.test.ts`:
+
+```ts
+it("forgets cached agent runs on unpair", async () => {
+  let cleared = 0;
+  const res = await handleUnpair({
+    clearConnection: async () => undefined,
+    clearRuns: async () => {
+      cleared += 1;
+    },
+  });
+  expect(cleared).toBe(1);
+  expect(res).toEqual({ kind: "connection", paired: false });
+});
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `bun run test test/unit/agent-run-store.test.ts -t "clears every stored run"`
+Expected: FAIL — `clearRuns` is not exported.
+
+- [ ] **Step 3: Implement `clearRuns`**
+
+In `src/background/agent-run-store.ts`, beside `putRun` so it joins the same
+single-writer chain — a clear racing a concurrent `putRun` would otherwise be
+overwritten by a snapshot read before it:
+
+```ts
+/**
+ * Drop every cached run. Called on unpair: a cached brief is an answer from ONE
+ * gateway, and the next pairing may be a different one. A service subject makes
+ * this sharp — `{kind:"service", service:"github"}` is identical on every
+ * gateway, so without this a lane could replay another gateway's answer for the
+ * rest of the TTL.
+ */
+export function clearRuns(): Promise<void> {
+  const next = chain.then(async () => {
+    await storageSet(STORE_KEY, {});
+  });
+  chain = next.catch(() => undefined);
+  return next;
+}
+```
+
+- [ ] **Step 4: Call it from unpair**
+
+In `src/background/handlers.ts`, extend `UnpairDeps` and `handleUnpair`:
+
+```ts
+export interface UnpairDeps {
+  readonly clearConnection: () => Promise<void>;
+  /** Cached briefs belong to the gateway that produced them — see clearRuns. */
+  readonly clearRuns: () => Promise<void>;
+}
+
+export async function handleUnpair(deps: UnpairDeps): Promise<ConnectionResponse> {
+  await deps.clearConnection();
+  await deps.clearRuns();
+  return { kind: "connection", paired: false };
+}
+```
+
+In `src/background/service-worker.ts` line 563, pass the new dep and add
+`clearRuns` to the `./agent-run-store.ts` import:
+
+```ts
+    handleUnpair({ clearConnection, clearRuns })
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+Run: `bun run test test/unit/agent-run-store.test.ts && bun run test test/unit/handlers.test.ts`
+Expected: PASS.
+
+- [ ] **Step 6: Full gate**
+
+Run: `bun run typecheck && bun run lint && bun run test`
+Expected: clean, all green.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/background/agent-run-store.ts src/background/handlers.ts src/background/service-worker.ts test/unit/
+git commit -m "fix(background): a cached brief belongs to the gateway that made it"
+```
+
+---
+
+### Task 9: Documentation and roadmap corrections
 
 The slice is not done until the reference docs describe it and the roadmap stops being wrong about upstream.
 
@@ -1373,7 +1509,7 @@ The slice is not done until the reference docs describe it and the roadmap stops
 
 - [ ] **Step 1: Document the service-lane path in `docs/architecture.md`**
 
-In the agent-lanes section, add a subsection covering: the two lane scopes (item vs service); that a service lane skips resolve entirely because `Recognition.product` is the connector id; that it therefore needs only the `agents` scope; the `RunSubject` key and why two instances of one product share an entry; and that `ownership` degrades to a gap brief without `[[filesystem.roots]]`.
+In the agent-lanes section, add a subsection covering: the two lane scopes (item vs service); that a service lane skips resolve entirely because `Recognition.product` is the connector id; that it therefore needs only the `agents` scope; the `RunSubject` key, why two instances of one product share an entry, and why unpair now clears the store (Task 8); and that `ownership` degrades to a gap brief without `[[filesystem.roots]]`.
 
 - [ ] **Step 2: Correct C2.3 in `ROADMAP.md`**
 
@@ -1395,6 +1531,10 @@ Under `## [Unreleased]`:
   Jira and Jenkins — and offers three lanes there: *What happened while I was
   away*, *What got decided* and *Who owns what*. They answer across the whole
   connector, which is what the header says, and they need no indexed item.
+
+### Fixed
+- Unpairing now clears cached agent answers, so a brief can no longer outlive the
+  gateway that produced it.
 ```
 
 - [ ] **Step 4: Verify the docs match the code**
@@ -1423,6 +1563,29 @@ git commit -m "docs: record the service lanes, and correct C2.3's upstream claim
 4. Open the panel on a pull request. Related, *What breaks if it lands* and *Who should review it* are present; none of the three service lanes are.
 5. On the dashboard, confirm **no ambient cue** appears, with the per-host toggle on.
 6. With no `[[filesystem.roots]]` configured, *Who owns what* renders the gateway's gap brief including its `nimbus index add` line — not a blank lane.
+
+## Deferred, with reasons
+
+**Skipping the `related` request on a dashboard.** Task 7 suppresses the related
+*lane* but still lets the request fire — it goes out in parallel with the resolve,
+before any recognition is known. Two fixes were considered and both cost more than
+the waste:
+
+- *Short-circuit `handleRelated` in the service worker.* `RelatedDeps` has no
+  `getOrigins` today (`handlers.ts:112`), so this adds a `chrome.storage` read plus
+  a `recognise()` call to **every** related request — taxing the item-page hot path
+  to save one loopback call on the cold path. Backwards.
+- *Check the URL in the panel before sending.* The panel can import `recognise`,
+  but not the user's configured origins — those live behind the service worker. It
+  would therefore work for the built-in SaaS hosts and silently not work for
+  self-hosted Jenkins, Jira Server and Bitbucket Server, which is exactly where the
+  dashboards matter most. A check that works on half the surfaces is worse than no
+  check.
+
+What is actually spent is one loopback POST to a local gateway whose response is
+discarded: no user-visible latency (it is parallel), no privacy exposure, no
+meaningful rate-limit pressure. Revisit if `RelatedDeps` ever grows `getOrigins`
+for its own reasons — then the short-circuit is free.
 
 ## Known-weak lane
 
