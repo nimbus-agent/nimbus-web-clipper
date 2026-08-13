@@ -78,6 +78,30 @@ function select(id: string): HTMLSelectElement {
 }
 
 /**
+ * Click the surface-row control for exactly one origin.
+ *
+ * Matches `data-origin` by EQUALITY, never by substring. A substring match on a
+ * host is the pattern CodeQL flags as `js/incomplete-url-substring-sanitization`
+ * — "github.com" is a substring of "evil-github.com.example" too — and although
+ * these are test selectors rather than a security check, the exact match is also
+ * the more precise selector: built-in rows carry their label verbatim
+ * ("github.com", "*.atlassian.net") and stored rows carry their full origin.
+ *
+ * Throws on a miss rather than no-opping. `find(...)?.click()` silently does
+ * nothing when a selector breaks, which turns "the row moved" into a confusing
+ * assertion failure somewhere else.
+ */
+function clickFor(action: string, origin: string): void {
+  const match = [...document.querySelectorAll(`[data-action="${action}"]`)].find(
+    (node) => node instanceof HTMLElement && node.dataset["origin"] === origin,
+  );
+  if (!(match instanceof HTMLElement)) {
+    throw new Error(`no [data-action="${action}"] control for origin ${origin}`);
+  }
+  match.click();
+}
+
+/**
  * Seeds the fixture DOM and fires DOMContentLoaded — assumes the chrome mock
  * (and any harness state a test wants pre-seeded, e.g. `harness.grantedOrigins`
  * or `harness.storage`) is already installed by the caller.
@@ -427,10 +451,7 @@ describe("built-in surfaces in the list", () => {
   test("granting a built-in requests exactly its host pattern", async () => {
     harness = installChromeMock();
     await bootOptions();
-    const grant = [...document.querySelectorAll('[data-action="grant"]')].find((el) =>
-      (el as HTMLElement).dataset["origin"]?.includes("github.com"),
-    ) as HTMLButtonElement;
-    grant.click();
+    clickFor("grant", "github.com");
     await flush();
     expect(harness.permissionsRequest).toHaveBeenCalledWith({
       origins: ["https://github.com/*"],
@@ -440,10 +461,7 @@ describe("built-in surfaces in the list", () => {
   test("the Jira Cloud row asks for the tenant wildcard", async () => {
     harness = installChromeMock();
     await bootOptions();
-    const grant = [...document.querySelectorAll('[data-action="grant"]')].find((el) =>
-      (el as HTMLElement).dataset["origin"]?.includes("atlassian.net"),
-    ) as HTMLButtonElement;
-    grant.click();
+    clickFor("grant", "*.atlassian.net");
     await flush();
     expect(harness.permissionsRequest).toHaveBeenCalledWith({
       origins: ["https://*.atlassian.net/*"],
@@ -488,10 +506,7 @@ describe("the ambient toggle", () => {
     harness.grantedOrigins.add("https://github.com/*");
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
     await bootOptions();
-    const revoke = [...document.querySelectorAll('[data-action="revoke"]')].find((el) =>
-      (el as HTMLElement).dataset["origin"]?.includes("github.com"),
-    ) as HTMLButtonElement;
-    revoke.click();
+    clickFor("revoke", "github.com");
     await flush();
     expect(harness.storage.get("ambient-hosts")).toEqual([]);
   });
@@ -502,10 +517,7 @@ describe("the ambient toggle", () => {
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
     harness.permissionsRemove.mockResolvedValueOnce(false);
     await bootOptions();
-    const revoke = [...document.querySelectorAll('[data-action="revoke"]')].find((el) =>
-      (el as HTMLElement).dataset["origin"]?.includes("github.com"),
-    ) as HTMLButtonElement;
-    revoke.click();
+    clickFor("revoke", "github.com");
     await flush();
     expect(harness.storage.get("ambient-hosts")).toEqual(["https://github.com/*"]);
   });
@@ -554,10 +566,7 @@ describe("the ambient toggle", () => {
       gitlabToggle.checked = true;
       gitlabToggle.dispatchEvent(new Event("change", { bubbles: true }));
 
-      const revoke = [...document.querySelectorAll('[data-action="revoke"]')].find((el) =>
-        (el as HTMLElement).dataset["origin"]?.includes("github.com"),
-      ) as HTMLButtonElement;
-      revoke.click();
+      clickFor("revoke", "github.com");
 
       // Advances the virtual clock (and drains the microtasks interleaved with
       // it) well past every pending 5ms storageGet timer — however many hops
