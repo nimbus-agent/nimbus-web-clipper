@@ -24,22 +24,23 @@ import type {
 import { enqueue, type QueuedClip, removeFromQueue, toView } from "../shared/queue.ts";
 import { recognise } from "../shared/recognise.ts";
 import { buildRelatedQuery, type RelatedQuery } from "../shared/related.ts";
-import type {
-  AgentError,
-  AgentLane,
-  ClipPostResult,
-  ConfiguredOrigin,
-  Connection,
-  FetchError,
-  FetchOutcome,
-  LaneState,
-  PairError,
-  RelatedError,
-  RelatedHit,
-  ResolvedItem,
-  ResolveError,
-  ResolveOutcome,
-  ScopeGap,
+import {
+  type AgentError,
+  type AgentLane,
+  type ClipPostResult,
+  type ConfiguredOrigin,
+  type Connection,
+  type FetchError,
+  type FetchOutcome,
+  type LaneState,
+  type PairError,
+  PRODUCT_SERVICE_ID,
+  type RelatedError,
+  type RelatedHit,
+  type ResolvedItem,
+  type ResolveError,
+  type ResolveOutcome,
+  type ScopeGap,
 } from "../shared/types.ts";
 import type { RunSubject, StoredRun } from "./agent-run-store.ts";
 
@@ -328,15 +329,31 @@ async function invokeWithRetry(
   return second.reason === "busy" ? { ok: false, reason: "server_error" } : second;
 }
 
+/**
+ * What a lane needs before it can invoke. Two success arms, because a lane is
+ * about one of two things: an indexed ITEM (C2.1) or a whole SERVICE (C2.3).
+ * The service arm exists precisely so the home path can skip the resolve call —
+ * there is no item to resolve, and a dashboard URL sent to `resolve` would come
+ * back `unresolvable`, reporting a miss for a page that was never meant to hit.
+ */
 type ResolveForAgent =
   | {
       readonly ok: true;
+      readonly scope: "item";
       readonly origin: string;
       readonly token: string;
       readonly label: string;
       /** The URL sent to `resolve` — the same one `impact` is given. */
       readonly resolveUrl: string;
       readonly item: ResolvedItem;
+    }
+  | {
+      readonly ok: true;
+      readonly scope: "service";
+      readonly origin: string;
+      readonly token: string;
+      readonly label: string;
+      readonly service: string;
     }
   | { readonly ok: false; readonly reason: AgentError; readonly scopeGap?: ScopeGap };
 
@@ -364,6 +381,20 @@ async function resolveForAgent(
   if (conn === null) {
     return { ok: false, reason: "not_paired" };
   }
+  if (recognition.kind === "home") {
+    // No resolve call: a dashboard has no indexed item, and `Recognition.product`
+    // IS the gateway's connector id, so the only parameter these lanes need is
+    // already in hand. This is also why a service lane works on a pairing that
+    // never received the `resolve` scope — it needs only `agents`.
+    return {
+      ok: true,
+      scope: "service",
+      origin: conn.origin,
+      token: conn.token,
+      label: conn.label,
+      service: PRODUCT_SERVICE_ID[recognition.product],
+    };
+  }
   const resolved = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!resolved.ok) {
     return resolved.scopeGap === undefined
@@ -381,6 +412,7 @@ async function resolveForAgent(
   }
   return {
     ok: true,
+    scope: "item",
     origin: conn.origin,
     token: conn.token,
     label: conn.label,
@@ -389,12 +421,29 @@ async function resolveForAgent(
   };
 }
 
-/** The gateway validates this body verbatim, so each agent gets exactly what it
- *  accepts: `impact` takes the page's PR URL, `expert` free text to match
- *  against indexed titles (the repo name would parse too, but answers a
- *  broader question — the same people for every PR in the repo). */
-function agentParams(lane: AgentLane, resolveUrl: string, item: ResolvedItem): unknown {
-  return lane === "impact" ? { fileOrPrUrl: resolveUrl } : { topicOrFile: item.title };
+/**
+ * The gateway validates this body verbatim, so each agent gets exactly what it
+ * accepts: `impact` takes the page's PR URL, `expert` free text to match against
+ * indexed titles, and the three service lanes take the connector id alone.
+ *
+ * No `sinceMs`, `minConfidence` or `limit` is sent. The gateway owns those
+ * defaults and re-reads its config per call, so a client-side knob would only
+ * be a second place for the same number to disagree.
+ */
+function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }): unknown {
+  if (resolved.scope === "service") {
+    return { service: resolved.service };
+  }
+  return lane === "impact"
+    ? { fileOrPrUrl: resolved.resolveUrl }
+    : { topicOrFile: resolved.item.title };
+}
+
+/** The cache key for a lane: the item it is about, or the service it is about. */
+function subjectFor(resolved: ResolveForAgent & { ok: true }): RunSubject {
+  return resolved.scope === "service"
+    ? { kind: "service", service: resolved.service }
+    : { kind: "item", id: resolved.item.id };
 }
 
 /** Build the response for a `failed` lane, attaching the scope gap only when
@@ -424,33 +473,22 @@ export async function handleAgentRun(
   if (!resolved.ok) {
     return failedResponse(req.lane, resolved.reason, resolved.scopeGap);
   }
-  const { origin, token, label, resolveUrl, item } = resolved;
 
-  const cached = await deps.getRun({ kind: "item", id: item.id }, req.lane);
-  // Only `running` and `done` short-circuit. A `failed` state is not an answer, and
-  // `agent-run` only arrives from an explicit user action — expanding a lane or
-  // pressing Re-run — so re-asking is what the user just asked for. It also self-heals:
-  // the moment they grant the missing scope, the next expand succeeds instead of
-  // replaying a stale 403 for the rest of the TTL.
+  const subject = subjectFor(resolved);
+  const cached = await deps.getRun(subject, req.lane);
   if (cached !== null && (cached.state.kind === "running" || cached.state.kind === "done")) {
     return { kind: "agent-state", lane: req.lane, state: cached.state };
   }
 
-  const params = agentParams(req.lane, resolveUrl, item);
-  const invoked = await invokeWithRetry(deps, origin, token, req.lane, params);
+  const params = agentParams(req.lane, resolved);
+  const invoked = await invokeWithRetry(deps, resolved.origin, resolved.token, req.lane, params);
   if (!invoked.ok) {
-    // Only `handlers.ts` holds a `Connection`, so the device label is attached
-    // here — exactly as `handleResolve` and `handleFetch` already do.
-    const scopeGap = invoked.scopeGap === undefined ? undefined : { label, ...invoked.scopeGap };
+    const scopeGap =
+      invoked.scopeGap === undefined ? undefined : { label: resolved.label, ...invoked.scopeGap };
     return failedResponse(req.lane, invoked.reason, scopeGap);
   }
   const state = { kind: "running" as const, runId: invoked.runId };
-  await deps.putRun({
-    subject: { kind: "item", id: item.id },
-    lane: req.lane,
-    runId: invoked.runId,
-    state,
-  });
+  await deps.putRun({ subject, lane: req.lane, runId: invoked.runId, state });
   return { kind: "agent-state", lane: req.lane, state };
 }
 
@@ -464,7 +502,7 @@ export async function handleAgentState(
   if (!resolved.ok) {
     return failedResponse(req.lane, resolved.reason, resolved.scopeGap);
   }
-  const cached = await deps.getRun({ kind: "item", id: resolved.item.id }, req.lane);
+  const cached = await deps.getRun(subjectFor(resolved), req.lane);
   return { kind: "agent-state", lane: req.lane, state: cached?.state ?? { kind: "collapsed" } };
 }
 

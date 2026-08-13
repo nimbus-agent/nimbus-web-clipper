@@ -15,7 +15,7 @@ import {
   handleUnpair,
 } from "../../src/background/handlers.ts";
 import type { QueuedClip } from "../../src/shared/queue.ts";
-import type { Connection } from "../../src/shared/types.ts";
+import { type Connection, PRODUCT_SERVICE_ID } from "../../src/shared/types.ts";
 
 const conn: Connection = {
   origin: "http://127.0.0.1:8765",
@@ -1165,5 +1165,133 @@ describe("handleAgentState", () => {
       reason: "insufficient_scope",
       scopeGap: { label: "chrome", required: "resolve", granted: [] },
     });
+  });
+});
+
+describe("service lanes on a home page", () => {
+  it("invokes with the service and never calls resolve", async () => {
+    let resolveCalls = 0;
+    const invoked: Array<{ agent: string; params: unknown }> = [];
+    const deps = {
+      getOrigins: async () => [
+        { origin: "https://jenkins.corp.example", product: "jenkins" as const },
+      ],
+      getConnection: async () => ({ origin: "http://127.0.0.1:7777", token: "t", label: "dev" }),
+      resolveItem: async () => {
+        resolveCalls += 1;
+        throw new Error("resolve must not be called on a home page");
+      },
+      invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+        invoked.push({ agent, params });
+        return { ok: true as const, runId: "run_1" };
+      },
+      getRun: async () => null,
+      putRun: async () => undefined,
+    };
+
+    const res = await handleAgentRun(deps, {
+      kind: "agent-run",
+      lane: "catchup",
+      pageUrl: "https://jenkins.corp.example/",
+    });
+
+    expect(resolveCalls).toBe(0);
+    expect(invoked).toEqual([{ agent: "catchup", params: { service: "jenkins" } }]);
+    expect(res.state).toEqual({ kind: "running", runId: "run_1" });
+  });
+
+  it("caches a service run under the service, not a page", async () => {
+    const puts: unknown[] = [];
+    const deps = {
+      getOrigins: async () => [],
+      getConnection: async () => ({ origin: "http://127.0.0.1:7777", token: "t", label: "dev" }),
+      resolveItem: async () => {
+        throw new Error("unused");
+      },
+      invokeAgent: async () => ({ ok: true as const, runId: "run_2" }),
+      getRun: async () => null,
+      putRun: async (r: unknown) => {
+        puts.push(r);
+      },
+    };
+
+    await handleAgentRun(deps, {
+      kind: "agent-run",
+      lane: "decisions",
+      pageUrl: "https://github.com/",
+    });
+
+    expect(puts).toEqual([
+      {
+        subject: { kind: "service", service: "github" },
+        lane: "decisions",
+        runId: "run_2",
+        state: { kind: "running", runId: "run_2" },
+      },
+    ]);
+  });
+
+  it("replays a cached service answer without a second invoke", async () => {
+    let invokes = 0;
+    const deps = {
+      getOrigins: async () => [],
+      getConnection: async () => ({ origin: "http://127.0.0.1:7777", token: "t", label: "dev" }),
+      resolveItem: async () => {
+        throw new Error("unused");
+      },
+      invokeAgent: async () => {
+        invokes += 1;
+        return { ok: true as const, runId: "run_3" };
+      },
+      getRun: async () => ({
+        subject: { kind: "service" as const, service: "github" },
+        lane: "catchup" as const,
+        runId: "run_old",
+        state: { kind: "done" as const, brief: "Yesterday: 3 merges." },
+        expiresAtMs: Number.MAX_SAFE_INTEGER,
+      }),
+      putRun: async () => undefined,
+    };
+
+    const res = await handleAgentRun(deps, {
+      kind: "agent-run",
+      lane: "catchup",
+      pageUrl: "https://github.com/",
+    });
+
+    expect(invokes).toBe(0);
+    expect(res.state).toEqual({ kind: "done", brief: "Yesterday: 3 merges." });
+  });
+
+  it("maps every product to a distinct service id", () => {
+    // The one mistake in this map a compiler cannot see: a copy-paste typo
+    // like `github: "gitlab"` typechecks fine and silently asks the wrong
+    // connector. An upstream RENAME is still undetectable here — see the map's
+    // own doc comment — so this asserts distinctness, not correctness.
+    const ids = Object.values(PRODUCT_SERVICE_ID);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("refuses a service lane when the page is not recognised", async () => {
+    const deps = {
+      getOrigins: async () => [],
+      getConnection: async () => ({ origin: "http://127.0.0.1:7777", token: "t", label: "dev" }),
+      resolveItem: async () => {
+        throw new Error("unused");
+      },
+      invokeAgent: async () => {
+        throw new Error("must not invoke");
+      },
+      getRun: async () => null,
+      putRun: async () => undefined,
+    };
+
+    const res = await handleAgentRun(deps, {
+      kind: "agent-run",
+      lane: "catchup",
+      pageUrl: "https://example.com/whatever",
+    });
+
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
   });
 });
