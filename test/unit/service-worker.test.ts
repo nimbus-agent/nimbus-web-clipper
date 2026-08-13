@@ -5,7 +5,8 @@
 // Importing the module registers its listeners against `globalThis.chrome`, so
 // each test installs a FRESH chrome mock and resets the module cache *before*
 // importing, then drives the freshly-registered listeners via the harness.
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { addNavigationListener } from "../../src/browser/tabs.ts";
 import type { QueuedClip } from "../../src/shared/queue.ts";
 import type { CaptureResult, Connection } from "../../src/shared/types.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
@@ -1464,6 +1465,159 @@ describe("agent run polling — survives eviction", () => {
     expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
       kind: "failed",
       reason: "unreachable",
+    });
+  });
+});
+
+describe("ambient surfacing", () => {
+  const PR_URL = "https://github.com/acme/web/pull/482";
+  const OTHER_PR_URL = "https://github.com/acme/web/pull/517";
+
+  /** A `found` resolve answer for the given page, same shape as the existing
+   *  "resolve: a recognised page GETs…" test above. */
+  function resolveFoundResponse(pageUrl: string): Response {
+    return jsonRes(200, {
+      found: true,
+      matchKind: "exact",
+      item: {
+        id: pageUrl,
+        service: "github",
+        type: "pr",
+        title: "Add thing",
+        url: pageUrl,
+        modified_at: 5,
+      },
+    });
+  }
+
+  /** Load the worker module fresh, registering its listeners against the
+   *  already-installed harness. Unlike the file's own `load()`, this does not
+   *  flush via a real setTimeout: fake timers are already active for this whole
+   *  describe block (see beforeEach), and every listener this task cares about
+   *  is registered synchronously at import time, before the fire-and-forget
+   *  startup sequence even begins. */
+  async function loadWorker(): Promise<void> {
+    vi.resetModules();
+    await import("../../src/background/service-worker.ts");
+  }
+
+  /** Advance past the 600ms debounce and let the resulting resolve settle. */
+  async function settleAmbient(): Promise<void> {
+    await vi.advanceTimersByTimeAsync(700);
+  }
+
+  beforeEach(() => {
+    harness = installChromeMock();
+    harness.storage.set(CONNECTION_KEY, conn);
+    // Keep tabsGet truthful across navigations: decideAmbient re-reads the tab's
+    // CURRENT url via tabUrl only after its resolve settles, and the overtaken-run
+    // test needs that read to reflect whichever navigation happened most recently,
+    // not a fixed fixture value.
+    addNavigationListener((nav) => {
+      harness.tabsGet.mockResolvedValue({ url: nav.url });
+    });
+    // The gateway stub for /v1/items/resolve: a `found` outcome for either PR,
+    // gated through takeResolveGate so holdNextResolve can hold one call open.
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const gate = harness.takeResolveGate();
+      if (gate !== undefined) {
+        await gate;
+      }
+      const u = String(url);
+      if (u.includes(encodeURIComponent(PR_URL))) {
+        return resolveFoundResponse(PR_URL);
+      }
+      if (u.includes(encodeURIComponent(OTHER_PR_URL))) {
+        return resolveFoundResponse(OTHER_PR_URL);
+      }
+      return jsonRes(404, {});
+    });
+    // Fake timers from the START of the test — the debounce's setTimeout is
+    // scheduled synchronously inside emitTabUpdated, so the clock it runs on
+    // must already be the fake one by the time that call happens.
+    vi.useFakeTimers();
+  });
+
+  test("a navigation to a resolved page on an enabled host mounts the cue", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    const files = harness.executeScript.mock.calls.map((c) => (c[0] as { files?: string[] }).files);
+    expect(files).toContainEqual(["cue.js"]);
+  });
+
+  test("a navigation on a host that is not switched on injects nothing", async () => {
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    expect(harness.executeScript).not.toHaveBeenCalled();
+  });
+
+  test("the same item twice in one tab injects the cue once", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    harness.emitTabUpdated(7, { url: `${PR_URL}/files` }, { active: true });
+    await settleAmbient();
+    const cueInjections = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    expect(cueInjections).toHaveLength(1);
+  });
+
+  test("closing the tab forgets it, so returning to the same PR cues again", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    harness.emitTabRemoved(7);
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    const cueInjections = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    expect(cueInjections).toHaveLength(2);
+  });
+
+  test("a run overtaken by a newer navigation in the same tab drops its result", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await loadWorker();
+    // Hold the first resolve open past the second navigation, so the two runs
+    // genuinely overlap rather than merely being scheduled apart.
+    let release: (() => void) | undefined;
+    harness.holdNextResolve(new Promise<void>((r) => (release = r)));
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    harness.emitTabUpdated(7, { url: OTHER_PR_URL }, { active: true });
+    await settleAmbient();
+    release?.();
+    await settleAmbient();
+    const cued = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    // Exactly one cue, and it is the newer page's.
+    expect(cued).toHaveLength(1);
+  });
+
+  test("an injection failure on a restricted page is swallowed, not thrown", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.executeScript.mockRejectedValue(new Error("Cannot access contents of the page"));
+    await loadWorker();
+    expect(() => {
+      harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    }).not.toThrow();
+    await settleAmbient();
+  });
+
+  test("cue-open injects the panel into the sender's own tab", async () => {
+    await loadWorker();
+    await harness.emitMessageFromTab({ kind: "cue-open" }, 7);
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 7 },
+      files: ["panel.js"],
     });
   });
 });

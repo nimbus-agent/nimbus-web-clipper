@@ -1,4 +1,4 @@
-import type { CaptureResult, ToastState } from "../shared/types.ts";
+import type { CaptureResult, CueState, ToastState } from "../shared/types.ts";
 
 function isCaptureResult(v: unknown): v is CaptureResult {
   if (typeof v !== "object" || v === null) {
@@ -50,6 +50,17 @@ export async function showToast(tabId: number, state: ToastState): Promise<void>
     target: { tabId },
     func: (s: ToastState) =>
       (globalThis as unknown as { __nimbusToast: (x: ToastState) => void }).__nimbusToast(s),
+    args: [state],
+  });
+}
+
+/** Inject cue.js then call its global with the state (two-step, like showToast). */
+export async function showCue(tabId: number, state: CueState): Promise<void> {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["cue.js"] });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (s: CueState) =>
+      (globalThis as unknown as { __nimbusCue: (x: CueState) => void }).__nimbusCue(s),
     args: [state],
   });
 }

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { setBadgeCount } from "../../src/browser/action.ts";
 import { clearAlarm, ensureAlarm, rearmAlarm } from "../../src/browser/alarms.ts";
-import { injectPanel, runCapture } from "../../src/browser/scripting.ts";
+import { injectPanel, runCapture, showCue } from "../../src/browser/scripting.ts";
 import { storageGet, storageRemove, storageSet } from "../../src/browser/storage.ts";
 import {
   activeTab,
@@ -58,6 +58,19 @@ describe("injectPanel", () => {
     const { executeCalls } = installChromeStub();
     await injectPanel(7);
     expect(executeCalls).toEqual([{ target: { tabId: 7 }, files: ["panel.js"] }]);
+  });
+});
+
+describe("showCue", () => {
+  test("showCue injects cue.js then calls its global with the state", async () => {
+    harness = installChromeMock();
+    await showCue(7, { label: "GitHub PR", ref: "acme/web #482" });
+    expect(harness.executeScript).toHaveBeenNthCalledWith(1, {
+      target: { tabId: 7 },
+      files: ["cue.js"],
+    });
+    const second = harness.executeScript.mock.calls[1]?.[0] as { args?: unknown[] };
+    expect(second.args).toEqual([{ label: "GitHub PR", ref: "acme/web #482" }]);
   });
 });
 

@@ -11,13 +11,20 @@ import {
   addInstalledListener,
   addMessageListener,
 } from "../browser/runtime.ts";
-import { injectPanel, runCapture, showToast } from "../browser/scripting.ts";
-import { activeTab } from "../browser/tabs.ts";
+import { injectPanel, runCapture, showCue, showToast } from "../browser/scripting.ts";
+import {
+  activeTab,
+  addNavigationListener,
+  addTabClosedListener,
+  type TabNavigation,
+  tabUrl,
+} from "../browser/tabs.ts";
 import {
   isAgentRunRequest,
   isAgentStateRequest,
   isClipRequest,
   isConnectionStatusRequest,
+  isCueOpenRequest,
   isFetchRequest,
   isPairRequest,
   isQueueListRequest,
@@ -28,7 +35,7 @@ import {
   isResolveRequest,
   isUnpairRequest,
 } from "../shared/messages.ts";
-import type { AgentError, AgentLane, LaneState } from "../shared/types.ts";
+import type { AgentError, AgentLane, LaneState, Recognition } from "../shared/types.ts";
 import {
   AGENT_RUN_CACHE_TTL_MS,
   type StoredRun,
@@ -36,6 +43,8 @@ import {
   listRunning as storeListRunning,
   putRun as storePutRun,
 } from "./agent-run-store.ts";
+import { type AmbientDeps, decideAmbient } from "./ambient.ts";
+import { getAmbientHosts } from "./ambient-prefs.ts";
 import { getQueue, updateQueue } from "./clip-queue-store.ts";
 import { clearConnection, getConnection, setConnection } from "./connection-store.ts";
 import { showFeedback } from "./feedback.ts";
@@ -395,7 +404,7 @@ addMenuClickListener((menuItemId, tabId) => {
   );
 });
 
-addMessageListener((message, respond) => {
+addMessageListener((message, respond, sender) => {
   if (isPairRequest(message)) {
     handlePair({ confirmPair, setConnection, nowMs: () => Date.now() }, message)
       .then(respond)
@@ -535,6 +544,17 @@ addMessageListener((message, respond) => {
       });
     return true;
   }
+  if (isCueOpenRequest(message)) {
+    // The tab comes from the BROWSER's sender, never from the message: the cue
+    // runs in the page, so a payload-supplied tab id would be forgeable on a
+    // hostile site. No response — the cue does not wait, and the panel appearing
+    // is the answer.
+    const tabId = sender.tabId;
+    if (tabId !== undefined) {
+      injectPanel(tabId).catch(() => undefined);
+    }
+    return false;
+  }
   return false;
 });
 
@@ -553,6 +573,89 @@ addCommandListener((command) => {
   }
   if (command === "clip-selection") {
     quickClip(quickClipDeps, "selection").catch(() => undefined);
+  }
+});
+
+/**
+ * The item last cued per tab — the dedupe memory decision 4 asks for: quiet for
+ * this item, in this tab, until you navigate to a different one.
+ *
+ * Deliberately NOT persisted. A service-worker eviction re-cues you once, which
+ * is a better failure than a suppression that outlives the reason for it.
+ */
+const lastCuedByTab = new Map<number, Recognition>();
+const ambientTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+/**
+ * One in-flight ambient run per tab, as the design spec states — enforced by
+ * generation, not by cancellation.
+ *
+ * The debounce coalesces bursts, but it cannot help once a run has STARTED: a
+ * navigation 700ms after another leaves two runs overlapping, and the older one
+ * can still land last. Bumping a counter per navigation and checking it after
+ * the await means the stale run drops its result instead of racing the fresh one
+ * to `showCue`.
+ *
+ * This is deliberately NOT an AbortController. See the spec's "Deferred, with
+ * reasons": caller-side cancellation means threading a signal through
+ * `resolveItem` and `handleResolve` — a seam the panel shares — to save a
+ * request to 127.0.0.1 whose work the gateway has already begun. Correctness is
+ * what matters here, and this is what buys it.
+ */
+const ambientGeneration = new Map<number, number>();
+
+/** SPA URL rewrites arrive in bursts; one navigation should cost one resolve. */
+const AMBIENT_DEBOUNCE_MS = 600;
+
+const ambientDeps: AmbientDeps = {
+  enabledHosts: getAmbientHosts,
+  getOrigins,
+  lastCued: (tabId) => lastCuedByTab.get(tabId),
+  resolve: (pageUrl) =>
+    handleResolve({ getConnection, getOrigins, resolveItem }, { kind: "resolve", pageUrl }),
+  currentUrl: tabUrl,
+};
+
+async function runAmbient(nav: TabNavigation, generation: number): Promise<void> {
+  const decision = await decideAmbient(ambientDeps, nav);
+  // A newer navigation in this tab supersedes this one, whatever it concluded.
+  if (ambientGeneration.get(nav.tabId) !== generation) {
+    return;
+  }
+  if (decision.kind !== "show") {
+    return;
+  }
+  // Inject FIRST, remember second: an attempt abandoned by a restricted page
+  // must not suppress the cue the next time the user lands on this item.
+  await showCue(nav.tabId, decision.cue);
+  lastCuedByTab.set(nav.tabId, decision.recognition);
+}
+
+addNavigationListener((nav) => {
+  const generation = (ambientGeneration.get(nav.tabId) ?? 0) + 1;
+  ambientGeneration.set(nav.tabId, generation);
+  const pending = ambientTimers.get(nav.tabId);
+  if (pending !== undefined) {
+    clearTimeout(pending);
+  }
+  ambientTimers.set(
+    nav.tabId,
+    setTimeout(() => {
+      ambientTimers.delete(nav.tabId);
+      // Fails closed like every other listener here: the user-visible result is
+      // a cue or nothing, and a rejection has nowhere to be reported.
+      runAmbient(nav, generation).catch(() => undefined);
+    }, AMBIENT_DEBOUNCE_MS),
+  );
+});
+
+addTabClosedListener((tabId) => {
+  lastCuedByTab.delete(tabId);
+  ambientGeneration.delete(tabId);
+  const pending = ambientTimers.get(tabId);
+  if (pending !== undefined) {
+    clearTimeout(pending);
+    ambientTimers.delete(tabId);
   }
 });
 
