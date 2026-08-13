@@ -2087,3 +2087,63 @@ describe("following a client-side navigation", () => {
     ).toBe("Fetch this from GitHub");
   });
 });
+
+describe("the dashboard panel", () => {
+  const HOME_RESOLVE = {
+    kind: "resolve",
+    ok: true,
+    recognition: {
+      ok: true,
+      product: "github",
+      kind: "home",
+      label: "GitHub dashboard",
+      ref: "",
+      resolveUrl: "https://github.com/",
+    },
+    outcome: { kind: "not-indexed", fetchable: false },
+  };
+
+  const PR_RESOLVE = {
+    kind: "resolve",
+    ok: true,
+    recognition: {
+      ok: true,
+      product: "github",
+      kind: "pr",
+      label: "GitHub PR",
+      ref: "acme/web #482",
+      resolveUrl: "https://github.com/acme/web/pull/482",
+    },
+    outcome: {
+      kind: "found",
+      matchKind: "exact",
+      item: {
+        id: "github:482",
+        service: "github",
+        type: "pr",
+        title: "Add the thing",
+        url: "https://github.com/acme/web/pull/482",
+        modifiedAt: 1_800_000_000_000,
+      },
+    },
+  };
+
+  const laneIds = (root: ShadowRoot): (string | null)[] =>
+    [...root.querySelectorAll("details[data-lane]")].map((el) => el.getAttribute("data-lane"));
+
+  it("renders the service header and the three service lanes", async () => {
+    const root = await mountPanelWithResolve(HOME_RESOLVE);
+    expect(headerText()).toContain("GitHub dashboard");
+    expect(laneIds(root)).toEqual(["catchup", "decisions", "ownership"]);
+  });
+
+  it("shows no related lane on a dashboard", async () => {
+    const root = await mountPanelWithResolve(HOME_RESOLVE);
+    expect(root.querySelector('details[data-lane="related"]')).toBeNull();
+  });
+
+  it("still shows related and the item lanes on a pull request", async () => {
+    const root = await mountPanelWithResolve(PR_RESOLVE);
+    expect(laneIds(root)).toEqual(["related", "impact", "expert"]);
+  });
+});

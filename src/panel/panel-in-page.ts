@@ -296,6 +296,12 @@ function headerFrom(res: unknown, nowMs: number, fetchSent: boolean): HeaderStat
   if (surface === null) {
     return { kind: "unrecognised" };
   }
+  // Before any outcome is read. A home page carries an inert outcome
+  // (handlers.ts fills one in only because the response type demands it), so
+  // reading it here would render a dashboard as a miss.
+  if (res.recognition.ok && res.recognition.kind === "home") {
+    return { kind: "service", surface, product: res.recognition.product };
+  }
   const outcome = res.outcome;
   if (outcome.kind === "found") {
     return { kind: "resolved", surface, item: outcome.item, matchKind: outcome.matchKind, nowMs };
@@ -918,25 +924,29 @@ function createPanel(body: HTMLElement): {
     // acme/web #482"), not the typed kind.
     const surfaceKind = pinnedRecognition?.ok === true ? pinnedRecognition.kind : null;
     const agentLanes: Lane[] =
-      shown.kind === "resolved" && surfaceKind !== null
+      (shown.kind === "resolved" || shown.kind === "service") && surfaceKind !== null
         ? AGENT_LANES.filter((lane) => LANE_SURFACES[lane].includes(surfaceKind)).map((lane) => ({
             id: lane,
             title: LANE_TITLES[lane],
             expanded: laneOpen[lane],
             render: (doc: Document) =>
-              // Every rendered lane gets a REAL Re-run handler — never omitted.
-              // `renderLaneBody`'s third argument is optional so it can be unit
-              // tested without one, but a lane rendered here without it would
-              // ship a Re-run button that silently does nothing.
               renderLaneBody(doc, laneState[lane], () => {
                 sendAgentRun(lane).catch(() => undefined);
               }),
           }))
         : [];
-    const lanes: Lane[] = [
-      { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
-      ...agentLanes,
-    ];
+    // No related lane on a dashboard: `/v1/clips/related` keyed on a dashboard's
+    // title and URL returns noise dressed as recall. The related REQUEST is still
+    // sent — it is fired in parallel with the resolve, before the recognition is
+    // known, and serialising the two would slow every item page to save one
+    // loopback call on a dashboard. Its answer is simply not rendered.
+    const lanes: Lane[] =
+      surfaceKind === "home"
+        ? agentLanes
+        : [
+            { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
+            ...agentLanes,
+          ];
     const navAwayState = navAway
       ? {
           pinnedRef: pinnedRecognition?.ok === true ? pinnedRecognition.ref : null,
