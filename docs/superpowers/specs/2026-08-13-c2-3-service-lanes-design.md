@@ -67,10 +67,23 @@ constants.
 Today it is an identity map, and writing it out anyway is the entire point. The
 agreement between this client's `Product` union and the gateway's connector ids is
 **convention between two repositories, not contract**. A cast, or a bare
-`product as string`, would encode that agreement invisibly and rot silently the
-day upstream renames a connector. A named map is greppable from both sides and
-fails as a type error rather than as a lane that quietly asks about a service that
-no longer exists.
+`product as string`, would encode that agreement invisibly.
+
+**What the map does and does not buy.** It makes the coupling greppable from both
+sides and gives it one place to change. It does **not** make an upstream rename a
+compile error: the type only checks that every `Product` has an entry, so if
+upstream renamed `"jenkins"` to `"jenkins-ci"`, this map would keep typechecking
+green while every Jenkins lane quietly answered about a service that no longer
+exists. The protection is discoverability, not enforcement — an earlier draft of
+this spec claimed the latter and was wrong.
+
+Validating the map against the gateway was considered. `GET /v1/connectors` exists
+and is public, returning `connector_id` rows — but it reads the `sync_state` table
+(`packages/gateway/src/connectors/health.ts:265`), so it lists only connectors that
+have actually synced. An unconfigured Jenkins is absent from it in exactly the same
+way a renamed one would be, so it cannot tell the two apart. Warning a user that
+their map is broken when they have simply not connected Jenkins yet is worse than
+staying quiet. Deferred, with the endpoint named here for whoever revisits it.
 
 Where a resolved item is in hand, `item.service` still wins — it is gateway-sourced
 truth, and the map is only for the case where there is no item to ask.
@@ -96,6 +109,17 @@ A dashboard has no indexed item, and **that is correct rather than a failure**. 
 must not borrow copy from `not-indexed` or `unresolvable`, which describe a page
 that should have resolved and didn't. Offering the C3.1 fetch button here would be
 worse still: it would propose fetching a dashboard into the index as an item.
+
+**The header states the scope, and does not name the host.** Stripped of the item
+link, the freshness line and the fetch button, the header would otherwise be a bare
+product name. It carries a scope line instead — "across all indexed Jenkins builds"
+— which fills it with the one fact the user needs to read the lanes correctly.
+
+Naming the instance host there (`jenkins.prod.local`) was considered and rejected.
+It would imply the answer is scoped to that instance when it spans every indexed
+Jenkins — the same over-promise decision 1 rejects repo pages for, and harder to
+spot because the host is literally in the address bar above it. The scope line says
+the true, coarser thing.
 
 The related lane is suppressed on home. `/v1/clips/related` keyed on a dashboard's
 title and URL returns noise dressed as recall.
@@ -181,6 +205,21 @@ costs at most one re-run: this store is a ten-minute cache
 (`AGENT_RUN_CACHE_TTL_MS`), not durable state. Keying by service also means the
 answer is computed once per product rather than once per page.
 
+**Two instances of one product deliberately share a cache entry.** Navigating from
+`jenkins.dev.local` to `jenkins.prod.local` replays the stored answer rather than
+re-invoking, and that is correct: `jenkins-sync.ts` writes `service: SERVICE_ID` —
+the constant `"jenkins"` — and an `externalId` of job full name plus build number
+with **no host component** (`jenkins-sync.ts:22,172,181`). Both instances index into
+one service bucket, so `catchup { service: "jenkins" }` spans both and there is
+exactly one answer to cache. Keying by origin would store the same answer twice and
+double the agent runs to produce it.
+
+The gateway has no per-instance segmentation to surface here even if the client
+wanted it — with no host in `externalId`, two instances running a same-named job
+collide on item id upstream. That is the gateway's data model, out of scope for
+this slice, and noted only as the evidence that a per-origin key would be inventing
+a distinction rather than preserving one.
+
 ### Handler rules
 
 - On `kind === "home"`, `handleAgentRun` and `handleAgentState` **must not call
@@ -229,9 +268,19 @@ the normal case, not the edge case.
 The client cannot detect this in advance — there is no read that reports whether
 roots are configured — so the lane cannot be hidden when it will not answer. It
 renders the gap brief, which does satisfy C2.1's bar (*a cited brief, or a plain
-"couldn't answer, and here's why" — never a silent empty lane*), and the gap brief
-does say what to do about it. But it is a weaker lane than the other two, and this
-is recorded here rather than left for the manual pass to find.
+"couldn't answer, and here's why" — never a silent empty lane*). But it is a weaker
+lane than the other two, and this is recorded here rather than left for the manual
+pass to find.
+
+**The remedy is already in the brief, and the client must not add its own.** The
+gap brief's own remediation line reads *"Add a `[[filesystem.roots]]` block with
+`git_aware = true`, or run `nimbus index add <path>`"* (`ownership.ts:85`), so the
+user already sees the command. Rendering a client-side action alongside it would
+require pattern-matching the brief text to recognise this particular gap — and
+briefs are free text from the gateway, rendered with `textContent` and never
+parsed. That rule is load-bearing: a client that greps gateway prose breaks
+silently the first time upstream rewords a sentence, and the failure looks like a
+missing feature rather than a broken match.
 
 Shipping it anyway is a deliberate call: it was the explicit scope decision for
 this slice, the failure mode is honest rather than misleading, and the lane becomes
@@ -248,8 +297,12 @@ Pure modules carry the weight, as they do today.
 - **`sameItem`** across two self-hosted instances of the same product at
   `kind: "home"` — asserts equal, with the reason in the test name.
 - **`surfaceLine`** on a home recognition — label alone, no dangling separator.
-- **Header rendering** of the service arm: names the product, and asserts the
-  absence of the fetch button, the freshness line and the item link.
+- **Header rendering** of the service arm: names the product, carries the scope
+  line, and asserts the absence of the fetch button, the freshness line, the item
+  link **and the instance host**.
+- **Cross-instance cache sharing**: two dashboards of the same product on
+  different origins hit one stored entry, with the reason in the test name so a
+  future reader does not "fix" it into two.
 - **`LANE_SURFACES` gating**: the three service lanes render on `home` and on no
   other kind; `impact`/`expert` render on `pr` and not on `home`.
 - **Run store**: subject-keyed round-trip for both kinds, an item and a service
@@ -274,6 +327,19 @@ selection plumbing into the lane path that does not exist. Its own slice.
 **Repo, project and job pages get no lanes.** They read as a tighter scope than
 `{ service }` delivers. If upstream ever narrows these agents below the connector,
 this is the first thing to revisit.
+
+**Forcing a refresh of a `done` lane.** Re-run is offered on five of the nine
+`AgentError` reasons (`panel-view.ts:483`) — failed lanes only. A `done` lane
+replays its stored brief for the ten-minute TTL with no way to ask again. That is
+real, but it is pre-existing C2.1/C2.2 behaviour and identical on the pull-request
+lanes; adding a refresh to dashboard lanes alone would make lane behaviour differ
+by surface, which is the drift `LANE_SURFACES` exists to prevent. It belongs in a
+follow-up covering every lane. The staleness is also mild here: the cache TTL is
+ten minutes while `catchup`'s own window is days.
+
+**Validating `PRODUCT_SERVICE_ID` against `GET /v1/connectors`.** Deferred for the
+reason given in decision 2 — the endpoint cannot distinguish a renamed connector
+from an unconfigured one.
 
 ## Out of scope
 
@@ -303,7 +369,8 @@ convention C2.1 followed when it corrected its own `why`/`whyPeek` claim.
 ## Done when
 
 - A dashboard page on any of the five products is recognised as `kind: "home"`,
-  and the panel names the product without claiming an indexed item.
+  and the panel names the product and its scope without claiming an indexed item
+  or an instance.
 - The three service lanes appear there and nowhere else; `impact` and `expert`
   appear on pull requests and not on dashboards.
 - Expanding a service lane invokes with `{ service }` and **makes no resolve
