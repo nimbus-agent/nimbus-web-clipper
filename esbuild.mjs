@@ -28,6 +28,7 @@ const ENTRIES = [
   { in: "src/capture/capture-in-page.ts", out: "capture" },
   { in: "src/panel/panel-in-page.ts", out: "panel" },
   { in: "src/capture/toast-in-page.ts", out: "toast" },
+  { in: "src/panel/cue-in-page.ts", out: "cue" },
 ];
 
 // Static assets copied verbatim into each target dir.
