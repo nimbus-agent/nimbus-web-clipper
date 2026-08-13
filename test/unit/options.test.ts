@@ -540,24 +540,34 @@ describe("the ambient toggle", () => {
       return new Promise((r) => setTimeout(() => r({ [key]: snapshot }), 5));
     });
 
-    const gitlabToggle = [...document.querySelectorAll('[data-action="ambient"]')].find(
-      (el) => (el as HTMLInputElement).dataset["pattern"] === "https://gitlab.com/*",
-    ) as HTMLInputElement;
-    gitlabToggle.checked = true;
-    gitlabToggle.dispatchEvent(new Event("change", { bubbles: true }));
+    // Fake timers make the delayed storageGet calls above — and everything
+    // chained after them, including onSurfaceClick's own trailing
+    // refreshSurfaces() re-read — settle on a virtual clock we advance
+    // ourselves, rather than on a guessed real-time upper bound. That is what
+    // makes the drain below exact instead of a wall-clock race against
+    // afterEach's harness.restore() on a loaded runner.
+    vi.useFakeTimers();
+    try {
+      const gitlabToggle = [...document.querySelectorAll('[data-action="ambient"]')].find(
+        (el) => (el as HTMLInputElement).dataset["pattern"] === "https://gitlab.com/*",
+      ) as HTMLInputElement;
+      gitlabToggle.checked = true;
+      gitlabToggle.dispatchEvent(new Event("change", { bubbles: true }));
 
-    const revoke = [...document.querySelectorAll('[data-action="revoke"]')].find((el) =>
-      (el as HTMLElement).dataset["origin"]?.includes("github.com"),
-    ) as HTMLButtonElement;
-    revoke.click();
+      const revoke = [...document.querySelectorAll('[data-action="revoke"]')].find((el) =>
+        (el as HTMLElement).dataset["origin"]?.includes("github.com"),
+      ) as HTMLButtonElement;
+      revoke.click();
 
-    await vi.waitFor(() => {
-      expect(harness.storage.get("ambient-hosts")).toEqual(["https://gitlab.com/*"]);
-    });
-    // onSurfaceClick's own trailing refreshSurfaces() re-reads storage (through
-    // the same delayed mock) after the assertion above is already satisfied —
-    // drain it here so no timer is left pending when afterEach tears the chrome
-    // mock down, which would otherwise surface as an unhandled rejection.
-    await new Promise((resolve) => setTimeout(resolve, 30));
+      // Advances the virtual clock (and drains the microtasks interleaved with
+      // it) well past every pending 5ms storageGet timer — however many hops
+      // deep the chained writes and the trailing refreshSurfaces() turn out to
+      // be — with no wall-clock cost and no timer left dangling for afterEach.
+      await vi.advanceTimersByTimeAsync(1000);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(harness.storage.get("ambient-hosts")).toEqual(["https://gitlab.com/*"]);
   });
 });
