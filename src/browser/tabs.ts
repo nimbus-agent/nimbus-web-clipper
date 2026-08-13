@@ -19,7 +19,10 @@ export interface TabNavigation {
  * The permission boundary is the browser's, not ours: `changeInfo.url` is
  * populated only for tabs we hold host permission on, so a page on an ungranted
  * host never reaches this callback at all. The ambient gate's own granted-check
- * is the second lock, not the first.
+ * (service-worker.ts's `enabledHosts`, via `hasOrigin`) is the second lock: it
+ * catches a grant withdrawn through chrome://extensions, which clears the
+ * browser's permission without touching the stored ambient-hosts preference
+ * this callback cannot see.
  *
  * Fires for history-API navigations too, which is what makes an SPA (GitHub,
  * GitLab, Jira) reach the callback without a page load.

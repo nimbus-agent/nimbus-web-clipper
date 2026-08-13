@@ -6,6 +6,7 @@
 import { setBadgeBackground, setBadgeCount, setBadgeText } from "../browser/action.ts";
 import { addAlarmListener, clearAlarm, ensureAlarm, rearmAlarm } from "../browser/alarms.ts";
 import { addMenuClickListener, createMenu, removeAllMenus } from "../browser/context-menus.ts";
+import { hasOrigin } from "../browser/permissions.ts";
 import {
   addCommandListener,
   addInstalledListener,
@@ -608,7 +609,17 @@ const ambientGeneration = new Map<number, number>();
 const AMBIENT_DEBOUNCE_MS = 600;
 
 const ambientDeps: AmbientDeps = {
-  enabledHosts: getAmbientHosts,
+  // The stored preference alone is not enough: a revoke made from
+  // chrome://extensions (rather than through Options) never touches this
+  // list, and an out-of-band re-grant would otherwise silently resurrect a
+  // preference the user last saw being withdrawn. hasOrigin re-checks against
+  // the browser's own grant, which is safe to call here (unlike `request`, it
+  // needs no user gesture).
+  enabledHosts: async () => {
+    const patterns = await getAmbientHosts();
+    const granted = await Promise.all(patterns.map(hasOrigin));
+    return patterns.filter((_, i) => granted[i] === true);
+  },
   getOrigins,
   lastCued: (tabId) => lastCuedByTab.get(tabId),
   resolve: (pageUrl) =>

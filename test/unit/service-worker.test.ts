@@ -1555,8 +1555,32 @@ describe("ambient surfacing", () => {
     expect(harness.executeScript).not.toHaveBeenCalled();
   });
 
+  // The preference alone is not enough: a grant withdrawn from
+  // chrome://extensions never touches the "ambient-hosts" list, so a stored,
+  // switched-on pattern that the browser no longer grants must produce no
+  // cue. `harness.grantedOrigins` is deliberately left empty here — the
+  // pattern is enabled in storage but not (or no longer) granted.
+  test("a host enabled in storage but not granted by the browser injects nothing", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    expect(harness.executeScript).not.toHaveBeenCalled();
+  });
+
+  test("a host enabled in storage AND granted by the browser mounts the cue", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    const files = harness.executeScript.mock.calls.map((c) => (c[0] as { files?: string[] }).files);
+    expect(files).toContainEqual(["cue.js"]);
+  });
+
   test("the same item twice in one tab injects the cue once", async () => {
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
     await loadWorker();
     harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
     await settleAmbient();
@@ -1570,6 +1594,7 @@ describe("ambient surfacing", () => {
 
   test("closing the tab forgets it, so returning to the same PR cues again", async () => {
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
     await loadWorker();
     harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
     await settleAmbient();
@@ -1584,6 +1609,7 @@ describe("ambient surfacing", () => {
 
   test("a run overtaken by a newer navigation in the same tab drops its result", async () => {
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
     await loadWorker();
     // Hold the first resolve open past the second navigation, so the two runs
     // genuinely overlap rather than merely being scheduled apart.
@@ -1614,6 +1640,7 @@ describe("ambient surfacing", () => {
   // run from calling showCue a second time.
   test("a run overtaken by a navigation to the SAME item also drops its result", async () => {
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
     await loadWorker();
     let release: (() => void) | undefined;
     harness.holdNextResolve(new Promise<void>((r) => (release = r)));
@@ -1637,6 +1664,7 @@ describe("ambient surfacing", () => {
   // wrongly read as "already cued" and suppress the second cue.
   test("a tab closed while showCue is in flight leaves no stale dedupe entry", async () => {
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
     await loadWorker();
     let releaseInject: (() => void) | undefined;
     harness.executeScript.mockImplementationOnce(
@@ -1670,6 +1698,7 @@ describe("ambient surfacing", () => {
   // own write.
   test("a same-item navigation superseding an in-flight showCue does not block that run's dedupe write", async () => {
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
     await loadWorker();
     let releaseInject: (() => void) | undefined;
     harness.executeScript.mockImplementationOnce(
@@ -1698,6 +1727,7 @@ describe("ambient surfacing", () => {
 
   test("an injection failure on a restricted page is swallowed, not thrown", async () => {
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
     harness.executeScript.mockRejectedValue(new Error("Cannot access contents of the page"));
     await loadWorker();
     expect(() => {
