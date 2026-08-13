@@ -405,6 +405,28 @@ addMenuClickListener((menuItemId, tabId) => {
   );
 });
 
+/**
+ * Open the panel for a cue click, in the tab the BROWSER says the message came
+ * from — never a tab id from the message itself. The cue runs in the page, so a
+ * payload-supplied tab id would be forgeable on a hostile site; `CueOpenRequest`
+ * carries no payload at all for that reason. An undefined tab means the message
+ * did not come from a tab (the popup or options page), which nothing here can
+ * act on.
+ *
+ * Lives outside the message listener rather than inline: the listener is a flat
+ * router of fourteen branches, and a nested `if` inside one of them costs more
+ * cognitive complexity than the branch itself (SonarCloud S3776, which this
+ * pushed to 16 against a threshold of 15). The router routes; this decides.
+ */
+function openPanelForCue(tabId: number | undefined): void {
+  if (tabId === undefined) {
+    return;
+  }
+  // Fire-and-forget: no response is sent, the cue does not wait, and the panel
+  // appearing is the answer. A restricted page rejects injection — fail closed.
+  injectPanel(tabId).catch(() => undefined);
+}
+
 addMessageListener((message, respond, sender) => {
   if (isPairRequest(message)) {
     handlePair({ confirmPair, setConnection, nowMs: () => Date.now() }, message)
@@ -546,14 +568,7 @@ addMessageListener((message, respond, sender) => {
     return true;
   }
   if (isCueOpenRequest(message)) {
-    // The tab comes from the BROWSER's sender, never from the message: the cue
-    // runs in the page, so a payload-supplied tab id would be forgeable on a
-    // hostile site. No response — the cue does not wait, and the panel appearing
-    // is the answer.
-    const tabId = sender.tabId;
-    if (tabId !== undefined) {
-      injectPanel(tabId).catch(() => undefined);
-    }
+    openPanelForCue(sender.tabId);
     return false;
   }
   return false;
