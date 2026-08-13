@@ -522,7 +522,7 @@ need a browser-viable shape first; see C2.4.*
 > offers real cancellation. See `docs/architecture.md`'s agent-lanes section
 > for the fuller reasoning.
 
-### C2.3 The remaining lanes, surface by surface · 🟡 · M
+### C2.3 The remaining lanes, surface by surface · 🟢 · M — ✅ shipped (three service-scoped lanes, on a new dashboard surface)
 > **What** Map the other agents onto the pages they belong on —
 > `agents.catchup` for a repo or board you have been away from,
 > `agents.conflicts` and `agents.ghost` where ownership is unclear,
@@ -550,12 +550,48 @@ need a browser-viable shape first; see C2.4.*
 > where a new lane declares the surfaces it belongs on; adding a lane without one
 > is a type error. This phase's done-when asked for that, and it shipped early
 > with the page-context slice.
+> **Correction (2026-08-13), read from upstream source at `ea37e0d0`:** three more
+> stale claims, found while designing the service-scoped set — recorded rather
+> than silently edited, same as the 2026-08-11 correction above.
+> The **exclusion count above is wrong**: `HTTP_EXCLUDED_AGENT_METHODS` has
+> **four** members, not three. `agents.negotiate` is the fourth, and it is
+> excluded for a reason distinct from the other three — it has no side effects
+> and its `{runId}` + poll shape fits the HTTP contract fine, but combined with
+> `--person` it would let any holder of the `agents` token assemble a
+> contribution dossier on any indexed person without the owner initiating it.
+> The **"thirteen agents" figure used elsewhere in this roadmap** (the north
+> star, pillar 1) is itself stale as of this same upstream read — there are more
+> than thirteen now, `agents.negotiate` among them. Not corrected globally here;
+> flagged where this slice's own research surfaced it.
+> And the **framing above undersold what `catchup`, `decisions` and `ownership`
+> needed**: "map the other agents onto the pages they belong on" implied an
+> existing surface would do. It would not — those three answer about the whole
+> connector, not a page's item, so dropping them onto an item page (a repo, a
+> board) would put the same connector-wide answer on every page of that host.
+> They needed a surface whose scope matches theirs, which did not exist. Full
+> reasoning: `docs/superpowers/specs/2026-08-13-c2-3-service-lanes-design.md`.
 > **Why it wows** Each surface grows its own reason to keep the panel open.
 > **Approach** One lane at a time, each earning its place on a real page. A lane
 > that fires everywhere is noise, and noise is how ambient UI dies.
 > **Depends** C2.1's invocation surface.
+> **Status** Shipped the service-scoped set only — `catchup`, `decisions` and
+> `ownership` — on a new recognised surface, `SurfaceKind: "home"`: a product's
+> own dashboard (GitHub root; GitLab root or `/dashboard`; Bitbucket
+> `/dashboard/*`; Jira Cloud `/jira/your-work` and Server
+> `/secure/Dashboard.jspa`; Jenkins instance root, past any configured path
+> prefix). The three lanes render there and nowhere else. A dashboard makes
+> **no resolve call** — `Recognition.product` is already the gateway's connector
+> id, so the lane needs only the `agents` token scope, not `resolve` — and two
+> self-hosted instances of one product share a single cached answer, because
+> `service` is a flat connector id and both instances are one scope. The C1.3
+> ambient cue stays silent on a dashboard: it gates on a `found` resolve, and a
+> dashboard resolves to none. `agents.glossary` is not in this slice — it needs
+> selection plumbing into the lane path that does not exist yet, its own slice.
+> `agents.huddle` and `agents.janitor` are also unaddressed.
 > **Done when** Every shipped lane appears only where it is useful, and the
-> rule that put it there is written down.
+> rule that put it there is written down. ✅ for the three lanes shipped here;
+> unit suite green. The plan's manual dev-load pass (`docs/development.md`) is
+> still outstanding.
 
 ### C2.4 A browser-viable "why" · 🟡 · M
 > **What** Answer *why does this change exist* from the browser, without

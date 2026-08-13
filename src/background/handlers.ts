@@ -445,7 +445,9 @@ async function resolveForAgent(
 /**
  * The gateway validates this body verbatim, so each agent gets exactly what it
  * accepts: `impact` takes the page's PR URL, `expert` free text to match against
- * indexed titles, and the three service lanes take the connector id alone.
+ * indexed titles (the repo name would parse too, but answers a broader
+ * question — the same people for every PR in the repo), and the three service
+ * lanes take the connector id alone.
  *
  * No `sinceMs`, `minConfidence` or `limit` is sent. The gateway owns those
  * defaults and re-reads its config per call, so a client-side knob would only
@@ -497,6 +499,11 @@ export async function handleAgentRun(
 
   const subject = subjectFor(resolved);
   const cached = await deps.getRun(subject, req.lane);
+  // Only `running` and `done` short-circuit. A `failed` state is not an answer, and
+  // `agent-run` only arrives from an explicit user action — expanding a lane or
+  // pressing Re-run — so re-asking is what the user just asked for. It also self-heals:
+  // the moment they grant the missing scope, the next expand succeeds instead of
+  // replaying a stale 403 for the rest of the TTL.
   if (cached !== null && (cached.state.kind === "running" || cached.state.kind === "done")) {
     return { kind: "agent-state", lane: req.lane, state: cached.state };
   }

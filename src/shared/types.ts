@@ -274,8 +274,9 @@ export type FetchError =
  * The lanes this client ships, and the agent each maps to. A member IS the wire
  * agent name — `invokeAgent` passes it straight through as `{agent}` in
  * `POST /v1/agents/{agent}` — so these must be spelled exactly as upstream's
- * handler keys, and `catchup` is first because it is the question a dashboard
- * exists to answer.
+ * handler keys. Order here is render order, and `catchup` is declared first
+ * AMONG THE HOME LANES — not first overall — because it is the question a
+ * dashboard exists to answer.
  *
  * `why` is deliberately ABSENT — see the existing note above.
  *

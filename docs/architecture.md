@@ -564,12 +564,14 @@ to be granted page access, because the Grant button lives on a row — is C1.4's
 gap, not this feature's; see C1.4 in [`ROADMAP.md`](../ROADMAP.md) for what
 closed it.
 
-## The agent lanes (Phase C2.1)
+## The agent lanes (Phase C2.1 / C2.3)
 
 On a resolved page (the `resolved` header state, and only that one) the panel
 offers two collapsed lanes below Related — *what breaks if it lands* (`agents.impact`) and
 *who should review it* (`agents.expert`) — each answered by an agent that
-already exists behind the gateway. Two routes:
+already exists behind the gateway. C2.3 added a second class of lane, gated on
+a different page kind and skipping resolve entirely — see "Item lanes vs.
+service lanes" below. Two routes, shared by both classes:
 
 ```
 POST /v1/agents/{agent}        202 { runId }            · 404 unknown agent · 429 busy (Retry-After)
@@ -677,18 +679,101 @@ client sends exactly the shape each agent's own scope expects, no more.
 ### Which lanes appear where
 
 `LANE_SURFACES` (`src/shared/types.ts`) maps each lane to the `SurfaceKind`s it
-belongs on; the panel renders only the lanes matching the recognised kind. Both
-shipped lanes are `["pr"]`.
+belongs on; the panel renders only the lanes matching the recognised kind.
+`impact` and `expert` are `["pr"]`; `catchup`, `decisions` and `ownership` are
+`["home"]` — see the next section for what `"home"` is and why these three
+lanes could not simply join the other two.
 
-They were previously gated on "the page resolved to an item" alone, so a resolved
-Jira issue or Jenkins build offered *What breaks if it lands* and handed that
-page's URL to `agents.impact` as its `fileOrPrUrl` — a question that does not
-apply, from an input the agent was not built for.
+`impact` and `expert` were previously gated on "the page resolved to an item"
+alone, so a resolved Jira issue or Jenkins build offered *What breaks if it
+lands* and handed that page's URL to `agents.impact` as its `fileOrPrUrl` — a
+question that does not apply, from an input the agent was not built for.
 
 The table is keyed by `AgentLane`, so adding a lane without declaring its
 surfaces is a type error. It is gated on the recogniser's `kind` — a closed union
 this repo owns — and not on `ResolvedItem.type`, which is a free-form string from
 the wire.
+
+### Item lanes vs. service lanes (Phase C2.3)
+
+`impact` and `expert` answer about *this pull request* — a resolved item, keyed
+by the gateway's item id. `catchup`, `decisions` and `ownership` answer about
+*the whole connector* — everything indexed from one service, e.g. all of
+GitHub. That is a coarser scope than any item page can honestly claim, so it
+needed a page whose scope actually matches: the product's own dashboard,
+recognised as `SurfaceKind: "home"` (GitHub root; GitLab root or `/dashboard`;
+Bitbucket `/dashboard/*`; Jira Cloud `/jira/your-work` and Server
+`/secure/Dashboard.jspa`; Jenkins instance root, past any configured path
+prefix).
+
+**A service lane makes no resolve call.** `Recognition.product` already IS the
+gateway's connector id — the five `Product` values are exactly upstream's
+per-connector `SERVICE_ID` constants — so `resolveForAgent` (`handlers.ts`)
+branches on `recognition.kind === "home"` before ever calling `resolveItem`,
+and returns a `service`-scoped result straight from the recogniser. There is no
+item to resolve and no `found` outcome to require, which also means a service
+lane works on a pairing that never received the `resolve` scope — it needs only
+`agents`. `PRODUCT_SERVICE_ID` (`src/shared/types.ts`) is the map from
+`Product` to that connector id. It is written out rather than cast so the
+coupling between this client's `Product` union and the gateway's connector ids
+— convention between two repositories, not contract — is greppable from both
+sides. That buys **discoverability, not enforcement**: the map only checks that
+every `Product` has an entry, so an upstream connector rename (e.g.
+`"jenkins"` → `"jenkins-ci"`) would keep it typechecking green while every
+Jenkins lane quietly answered about a service that no longer exists.
+
+**The run store keys on scope, not just on an item.** `StoredRun`'s subject is
+a `RunSubject` — `{kind:"item", id}` or `{kind:"service", service}` — and
+`agent-run-store.ts`'s `makeKey` encodes the kind alongside the value, so an
+item id and a service id can never collide even if they happened to share a
+string. One consequence is deliberate: **two self-hosted instances of one
+product share a single cached answer.** `jenkins.dev.local` and
+`jenkins.prod.local` both recognise as `product: "jenkins"`, so
+`catchup { service: "jenkins" }` is one scope and one cache entry — navigating
+between them replays the stored answer instead of re-invoking. That mirrors
+the gateway's own data model: connector-written item ids carry no host
+component, so upstream itself has no per-instance segmentation to preserve
+here.
+
+**Cached runs are cleared on unpair, and on a confirmed re-pair.** A stored
+brief belongs to the gateway that produced it; either event may point the
+extension at a different gateway, so both call the run store's `clearRuns`
+(`handlePair`/`handleUnpair` in `handlers.ts`) rather than let a brief from the
+old gateway answer for the new one.
+
+**The panel header for a dashboard is not a miss state.** It names the product
+and states the scope ("across all indexed Jenkins builds") — deliberately not
+the instance host, which would understate the answer's real, connector-wide
+scope — and carries no item link, no freshness line, no fetch button and no
+candidate chooser. The related lane is suppressed there too: `/v1/clips/related`
+keyed on a dashboard's own title and URL would return noise dressed as recall.
+The related *request* still fires in parallel with resolve, before recognition
+is known, and its answer is simply discarded — a deliberate, documented
+trade-off (see the design spec) rather than an oversight, because both fixes
+considered cost more than the one wasted loopback call: short-circuiting
+`handleRelated` would tax every item-page related request to save a call on the
+dashboard path, and checking the URL from the panel would work for the
+built-in SaaS hosts and silently not for self-hosted Jenkins/Jira/Bitbucket,
+exactly where dashboards matter most.
+
+**The ambient cue (C1.3) stays silent on a dashboard.** Its one contract is
+"this page resolves to exactly one indexed item, and here it is"; a dashboard
+resolves to none, so it gates closed by the same non-`found`-is-silence rule
+every other miss already uses. Dashboards are panel-only — the user summons
+the panel, same as C1.3 kept the panel itself user-summoned.
+
+**`ownership` is a known-weak lane.** It derives ownership from git blame over
+configured `[[filesystem.roots]]`; with none configured — the normal case for a
+browser-first user — the gateway returns a gap-only brief rather than an
+answer. The client cannot detect this in advance (there is no read that reports
+whether roots are configured), so the lane cannot be hidden when it will not
+answer. The gap brief already carries its own remedy (a `nimbus index add`
+line), and the client must never pattern-match that free-text brief to add its
+own action beside it — briefs are rendered with `textContent` and never parsed,
+and a client that greps gateway prose breaks silently the first time upstream
+rewords a sentence.
+
+Full reasoning: `docs/superpowers/specs/2026-08-13-c2-3-service-lanes-design.md`.
 
 ## Two state machines worth understanding
 

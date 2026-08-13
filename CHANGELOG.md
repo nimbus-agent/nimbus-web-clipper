@@ -35,9 +35,15 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   Jenkins build that Nimbus had indexed offered *What breaks if it lands* and *Who
   should review it*, which are questions about a change under review. Both lanes
   now appear on pull requests only.
+- Unpairing now clears cached agent answers, so a brief can no longer outlive the
+  gateway that produced it.
 
 ### Added
 
+- The panel now recognises a product's own dashboard — GitHub, GitLab, Bitbucket,
+  Jira and Jenkins — and offers three lanes there: *What happened while I was
+  away*, *What got decided* and *Who owns what*. They answer across the whole
+  connector, which is what the header says, and they need no indexed item.
 - **Nimbus can now tell you it knows this page, before you ask.** On a site you
   have granted page access to and switched **Surface automatically** on for,
   landing on a pull request, build or issue that Nimbus has already indexed puts
