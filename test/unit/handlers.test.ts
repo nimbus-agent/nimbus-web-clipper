@@ -554,6 +554,31 @@ describe("handleResolve", () => {
     );
     expect(sent).toBe("https://corp.example/jira/browse/PLAT-9?x=1");
   });
+
+  it("answers a home page without calling the gateway", async () => {
+    let resolveCalls = 0;
+    const deps = {
+      getOrigins: async () => [],
+      getConnection: async () => ({ origin: "http://127.0.0.1:7777", token: "t", label: "dev" }),
+      resolveItem: async () => {
+        resolveCalls += 1;
+        return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
+      },
+    };
+
+    const res = await handleResolve(deps, {
+      kind: "resolve",
+      pageUrl: "https://github.com/",
+      title: "GitHub",
+    });
+
+    expect(resolveCalls).toBe(0);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.recognition.ok).toBe(true);
+    if (!res.recognition.ok) return;
+    expect(res.recognition.kind).toBe("home");
+  });
 });
 
 describe("handleFetch", () => {

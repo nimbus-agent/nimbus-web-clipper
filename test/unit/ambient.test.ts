@@ -214,3 +214,23 @@ describe("the preconditions re-checked after the resolve", () => {
     expect(d.kind).toBe("show");
   });
 });
+
+describe("a home page", () => {
+  test("resolves to not-indexed, so the cue stays silent by construction", async () => {
+    const HOME = "https://github.com/";
+    const resolve = vi.fn(
+      async (): Promise<ResolveResponse> => ({
+        kind: "resolve",
+        ok: true,
+        recognition: recognise(HOME, []),
+        outcome: { kind: "not-indexed", fetchable: false },
+      }),
+    );
+    const d = await decideAmbient(deps({ resolve, currentUrl: async () => HOME }), {
+      ...NAV,
+      url: HOME,
+    });
+    expect(d.kind).not.toBe("show");
+    expect(d).toEqual({ kind: "none", why: "no-item" });
+  });
+});

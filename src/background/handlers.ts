@@ -186,6 +186,21 @@ export async function handleResolve(
       outcome: { kind: "not-indexed", fetchable: false },
     };
   }
+  if (recognition.kind === "home") {
+    // A dashboard has no indexed item and is not supposed to have one, so there
+    // is nothing to ask the gateway. The outcome below is INERT: `headerFrom`
+    // (panel-in-page.ts) branches on `recognition.kind` before it reads an
+    // outcome, so a home page never renders as a miss. It is filled in only
+    // because `ResolveResponse`'s ok arm requires one — the same synthetic the
+    // unrecognised branch above already uses. `fetchable:false` keeps the C3.1
+    // button away from a page that is not a fetch candidate.
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: false },
+    };
+  }
   const conn = await deps.getConnection();
   if (conn === null) {
     return { kind: "resolve", ok: false, recognition, reason: "not_paired" };
