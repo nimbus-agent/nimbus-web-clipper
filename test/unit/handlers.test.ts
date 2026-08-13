@@ -734,7 +734,7 @@ describe("handleAgentRun", () => {
           return { ok: true as const, runId: "r2" };
         },
         getRun: async () => ({
-          itemId: "gh-1",
+          subject: { kind: "item" as const, id: "gh-1" },
           lane: "impact" as const,
           runId: "r1",
           state: { kind: "done" as const, brief: "b" },
@@ -766,7 +766,7 @@ describe("handleAgentRun", () => {
           return { ok: true as const, runId: "r-rerun" };
         },
         getRun: async () => ({
-          itemId: "gh-1",
+          subject: { kind: "item" as const, id: "gh-1" },
           lane: "impact" as const,
           runId: "r1",
           state: { kind: "failed" as const, reason: "stale" as const },
@@ -843,7 +843,12 @@ describe("handleAgentRun", () => {
       { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
     );
     expect(puts).toEqual([
-      { itemId: "gh-1", lane: "impact", runId: "r9", state: { kind: "running", runId: "r9" } },
+      {
+        subject: { kind: "item", id: "gh-1" },
+        lane: "impact",
+        runId: "r9",
+        state: { kind: "running", runId: "r9" },
+      },
     ]);
     expect(res.state).toEqual({ kind: "running", runId: "r9" });
   });
@@ -1089,7 +1094,7 @@ describe("handleAgentState", () => {
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
         getRun: async () => ({
-          itemId: "gh-1",
+          subject: { kind: "item" as const, id: "gh-1" },
           lane: "impact" as const,
           runId: "r1",
           state: { kind: "running" as const, runId: "r1" },

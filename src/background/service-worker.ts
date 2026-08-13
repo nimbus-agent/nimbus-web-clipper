@@ -39,6 +39,7 @@ import {
 import type { AgentError, AgentLane, LaneState, Recognition } from "../shared/types.ts";
 import {
   AGENT_RUN_CACHE_TTL_MS,
+  type RunSubject,
   type StoredRun,
   getRun as storeGetRun,
   listRunning as storeListRunning,
@@ -169,7 +170,7 @@ const clipDeps = { getConnection, postClip: postClipPaced, updateQueue, nowMs: (
 // one place "now" is read and the TTL applied, mirroring how postClipPaced wraps
 // postClip with the side effects handleClip itself stays free of.
 const agentStoreDeps = {
-  getRun: (itemId: string, lane: AgentLane) => storeGetRun(itemId, lane, Date.now()),
+  getRun: (subject: RunSubject, lane: AgentLane) => storeGetRun(subject, lane, Date.now()),
 };
 
 const agentRunDeps = {
@@ -273,7 +274,7 @@ async function tickAgentPoll(
   if (run.expiresAtMs <= Date.now()) {
     activeAgentPolls.delete(run.runId);
     await agentRunDeps.putRun({
-      itemId: run.itemId,
+      subject: run.subject,
       lane: run.lane,
       runId: run.runId,
       state: { kind: "failed", reason: lastReason === "running" ? "stale" : lastReason },
@@ -288,7 +289,7 @@ async function tickAgentPoll(
     // they have.
     activeAgentPolls.delete(run.runId);
     await agentRunDeps.putRun({
-      itemId: run.itemId,
+      subject: run.subject,
       lane: run.lane,
       runId: run.runId,
       state: { kind: "failed", reason: "not_paired" },
@@ -306,7 +307,7 @@ async function tickAgentPoll(
   }
   activeAgentPolls.delete(run.runId);
   await agentRunDeps.putRun({
-    itemId: run.itemId,
+    subject: run.subject,
     lane: run.lane,
     runId: run.runId,
     state: terminalLaneState(result, conn.label),

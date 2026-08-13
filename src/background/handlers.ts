@@ -41,7 +41,7 @@ import type {
   ResolveOutcome,
   ScopeGap,
 } from "../shared/types.ts";
-import type { StoredRun } from "./agent-run-store.ts";
+import type { RunSubject, StoredRun } from "./agent-run-store.ts";
 
 export interface PairDeps {
   readonly confirmPair: (
@@ -281,7 +281,7 @@ export interface AgentRunDeps {
     | { ok: false; reason: AgentError; scopeGap?: RawScopeGap }
     | { ok: false; reason: "busy"; retryAfterMs: number }
   >;
-  readonly getRun: (itemId: string, lane: AgentLane) => Promise<StoredRun | null>;
+  readonly getRun: (subject: RunSubject, lane: AgentLane) => Promise<StoredRun | null>;
   readonly putRun: (run: Omit<StoredRun, "expiresAtMs">) => Promise<void>;
 }
 
@@ -289,7 +289,7 @@ export interface AgentStateDeps {
   readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
   readonly getConnection: () => Promise<{ origin: string; token: string; label: string } | null>;
   readonly resolveItem: AgentRunDeps["resolveItem"];
-  readonly getRun: (itemId: string, lane: AgentLane) => Promise<StoredRun | null>;
+  readonly getRun: (subject: RunSubject, lane: AgentLane) => Promise<StoredRun | null>;
 }
 
 function delay(ms: number): Promise<void> {
@@ -426,7 +426,7 @@ export async function handleAgentRun(
   }
   const { origin, token, label, resolveUrl, item } = resolved;
 
-  const cached = await deps.getRun(item.id, req.lane);
+  const cached = await deps.getRun({ kind: "item", id: item.id }, req.lane);
   // Only `running` and `done` short-circuit. A `failed` state is not an answer, and
   // `agent-run` only arrives from an explicit user action — expanding a lane or
   // pressing Re-run — so re-asking is what the user just asked for. It also self-heals:
@@ -445,7 +445,12 @@ export async function handleAgentRun(
     return failedResponse(req.lane, invoked.reason, scopeGap);
   }
   const state = { kind: "running" as const, runId: invoked.runId };
-  await deps.putRun({ itemId: item.id, lane: req.lane, runId: invoked.runId, state });
+  await deps.putRun({
+    subject: { kind: "item", id: item.id },
+    lane: req.lane,
+    runId: invoked.runId,
+    state,
+  });
   return { kind: "agent-state", lane: req.lane, state };
 }
 
@@ -459,7 +464,7 @@ export async function handleAgentState(
   if (!resolved.ok) {
     return failedResponse(req.lane, resolved.reason, resolved.scopeGap);
   }
-  const cached = await deps.getRun(resolved.item.id, req.lane);
+  const cached = await deps.getRun({ kind: "item", id: resolved.item.id }, req.lane);
   return { kind: "agent-state", lane: req.lane, state: cached?.state ?? { kind: "collapsed" } };
 }
 

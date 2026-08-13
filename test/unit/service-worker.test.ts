@@ -1062,7 +1062,7 @@ describe("agent run polling — survives eviction", () => {
     const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
     await putRun(
       {
-        itemId: "gh-1",
+        subject: { kind: "item", id: "gh-1" },
         lane: "impact",
         runId: "r1",
         state: { kind: "running", runId: "r1" },
@@ -1080,7 +1080,7 @@ describe("agent run polling — survives eviction", () => {
     await fireAlarm(AGENT_POLL_ALARM);
 
     expect(polls.some((u) => u.includes("/v1/agents/runs/r1"))).toBe(true);
-    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
       kind: "done",
       brief: "answered",
     });
@@ -1094,7 +1094,7 @@ describe("agent run polling — survives eviction", () => {
     const { putRun } = await import("../../src/background/agent-run-store.ts");
     await putRun(
       {
-        itemId: "gh-1",
+        subject: { kind: "item", id: "gh-1" },
         lane: "impact",
         runId: "r1",
         state: { kind: "running", runId: "r1" },
@@ -1123,7 +1123,7 @@ describe("agent run polling — survives eviction", () => {
     const { putRun } = await import("../../src/background/agent-run-store.ts");
     await putRun(
       {
-        itemId: "gh-1",
+        subject: { kind: "item", id: "gh-1" },
         lane: "impact",
         runId: "r1",
         state: { kind: "running", runId: "r1" },
@@ -1147,7 +1147,7 @@ describe("agent run polling — survives eviction", () => {
     const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
     await putRun(
       {
-        itemId: "gh-1",
+        subject: { kind: "item", id: "gh-1" },
         lane: "impact",
         runId: "r1",
         state: { kind: "running", runId: "r1" },
@@ -1166,7 +1166,7 @@ describe("agent run polling — survives eviction", () => {
 
     await fireAlarm(AGENT_POLL_ALARM);
 
-    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
       kind: "failed",
       reason: "stale",
     });
@@ -1185,7 +1185,7 @@ describe("agent run polling — survives eviction", () => {
     const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
     await putRun(
       {
-        itemId: "gh-1",
+        subject: { kind: "item", id: "gh-1" },
         lane: "impact",
         runId: "r1",
         state: { kind: "running", runId: "r1" },
@@ -1197,7 +1197,7 @@ describe("agent run polling — survives eviction", () => {
 
     await fireAlarm(AGENT_POLL_ALARM);
 
-    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
       kind: "failed",
       reason: "agent_failed",
       detail: "no LLM configured",
@@ -1215,7 +1215,7 @@ describe("agent run polling — survives eviction", () => {
     const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
     await putRun(
       {
-        itemId: "gh-1",
+        subject: { kind: "item", id: "gh-1" },
         lane: "impact",
         runId: "r1",
         state: { kind: "running", runId: "r1" },
@@ -1227,7 +1227,7 @@ describe("agent run polling — survives eviction", () => {
 
     await fireAlarm(AGENT_POLL_ALARM);
 
-    const state = (await getRun("gh-1", "impact", NOW))?.state;
+    const state = (await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state;
     expect(state).toEqual({ kind: "failed", reason: "agent_failed" });
     expect(state !== undefined && "detail" in state).toBe(false);
   });
@@ -1246,7 +1246,7 @@ describe("agent run polling — survives eviction", () => {
     const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
     await putRun(
       {
-        itemId: "gh-1",
+        subject: { kind: "item", id: "gh-1" },
         lane: "impact",
         runId: "r1",
         state: { kind: "running", runId: "r1" },
@@ -1260,7 +1260,7 @@ describe("agent run polling — survives eviction", () => {
 
     await fireAlarm(AGENT_POLL_ALARM);
 
-    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
       kind: "failed",
       reason: "not_paired",
     });
@@ -1288,7 +1288,7 @@ describe("agent run polling — survives eviction", () => {
     const { putRun } = await import("../../src/background/agent-run-store.ts");
     await putRun(
       {
-        itemId: "gh-1",
+        subject: { kind: "item", id: "gh-1" },
         lane: "impact",
         runId: "r1",
         state: { kind: "running", runId: "r1" },
@@ -1408,7 +1408,7 @@ describe("agent run polling — survives eviction", () => {
     // by listRunning) but has expired by the time the SECOND tick fires.
     await putRun(
       {
-        itemId: "gh-1",
+        subject: { kind: "item", id: "gh-1" },
         lane: "impact",
         runId: "r1",
         state: { kind: "running", runId: "r1" },
@@ -1420,13 +1420,13 @@ describe("agent run polling — survives eviction", () => {
 
     harness.emitAlarm(AGENT_POLL_ALARM);
     await vi.advanceTimersByTimeAsync(0); // the alarm's own immediate first tick
-    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
       kind: "running",
       runId: "r1",
     });
     await vi.advanceTimersByTimeAsync(750); // the scheduled second tick, past expiry
 
-    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
       kind: "failed",
       reason: "stale",
     });
@@ -1444,7 +1444,7 @@ describe("agent run polling — survives eviction", () => {
     const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
     await putRun(
       {
-        itemId: "gh-1",
+        subject: { kind: "item", id: "gh-1" },
         lane: "impact",
         runId: "r1",
         state: { kind: "running", runId: "r1" },
@@ -1462,7 +1462,7 @@ describe("agent run polling — survives eviction", () => {
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(750);
 
-    expect((await getRun("gh-1", "impact", NOW))?.state).toEqual({
+    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
       kind: "failed",
       reason: "unreachable",
     });

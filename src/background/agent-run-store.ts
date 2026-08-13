@@ -29,25 +29,56 @@ export const AGENT_RUN_CACHE_TTL_MS = 10 * 60_000;
  */
 export const MAX_STORED_RUNS = 16;
 
+/**
+ * What a run is ABOUT.
+ *
+ * `item` is C2.1's shape: a lane answering about one indexed item. `service` is
+ * C2.3's: a lane answering about a whole connector, which has no item to key on.
+ * A discriminated union rather than a synthetic string like "service:bitbucket"
+ * because upstream item ids are already `${service}:${externalId}`
+ * (packages/gateway/src/index/item-key.ts), so a synthetic key would share a
+ * namespace SHAPE with real ids — confusable by inspection, and one connector
+ * rename away from being ambiguous in fact.
+ */
+export type RunSubject =
+  | { readonly kind: "item"; readonly id: string }
+  | { readonly kind: "service"; readonly service: string };
+
 export interface StoredRun {
-  readonly itemId: string;
+  readonly subject: RunSubject;
   readonly lane: AgentLane;
   readonly runId: string;
   readonly state: LaneState;
   readonly expiresAtMs: number;
 }
 
-// Keyed by `${itemId}\u0000${lane}` — a separator that cannot occur in either
-// half — so an item id containing what looks like a lane name can never collide
-// with a real item/lane pair.
+// Keyed by `${kind}\u0000${value}\u0000${lane}` and a separator that cannot occur
+// in any of the three parts, so neither an item id that looks like a lane name
+// nor a service id equal to some item id can collide. UNCHANGED from the
+// pre-subject store: keep the escape sequence, never a literal control
+// character typed into source.
 const KEY_SEP = "\u0000";
 
-function makeKey(itemId: string, lane: AgentLane): string {
-  return `${itemId}${KEY_SEP}${lane}`;
+function subjectValue(subject: RunSubject): string {
+  return subject.kind === "item" ? subject.id : subject.service;
+}
+
+function makeKey(subject: RunSubject, lane: AgentLane): string {
+  return `${subject.kind}${KEY_SEP}${subjectValue(subject)}${KEY_SEP}${lane}`;
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
+}
+
+function isRunSubject(v: unknown): v is RunSubject {
+  if (!isObject(v)) {
+    return false;
+  }
+  if (v["kind"] === "item") {
+    return typeof v["id"] === "string";
+  }
+  return v["kind"] === "service" && typeof v["service"] === "string";
 }
 
 function isAgentLane(v: unknown): v is AgentLane {
@@ -92,7 +123,7 @@ interface StoredEntry extends StoredRun {
 function isStoredEntry(v: unknown): v is StoredEntry {
   return (
     isObject(v) &&
-    typeof v["itemId"] === "string" &&
+    isRunSubject(v["subject"]) &&
     isAgentLane(v["lane"]) &&
     typeof v["runId"] === "string" &&
     isLaneState(v["state"]) &&
@@ -121,17 +152,17 @@ async function readAll(): Promise<Record<string, StoredEntry>> {
  *  public `StoredRun` boundary — callers (soon: a message to the panel) must
  *  never see it. */
 function toStoredRun(entry: StoredEntry): StoredRun {
-  const { itemId, lane, runId, state, expiresAtMs } = entry;
-  return { itemId, lane, runId, state, expiresAtMs };
+  const { subject, lane, runId, state, expiresAtMs } = entry;
+  return { subject, lane, runId, state, expiresAtMs };
 }
 
 export async function getRun(
-  itemId: string,
+  subject: RunSubject,
   lane: AgentLane,
   nowMs: number,
 ): Promise<StoredRun | null> {
   const all = await readAll();
-  const found = all[makeKey(itemId, lane)];
+  const found = all[makeKey(subject, lane)];
   if (found === undefined || found.expiresAtMs <= nowMs) {
     return null;
   }
@@ -153,7 +184,7 @@ let chain: Promise<unknown> = Promise.resolve();
 export function putRun(run: StoredRun, nowMs: number): Promise<void> {
   const next = chain.then(async () => {
     const all = await readAll();
-    const key = makeKey(run.itemId, run.lane);
+    const key = makeKey(run.subject, run.lane);
     const entries = Object.entries(all).filter(([k]) => k !== key);
     entries.push([key, { ...run, writtenAtMs: nowMs }]);
     // Oldest write survives longest against the cap; evict by writtenAtMs, not
