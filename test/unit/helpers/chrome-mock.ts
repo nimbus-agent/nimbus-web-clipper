@@ -25,6 +25,11 @@ export interface ChromeHarness {
   readonly alarmsGet: ReturnType<typeof vi.fn>;
   readonly alarmsClear: ReturnType<typeof vi.fn>;
   readonly tabsQuery: ReturnType<typeof vi.fn>;
+  readonly tabsGet: ReturnType<typeof vi.fn>;
+  readonly tabsUpdatedListeners: Array<
+    (tabId: number, changeInfo: { url?: string | undefined }, tab: { active?: boolean }) => void
+  >;
+  readonly tabsRemovedListeners: Array<(tabId: number) => void>;
   readonly storageGet: ReturnType<typeof vi.fn>;
   readonly storageSet: ReturnType<typeof vi.fn>;
   readonly storageRemove: ReturnType<typeof vi.fn>;
@@ -50,6 +55,14 @@ export interface ChromeHarness {
   emitMenuClick(menuItemId: string, tabId?: number): void;
   /** Fire runtime.onInstalled. */
   emitInstalled(): void;
+  /** Fire a tab update through every registered listener. */
+  emitTabUpdated(
+    tabId: number,
+    changeInfo: { url?: string | undefined },
+    tab: { active?: boolean },
+  ): void;
+  /** Fire a tab removal through every registered listener. */
+  emitTabRemoved(tabId: number): void;
   /** Remove the fake from `globalThis.chrome`. */
   restore(): void;
 }
@@ -88,6 +101,9 @@ export function installChromeMock(): ChromeHarness {
       { id: 1, url: "https://example.com/", title: "Example" },
     ],
   );
+  const tabsGet = vi.fn(async (_id: number) => ({ url: "https://github.com/acme/web/pull/482" }));
+  const tabsUpdatedListeners: ChromeHarness["tabsUpdatedListeners"] = [];
+  const tabsRemovedListeners: ChromeHarness["tabsRemovedListeners"] = [];
   const storageGet = vi.fn(
     async (key: string): Promise<Record<string, unknown>> => ({
       [key]: storage.get(key),
@@ -163,7 +179,26 @@ export function installChromeMock(): ChromeHarness {
       },
     },
     scripting: { executeScript },
-    tabs: { query: tabsQuery },
+    tabs: {
+      query: tabsQuery,
+      get: tabsGet,
+      onUpdated: {
+        addListener: (
+          cb: (
+            tabId: number,
+            changeInfo: { url?: string | undefined },
+            tab: { active?: boolean },
+          ) => void,
+        ): void => {
+          tabsUpdatedListeners.push(cb);
+        },
+      },
+      onRemoved: {
+        addListener: (cb: (tabId: number) => void): void => {
+          tabsRemovedListeners.push(cb);
+        },
+      },
+    },
     storage: { local: { get: storageGet, set: storageSet, remove: storageRemove } },
     permissions: {
       contains: permissionsContains,
@@ -235,6 +270,22 @@ export function installChromeMock(): ChromeHarness {
     }
   }
 
+  function emitTabUpdated(
+    tabId: number,
+    changeInfo: { url?: string | undefined },
+    tab: { active?: boolean },
+  ): void {
+    for (const cb of tabsUpdatedListeners) {
+      cb(tabId, changeInfo, tab);
+    }
+  }
+
+  function emitTabRemoved(tabId: number): void {
+    for (const cb of tabsRemovedListeners) {
+      cb(tabId);
+    }
+  }
+
   function restore(): void {
     (globalThis as unknown as { chrome?: unknown }).chrome = undefined;
   }
@@ -248,6 +299,9 @@ export function installChromeMock(): ChromeHarness {
     alarmsGet,
     alarmsClear,
     tabsQuery,
+    tabsGet,
+    tabsUpdatedListeners,
+    tabsRemovedListeners,
     storageGet,
     storageSet,
     storageRemove,
@@ -266,6 +320,8 @@ export function installChromeMock(): ChromeHarness {
     emitAlarm,
     emitMenuClick,
     emitInstalled,
+    emitTabUpdated,
+    emitTabRemoved,
     restore,
   };
 }
