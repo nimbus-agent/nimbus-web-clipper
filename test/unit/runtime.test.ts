@@ -69,7 +69,11 @@ describe("browser/runtime seam", () => {
 
     await harness.emitMessage({ kind: "ping" });
 
-    expect(received).toEqual({ tabId: undefined });
+    // toStrictEqual, not toEqual: the conditional-spread in addMessageListener
+    // must produce `{}` (the key ABSENT) here, not `{ tabId: undefined }` (the
+    // key present with an explicit undefined) — toEqual treats those as equal
+    // and would not catch a regression to the latter.
+    expect(received).toStrictEqual({});
   });
 
   test("addCommandListener forwards keyboard commands", () => {

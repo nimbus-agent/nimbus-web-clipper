@@ -1602,6 +1602,63 @@ describe("ambient surfacing", () => {
     expect(cued).toHaveLength(1);
   });
 
+  // The test above overlaps runs for two DIFFERENT items, so ambient.ts's own
+  // post-resolve recheck (comparing `currentUrl` against the recognition it
+  // resolved) already kills the stale run on its own — that test would still
+  // pass with the generation check deleted. Pin the generation check itself by
+  // overlapping two navigations to the SAME item (a PR's Conversation tab, then
+  // its Files tab): the post-resolve recheck PASSES for the stale run (same
+  // product/kind/ref), and the already-cued gate can't save it either, because
+  // it reads `lastCued` before the resolve — before the second nav's run has had
+  // a chance to record anything there. Only the generation check stops the stale
+  // run from calling showCue a second time.
+  test("a run overtaken by a navigation to the SAME item also drops its result", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await loadWorker();
+    let release: (() => void) | undefined;
+    harness.holdNextResolve(new Promise<void>((r) => (release = r)));
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    harness.emitTabUpdated(7, { url: `${PR_URL}/files` }, { active: true });
+    await settleAmbient();
+    release?.();
+    await settleAmbient();
+    const cued = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    expect(cued).toHaveLength(1);
+  });
+
+  // If a tab closes while the winning run is still inside `showCue`'s await, the
+  // close handler clears `ambientGeneration`/`lastCuedByTab` for that tab BEFORE
+  // the pending run resumes and writes its own `lastCuedByTab` entry — a stale
+  // write for a tab nothing is tracking any more. Reusing the same tab id for a
+  // fresh navigation to the SAME PR is the observable proxy: a leaked entry would
+  // wrongly read as "already cued" and suppress the second cue.
+  test("a tab closed while showCue is in flight leaves no stale dedupe entry", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await loadWorker();
+    let releaseInject: (() => void) | undefined;
+    harness.executeScript.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseInject = () => resolve([{ result: undefined }]);
+        }),
+    );
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    // decideAmbient has resolved "show"; showCue's cue.js inject is now pending.
+    harness.emitTabRemoved(7);
+    releaseInject?.();
+    await settleAmbient();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    const cued = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    expect(cued).toHaveLength(2);
+  });
+
   test("an injection failure on a restricted page is swallowed, not thrown", async () => {
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
     harness.executeScript.mockRejectedValue(new Error("Cannot access contents of the page"));

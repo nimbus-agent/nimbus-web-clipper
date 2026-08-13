@@ -628,7 +628,13 @@ async function runAmbient(nav: TabNavigation, generation: number): Promise<void>
   // Inject FIRST, remember second: an attempt abandoned by a restricted page
   // must not suppress the cue the next time the user lands on this item.
   await showCue(nav.tabId, decision.cue);
-  lastCuedByTab.set(nav.tabId, decision.recognition);
+  // Re-check the generation once more, right before the write: the tab may have
+  // closed (clearing this tab's entry) or navigated again while showCue's await
+  // was in flight. Either way, writing the dedupe entry now would be a stale
+  // write for a tab nothing here is tracking any more.
+  if (ambientGeneration.get(nav.tabId) === generation) {
+    lastCuedByTab.set(nav.tabId, decision.recognition);
+  }
 }
 
 addNavigationListener((nav) => {
