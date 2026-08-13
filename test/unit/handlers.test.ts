@@ -41,6 +41,7 @@ describe("handlePair", () => {
           return { ok: true, token: "t", label: "l" };
         },
         setConnection: async () => undefined,
+        clearRuns: async () => undefined,
         nowMs: () => 1,
       },
       { kind: "pair", origin: "http://evil.com", code: "1" },
@@ -56,6 +57,7 @@ describe("handlePair", () => {
         setConnection: async (c) => {
           stored = c;
         },
+        clearRuns: async () => undefined,
         nowMs: () => 100,
       },
       { kind: "pair", origin: "http://127.0.0.1:8765", code: "429173" },
@@ -74,11 +76,54 @@ describe("handlePair", () => {
       {
         confirmPair: async () => ({ ok: false, reason: "pairing_failed" }),
         setConnection: async () => undefined,
+        clearRuns: async () => undefined,
         nowMs: () => 1,
       },
       { kind: "pair", origin: "http://127.0.0.1:8765", code: "000000" },
     );
     expect(res).toEqual({ kind: "pair", ok: false, reason: "pairing_failed" });
+  });
+
+  test("a successful pair clears cached agent runs after storing the connection", async () => {
+    let setConnectionCalls = 0;
+    let clearRunsCalls = 0;
+    const res = await handlePair(
+      {
+        confirmPair: async () => ({ ok: true, token: "tok-xyz", label: "chrome" }),
+        setConnection: async () => {
+          setConnectionCalls += 1;
+        },
+        clearRuns: async () => {
+          clearRunsCalls += 1;
+        },
+        nowMs: () => 100,
+      },
+      { kind: "pair", origin: "http://127.0.0.1:8765", code: "429173" },
+    );
+    expect(res).toEqual({ kind: "pair", ok: true, label: "chrome" });
+    expect(setConnectionCalls).toBe(1);
+    expect(clearRunsCalls).toBe(1);
+  });
+
+  test("a failed pair does not clear cached agent runs", async () => {
+    let setConnectionCalls = 0;
+    let clearRunsCalls = 0;
+    const res = await handlePair(
+      {
+        confirmPair: async () => ({ ok: false, reason: "pairing_failed" }),
+        setConnection: async () => {
+          setConnectionCalls += 1;
+        },
+        clearRuns: async () => {
+          clearRunsCalls += 1;
+        },
+        nowMs: () => 1,
+      },
+      { kind: "pair", origin: "http://127.0.0.1:8765", code: "000000" },
+    );
+    expect(res).toEqual({ kind: "pair", ok: false, reason: "pairing_failed" });
+    expect(setConnectionCalls).toBe(0);
+    expect(clearRunsCalls).toBe(0);
   });
 });
 

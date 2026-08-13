@@ -431,7 +431,7 @@ function openPanelForCue(tabId: number | undefined): void {
 
 addMessageListener((message, respond, sender) => {
   if (isPairRequest(message)) {
-    handlePair({ confirmPair, setConnection, nowMs: () => Date.now() }, message)
+    handlePair({ confirmPair, setConnection, clearRuns, nowMs: () => Date.now() }, message)
       .then(respond)
       .catch(() => {
         respond({ kind: "pair", ok: false, reason: "server_error" });

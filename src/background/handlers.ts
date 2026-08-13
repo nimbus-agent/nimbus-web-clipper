@@ -50,6 +50,8 @@ export interface PairDeps {
     code: string,
   ) => Promise<{ ok: true; token: string; label: string } | { ok: false; reason: PairError }>;
   readonly setConnection: (c: Connection) => Promise<void>;
+  /** Cached briefs belong to the gateway that produced them — see clearRuns. */
+  readonly clearRuns: () => Promise<void>;
   readonly nowMs: () => number;
 }
 
@@ -80,6 +82,10 @@ export async function handlePair(deps: PairDeps, req: PairRequest): Promise<Pair
     label: r.label,
     pairedAt: deps.nowMs(),
   });
+  // A confirmed new token may be a different gateway than the one that produced
+  // any cached briefs — a cached brief belongs to the gateway that produced it,
+  // the same reason unpair clears (see handleUnpair).
+  await deps.clearRuns();
   return { kind: "pair", ok: true, label: r.label };
 }
 
