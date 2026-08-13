@@ -628,11 +628,13 @@ async function runAmbient(nav: TabNavigation, generation: number): Promise<void>
   // Inject FIRST, remember second: an attempt abandoned by a restricted page
   // must not suppress the cue the next time the user lands on this item.
   await showCue(nav.tabId, decision.cue);
-  // Re-check the generation once more, right before the write: the tab may have
-  // closed (clearing this tab's entry) or navigated again while showCue's await
-  // was in flight. Either way, writing the dedupe entry now would be a stale
-  // write for a tab nothing here is tracking any more.
-  if (ambientGeneration.get(nav.tabId) === generation) {
+  // Skip the write only when the tab is GONE — addTabClosedListener has already
+  // cleared this tab's maps, and re-adding an entry would leak one for a dead
+  // tab. A newer navigation superseding this run is NOT a reason to skip: this
+  // run genuinely mounted a cue for `decision.recognition`, that fact stays
+  // true regardless of what navigated next, and it can never wrongly suppress a
+  // later cue for a DIFFERENT item (the dedupe check compares with sameItem).
+  if (ambientGeneration.has(nav.tabId)) {
     lastCuedByTab.set(nav.tabId, decision.recognition);
   }
 }

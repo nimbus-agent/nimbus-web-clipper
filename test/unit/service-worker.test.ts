@@ -1659,6 +1659,43 @@ describe("ambient surfacing", () => {
     expect(cued).toHaveLength(2);
   });
 
+  // The tab-close test above proves the guard skips the write for a DEAD tab.
+  // This is the other half: a run whose tab is still open, but whose generation
+  // was superseded by a newer navigation while showCue was still in flight, must
+  // still WRITE its dedupe entry — the cue it mounted is a true fact regardless
+  // of what navigated next, and it can never wrongly suppress a cue for a
+  // DIFFERENT item (the dedupe check compares with sameItem). The superseding
+  // navigation here is INACTIVE, so it bumps the generation without itself
+  // reaching a resolve/showCue — isolating the guard's effect on the first run's
+  // own write.
+  test("a same-item navigation superseding an in-flight showCue does not block that run's dedupe write", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await loadWorker();
+    let releaseInject: (() => void) | undefined;
+    harness.executeScript.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseInject = () => resolve([{ result: undefined }]);
+        }),
+    );
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    // Supersedes the generation without producing a cue of its own (inactive tab
+    // — decideAmbient's cheapest gate returns before any resolve).
+    harness.emitTabUpdated(7, { url: `${PR_URL}/files` }, { active: false });
+    await settleAmbient();
+    releaseInject?.();
+    await settleAmbient();
+    // The tab is still open, so the first run's write went through despite being
+    // superseded. A third navigation to the same item must find it already-cued.
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    const cued = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    expect(cued).toHaveLength(1);
+  });
+
   test("an injection failure on a restricted page is swallowed, not thrown", async () => {
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
     harness.executeScript.mockRejectedValue(new Error("Cannot access contents of the page"));
