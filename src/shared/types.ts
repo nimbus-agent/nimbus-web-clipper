@@ -245,16 +245,21 @@ export type FetchError =
   | "server_error";
 
 /**
- * The lanes this phase ships, and the agent each maps to.
+ * The lanes this client ships, and the agent each maps to. A member IS the wire
+ * agent name — `invokeAgent` passes it straight through as `{agent}` in
+ * `POST /v1/agents/{agent}` — so these must be spelled exactly as upstream's
+ * handler keys, and `catchup` is first because it is the question a dashboard
+ * exists to answer.
  *
- * `why` is deliberately ABSENT. `agents.why` takes `{ ref, line? }` where `ref` is
- * a LOCAL filesystem path resolved against configured `[[filesystem.roots]]` and
- * answered by git blame on a local checkout — it answers "why does this line
- * exist", not "why does this change exist", and a browser on a pull-request page
- * has neither the path nor necessarily the repo. The roadmap's C2.1 brief names it
- * (and `whyPeek`, which is HTTP-excluded); both are corrected there.
+ * `why` is deliberately ABSENT — see the existing note above.
+ *
+ * `preflight`, `premortem`, `whyPeek` and `negotiate` are absent because
+ * upstream excludes them from the HTTP surface entirely
+ * (HTTP_EXCLUDED_AGENT_METHODS in packages/gateway/src/ipc/agents-rpc.ts).
+ * `ghost` and `conflicts` are absent because both require `{ file }` — a local
+ * checkout the browser does not have.
  */
-export const AGENT_LANES = ["impact", "expert"] as const;
+export const AGENT_LANES = ["impact", "expert", "catchup", "decisions", "ownership"] as const;
 export type AgentLane = (typeof AGENT_LANES)[number];
 
 /**
@@ -274,6 +279,12 @@ export type AgentLane = (typeof AGENT_LANES)[number];
 export const LANE_SURFACES: Record<AgentLane, readonly SurfaceKind[]> = {
   impact: ["pr"],
   expert: ["pr"],
+  // Service-scoped: these answer about a whole connector, so they belong on the
+  // one page whose scope is the connector. On an item page they would repeat
+  // the same answer for every item on that host.
+  catchup: ["home"],
+  decisions: ["home"],
+  ownership: ["home"],
 };
 
 /**

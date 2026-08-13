@@ -92,6 +92,9 @@ const FETCH_MESSAGES: Record<string, string> = {
 const LANE_TITLES: Record<AgentLane, string> = {
   impact: "What breaks if it lands",
   expert: "Who should review it",
+  catchup: "What happened while I was away",
+  decisions: "What got decided",
+  ownership: "Who owns what",
 };
 
 /** How often an OPEN panel re-asks the worker for a running lane's state — a
@@ -512,10 +515,19 @@ function createPanel(body: HTMLElement): {
   const laneState: Record<AgentLane, LaneState> = {
     impact: { kind: "collapsed" },
     expert: { kind: "collapsed" },
+    catchup: { kind: "collapsed" },
+    decisions: { kind: "collapsed" },
+    ownership: { kind: "collapsed" },
   };
   // Whether each lane's own <details> is open, carried across repaints exactly
   // like `relatedExpanded` above.
-  const laneOpen: Record<AgentLane, boolean> = { impact: false, expert: false };
+  const laneOpen: Record<AgentLane, boolean> = {
+    impact: false,
+    expert: false,
+    catchup: false,
+    decisions: false,
+    ownership: false,
+  };
   /**
    * Lanes with an `agent-run` genuinely IN FLIGHT — sent but not yet answered.
    * Guards a double invoke on rapid toggling: expand -> collapse -> expand

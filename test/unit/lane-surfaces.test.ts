@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_LANES, LANE_SURFACES, type SurfaceKind } from "../../src/shared/types.ts";
 
-const ALL_KINDS: readonly SurfaceKind[] = ["pr", "build", "issue"];
+const ALL_KINDS: readonly SurfaceKind[] = ["pr", "build", "issue", "home"];
 
 describe("LANE_SURFACES", () => {
   it("covers every lane", () => {
@@ -33,5 +33,27 @@ describe("LANE_SURFACES", () => {
     for (const kind of ["build", "issue"] as const) {
       expect(AGENT_LANES.filter((lane) => LANE_SURFACES[lane].includes(kind))).toEqual([]);
     }
+  });
+});
+
+describe("service lanes", () => {
+  it("puts the service-scoped lanes on home and nowhere else", () => {
+    for (const lane of ["catchup", "decisions", "ownership"] as const) {
+      expect(LANE_SURFACES[lane], lane).toEqual(["home"]);
+    }
+  });
+
+  it("keeps the item-scoped lanes off home", () => {
+    for (const lane of ["impact", "expert"] as const) {
+      expect(LANE_SURFACES[lane].includes("home"), lane).toBe(false);
+    }
+  });
+
+  it("gives every surface kind at least one lane", () => {
+    const covered = new Set(Object.values(LANE_SURFACES).flat());
+    // `build` and `issue` deliberately have no agent lane yet — assert the two
+    // that DO, so this test fails loudly if a future edit empties them.
+    expect(covered.has("pr")).toBe(true);
+    expect(covered.has("home")).toBe(true);
   });
 });
