@@ -123,6 +123,21 @@ unturnable-on for the three hosts most users have. So it is in scope here:
   origins; the built-in rows carry their pattern directly, since the Jira Cloud
   wildcard is not derivable from an origin string.
 
+Grant state is read from the browser, never cached or inferred:
+`surfaceRows()` already resolves `granted` per row through `hasOrigin` →
+`chrome.permissions.contains` (`src/options/options.ts:184`,
+`src/browser/permissions.ts:7`), and the built-in rows join that same loop. The
+query stays in `options.ts`; `surfaces-view.ts` is a pure DOM builder and does
+not touch `chrome.*` — the project rule that keeps pure logic out of the API
+seam applies to this row work as much as to the rest.
+
+One consequence of the wildcard worth stating: `permissions.contains` for
+`https://*.atlassian.net/*` answers about *that* pattern. A user who somehow
+holds a grant for a single tenant host reads as not-granted on the Jira Cloud
+row, and granting from the row asks for the wildcard. That is the honest
+answer — the row is offering all of Jira Cloud, because tenant hosts are not
+enumerable — not a bug to paper over.
+
 ## Components
 
 | Module | Kind | Job |
@@ -158,6 +173,39 @@ chrome.tabs.onUpdated (changeInfo.url present)
   │    └─ anything else ────→ silence
   └─ in page: panel already mounted (#nimbus-related-host)? ─ yes ─→ don't mount
 ```
+
+### Preconditions are re-checked after the resolve returns
+
+The gate above runs *before* a loopback call that takes up to
+`RESOLVE_TIMEOUT_MS` (8s, `src/background/gateway-client.ts:26`). A lot can
+happen in that window, so `found` is not on its own permission to mount. Before
+injecting, the worker re-checks:
+
+- **the tab still exists** — otherwise `executeScript` rejects into a swallowed
+  catch, which is harmless but is not a design;
+- **the tab's URL still equals the `resolveUrl` we sent** — this is the real one.
+  Without it the cue mounts on a page the user has already left, naming the item
+  they left behind. That is the exact defect the panel-page-context slice fixed
+  on 2026-08-11, and an ambient surface would reintroduce it with no click
+  involved.
+
+Deliberately **not** re-checked: whether the tab is still *active*. The
+active-tab test belongs to the pre-resolve gate, where its job is to stop
+fifteen background tabs costing fifteen resolves. Re-applying it after the fact
+would mean that switching tabs for four seconds and switching back leaves you
+with no cue at all, permanently — a cue quietly waiting in a tab you return to
+is the better outcome, and it costs nothing extra, the work having already been
+done.
+
+For the same reason, a tab's entry in the dedupe map is written **when the cue
+actually mounts**, never when the attempt starts. An attempt abandoned by these
+preconditions must not suppress the cue the next time you land on that item.
+
+Also deliberately not re-checked in the worker: whether the panel is open. That
+check stays in-page, against `#nimbus-related-host`, where the DOM is the
+authority and the answer is free — asking from the worker would need a second
+injection round-trip to learn something the cue script is about to see for
+itself.
 
 The permission boundary is enforced by the browser, not by us: Chrome populates
 `changeInfo.url` only for tabs the extension holds host permission on, so an
@@ -206,15 +254,27 @@ removed, not tuned forever. The same applies here.
 - Debounced per tab, so an SPA that rewrites its URL twice during one navigation
   resolves once.
 - At most one cue per tab at a time, and none while the panel is open.
-- The cue is fixed to a page corner, does not take focus, is not modal, and
-  accepts pointer events only within itself.
+- The cue is pinned **top-right**, at `top: 16px; right: 16px`, matching the
+  toast (`src/capture/toast-in-page.ts:20`) and sitting flush with the edge the
+  panel opens along (`position: fixed; top: 0; right: 0; width: 340px`,
+  `src/panel/panel-in-page.ts:171`). Two reasons, in order: the cue's whole
+  promise is that clicking it becomes the panel, so it should appear where the
+  panel will; and bottom-right is the crowded corner on the modern web — chat
+  widgets, cookie banners, feedback tabs, scroll-to-top buttons all live there.
+- Its wrapper takes `pointer-events: none` with `pointer-events: auto` on the
+  cue itself, so the page underneath stays clickable everywhere the cue is not.
+  `z-index: 2147483647`, as both existing injected surfaces already use.
+- It does not take focus and is not modal.
 
 ## Testing
 
 - `ambient.ts` — a decision table under Vitest (node): granted × enabled ×
   active × recognised × each resolve outcome (`found` / `not_indexed` /
   `unresolvable_url` / `ambiguous` / each error) × dedupe × dismissal. This is
-  where the feature's behaviour actually lives.
+  where the feature's behaviour actually lives. It carries the post-resolve
+  preconditions too: a tab closed mid-resolve, a tab navigated mid-resolve, a
+  superseding navigation, and the rule that an abandoned attempt leaves the
+  dedupe map untouched.
 - `cue-view.ts` — jsdom: renders the label and ref, dismiss and open targets
   exist, user-supplied text goes through `textContent`.
 - `surfaces-view.ts` — jsdom: built-in rows render with grant/revoke and toggle
@@ -231,11 +291,51 @@ removed, not tuned forever. The same applies here.
   stay silent, a restricted page fails closed, revoking page access mid-session
   silences the host, and the cue does not appear while the panel is open.
 
+## Deferred, with reasons
+
+From the design review
+([`…-ambient-surfacing-design-review.md`](./2026-08-13-ambient-surfacing-design-review.md)).
+Both are defensible asks; neither earns its complexity in this slice.
+
+### An in-memory cache of the enabled-host prefs
+
+The concern is `chrome.storage.local` I/O on a frequently-firing
+`chrome.tabs.onUpdated`. The events that reach the read are already filtered
+three ways — the browser omits `changeInfo.url` for ungranted hosts, we drop
+inactive tabs, and the ~600ms debounce coalesces SPA churn — so the read happens
+on the order of once per page you actually navigate to, on hosts you explicitly
+enabled. That is not a load worth defending against in advance.
+
+A cache is also not free under MV3: it needs a `chrome.storage.onChanged`
+listener to stay honest, and its failure mode is a cue appearing on a host the
+user just switched off — a correctness bug traded for latency nobody has
+measured. If the manual pass shows perceptible lag, the first move is to fold the
+two reads the gate makes (`origins` for the recogniser, prefs for enablement)
+into one `chrome.storage.local.get` of both keys; caching comes after that, with
+a measurement behind it.
+
+### Aborting an in-flight resolve when the URL changes again
+
+`getJsonAt` already creates an `AbortController` per call, but only for its own
+timeout (`src/background/gateway-client.ts:94`); exposing caller-side
+cancellation means threading a signal through `resolveItem` and `handleResolve`,
+a shipped seam shared with the panel, to save a request to `127.0.0.1` whose work
+the gateway has already begun.
+
+What actually matters here is correctness, not bandwidth, and it is stated as a
+property rather than bought with plumbing: **at most one in-flight ambient
+resolve per tab, and a newer navigation supersedes an older one's result.** The
+post-resolve URL check above discards the stale answer whether or not the request
+was cancelled. Revisit if a slow gateway ever makes the wasted call visible.
+
 ## Out of scope
 
 - Cue on a fetchable miss (decision 2's second rejection). Later, if earned.
 - Persisted dismissal (decision 4).
 - Background tabs.
+- A draggable or repositionable cue. It is dismissible in one click and pinned
+  where the panel opens; a position the user has to manage is a setting, and a
+  cue that needs one has already failed at being unobtrusive.
 - Any ambient agent invocation. Nothing runs without a click — that rule is the
   reason the panel is defensible, and the ambient path does not get an exception.
 - Renaming, restyling or otherwise reworking the panel itself.
