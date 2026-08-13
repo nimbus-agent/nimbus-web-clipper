@@ -19,3 +19,12 @@ code { font-family: ui-monospace, monospace; padding: 1px 4px; border-radius: 4p
 .surfaces__origin { flex: 1; font-family: ui-monospace, monospace; font-size: 13px; }
 .surfaces__product { font-size: 12px; opacity: 0.75; }
 .surfaces__row button { margin-top: 0; }
+.surfaces__ambient {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.surfaces__ambient input:disabled + span {
+  opacity: 0.55;
+}

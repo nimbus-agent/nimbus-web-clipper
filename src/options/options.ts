@@ -182,6 +182,9 @@ async function surfaceRows(): Promise<SurfaceRow[]> {
       origin: entry.origin,
       product: entry.product,
       granted: pattern !== null && (await hasOrigin(pattern)),
+      builtIn: false,
+      pattern,
+      ambient: false,
     });
   }
   return rows;
