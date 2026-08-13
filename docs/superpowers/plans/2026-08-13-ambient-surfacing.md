@@ -505,6 +505,15 @@ describe("the ambient toggle", () => {
     expect(input.disabled).toBe(true);
   });
 
+  test("never renders ticked-but-disabled — a tick means the cue is happening", () => {
+    // Reachable when page access is revoked from the browser's own extension
+    // settings, which never passes through our revoke handler.
+    const el = renderSurfaceList(document, [{ ...BUILT_IN, granted: false, ambient: true }]);
+    const input = el.querySelector('[data-action="ambient"]') as HTMLInputElement;
+    expect(input.disabled).toBe(true);
+    expect(input.checked).toBe(false);
+  });
+
   test("origin text is written as text, never parsed as markup", () => {
     const el = renderSurfaceList(document, [
       { ...STORED, origin: "https://corp.example/<img src=x onerror=alert(1)>" },
@@ -540,12 +549,20 @@ function ambientToggle(doc: Document, row: SurfaceRow): HTMLLabelElement {
   const label = doc.createElement("label");
   label.className = "surfaces__ambient";
 
+  const disabled = !row.granted || row.pattern === null;
+
   const input = doc.createElement("input");
   input.type = "checkbox";
   input.dataset["action"] = "ambient";
   input.dataset["pattern"] = row.pattern ?? "";
-  input.checked = row.ambient;
-  input.disabled = !row.granted || row.pattern === null;
+  // Ticked means "this is happening", never "this is stored". A disabled tick
+  // would be ambiguous exactly when it matters — after page access is revoked,
+  // is the cue still on? It is not, so it does not show as on. The stored
+  // preference is separately cleared on the revoke path (options.ts), so the two
+  // cannot disagree; this rule additionally covers a revoke made from the
+  // browser's own extension settings, which never reaches our click handler.
+  input.checked = row.ambient && !disabled;
+  input.disabled = disabled;
 
   const text = doc.createElement("span");
   text.textContent = "Surface automatically";
@@ -676,6 +693,35 @@ describe("the ambient toggle", () => {
     expect(harness.storage.get("ambient-hosts")).toEqual(["https://github.com/*"]);
   });
 
+  test("revoking page access switches the cue off for that host", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    document.body.innerHTML = OPTIONS_HTML;
+    await bootOptions();
+    const revoke = [...document.querySelectorAll('[data-action="revoke"]')].find((el) =>
+      (el as HTMLElement).dataset["origin"]?.includes("github.com"),
+    ) as HTMLButtonElement;
+    revoke.click();
+    await flush();
+    expect(harness.storage.get("ambient-hosts")).toEqual([]);
+  });
+
+  test("a revoke that failed leaves the preference alone", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.permissionsRemove.mockResolvedValueOnce(false);
+    document.body.innerHTML = OPTIONS_HTML;
+    await bootOptions();
+    const revoke = [...document.querySelectorAll('[data-action="revoke"]')].find((el) =>
+      (el as HTMLElement).dataset["origin"]?.includes("github.com"),
+    ) as HTMLButtonElement;
+    revoke.click();
+    await flush();
+    expect(harness.storage.get("ambient-hosts")).toEqual(["https://github.com/*"]);
+  });
+
   test("unchecking it removes the pattern", async () => {
     harness = installChromeMock();
     harness.grantedOrigins.add("https://github.com/*");
@@ -777,6 +823,18 @@ and guard Remove so a built-in can never be deleted, replacing the `if (action =
 
 ```ts
   if (action === "remove" && builtIn === undefined) {
+```
+
+In the `revoke` branch, switch the cue off for that host once the revoke actually
+succeeds — inside the existing `if (await removeOrigin(pattern))`, before the
+status line:
+
+```ts
+      // Page access is what the cue runs on, so revoking it turns the cue off
+      // rather than leaving a stored "on" that cannot happen. Without this, a
+      // later re-grant would silently resurrect a preference the user last saw
+      // being withdrawn.
+      await setAmbientHost(pattern, false);
 ```
 
 - [ ] **Step 5: Handle the toggle**
@@ -1102,6 +1160,20 @@ describe("the injected cue", () => {
     expect(document.getElementById("nimbus-cue-host")).toBeNull();
   });
 
+  test("retracts itself when the panel is opened by any other route", async () => {
+    vi.useFakeTimers();
+    const show = await loadCue();
+    show(STATE);
+    expect(cueEl()).not.toBeNull();
+    // The hotkey, the popup button and the context menu all inject the panel
+    // without going through the cue — from in here, all three look like this.
+    const panel = document.createElement("div");
+    panel.id = "nimbus-related-host";
+    document.documentElement.append(panel);
+    vi.advanceTimersByTime(600);
+    expect(document.getElementById("nimbus-cue-host")).toBeNull();
+  });
+
   test("a second call replaces the first cue rather than stacking a second one", async () => {
     const show = await loadCue();
     show(STATE);
@@ -1263,7 +1335,13 @@ function show(state: CueState): void {
 
   const mountedAt = window.location.href;
   host.__nimbusNavTimer = setInterval(() => {
-    if (window.location.href !== mountedAt) {
+    // Two ways the cue stops being the right thing on screen. The page moved on
+    // — a cue naming the page you just left is the 2026-08-11 defect. Or the
+    // panel opened without us: the hotkey, the popup button and the context menu
+    // all inject it directly, and the mount-time check above cannot see a panel
+    // that arrives later. Leaving both up would be two surfaces answering the
+    // same question, one of them redundantly.
+    if (window.location.href !== mountedAt || document.getElementById(PANEL_HOST_ID) !== null) {
       teardown();
     }
   }, NAV_CHECK_MS);
@@ -2039,6 +2117,26 @@ describe("ambient surfacing", () => {
     expect(cueInjections).toHaveLength(2);
   });
 
+  test("a run overtaken by a newer navigation in the same tab drops its result", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await loadWorker();
+    // Hold the first resolve open past the second navigation, so the two runs
+    // genuinely overlap rather than merely being scheduled apart.
+    let release: (() => void) | undefined;
+    harness.holdNextResolve(new Promise<void>((r) => (release = r)));
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await settleAmbient();
+    harness.emitTabUpdated(7, { url: OTHER_PR_URL }, { active: true });
+    await settleAmbient();
+    release?.();
+    await settleAmbient();
+    const cued = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    // Exactly one cue, and it is the newer page's.
+    expect(cued).toHaveLength(1);
+  });
+
   test("an injection failure on a restricted page is swallowed, not thrown", async () => {
     harness.storage.set("ambient-hosts", ["https://github.com/*"]);
     harness.executeScript.mockRejectedValue(new Error("Cannot access contents of the page"));
@@ -2060,7 +2158,13 @@ describe("ambient surfacing", () => {
 });
 ```
 
-This test file already stubs the gateway; make the resolve return a `found` outcome for `PR_URL` the same way its existing resolve tests do. Add two helpers to it: `settleAmbient()` — advance past the debounce (`vi.useFakeTimers()` + `await vi.advanceTimersByTimeAsync(700)`, then flush microtasks) — and, in `chrome-mock.ts`, `emitMessageFromTab(message, tabId)`, which fires the listener with a `sender` of `{ tab: { id: tabId } }`. The existing `emitMessage` passes no sender; keep it, and have it delegate to `emitMessageFromTab(message, undefined)`.
+This test file already stubs the gateway; make the resolve return a `found` outcome for both `PR_URL` (`https://github.com/acme/web/pull/482`) and `OTHER_PR_URL` (`https://github.com/acme/web/pull/517`) the same way its existing resolve tests do, and have `tabsGet` report whichever URL was last navigated to, so the post-resolve precondition sees the real page.
+
+Three helpers this task needs:
+
+- `settleAmbient()`, in the test file — advance past the debounce and flush: `vi.useFakeTimers()` in setup, then `await vi.advanceTimersByTimeAsync(700)`.
+- `emitMessageFromTab(message, tabId)`, in `chrome-mock.ts` — fires the message listener with a `sender` of `{ tab: { id: tabId } }`. Keep the existing `emitMessage` and have it delegate with `undefined`, so the popup and options paths still exercise the no-tab case.
+- `holdNextResolve(gate: Promise<void>)`, in `chrome-mock.ts` — makes the next gateway resolve wait on `gate` before returning its stubbed response. Only the overtaken-run test needs it; without a way to hold a response open, two runs cannot be made to genuinely overlap and the test would pass whether or not the generation check exists.
 
 - [ ] **Step 2: Run them to make sure they fail**
 
@@ -2139,6 +2243,24 @@ Add to `src/background/service-worker.ts`, after the command listener:
 const lastCuedByTab = new Map<number, Recognition>();
 const ambientTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
+/**
+ * One in-flight ambient run per tab, as the design spec states — enforced by
+ * generation, not by cancellation.
+ *
+ * The debounce coalesces bursts, but it cannot help once a run has STARTED: a
+ * navigation 700ms after another leaves two runs overlapping, and the older one
+ * can still land last. Bumping a counter per navigation and checking it after
+ * the await means the stale run drops its result instead of racing the fresh one
+ * to `showCue`.
+ *
+ * This is deliberately NOT an AbortController. See the spec's "Deferred, with
+ * reasons": caller-side cancellation means threading a signal through
+ * `resolveItem` and `handleResolve` — a seam the panel shares — to save a
+ * request to 127.0.0.1 whose work the gateway has already begun. Correctness is
+ * what matters here, and this is what buys it.
+ */
+const ambientGeneration = new Map<number, number>();
+
 /** SPA URL rewrites arrive in bursts; one navigation should cost one resolve. */
 const AMBIENT_DEBOUNCE_MS = 600;
 
@@ -2151,8 +2273,12 @@ const ambientDeps: AmbientDeps = {
   currentUrl: tabUrl,
 };
 
-async function runAmbient(nav: TabNavigation): Promise<void> {
+async function runAmbient(nav: TabNavigation, generation: number): Promise<void> {
   const decision = await decideAmbient(ambientDeps, nav);
+  // A newer navigation in this tab supersedes this one, whatever it concluded.
+  if (ambientGeneration.get(nav.tabId) !== generation) {
+    return;
+  }
   if (decision.kind !== "show") {
     return;
   }
@@ -2163,6 +2289,8 @@ async function runAmbient(nav: TabNavigation): Promise<void> {
 }
 
 addNavigationListener((nav) => {
+  const generation = (ambientGeneration.get(nav.tabId) ?? 0) + 1;
+  ambientGeneration.set(nav.tabId, generation);
   const pending = ambientTimers.get(nav.tabId);
   if (pending !== undefined) {
     clearTimeout(pending);
@@ -2173,13 +2301,14 @@ addNavigationListener((nav) => {
       ambientTimers.delete(nav.tabId);
       // Fails closed like every other listener here: the user-visible result is
       // a cue or nothing, and a rejection has nowhere to be reported.
-      runAmbient(nav).catch(() => undefined);
+      runAmbient(nav, generation).catch(() => undefined);
     }, AMBIENT_DEBOUNCE_MS),
   );
 });
 
 addTabClosedListener((tabId) => {
   lastCuedByTab.delete(tabId);
+  ambientGeneration.delete(tabId);
   const pending = ambientTimers.get(tabId);
   if (pending !== undefined) {
     clearTimeout(pending);
