@@ -200,6 +200,21 @@ export function putRun(run: StoredRun, nowMs: number): Promise<void> {
   return next;
 }
 
+/**
+ * Drop every cached run. Called on unpair: a cached brief is an answer from ONE
+ * gateway, and the next pairing may be a different one. A service subject makes
+ * this sharp — `{kind:"service", service:"github"}` is identical on every
+ * gateway, so without this a lane could replay another gateway's answer for the
+ * rest of the TTL.
+ */
+export function clearRuns(): Promise<void> {
+  const next = chain.then(async () => {
+    await storageSet(STORE_KEY, {});
+  });
+  chain = next.catch(() => undefined);
+  return next;
+}
+
 export async function listRunning(nowMs: number): Promise<StoredRun[]> {
   const all = await readAll();
   return Object.values(all)

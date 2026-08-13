@@ -343,8 +343,21 @@ describe("handleUnpair", () => {
       clearConnection: async () => {
         cleared = true;
       },
+      clearRuns: async () => undefined,
     });
     expect(cleared).toBe(true);
+    expect(res).toEqual({ kind: "connection", paired: false });
+  });
+
+  it("forgets cached agent runs on unpair", async () => {
+    let cleared = 0;
+    const res = await handleUnpair({
+      clearConnection: async () => undefined,
+      clearRuns: async () => {
+        cleared += 1;
+      },
+    });
+    expect(cleared).toBe(1);
     expect(res).toEqual({ kind: "connection", paired: false });
   });
 });

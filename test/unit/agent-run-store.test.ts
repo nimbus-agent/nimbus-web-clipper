@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   AGENT_RUN_CACHE_TTL_MS,
+  clearRuns,
   getRun,
   listRunning,
   MAX_STORED_RUNS,
@@ -175,6 +176,21 @@ describe("agent-run-store", () => {
     );
     const [running] = await listRunning(NOW);
     expect(running).not.toHaveProperty("writtenAtMs");
+  });
+
+  it("clears every stored run", async () => {
+    await putRun(
+      {
+        subject: { kind: "service", service: "github" },
+        lane: "catchup",
+        runId: "r1",
+        state: { kind: "done", brief: "B" },
+        expiresAtMs: NOW + 1000,
+      },
+      NOW,
+    );
+    await clearRuns();
+    expect(await getRun({ kind: "service", service: "github" }, "catchup", NOW)).toBeNull();
   });
 
   describe("run subjects", () => {

@@ -580,9 +580,12 @@ export async function handleConnectionStatus(
 
 export interface UnpairDeps {
   readonly clearConnection: () => Promise<void>;
+  /** Cached briefs belong to the gateway that produced them — see clearRuns. */
+  readonly clearRuns: () => Promise<void>;
 }
 
 export async function handleUnpair(deps: UnpairDeps): Promise<ConnectionResponse> {
   await deps.clearConnection();
+  await deps.clearRuns();
   return { kind: "connection", paired: false };
 }

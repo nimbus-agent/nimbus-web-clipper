@@ -39,6 +39,7 @@ import {
 import type { AgentError, AgentLane, LaneState, Recognition } from "../shared/types.ts";
 import {
   AGENT_RUN_CACHE_TTL_MS,
+  clearRuns,
   type RunSubject,
   type StoredRun,
   getRun as storeGetRun,
@@ -561,7 +562,7 @@ addMessageListener((message, respond, sender) => {
     return true;
   }
   if (isUnpairRequest(message)) {
-    handleUnpair({ clearConnection })
+    handleUnpair({ clearConnection, clearRuns })
       .then(respond)
       .catch(() => {
         respond({ kind: "connection", paired: false });
