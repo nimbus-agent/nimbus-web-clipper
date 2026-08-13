@@ -194,15 +194,19 @@ describe("agent-run-store", () => {
       await putRun(
         {
           subject: service,
-          lane: "expert",
+          lane: "impact",
           runId: "r2",
           state: { kind: "done", brief: "S" },
           expiresAtMs: NOW + 1000,
         },
         NOW,
       );
+      // Same lane on both writes — `kind` is the ONLY thing distinguishing the
+      // two keys here. A `makeKey` that ignored `subject.kind` and keyed only
+      // on value+lane would collide these two ("jenkins" + "impact" twice) and
+      // this assertion would catch it.
       expect((await getRun(item, "impact", NOW))?.runId).toBe("r1");
-      expect((await getRun(service, "expert", NOW))?.runId).toBe("r2");
+      expect((await getRun(service, "impact", NOW))?.runId).toBe("r2");
     });
 
     it("shares one entry across two instances of the same service", async () => {
