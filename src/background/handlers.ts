@@ -84,8 +84,12 @@ export async function handlePair(deps: PairDeps, req: PairRequest): Promise<Pair
   });
   // A confirmed new token may be a different gateway than the one that produced
   // any cached briefs — a cached brief belongs to the gateway that produced it,
-  // the same reason unpair clears (see handleUnpair).
-  await deps.clearRuns();
+  // the same reason unpair clears (see handleUnpair). But the pairing itself is
+  // the user-visible outcome here, already durably stored above — a stale cache
+  // is a lesser problem than telling the user pairing failed when it worked, so
+  // a `clearRuns` rejection must not fail this call. `setConnection`'s own
+  // errors are NOT swallowed; only this best-effort cleanup is.
+  await deps.clearRuns().catch(() => undefined);
   return { kind: "pair", ok: true, label: r.label };
 }
 
@@ -192,6 +196,18 @@ export async function handleResolve(
       outcome: { kind: "not-indexed", fetchable: false },
     };
   }
+  // Read BEFORE the home branch, on purpose: this is a `chrome.storage` read,
+  // not a gateway call, so it does not break the "a dashboard never triggers a
+  // resolve request" rule below — it only decides which no-gateway answer an
+  // unpaired user gets. Without this ordering, an unpaired dashboard would
+  // report a home page's normal `service` header instead of the `not_paired`
+  // guidance every other recognised surface shows unpaired (see
+  // `resolveForAgent`, which checks this first for the same reason). Do not
+  // "optimise" this back below the home branch.
+  const conn = await deps.getConnection();
+  if (conn === null) {
+    return { kind: "resolve", ok: false, recognition, reason: "not_paired" };
+  }
   if (recognition.kind === "home") {
     // A dashboard has no indexed item and is not supposed to have one, so there
     // is nothing to ask the gateway. The outcome below is INERT: `headerFrom`
@@ -206,10 +222,6 @@ export async function handleResolve(
       recognition,
       outcome: { kind: "not-indexed", fetchable: false },
     };
-  }
-  const conn = await deps.getConnection();
-  if (conn === null) {
-    return { kind: "resolve", ok: false, recognition, reason: "not_paired" };
   }
   const r = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!r.ok) {
@@ -251,6 +263,17 @@ export interface FetchDeps {
 export async function handleFetch(deps: FetchDeps, req: FetchRequest): Promise<FetchResponse> {
   const recognition = recognise(req.pageUrl, await deps.getOrigins());
   if (!recognition.ok) {
+    return { kind: "fetch", ok: true, recognition, outcome: { kind: "unfetchable" } };
+  }
+  if (recognition.kind === "home") {
+    // Defence in depth on an OUTBOUND path: the fetch button never renders for
+    // a dashboard (it only appears on the `not-indexed` header arm, which
+    // `handleResolve` never reaches for a home page), so this is unreachable
+    // through the UI today. It is guarded anyway, for the same reason
+    // `handleResolve` refuses a home page before touching the gateway — a
+    // dashboard is not a fetch candidate, and this is the one path where
+    // getting that wrong costs an outbound request under the user's stored
+    // credential, not just a wasted local read.
     return { kind: "fetch", ok: true, recognition, outcome: { kind: "unfetchable" } };
   }
   const conn = await deps.getConnection();

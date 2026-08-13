@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { type AmbientDeps, decideAmbient } from "../../src/background/ambient.ts";
+import { handleResolve } from "../../src/background/handlers.ts";
 import type { ResolveResponse } from "../../src/shared/messages.ts";
 import { recognise } from "../../src/shared/recognise.ts";
 
@@ -230,6 +231,38 @@ describe("a home page", () => {
       ...NAV,
       url: HOME,
     });
+    expect(d.kind).not.toBe("show");
+    expect(d).toEqual({ kind: "none", why: "no-item" });
+  });
+
+  test("the REAL handleResolve also stays silent on a home page, end to end", async () => {
+    // Unlike the test above, this does not hand-build the `not-indexed`
+    // outcome — it runs the production handler that produces it, so this is
+    // the guard that would actually catch a regression in `handleResolve`'s
+    // own home branch (handlers.ts), not just in this test's fixture.
+    const HOME = "https://github.com/";
+    let resolveItemCalls = 0;
+    const resolve = (pageUrl: string) =>
+      handleResolve(
+        {
+          getOrigins: async () => [],
+          getConnection: async () => ({
+            origin: "http://127.0.0.1:7777",
+            token: "t",
+            label: "dev",
+          }),
+          resolveItem: async () => {
+            resolveItemCalls += 1;
+            throw new Error("resolveItem must not be called on a home page");
+          },
+        },
+        { kind: "resolve", pageUrl },
+      );
+    const d = await decideAmbient(deps({ resolve, currentUrl: async () => HOME }), {
+      ...NAV,
+      url: HOME,
+    });
+    expect(resolveItemCalls).toBe(0);
     expect(d.kind).not.toBe("show");
     expect(d).toEqual({ kind: "none", why: "no-item" });
   });

@@ -35,8 +35,8 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   Jenkins build that Nimbus had indexed offered *What breaks if it lands* and *Who
   should review it*, which are questions about a change under review. Both lanes
   now appear on pull requests only.
-- Unpairing now clears cached agent answers, so a brief can no longer outlive the
-  gateway that produced it.
+- Unpairing, and a confirmed re-pair, now both clear cached agent answers, so a
+  brief can no longer outlive the gateway that produced it.
 
 ### Added
 

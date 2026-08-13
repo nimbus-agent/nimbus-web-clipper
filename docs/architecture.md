@@ -566,8 +566,8 @@ closed it.
 
 ## The agent lanes (Phase C2.1 / C2.3)
 
-On a resolved page (the `resolved` header state, and only that one) the panel
-offers two collapsed lanes below Related — *what breaks if it lands* (`agents.impact`) and
+On a resolved page (the `resolved` header state) the panel offers two collapsed
+lanes below Related — *what breaks if it lands* (`agents.impact`) and
 *who should review it* (`agents.expert`) — each answered by an agent that
 already exists behind the gateway. C2.3 added a second class of lane, gated on
 a different page kind and skipping resolve entirely — see "Item lanes vs.

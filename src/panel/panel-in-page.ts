@@ -904,10 +904,13 @@ function createPanel(body: HTMLElement): {
         : chosen !== null && header.kind === "ambiguous"
           ? { kind: "chosen", surface: header.surface, candidate: chosen }
           : header;
-    // The two agent lanes ask a question about ONE resolved item, on a surface
-    // where that question applies — see LANE_SURFACES (shared/types.ts). There is
-    // nothing to ask about on a miss, an error, or an ambiguous answer, and
-    // nothing worth asking `impact` about on a build or an issue.
+    // Which lanes render is gated by LANE_SURFACES (shared/types.ts) against the
+    // page's surface kind: the two item-scoped lanes (`impact`, `expert`) ask
+    // about ONE resolved item and need `shown.kind === "resolved"`; the three
+    // service-scoped lanes (`catchup`, `decisions`, `ownership`) ask about a
+    // whole connector and need `shown.kind === "service"` — a dashboard, with no
+    // item at all. There is nothing to ask about on a miss, an error, or an
+    // ambiguous answer.
     //
     // `chosen` is deliberately NOT included, even though the user has by then
     // pinned down which item this page is. `agent-run` carries only

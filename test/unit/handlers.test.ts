@@ -637,6 +637,27 @@ describe("handleResolve", () => {
     if (!res.recognition.ok) return;
     expect(res.recognition.kind).toBe("home");
   });
+
+  it("reports not_paired on a dashboard when unpaired, without calling resolve", async () => {
+    let resolveCalls = 0;
+    const deps = {
+      getOrigins: async () => [],
+      getConnection: async () => null,
+      resolveItem: async () => {
+        resolveCalls += 1;
+        return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
+      },
+    };
+
+    const res = await handleResolve(deps, {
+      kind: "resolve",
+      pageUrl: "https://github.com/",
+      title: "GitHub",
+    });
+
+    expect(resolveCalls).toBe(0);
+    expect(res).toMatchObject({ ok: false, reason: "not_paired" });
+  });
 });
 
 describe("handleFetch", () => {
