@@ -317,6 +317,49 @@ manual check (above) found the hard way — the same reasoning applies here.
    Firefox** → this extension → **Terminate Service Worker** (or your Firefox
    build's equivalent for `background.scripts`).
 
+## Manual verification — Ambient surfacing (Phase C1.3)
+
+Prereq: paired, gateway running. Nothing here is unit-testable end to end — the
+cue is injected into a real page, same as the panel/toast/capture surfaces
+above. `bun run mock-gateway` (pair against `http://127.0.0.1:8765`) makes step
+1's "indexed" case reproducible, same as the page-recognition and targeted-fetch
+checklists above.
+
+1. **Grant, then switch on:** Options → **Grant page access** on the
+   `github.com` row (this row exists as of this release — see the C1.4 note
+   below), then tick **Surface automatically**.
+2. **Cue on a hit:** open an indexed pull request. Within a second a cue appears
+   top-right naming it. Click it: the panel opens on that same item, and the
+   cue disappears.
+3. **Same item, no re-cue:** reload the same PR. No cue.
+4. **Different item, new cue:** navigate (in the same tab) to a different
+   indexed PR. A cue appears.
+5. **Sub-tab is the same item:** switch to that PR's **Files** tab. No second
+   cue — `sameItem` (product + kind + ref) treats it as unchanged.
+6. **Miss is silence:** open a PR Nimbus has never indexed. Nothing appears at
+   all.
+7. **Toggle off:** untick **Surface automatically**, reload an indexed PR.
+   Nothing appears.
+8. **Revoke turns it off too:** re-tick the toggle, then revoke page access.
+   The toggle greys out (never shows ticked-but-disabled) and no cue appears.
+9. **Background tabs stay silent:** middle-click three PRs into background
+   tabs. No cue in any of them until you focus one and navigate.
+10. **A cue survives a tab switch:** open a PR, then quickly switch tabs and
+    back. The cue is there when you return — the active-tab check runs only
+    before the resolve, not after.
+11. **Restricted page:** on `chrome://extensions` or another restricted page,
+    nothing appears, and no error surfaces anywhere.
+12. **Gateway down:** stop the gateway, then open an indexed PR. Nothing
+    appears — silence, not an error toast.
+13. Repeat steps 1–4 in Firefox.
+
+**C1.4 note:** before this slice, `github.com`, `gitlab.com`, `bitbucket.org`
+and Jira Cloud had no row in **Recognised surfaces** at all — only the user's
+own self-hosted entries did — and since the Grant button lives on a row, there
+was no way to grant page access to them. They're now listed alongside the
+user's entries, each with its own grant/revoke and toggle, and no Remove
+button (they aren't the user's to delete).
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any
