@@ -1744,4 +1744,13 @@ describe("ambient surfacing", () => {
       files: ["panel.js"],
     });
   });
+
+  test("cue-open from a sender with no tab injects nothing", async () => {
+    await loadWorker();
+    // A message with no `sender.tab` — what the popup or the options page sends.
+    // Only a real tab can be acted on, and the tab id comes from the browser's
+    // sender rather than the message, so there is nothing here to fall back to.
+    await harness.emitMessage({ kind: "cue-open" });
+    expect(harness.executeScript).not.toHaveBeenCalled();
+  });
 });
