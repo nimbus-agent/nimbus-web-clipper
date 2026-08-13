@@ -1,6 +1,6 @@
 # Review & Suggestions: Service Lanes Design (C2.3)
 
-This document contains open questions, suggestions, and potential improvements for the proposed design in [2026-08-13-c2-3-service-lanes-design.md](file:///C:/gitrep/nimbus-web-clipper/docs/superpowers/specs/2026-08-13-c2-3-service-lanes-design.md).
+This document contains open questions, suggestions, and potential improvements for the proposed design in [2026-08-13-c2-3-service-lanes-design.md](./2026-08-13-c2-3-service-lanes-design.md).
 
 ## 1. Instance-Specific vs. Service-Wide Cache Keying
 * **Scenario:** A user has multiple distinct self-hosted Jenkins instances (e.g., `jenkins.dev.local` and `jenkins.prod.local`). 
@@ -8,7 +8,7 @@ This document contains open questions, suggestions, and potential improvements f
 * **Suggestion:** Include the origin/host in the cache key or `RunSubject` for service lanes, or at least distinguish them per configured origin. Even though `service` is a flat string (`"jenkins"`), the query results from the gateway might differ if the gateway segments indexes by source or if the user expects contextually distinct answers. If they don't, and the gateway truly returns a single global set of results for `"jenkins"`, we should confirm this behavior is documented.
 
 ## 2. Lack of "Force Re-run" for Dashboard Lanes
-* **Concern:** The design correctly suppresses the "Fetch" button (since dashboards are not fetchable index items) and the candidate chooser. However, if a user wants to refresh the dashboard's service lanes (e.g., to see if new decisions or catchups have occurred) before the 10-minute cache TTL expires, they have no manual refresh option.
+* **Concern:** The design correctly suppresses the "Fetch" button (since dashboards are not fetchable index items) and the candidate chooser. However, if a user wants to refresh the dashboard's service lanes (e.g., to see if new decisions or catch-ups have occurred) before the 10-minute cache TTL expires, they have no manual refresh option.
 * **Suggestion:** Introduce a "Refresh" or "Re-run" button specific to the lane or header when on a dashboard page. This would invalidate the cache entry for that service and trigger a fresh agent run.
 
 ## 3. Actionability of the `ownership` Gap Brief

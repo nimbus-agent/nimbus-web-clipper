@@ -366,9 +366,14 @@ button (they aren't the user's to delete).
 
 Prereq: paired, gateway running, a token scoped with `agents` (`resolve` and
 `fetch` are not required — a service lane needs neither, see
-`docs/architecture.md`'s "Item lanes vs. service lanes"). To exercise this
-reproducibly, run `bun run mock-gateway` and pair against
-`http://127.0.0.1:8765`.
+`docs/architecture.md`'s "Item lanes vs. service lanes"). `bun run mock-gateway`
+(pair against `http://127.0.0.1:8765`) makes steps 1–5 reproducible, the same as
+the checklists above — its mock agent routes always return a fixed run id and
+report the run `done` immediately with a fixed brief (see the C2.1 section
+above). **Step 6 requires a real gateway with no git-aware
+`[[filesystem.roots]]` configured**: the gap brief it checks for comes from the
+real `ownership` agent noticing the absence of a configured root, which the
+mock's fixed brief cannot produce.
 
 1. On `https://github.com/` with page access granted, open the panel. The header
    reads **GitHub dashboard** and names the scope; the three service lanes are

@@ -46,11 +46,11 @@ Those five values are exactly this repo's `Product` union. That has two
 consequences, and both are load-bearing:
 
 **A service lane needs no resolve call at all.** `Recognition.product` is the
-service id, so `handleAgentRun` on a dashboard goes recogniser → invoke, skipping
-`resolveForAgent` entirely. There is no item to resolve, no `found` outcome to
-require, and no gateway round-trip before the invoke. It also means these lanes
-work on a pairing that never received the `resolve` scope — they need only
-`agents`.
+service id, so on a dashboard `resolveForAgent` returns a service-scoped result
+from its own home branch without calling `resolveItem`. There is no item to
+resolve, no `found` outcome to require, and no gateway round-trip before the
+invoke. It also means these lanes work on a pairing that never received the
+`resolve` scope — they need only `agents`.
 
 **The scope is coarser than "repo", so the trigger page must be too.** A repo home
 page is not a tighter scope than a pull-request page — both are just
@@ -141,7 +141,7 @@ panel itself user-summoned.
 | --- | --- |
 | `src/shared/types.ts` | `SurfaceKind` gains `"home"`; `AGENT_LANES` gains `catchup`/`decisions`/`ownership`; `LANE_SURFACES` declares `["home"]` for the three; new `PRODUCT_SERVICE_ID`. |
 | `src/shared/recognise.ts` | One dashboard branch per matcher; `KIND_NAMES.home`; `surfaceLine` handles an empty `ref`. |
-| `src/background/handlers.ts` | `handleAgentRun`/`handleAgentState` branch on `kind === "home"` before `resolveForAgent`; `agentParams` grows the service arm. |
+| `src/background/handlers.ts` | `resolveForAgent`'s home branch returns a service-scoped result for `kind === "home"` without calling `resolveItem`; `agentParams` grows the service arm. |
 | `src/background/agent-run-store.ts` | `StoredRun.itemId` becomes a discriminated subject; `makeKey` encodes the kind. |
 | `src/panel/panel-view.ts` | New `HeaderState` service arm; suppress related + fetch on home. |
 | `src/panel/panel-in-page.ts` | Skip resolve and related on home; three new `LANE_TITLES`. |

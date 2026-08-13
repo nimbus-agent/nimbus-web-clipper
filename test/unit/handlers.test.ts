@@ -1399,3 +1399,56 @@ describe("service lanes on a home page", () => {
     expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
   });
 });
+
+describe("lane/surface pairing enforcement", () => {
+  // `LANE_SURFACES` gates which lanes the panel ever renders per surface — the
+  // panel would never send this pair. But `agent-run` arrives from a content
+  // script, and `isAgentRunRequest` validates only that `lane` is an `AgentLane`
+  // and `pageUrl` a string, never the pairing between them — so the handler must
+  // enforce it itself. `invokeAgent` (and `getConnection`/`resolveItem`) throw
+  // below so a leak past the gate cannot pass silently.
+
+  it("refuses impact requested on a dashboard, never invoking", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => {
+          throw new Error("must not read the connection");
+        },
+        resolveItem: async () => {
+          throw new Error("must not resolve");
+        },
+        invokeAgent: async () => {
+          throw new Error("must not invoke");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/" },
+    );
+
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+
+  it("refuses catchup requested on a resolved pull-request URL, never invoking", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => {
+          throw new Error("must not read the connection");
+        },
+        resolveItem: async () => {
+          throw new Error("must not resolve");
+        },
+        invokeAgent: async () => {
+          throw new Error("must not invoke");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "catchup", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+});

@@ -4,7 +4,7 @@
 
 **Goal:** Put three service-scoped agent lanes — `catchup`, `decisions`, `ownership` — on a new class of recognised page, the product's own dashboard.
 
-**Architecture:** `SurfaceKind` grows a `"home"` member, so the existing `LANE_SURFACES` table routes the new lanes with no new mechanism. Because the gateway's `service` is a flat connector id identical to this client's `Product`, a service lane needs **no resolve call at all**: the handler goes recogniser → invoke. The panel gets one new `HeaderState` arm for a page that is recognised but has no indexed item, and the run store's key becomes a discriminated subject so a service answer is cached once per product instead of once per page.
+**Architecture:** `SurfaceKind` grows a `"home"` member, so the existing `LANE_SURFACES` table routes the new lanes with no new mechanism. Because the gateway's `service` is a flat connector id identical to this client's `Product`, a service lane needs **no resolve call at all**: the handler skips the gateway resolve call — `resolveForAgent`'s home branch returns a service-scoped result directly, without calling `resolveItem`. The panel gets one new `HeaderState` arm for a page that is recognised but has no indexed item, and the run store's key becomes a discriminated subject so a service answer is cached once per product instead of once per page.
 
 **Tech Stack:** TypeScript (strict, no `any`), Vitest (node env; DOM tests opt into jsdom via a docblock), Biome, esbuild, bun.
 

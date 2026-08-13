@@ -32,6 +32,7 @@ import {
   type Connection,
   type FetchError,
   type FetchOutcome,
+  LANE_SURFACES,
   type LaneState,
   type PairError,
   PRODUCT_SERVICE_ID,
@@ -413,12 +414,28 @@ type ResolveForAgent =
  */
 async function resolveForAgent(
   deps: Pick<AgentStateDeps, "getOrigins" | "getConnection" | "resolveItem">,
+  lane: AgentLane,
   pageUrl: string,
 ): Promise<ResolveForAgent> {
   const recognition = recognise(pageUrl, await deps.getOrigins());
   if (!recognition.ok) {
     // Nothing to ask the gateway about — the recogniser is the boundary deciding
     // which URLs may reach it at all. No resolve call, no invoke.
+    return { ok: false, reason: "not_resolved" };
+  }
+  // Enforce, in the handler, what `LANE_SURFACES` already enforces in the panel's
+  // render gate: a lane must belong on the page's recognised surface. The panel
+  // never sends a mismatched pair — it renders only lanes `LANE_SURFACES` allows
+  // for the current surface — so this branch is unreachable from the shipped UI.
+  // But `agent-run`/`agent-state` arrive from a content script, and their guards
+  // (`isAgentRunRequest`/`isAgentStateRequest` in shared/messages.ts) validate only
+  // that `lane` is an `AgentLane` and `pageUrl` is a string, never the pairing
+  // between them. Cross-boundary data is untrusted here regardless of what the UI
+  // would send, so without this check a forged `agent-run` could ask `impact`
+  // about a dashboard or `catchup` about a pull request. Placed before any
+  // connection read, cache access or invoke — same "no gateway call for a
+  // condition of the page" rule the unrecognised-page branch above follows.
+  if (!LANE_SURFACES[lane].includes(recognition.kind)) {
     return { ok: false, reason: "not_resolved" };
   }
   const conn = await deps.getConnection();
@@ -515,7 +532,7 @@ export async function handleAgentRun(
   deps: AgentRunDeps,
   req: AgentRunRequest,
 ): Promise<AgentStateResponse> {
-  const resolved = await resolveForAgent(deps, req.pageUrl);
+  const resolved = await resolveForAgent(deps, req.lane, req.pageUrl);
   if (!resolved.ok) {
     return failedResponse(req.lane, resolved.reason, resolved.scopeGap);
   }
@@ -549,7 +566,7 @@ export async function handleAgentState(
   deps: AgentStateDeps,
   req: AgentStateRequest,
 ): Promise<AgentStateResponse> {
-  const resolved = await resolveForAgent(deps, req.pageUrl);
+  const resolved = await resolveForAgent(deps, req.lane, req.pageUrl);
   if (!resolved.ok) {
     return failedResponse(req.lane, resolved.reason, resolved.scopeGap);
   }
