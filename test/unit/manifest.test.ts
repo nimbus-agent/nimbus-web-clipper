@@ -82,3 +82,10 @@ describe("composeManifest — alarms permission", () => {
     });
   }
 });
+
+test("ambient surfacing adds no permission — it rides the existing optional grants", () => {
+  const m = composeManifest("chrome", "1.0.0");
+  expect(m.permissions).toEqual(["activeTab", "scripting", "storage", "alarms", "contextMenus"]);
+  expect(m.optional_host_permissions).toEqual(["http://*/*", "https://*/*"]);
+  expect(m.host_permissions).toEqual(["http://127.0.0.1/*", "http://localhost/*"]);
+});

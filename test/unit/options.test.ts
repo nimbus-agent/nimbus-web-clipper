@@ -77,13 +77,22 @@ function select(id: string): HTMLSelectElement {
   return found;
 }
 
+/**
+ * Seeds the fixture DOM and fires DOMContentLoaded — assumes the chrome mock
+ * (and any harness state a test wants pre-seeded, e.g. `harness.grantedOrigins`
+ * or `harness.storage`) is already installed by the caller.
+ */
+async function bootOptions(): Promise<void> {
+  document.body.innerHTML = FIXTURE;
+  document.dispatchEvent(new Event("DOMContentLoaded"));
+  await flush();
+}
+
 /** Installs the chrome mock, seeds the fixture DOM, and fires DOMContentLoaded. */
 async function boot(initialConnection: unknown = unpaired): Promise<void> {
   harness = installChromeMock();
   harness.sendMessage.mockResolvedValue(initialConnection);
-  document.body.innerHTML = FIXTURE;
-  document.dispatchEvent(new Event("DOMContentLoaded"));
-  await flush();
+  await bootOptions();
 }
 
 afterEach(() => {
@@ -330,7 +339,11 @@ describe("recognised surfaces", () => {
     button("surface-add").click();
     await flush();
 
-    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='grant']")?.click();
+    // Built-in rows are always in the list too now, so target the newly added
+    // entry's own Grant button rather than the first one in the list.
+    [...el("surface-list").querySelectorAll<HTMLButtonElement>("button[data-action='grant']")]
+      .find((b) => b.dataset["origin"] === "https://corp.example/jenkins")
+      ?.click();
     await flush();
 
     expect(harness.permissionsRequest).toHaveBeenCalledWith({
@@ -371,11 +384,17 @@ describe("recognised surfaces", () => {
     input("surface-origin").value = "https://corp.example/jenkins";
     button("surface-add").click();
     await flush();
-    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='grant']")?.click();
+    // Built-in rows are always in the list too now, so target the newly added
+    // entry's own Grant/Revoke buttons rather than the first ones in the list.
+    [...el("surface-list").querySelectorAll<HTMLButtonElement>("button[data-action='grant']")]
+      .find((b) => b.dataset["origin"] === "https://corp.example/jenkins")
+      ?.click();
     await flush();
 
     harness.permissionsRemove.mockResolvedValueOnce(false);
-    el("surface-list").querySelector<HTMLButtonElement>("button[data-action='revoke']")?.click();
+    [...el("surface-list").querySelectorAll<HTMLButtonElement>("button[data-action='revoke']")]
+      .find((b) => b.dataset["origin"] === "https://corp.example/jenkins")
+      ?.click();
     await flush();
 
     expect(el("surface-status").textContent).toBe("Page access could not be revoked.");
@@ -391,5 +410,100 @@ describe("recognised surfaces", () => {
     await flush();
 
     expect(harness.storage.get("origins")).toEqual([]);
+  });
+});
+
+describe("built-in surfaces in the list", () => {
+  test("built-ins are listed even with no stored origins, so they can be granted at all", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    const text = document.getElementById("surface-list")?.textContent ?? "";
+    expect(text).toContain("github.com");
+    expect(text).toContain("gitlab.com");
+    expect(text).toContain("bitbucket.org");
+    expect(text).toContain("*.atlassian.net");
+  });
+
+  test("granting a built-in requests exactly its host pattern", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    const grant = [...document.querySelectorAll('[data-action="grant"]')].find((el) =>
+      (el as HTMLElement).dataset["origin"]?.includes("github.com"),
+    ) as HTMLButtonElement;
+    grant.click();
+    await flush();
+    expect(harness.permissionsRequest).toHaveBeenCalledWith({
+      origins: ["https://github.com/*"],
+    });
+  });
+
+  test("the Jira Cloud row asks for the tenant wildcard", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    const grant = [...document.querySelectorAll('[data-action="grant"]')].find((el) =>
+      (el as HTMLElement).dataset["origin"]?.includes("atlassian.net"),
+    ) as HTMLButtonElement;
+    grant.click();
+    await flush();
+    expect(harness.permissionsRequest).toHaveBeenCalledWith({
+      origins: ["https://*.atlassian.net/*"],
+    });
+  });
+});
+
+describe("the ambient toggle", () => {
+  test("checking it stores the pattern", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    await bootOptions();
+    const toggle = [...document.querySelectorAll('[data-action="ambient"]')].find(
+      (el) => (el as HTMLInputElement).dataset["pattern"] === "https://github.com/*",
+    ) as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(harness.storage.get("ambient-hosts")).toEqual(["https://github.com/*"]);
+  });
+
+  test("revoking page access switches the cue off for that host", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await bootOptions();
+    const revoke = [...document.querySelectorAll('[data-action="revoke"]')].find((el) =>
+      (el as HTMLElement).dataset["origin"]?.includes("github.com"),
+    ) as HTMLButtonElement;
+    revoke.click();
+    await flush();
+    expect(harness.storage.get("ambient-hosts")).toEqual([]);
+  });
+
+  test("a revoke that failed leaves the preference alone", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.permissionsRemove.mockResolvedValueOnce(false);
+    await bootOptions();
+    const revoke = [...document.querySelectorAll('[data-action="revoke"]')].find((el) =>
+      (el as HTMLElement).dataset["origin"]?.includes("github.com"),
+    ) as HTMLButtonElement;
+    revoke.click();
+    await flush();
+    expect(harness.storage.get("ambient-hosts")).toEqual(["https://github.com/*"]);
+  });
+
+  test("unchecking it removes the pattern", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    await bootOptions();
+    const toggle = [...document.querySelectorAll('[data-action="ambient"]')].find(
+      (el) => (el as HTMLInputElement).dataset["pattern"] === "https://github.com/*",
+    ) as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    await flush();
+    expect(harness.storage.get("ambient-hosts")).toEqual([]);
   });
 });

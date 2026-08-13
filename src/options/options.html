@@ -27,7 +27,7 @@
       </section>
       <section id="surfaces-section">
         <h2>Recognised surfaces</h2>
-        <p>Nimbus recognises Bitbucket Cloud, GitHub, GitLab and Jira Cloud out of the box. Add self-hosted instances here — include the full URL and any sub-path, e.g. <code>https://corp.example/jira</code>.</p>
+        <p>Nimbus recognises Bitbucket Cloud, GitHub, GitLab and Jira Cloud out of the box — grant page access below to use them. Add self-hosted instances too: include the full URL and any sub-path, e.g. <code>https://corp.example/jira</code>.</p>
         <label for="surface-origin">Instance URL</label>
         <input id="surface-origin" type="text" placeholder="https://corp.example/jira" />
         <label for="surface-product">What is it?</label>
@@ -41,7 +41,7 @@
         <button id="surface-add" type="button">Add surface</button>
         <output id="surface-status" class="options__status"></output>
         <div id="surface-list"></div>
-        <p class="options__status">Granting page access lets Nimbus recognise pages on that site without you opening the panel first. It never changes where Nimbus can send data — that stays your local gateway only.</p>
+        <p class="options__status">Granting page access lets Nimbus recognise pages on that site without you opening the panel first. It never changes where Nimbus can send data — that stays your local gateway only. <strong>Surface automatically</strong> goes one step further: on a page Nimbus has indexed, a small cue appears in the corner so you don't have to open the panel to find out. Nothing runs until you click it.</p>
       </section>
     </main>
     <script src="options.js"></script>
