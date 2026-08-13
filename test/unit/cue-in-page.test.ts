@@ -122,4 +122,66 @@ describe("the injected cue", () => {
     expect(host).not.toBe(planted);
     expect(host?.shadowRoot?.querySelector(".nimbus-cue")).not.toBeNull();
   });
+
+  test("a shadow root planted by the page is left empty — nothing of ours is ever written into it", async () => {
+    const planted = document.createElement("div");
+    planted.id = "nimbus-cue-host";
+    const plantedRoot = planted.attachShadow({ mode: "open" });
+    document.documentElement.append(planted);
+    const show = await loadCue();
+    show(STATE);
+    expect(plantedRoot.querySelector(".nimbus-cue")).toBeNull();
+    expect(plantedRoot.childNodes).toHaveLength(0);
+  });
+
+  test("two hosts planted by the page are both removed, not just the first", async () => {
+    const first = document.createElement("div");
+    first.id = "nimbus-cue-host";
+    document.documentElement.append(first);
+    const second = document.createElement("div");
+    second.id = "nimbus-cue-host";
+    document.documentElement.append(second);
+    const show = await loadCue();
+    show(STATE);
+    expect(document.contains(first)).toBe(false);
+    expect(document.contains(second)).toBe(false);
+    expect(document.querySelectorAll("#nimbus-cue-host")).toHaveLength(1);
+  });
+
+  test("clears its poll interval when opened", async () => {
+    vi.useFakeTimers();
+    const show = await loadCue();
+    show(STATE);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    const open = cueEl()?.querySelector('[data-action="open"]') as HTMLButtonElement;
+    open.click();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("clears its poll interval when dismissed", async () => {
+    vi.useFakeTimers();
+    const show = await loadCue();
+    show(STATE);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    const dismiss = cueEl()?.querySelector('[data-action="dismiss"]') as HTMLButtonElement;
+    dismiss.click();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test("stops polling once its host is detached directly, not only through teardown", async () => {
+    vi.useFakeTimers();
+    const show = await loadCue();
+    show(STATE);
+    const host = document.getElementById("nimbus-cue-host");
+    expect(host).not.toBeNull();
+    // The page removing our node directly — host.remove(), or wiping
+    // documentElement's children — bypasses teardown() entirely, unlike
+    // dismiss/open above which call it. Without the isConnected check, the
+    // interval has no way to learn the host is gone and keeps firing at 2 Hz
+    // forever, with nothing left to tear down or paint into.
+    host?.remove();
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    vi.advanceTimersByTime(600);
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });

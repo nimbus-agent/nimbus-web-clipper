@@ -90,7 +90,12 @@ function show(state: CueState): void {
     return;
   }
   teardown();
-  document.getElementById(HOST_ID)?.remove();
+  // getElementById only ever finds the FIRST match — a page that planted two
+  // elements at HOST_ID would leave the second behind, and a later lookup of
+  // our own id could resolve to the page's leftover node instead of ours.
+  for (const el of document.querySelectorAll(`#${HOST_ID}`)) {
+    el.remove();
+  }
 
   const host = document.createElement("div") as CueHost;
   host.id = HOST_ID;
@@ -127,6 +132,17 @@ function show(state: CueState): void {
 
   const mountedAt = window.location.href;
   host.__nimbusNavTimer = setInterval(() => {
+    // The page can detach our host directly (host.remove(), or wiping
+    // documentElement's children) without going through teardown() — same
+    // precedent as panel-in-page.ts's checkNavigation `!body.isConnected`
+    // check. Without this, ownHost stays non-null and this interval would
+    // keep firing at 2 Hz forever, with nothing left to tear down or paint
+    // into. This runs on other people's pages, so a timer that never
+    // self-terminates is not acceptable.
+    if (!host.isConnected) {
+      teardown();
+      return;
+    }
     // Two ways the cue stops being the right thing on screen. The page moved on
     // — a cue naming the page you just left is the 2026-08-11 defect. Or the
     // panel opened without us: the hotkey, the popup button and the context menu
