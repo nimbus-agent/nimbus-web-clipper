@@ -51,6 +51,17 @@ export interface ToastState {
   readonly text: string;
 }
 
+/**
+ * What the ambient cue says. Both fields come from the pure recogniser
+ * (`Recognition.label` / `.ref`), never from page-controlled DOM — but they are
+ * rendered with textContent regardless, because the ref is derived from a URL
+ * the page's own history API can write.
+ */
+export interface CueState {
+  readonly label: string;
+  readonly ref: string;
+}
+
 /** A product whose pages the client can recognise. */
 export type Product = "bitbucket" | "github" | "gitlab" | "jenkins" | "jira";
 
