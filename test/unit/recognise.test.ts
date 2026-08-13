@@ -1,6 +1,13 @@
 // test/unit/recognise.test.ts
 import { describe, expect, it, test } from "vitest";
-import { recognise, sameItem, surfaceLine } from "../../src/shared/recognise.ts";
+import { hostPermissionPattern, patternMatchesUrl } from "../../src/shared/origins.ts";
+import {
+  BUILT_IN_ORIGINS,
+  BUILT_IN_SURFACES,
+  recognise,
+  sameItem,
+  surfaceLine,
+} from "../../src/shared/recognise.ts";
 import type { ConfiguredOrigin } from "../../src/shared/types.ts";
 
 const NONE: readonly ConfiguredOrigin[] = [];
@@ -258,5 +265,35 @@ describe("sameItem", () => {
   it("distinguishes two products that resolve the same ref shape", () => {
     const jenkins = recognise("https://corp.example/jenkins/job/web/482", SELF_HOSTED);
     expect(sameItem(gh("/acme/web/pull/482"), jenkins)).toBe(false);
+  });
+});
+
+describe("BUILT_IN_SURFACES", () => {
+  test("every built-in origin has a surface row carrying its host pattern", () => {
+    for (const entry of BUILT_IN_ORIGINS) {
+      const pattern = hostPermissionPattern(entry.origin);
+      const row = BUILT_IN_SURFACES.find((s) => s.product === entry.product);
+      expect(row).toBeDefined();
+      expect(row?.pattern).toBe(pattern);
+    }
+  });
+
+  test("Jira Cloud is a subdomain wildcard, since tenant hosts are not enumerable", () => {
+    const jira = BUILT_IN_SURFACES.find((s) => s.product === "jira");
+    expect(jira?.pattern).toBe("https://*.atlassian.net/*");
+  });
+
+  test("every surface pattern matches a real page URL on that product", () => {
+    const pages: Record<string, string> = {
+      bitbucket: "https://bitbucket.org/acme/web/pull-requests/7",
+      github: "https://github.com/acme/web/pull/482",
+      gitlab: "https://gitlab.com/acme/web/-/merge_requests/9",
+      jira: "https://acme.atlassian.net/browse/ABC-1",
+    };
+    for (const surface of BUILT_IN_SURFACES) {
+      const page = pages[surface.product];
+      expect(page).toBeDefined();
+      expect(patternMatchesUrl(surface.pattern, page ?? "")).toBe(true);
+    }
   });
 });

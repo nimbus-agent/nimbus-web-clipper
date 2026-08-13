@@ -16,6 +16,35 @@ export const BUILT_IN_ORIGINS: readonly ConfiguredOrigin[] = [
   { origin: "https://gitlab.com", product: "gitlab" },
 ];
 
+/** The host permission pattern for all of Jira Cloud. Tenant hosts are per-customer
+ *  (`acme.atlassian.net`) and cannot be enumerated, so the row offers the wildcard
+ *  and says so — see the design spec's built-in-rows section. */
+export const JIRA_CLOUD_PATTERN = "https://*.atlassian.net/*";
+
+/**
+ * A built-in surface as the Options page shows it: a host the extension
+ * recognises without configuration, and the permission pattern its page-access
+ * grant is keyed by.
+ *
+ * Separate from BUILT_IN_ORIGINS above because Jira Cloud has no single origin —
+ * it is matched by host suffix — so it can appear here and not there. The drift
+ * guard is a test: every BUILT_IN_ORIGINS entry must have a row whose pattern is
+ * exactly hostPermissionPattern(origin).
+ */
+export interface BuiltInSurface {
+  /** Shown in Options. Not an origin: Jira Cloud's is a host pattern. */
+  readonly label: string;
+  readonly product: Product;
+  readonly pattern: string;
+}
+
+export const BUILT_IN_SURFACES: readonly BuiltInSurface[] = [
+  { label: "bitbucket.org", product: "bitbucket", pattern: "https://bitbucket.org/*" },
+  { label: "github.com", product: "github", pattern: "https://github.com/*" },
+  { label: "gitlab.com", product: "gitlab", pattern: "https://gitlab.com/*" },
+  { label: "*.atlassian.net", product: "jira", pattern: JIRA_CLOUD_PATTERN },
+];
+
 const ATLASSIAN_SUFFIX = ".atlassian.net";
 
 const PRODUCT_NAMES: Record<Product, string> = {
