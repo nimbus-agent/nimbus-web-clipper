@@ -779,3 +779,34 @@ describe("the navigated-away notice", () => {
     expect(shell.querySelectorAll("[disabled]")).toHaveLength(0);
   });
 });
+
+describe("the service header", () => {
+  const state = {
+    kind: "service" as const,
+    surface: "Jenkins dashboard",
+    product: "jenkins" as const,
+  };
+
+  it("names the surface and states the scope", () => {
+    const el = renderHeader(document, state);
+    expect(el.textContent).toContain("Jenkins dashboard");
+    expect(el.textContent).toContain("across all indexed Jenkins builds");
+  });
+
+  it("offers no fetch button, no freshness line and no item link", () => {
+    const el = renderHeader(document, state);
+    expect(el.querySelector("button")).toBeNull();
+    expect(el.querySelector("a")).toBeNull();
+    expect(el.textContent).not.toContain("Updated");
+    expect(el.textContent).not.toContain("Not indexed");
+  });
+
+  it("does not name the instance host", () => {
+    // Naming `jenkins.prod.local` would imply the answer is scoped to that
+    // instance; it spans every indexed Jenkins. The scope line says the true,
+    // coarser thing instead.
+    const el = renderHeader(document, state);
+    expect(el.textContent).not.toContain("local");
+    expect(el.textContent).not.toContain("http");
+  });
+});
