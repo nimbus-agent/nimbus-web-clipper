@@ -801,12 +801,19 @@ describe("the service header", () => {
     expect(el.textContent).not.toContain("Not indexed");
   });
 
-  it("does not name the instance host", () => {
-    // Naming `jenkins.prod.local` would imply the answer is scoped to that
-    // instance; it spans every indexed Jenkins. The scope line says the true,
-    // coarser thing instead.
+  it("renders exactly the surface line and the scope line", () => {
+    // No assertion here names the instance host directly, because the `service`
+    // arm carries no host field — `{surface, product}` only — so a host is
+    // unrenderable by construction; there is nothing to withhold. This exact-
+    // content check is what would catch a regression that reintroduced one: any
+    // extra line (a host, a freshness line, a stray label) fails it, unlike a
+    // substring check against a fixture that never contained a host to begin
+    // with.
     const el = renderHeader(document, state);
-    expect(el.textContent).not.toContain("local");
-    expect(el.textContent).not.toContain("http");
+    const lines = [...el.children].map((c) => c.textContent);
+    expect(lines).toEqual([
+      "Jenkins dashboard",
+      "Nimbus can answer across all indexed Jenkins builds.",
+    ]);
   });
 });
