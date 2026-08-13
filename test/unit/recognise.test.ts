@@ -297,3 +297,80 @@ describe("BUILT_IN_SURFACES", () => {
     }
   });
 });
+
+describe("dashboard (home) surfaces", () => {
+  it("recognises each product's dashboard as kind home", () => {
+    const cases: ReadonlyArray<readonly [string, string]> = [
+      ["https://github.com/", "GitHub dashboard"],
+      ["https://gitlab.com/dashboard", "GitLab dashboard"],
+      ["https://bitbucket.org/dashboard/overview", "Bitbucket dashboard"],
+      ["https://acme.atlassian.net/jira/your-work", "Jira dashboard"],
+    ];
+    for (const [url, label] of cases) {
+      const r = recognise(url, []);
+      expect(r.ok, url).toBe(true);
+      if (!r.ok) continue;
+      expect(r.kind, url).toBe("home");
+      expect(r.label, url).toBe(label);
+      expect(r.ref, url).toBe("");
+    }
+  });
+
+  it("recognises a self-hosted Jenkins root under a path prefix", () => {
+    const origins = [{ origin: "https://corp.example/jenkins", product: "jenkins" as const }];
+    const r = recognise("https://corp.example/jenkins/", origins);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.kind).toBe("home");
+    expect(r.label).toBe("Jenkins dashboard");
+  });
+
+  it("recognises a self-hosted Jira Server dashboard", () => {
+    const origins = [{ origin: "https://jira.corp.example", product: "jira" as const }];
+    const r = recognise("https://jira.corp.example/secure/Dashboard.jspa", origins);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.kind).toBe("home");
+  });
+
+  it("does not claim near-miss paths as home", () => {
+    // Each of these is one segment away from a dashboard and must stay
+    // unrecognised rather than becoming a lane-bearing page.
+    const misses: readonly string[] = [
+      "https://github.com/acme",
+      "https://gitlab.com/dashboard-extra",
+      "https://bitbucket.org/dashboards",
+      "https://acme.atlassian.net/jira/your-work/extra",
+      "https://acme.atlassian.net/browse",
+    ];
+    for (const url of misses) {
+      expect(recognise(url, []).ok, url).toBe(false);
+    }
+  });
+
+  it("still recognises item pages, which win over the home branch", () => {
+    const r = recognise("https://github.com/acme/web/pull/482", []);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.kind).toBe("pr");
+    expect(r.ref).toBe("acme/web #482");
+  });
+
+  it("treats two self-hosted instances of one product as the same home", () => {
+    // Deliberate: `service` is a flat connector id, so `{service:"jenkins"}`
+    // spans BOTH instances and there is exactly one answer. Splitting these
+    // would store one answer twice and double the agent runs.
+    const origins = [
+      { origin: "https://jenkins.dev.local", product: "jenkins" as const },
+      { origin: "https://jenkins.prod.local", product: "jenkins" as const },
+    ];
+    const dev = recognise("https://jenkins.dev.local/", origins);
+    const prod = recognise("https://jenkins.prod.local/", origins);
+    expect(sameItem(dev, prod)).toBe(true);
+  });
+
+  it("renders a home surface line as the label alone", () => {
+    const r = recognise("https://github.com/", []);
+    expect(surfaceLine(r)).toBe("GitHub dashboard");
+  });
+});

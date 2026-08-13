@@ -65,8 +65,16 @@ export interface CueState {
 /** A product whose pages the client can recognise. */
 export type Product = "bitbucket" | "github" | "gitlab" | "jenkins" | "jira";
 
-/** What kind of item a recognised page is. */
-export type SurfaceKind = "pr" | "build" | "issue";
+/**
+ * What kind of item a recognised page is.
+ *
+ * `home` is the odd one out and deliberately so: it is a page the recogniser
+ * knows and that has NO indexed item — a product's own dashboard. It exists
+ * because the service-scoped agents (`catchup`/`decisions`/`ownership`) answer
+ * about a whole connector, so they need a page whose scope matches that answer.
+ * See LANE_SURFACES below.
+ */
+export type SurfaceKind = "pr" | "build" | "issue" | "home";
 
 /**
  * An origin whose pages may be recognised, declared by the user (or built in for
