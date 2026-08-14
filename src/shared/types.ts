@@ -12,6 +12,18 @@ export interface Connection {
   readonly token: string;
   readonly label: string;
   readonly pairedAt: number;
+  /**
+   * When a clip last succeeded against this gateway. OPTIONAL because pairings
+   * made before this shipped do not have it — absent means "no clip yet", which
+   * is also true of a fresh pairing, so no migration is needed.
+   */
+  readonly lastClipAt?: number;
+  /**
+   * The gateway has rejected this token (401). Surfaced as "needs re-pairing",
+   * which is the one thing a user can act on and cannot guess: a revoked token
+   * and a stopped gateway look identical from the outside.
+   */
+  readonly stale?: boolean;
 }
 
 export type PairError = "pairing_failed" | "bad_origin" | "unreachable" | "server_error";
