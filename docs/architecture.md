@@ -657,6 +657,81 @@ to be granted page access, because the Grant button lives on a row — is C1.4's
 gap, not this feature's; see C1.4 in [`ROADMAP.md`](../ROADMAP.md) for what
 closed it.
 
+## A second way into the panel (Phase C1.5)
+
+C1.3 shipped the panel behind `Alt+Shift+R`, and — as the roadmap's own
+2026-08-11 correction records — the popup's **Show related** button, which
+means the panel was never actually reachable by hotkey alone. What was still
+true is that `suggested_key` in the manifest is exactly that, a *suggestion*:
+when another extension already holds `Alt+Shift+R`, the browser leaves the
+command unbound, reports nothing to the page, and the keystroke goes wherever
+the other extension sends it — which is precisely what happened in Chrome
+during the Phase C1 manual pass. This slice adds a context-menu entry the
+browser cannot silently withhold, and a way for the user to see, rather than
+guess, what their browser actually bound.
+
+### `openPanel` — the one path every in-worker trigger converges on
+
+`openPanel(tabId?)` (`service-worker.ts`) is the single function the hotkey's
+`addCommandListener`, the context menu's `show-related` branch, and the
+ambient cue's `openPanelForCue` all call to inject the panel. (The popup calls
+`injectPanel` directly — it is its own bundle and cannot reach a function
+defined inside the service worker, so its convergence is on *behavior*, not on
+a shared call site.) Routing every in-worker trigger through one function is
+not tidying for its own sake: the panel must not behave differently depending
+on how it was summoned, and three call sites each carrying their own
+"resolve the tab, then inject" logic is exactly how that kind of drift starts
+— a fix landing on one path and quietly not reaching the other two.
+
+### `menuAction` returns `null`, not a default
+
+`menuAction` (`src/background/menus.ts`) maps a context-menu id to an action,
+and an id it does not recognise returns `null` rather than falling back to
+"clip the page." That reads as defensive boilerplate until you look at what it
+replaced: the previous handler routed every non-selection menu id as a clip —
+`menuItemId === "clip-selection" ? "selection" : "article"` — because there
+had only ever been two ids and one of them was the selection case. The moment
+a third entry (`show-related`) existed, that logic would have silently
+clipped the page on a right-click meant to open the panel. Returning `null`
+for an unrecognised id is what makes that latent bug impossible rather than
+merely unlikely: an id this module does not know about now does nothing,
+which is the only safe default for an action with side effects.
+
+### The shortcut readout exists because the browser will not tell you otherwise
+
+Options stage 2 now lists all three commands with the shortcut the browser
+actually bound, via `getAllCommands()` (`src/browser/commands.ts`) — never the
+manifest's `suggested_key`. This is the only surface that can say so: an
+unbound command reports nothing anywhere else — no error, no empty state,
+nothing hinting a shortcut was ever supposed to exist. `Alt+Shift+R` silently
+failing to bind in Chrome is the defect the whole slice traces back to.
+`shortcutRows` (`src/options/shortcuts-view.ts`) renders an unbound shortcut
+as the words **"Not set"**, never a blank cell — a blank cell reads as a
+rendering bug, and "Not set" reads as the true state of the world.
+
+### A copyable path, not a link — per target
+
+`shortcutsHint` (`src/options/shortcuts-view.ts`) tells the user where to fix
+a binding as prose plus a pasteable path, not an `<a href>` — forced, not
+stylistic. Chrome refuses to let an extension page navigate to
+`chrome://extensions/shortcuts`; a link there would silently do nothing, which
+is a second invisible failure stacked on the one this slice exists to fix.
+Firefox's equivalent lives at `about:addons` → the gear menu, a different path
+entirely — which is why the hint branches on `isFirefoxRuntime()`
+(`src/browser/runtime.ts`, derived from the extension's own URL scheme, never
+the spoofable user agent) rather than being one string for both targets.
+
+### Why `registerMenus` isolates each entry in its own try/catch
+
+`registerMenus` (`src/background/menus.ts`) wraps each `create` call in the
+`MENU_ITEMS` table individually rather than letting one throw abort the rest
+of the loop. `show-related` is deliberately **last** in that table, so without
+this, a throw while creating either clip entry would take out precisely the
+entry this slice exists to add — and the caller already swallows the whole
+registration (`registerContextMenus().catch(() => undefined)`), so that loss
+would be silent. Isolating each entry does not make a failure louder; it stops
+one bad entry from deleting the rest.
+
 ## The agent lanes (Phase C2.1 / C2.3)
 
 On a resolved page (the `resolved` header state) the panel offers two collapsed

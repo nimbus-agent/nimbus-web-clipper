@@ -360,6 +360,26 @@ was no way to grant page access to them. They're now listed alongside the
 user's entries, each with its own grant/revoke and toggle, and no Remove
 button (they aren't the user's to delete).
 
+## Manual verification — Panel entry points (C1.5)
+
+Prereq: paired, gateway running, a recognised page available (any GitHub/GitLab/
+Bitbucket PR, Jenkins build or Jira issue works). Reload the extension after
+building so the context menu is re-registered.
+
+1. Right-click a normal page → **Show related in Nimbus** appears; clicking it
+   opens the panel.
+2. Right-click a page in a **non-focused** window → the panel opens in *that*
+   tab, not the focused one.
+3. On `chrome://extensions` → the entry either does not appear or does
+   nothing; no error surfaces.
+4. Options stage 2 lists all three commands with their real bindings.
+5. Deliberately rebind `Alt+Shift+R` to something else in the browser's
+   shortcut settings → Options reflects the change on reload.
+6. Unbind it entirely → Options shows **Not set**, and the context-menu route
+   still opens the panel.
+7. Repeat 1–6 in Firefox, confirming the hint names `about:addons` rather than
+   the Chrome path.
+
 ## Manual verification — Service lanes (C2.3)
 
 **Outstanding — this pass has not yet been performed.** Its summary form is
