@@ -55,6 +55,13 @@ export async function handleRequest(req: Request): Promise<Response> {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
   }
+  // `GET /v1/health` — the unauthenticated liveness route zero-config discovery
+  // probes. Mirrors the real gateway's body exactly (`status: "ok"`), because
+  // `probeHealth` shape-checks it: something else listening on the port can
+  // return 200, so a bare 200 must NOT read as "Nimbus is here".
+  if (req.method === "GET" && url.pathname === GATEWAY_PATHS.health) {
+    return jsonResponse({ status: "ok", gateway: "read_only_http" });
+  }
   if (req.method === "GET" && url.pathname === GATEWAY_PATHS.resolve) {
     return jsonResponse(RESOLVE_FIXTURE);
   }
