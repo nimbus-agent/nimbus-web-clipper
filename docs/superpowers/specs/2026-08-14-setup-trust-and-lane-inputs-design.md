@@ -267,6 +267,53 @@ Every lane today is derived entirely from the page: `impact` and `expert` from t
 resolved item, `catchup` / `decisions` / `ownership` from the recognised product.
 This slice is the first time a lane takes an input the page did not supply.
 
+> **Amended 2026-08-14, at implementation.** Four decisions taken while building
+> this slice, recorded here rather than left to disagree with the code. The first
+> two were put to the owner; the last two are corrections to claims this section
+> made about surfaces it had not read.
+>
+> 1. **The glossary lane materialises with the term, and not before.** No lane on
+>    any page until a term exists — from *Define in Nimbus*, or from a selection
+>    the panel snapshots when it opens. An always-present lane (whose empty state
+>    would call `agents.glossary` with no argument for its `list` mode) was
+>    considered and rejected: it would put a usually-empty lane on every
+>    recognised page, which is the noise C2.3's own rule warns about.
+> 2. **It answers on ANY page the panel opens on**, including one the recogniser
+>    rejects — so `LANE_RULES`' term arm declares no surfaces at all. The
+>    recogniser gate exists to decide which page URLs may reach the gateway;
+>    `POST /v1/agents/glossary` takes `{term, limit}` and no URL, so the reason
+>    for the gate does not apply to this lane. The term you most need defined is
+>    usually on the unfamiliar internal wiki that has no connector.
+> 3. **The three glossary modes are not rendered by this client.** This section
+>    says `miss` "is a real upstream state, so *did you mean…* is rendered from
+>    data, not invented" — true of the agent, but not reachable here: the run
+>    route returns a single `brief` string for every agent
+>    (`getAgentRun`, gateway-client.ts), and `findings` is deliberately unmodelled.
+>    All three modes therefore arrive as gateway-rendered TEXT and need no client
+>    branch. Simpler than briefed, and the honesty claim still holds — the words
+>    are upstream's.
+> 4. **The selection does not arrive the way this section says.** It claims the
+>    menu takes `info.selectionText` "which is exactly how `clip-selection`
+>    already works". It is not: `clip-selection` re-runs in-page capture and never
+>    reads `info.selectionText`, so the `chrome.contextMenus` seam did not carry
+>    it. It now does — and that is the better source anyway, because it is
+>    captured when the menu opens (surviving a page script that clears the
+>    selection) and it carries text selected inside an `<input>` or `<textarea>`,
+>    which `window.getSelection()` reports as empty.
+>
+>    Delivery also needed a mechanism this section did not anticipate: `panel.js`
+>    is a SELF-TOGGLE, so injecting it to deliver a selection would close the
+>    panel whenever one was already open. The worker therefore calls a hook on the
+>    mounted panel's host element and injects only on a miss
+>    (`deliverSelection`, browser/scripting.ts; the id and hook name are shared in
+>    `src/shared/panel-host.ts` so the two sides cannot drift).
+>
+> One naming consequence: `LANE_SURFACES` is now **`LANE_RULES`**, a
+> discriminated union of `{input:"page", surfaces}` and `{input:"term"}`. Keeping
+> the old name over a value that is no longer a surface list is exactly the drift
+> the table exists to prevent, and the union makes "a term lane with surfaces" a
+> type error rather than a thing to remember.
+
 ### `agent-run` grows two optional fields, both guarded
 
 ```ts
@@ -333,6 +380,11 @@ belongs on any recognised surface *where a term exists*, which no existing entry
 can express. The table grows a required-input declaration alongside the surface
 list, so a lane that needs an input and does not declare one stays a type error —
 preserving the property C2.3 established.
+
+> **Amended (see the slice note above).** Shipped as `LANE_RULES`, a
+> discriminated union rather than a table with two independent fields, and the
+> term arm declares **no surfaces at all** — not "any recognised surface". A term
+> is not a property of the page, so no property of the page may withhold the lane.
 
 ### The run cache takes a third subject, not a rework
 

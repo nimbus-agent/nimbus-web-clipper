@@ -4,6 +4,7 @@
 
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
+import { isNormalisedTerm } from "./term.ts";
 import {
   AGENT_ERRORS,
   AGENT_LANES,
@@ -97,16 +98,40 @@ export interface RecogniseRequest {
   readonly pageUrl: string;
 }
 
+/**
+ * What a lane is being asked about, beyond the page it was asked from. Shared by
+ * both agent messages because the run and the poll must agree exactly: they key
+ * the same cache entry, so a poll that omitted a field the run carried would look
+ * up a different subject and report `collapsed` forever.
+ *
+ * Both fields arrive from a CONTENT SCRIPT and are therefore untrusted, which is
+ * why each is narrowed below rather than merely typed here.
+ */
+interface LaneInput {
+  /**
+   * The candidate the user picked out of an ambiguous resolve (C2.5). Honoured
+   * by the handler only after it confirms the id appears in the candidate set
+   * that resolve itself produced — an id the gateway never offered is refused.
+   */
+  readonly itemId?: string;
+  /**
+   * The selected term for a `{input:"term"}` lane. Already normalised by
+   * `normaliseTerm` (shared/term.ts) before it is sent; the guard re-checks that,
+   * so an unnormalised or over-long term never reaches the handler.
+   */
+  readonly term?: string;
+}
+
 /** Expand a lane: run its agent (or return the cached state if one already
- *  exists for this item and lane — expanding a `done` lane must not re-invoke). */
-export interface AgentRunRequest {
+ *  exists for this subject and lane — expanding a `done` lane must not re-invoke). */
+export interface AgentRunRequest extends LaneInput {
   readonly kind: "agent-run";
   readonly lane: AgentLane;
   readonly pageUrl: string;
 }
 
 /** Poll a lane's current state. Read-only — never invokes. */
-export interface AgentStateRequest {
+export interface AgentStateRequest extends LaneInput {
   readonly kind: "agent-state";
   readonly lane: AgentLane;
   readonly pageUrl: string;
@@ -488,12 +513,38 @@ export function isAgentError(v: unknown): v is AgentError {
   return typeof v === "string" && (AGENT_ERRORS as readonly string[]).includes(v);
 }
 
+/**
+ * The two optional lane inputs, narrowed identically for the run and the poll.
+ *
+ * `itemId` is checked for shape only — whether it names a real candidate is a
+ * question about a resolve answer this module has never seen, so the handler
+ * verifies it against the candidate set and refuses an id the gateway never
+ * offered. An empty string is rejected here because it can only be a bug: it
+ * would key a cache entry under nothing.
+ *
+ * `term` must arrive ALREADY normalised. The guard re-runs `normaliseTerm` and
+ * demands the input equals its own normal form, so an over-long or whitespace-
+ * ragged term is refused at the boundary rather than rewritten by it — a guard
+ * that quietly repaired its input would be validating nothing. The panel does
+ * the normalising, and renders the refusal copy itself, because it is the side
+ * that still has the user in front of it.
+ */
+function hasValidLaneInput(v: Record<string, unknown>): boolean {
+  const itemId = v["itemId"];
+  const term = v["term"];
+  return (
+    (itemId === undefined || (typeof itemId === "string" && itemId !== "")) &&
+    (term === undefined || isNormalisedTerm(term))
+  );
+}
+
 export function isAgentRunRequest(v: unknown): v is AgentRunRequest {
   return (
     isObject(v) &&
     v["kind"] === "agent-run" &&
     isAgentLane(v["lane"]) &&
-    typeof v["pageUrl"] === "string"
+    typeof v["pageUrl"] === "string" &&
+    hasValidLaneInput(v)
   );
 }
 
@@ -502,7 +553,8 @@ export function isAgentStateRequest(v: unknown): v is AgentStateRequest {
     isObject(v) &&
     v["kind"] === "agent-state" &&
     isAgentLane(v["lane"]) &&
-    typeof v["pageUrl"] === "string"
+    typeof v["pageUrl"] === "string" &&
+    hasValidLaneInput(v)
   );
 }
 

@@ -1159,6 +1159,162 @@ describe("handleAgentRun", () => {
   });
 });
 
+describe("handleAgentRun — a candidate the user picked (C2.5)", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+  const candidates = [
+    { id: "gh-1", service: "github", type: "pr", title: "One", url: null },
+    { id: "gh-2", service: "github", type: "pr", title: "Two", url: null },
+  ];
+  const ambiguous = {
+    ok: true as const,
+    outcome: { kind: "ambiguous" as const, candidates, fetchable: false, truncated: false },
+  };
+
+  function deps(seen: Array<{ params: unknown }>, subjects: Array<unknown> = []) {
+    return {
+      getOrigins: async () => [],
+      getConnection: async () => conn,
+      resolveItem: async () => ambiguous,
+      invokeAgent: async (_o: string, _t: string, _agent: string, params: unknown) => {
+        seen.push({ params });
+        return { ok: true as const, runId: "r1" };
+      },
+      getRun: async () => null,
+      putRun: async (run: { subject: unknown }) => {
+        subjects.push(run.subject);
+      },
+    };
+  }
+
+  it("answers about the picked candidate instead of refusing the ambiguity", async () => {
+    const seen: Array<{ params: unknown }> = [];
+    const subjects: unknown[] = [];
+    const res = await handleAgentRun(deps(seen, subjects), {
+      kind: "agent-run",
+      lane: "expert",
+      pageUrl: "https://github.com/a/b/pull/1",
+      itemId: "gh-2",
+    });
+    expect(res.state).toEqual({ kind: "running", runId: "r1" });
+    // The PICKED candidate's title, not the first one's — the whole point.
+    expect(seen[0]?.params).toEqual({ topicOrFile: "Two" });
+    // And it caches under that item, so the answer cannot leak to its sibling.
+    expect(subjects[0]).toEqual({ kind: "item", id: "gh-2" });
+  });
+
+  // The id comes from a content script. An id the gateway never offered is
+  // refused exactly like any other unverified cross-boundary value.
+  it("refuses an id that is not among the candidates this resolve produced", async () => {
+    const seen: Array<{ params: unknown }> = [];
+    const res = await handleAgentRun(deps(seen), {
+      kind: "agent-run",
+      lane: "expert",
+      pageUrl: "https://github.com/a/b/pull/1",
+      itemId: "gh-999",
+    });
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+    expect(seen).toEqual([]);
+  });
+
+  it("still refuses an ambiguous page when no candidate was picked", async () => {
+    const seen: Array<{ params: unknown }> = [];
+    const res = await handleAgentRun(deps(seen), {
+      kind: "agent-run",
+      lane: "expert",
+      pageUrl: "https://github.com/a/b/pull/1",
+    });
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+    expect(seen).toEqual([]);
+  });
+});
+
+describe("handleAgentRun — the glossary lane takes a term", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+
+  function deps(seen: Array<{ agent: string; params: unknown }>, subjects: unknown[] = []) {
+    return {
+      getOrigins: async () => {
+        throw new Error("a term lane must not consult the recogniser's origins");
+      },
+      getConnection: async () => conn,
+      resolveItem: async () => {
+        throw new Error("a term lane must not resolve the page");
+      },
+      invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+        seen.push({ agent, params });
+        return { ok: true as const, runId: "r1" };
+      },
+      getRun: async () => null,
+      putRun: async (run: { subject: unknown }) => {
+        subjects.push(run.subject);
+      },
+    };
+  }
+
+  // The decision this lane turns on: `POST /v1/agents/glossary` takes `{term}`
+  // and no URL, so the recogniser gate — which exists to decide which page URLs
+  // may reach the gateway — has nothing to gate. Both throwing deps above are
+  // the assertion; reaching either would fail the test.
+  it("answers on a page the recogniser would reject, with no resolve call", async () => {
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    const subjects: unknown[] = [];
+    const res = await handleAgentRun(deps(seen, subjects), {
+      kind: "agent-run",
+      lane: "glossary",
+      pageUrl: "https://wiki.internal.example/runbooks/deploy",
+      term: "blast radius",
+    });
+    expect(res.state).toEqual({ kind: "running", runId: "r1" });
+    expect(seen[0]).toEqual({ agent: "glossary", params: { term: "blast radius" } });
+    expect(subjects[0]).toEqual({ kind: "term", term: "blast radius" });
+  });
+
+  it("still needs a pairing", async () => {
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    const res = await handleAgentRun(
+      { ...deps(seen), getConnection: async () => null },
+      { kind: "agent-run", lane: "glossary", pageUrl: "https://example.com", term: "canary" },
+    );
+    expect(res.state).toEqual({ kind: "failed", reason: "not_paired" });
+    expect(seen).toEqual([]);
+  });
+
+  // Unreachable from the shipped UI — the panel materialises the lane only once
+  // a term exists — so this is the answer to a forged message. `no_term` and not
+  // `not_resolved`: the page is not what is missing.
+  it("reports no_term when a forged message omits the term", async () => {
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    const res = await handleAgentRun(deps(seen), {
+      kind: "agent-run",
+      lane: "glossary",
+      pageUrl: "https://example.com",
+    });
+    expect(res.state).toEqual({ kind: "failed", reason: "no_term" });
+    expect(seen).toEqual([]);
+  });
+
+  it("keeps two terms apart in the cache", async () => {
+    const subjects: unknown[] = [];
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    await handleAgentRun(deps(seen, subjects), {
+      kind: "agent-run",
+      lane: "glossary",
+      pageUrl: "https://example.com",
+      term: "canary",
+    });
+    await handleAgentRun(deps(seen, subjects), {
+      kind: "agent-run",
+      lane: "glossary",
+      pageUrl: "https://example.com",
+      term: "blast radius",
+    });
+    expect(subjects).toEqual([
+      { kind: "term", term: "canary" },
+      { kind: "term", term: "blast radius" },
+    ]);
+  });
+});
+
 describe("handleAgentState", () => {
   const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
   const item = {

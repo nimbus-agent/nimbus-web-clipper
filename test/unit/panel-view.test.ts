@@ -619,6 +619,7 @@ describe("renderLaneBody", () => {
       "insufficient_scope",
       "unsupported",
       "not_resolved",
+      "no_term",
     ] as const) {
       const el = renderLaneBody(document, { kind: "failed", reason }, () => undefined);
       expect(el.querySelector("button")).toBeNull();
@@ -642,6 +643,7 @@ describe("renderLaneBody", () => {
       "unauthorized",
       "unsupported",
       "not_resolved",
+      "no_term",
       "agent_failed",
       "unreachable",
       "server_error",
@@ -664,6 +666,17 @@ describe("renderLaneBody", () => {
     const text = el.textContent?.toLowerCase() ?? "";
     expect(text).not.toContain("hasn't indexed");
     expect(text).not.toContain("not indexed");
+  });
+
+  // `no_term` is about the INPUT, not the page and not the gateway. Saying
+  // "couldn't pin this page to one indexed item" for a missing selection would
+  // send the user off to fix a page that is fine.
+  it("blames neither the page nor the gateway for a missing term", () => {
+    const el = renderLaneBody(document, { kind: "failed", reason: "no_term" }, () => undefined);
+    const text = el.textContent?.toLowerCase() ?? "";
+    expect(text).toContain("select");
+    expect(text).not.toContain("indexed item");
+    expect(text).not.toContain("gateway");
   });
 
   it("blames the gateway for unsupported and the page for not_resolved, never the reverse", () => {

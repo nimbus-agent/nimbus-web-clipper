@@ -477,6 +477,38 @@ The fetch preview (panel) — this one has **no** off switch:
     preview rather than re-sending, and step 12's behaviour repeats.
 14. Repeat 1, 3, 10 and 12 in Firefox.
 
+## Manual verification — Lanes that take an input (C2.5 · glossary · 4.2)
+
+Prereq: paired, with the `agents` scope. The glossary steps need at least one
+term in your Nimbus glossary; the ambiguity step needs a URL that resolves to
+more than one indexed item (the panel shows a chooser when it does).
+
+1. On any page, select a word → right-click → **Define in Nimbus**. The panel
+   opens, a lane titled with that term is **already expanded**, and it answers.
+2. With the panel still open, select a *different* word → **Define in Nimbus**.
+   The panel must **stay open** (this is the toggle hazard: the worker reaches
+   the open panel through its hook, never by re-injecting `panel.js`), and the
+   lane retitles and re-answers for the new term.
+3. Select a whole paragraph → **Define in Nimbus**. The lane says *"That's a
+   passage, not a term"*. Confirm in DevTools' network/SW logs that **no**
+   `/v1/agents/glossary` call went out.
+4. Repeat step 1 on a page Nimbus does **not** recognise — an internal wiki, a
+   vendor console. The lane must still work; the page lanes must still be
+   absent. This is the slice's central claim.
+5. Select text inside a `<textarea>` or `<input>` and define it — it must work
+   (this is why the entry reads the browser's captured `selectionText` rather
+   than the page's own selection).
+6. Select text → **What's related to this?**. The Related lane re-runs against
+   the selection, and the glossary lane appears **collapsed and unrun** — no
+   agent run is spent on a question nobody asked.
+7. Open the panel with no selection anywhere: **no glossary lane at all**.
+8. On an ambiguous page, pick a candidate. The two pull-request lanes now appear
+   under the chosen header and answer **about that item** — never *"Nimbus
+   couldn't pin this page to one indexed item."*
+9. Navigate away within an SPA and re-read: the glossary lane is gone, because
+   the selection belonged to the page the panel has stopped describing.
+10. Repeat 1, 2, 6 and 8 in Firefox.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any

@@ -9,7 +9,13 @@ import { addCommandListener } from "../browser/commands.ts";
 import { addMenuClickListener, createMenu, removeAllMenus } from "../browser/context-menus.ts";
 import { hasOrigin } from "../browser/permissions.ts";
 import { addInstalledListener, addMessageListener } from "../browser/runtime.ts";
-import { injectPanel, runCapture, showCue, showToast } from "../browser/scripting.ts";
+import {
+  deliverSelection,
+  injectPanel,
+  runCapture,
+  showCue,
+  showToast,
+} from "../browser/scripting.ts";
 import {
   activeTab,
   addNavigationListener,
@@ -493,7 +499,38 @@ function openPanel(tabId?: number): void {
     .catch(() => undefined);
 }
 
-addMenuClickListener((menuItemId, tabId) => {
+/**
+ * The two selection entries: hand the selected text to the panel in the clicked
+ * tab, opening one if none is there (`deliverSelection` is what keeps that from
+ * toggling an open panel shut).
+ *
+ * A missing `tabId` cannot be recovered from here. Unlike `openPanel`, which
+ * falls back to the active tab, a selection belongs to ONE page — delivering it
+ * to whichever tab happens to be active would put a term from one page into a
+ * panel describing another. Doing nothing is the honest failure.
+ *
+ * Empty text falls back to opening the panel plainly: the browser only offers a
+ * selection entry when there is a selection, so this is a browser-level
+ * surprise, and the panel's own mount-time snapshot is a better guess than a
+ * request built on nothing.
+ */
+function handleSelectionMenu(
+  action: "define-selection" | "related-to-selection",
+  tabId: number | undefined,
+  selectionText: string | undefined,
+): void {
+  if (tabId === undefined) {
+    return;
+  }
+  if (selectionText === undefined || selectionText === "") {
+    openPanel(tabId);
+    return;
+  }
+  const intent = action === "define-selection" ? "define" : "related";
+  deliverSelection(tabId, { text: selectionText, intent }).catch(() => undefined);
+}
+
+addMenuClickListener((menuItemId, tabId, selectionText) => {
   const action = menuAction(menuItemId);
   if (action === null) {
     return;
@@ -519,6 +556,10 @@ addMenuClickListener((menuItemId, tabId) => {
       return;
     case "clip-selection":
       quickClip(quickClipDeps, "selection", tabId).catch(() => undefined);
+      return;
+    case "define-selection":
+    case "related-to-selection":
+      handleSelectionMenu(action, tabId, selectionText);
       return;
     default: {
       const unreachable: never = action;

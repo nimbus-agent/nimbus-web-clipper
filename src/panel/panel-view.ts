@@ -584,13 +584,13 @@ export function renderFetchPreview(
 }
 
 /**
- * Renders the body of one C2 agent lane (`impact`/`expert`) — never the shared
- * "related" lane, which keeps its own `relatedBody` render path.
+ * Renders the body of one agent lane — never the shared "related" lane, which
+ * keeps its own `relatedBody` render path.
  *
- * Re-run is offered for five of the nine `AgentError` reasons — `not_paired`,
+ * Re-run is offered for five of the ten `AgentError` reasons — `not_paired`,
  * `stale`, `unreachable`, `server_error`, `agent_failed` — and withheld for the
- * other four (`unauthorized`, `insufficient_scope`, `unsupported`,
- * `not_resolved`).
+ * other five (`unauthorized`, `insufficient_scope`, `unsupported`,
+ * `not_resolved`, `no_term`).
  *
  * `stale`/`unreachable`/`server_error` are transport-level blips, and
  * `agent_failed` means the run reached the agent and it could not answer (which a
@@ -598,10 +598,10 @@ export function renderFetchPreview(
  * itself worked). `not_paired` is the one whose remedy is on ANOTHER surface and
  * still keeps the button: pairing happens in Options, but the retry belongs here,
  * and the copy names pairing first so the button is never the whole instruction —
- * see its branch below. The four without a button need a different fix elsewhere
+ * see its branch below. The five without a button need a different fix elsewhere
  * AND have nothing here to retry into (re-authenticate, grant a scope, index the
- * page, or a gateway that has the agents surface at all) — a Re-run there would
- * just fail identically.
+ * page, select a term, or a gateway that has the agents surface at all) — a
+ * Re-run there would just fail identically.
  */
 export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => void): HTMLElement {
   const box = doc.createElement("div");
@@ -707,6 +707,19 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
     // indexed/not-indexed claim; say only what is true in all three cases.
     box.append(
       line(doc, "nimbus-related__status", "Nimbus couldn't pin this page to one indexed item."),
+    );
+    return box;
+  }
+  if (state.reason === "no_term") {
+    // A term lane asked to run with no term. The panel materialises a term lane
+    // only once a term exists, so this is not reachable from this UI — it is the
+    // honest answer to a forged or stale message, and it says what is missing
+    // rather than blaming the page as `not_resolved` would.
+    //
+    // No Re-run: the button would re-send the same term-less request. The remedy
+    // is a selection, which is not a control this lane can offer.
+    box.append(
+      line(doc, "nimbus-related__status", "Select a word or phrase first — this lane needs one."),
     );
     return box;
   }

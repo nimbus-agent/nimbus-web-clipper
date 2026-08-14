@@ -9,6 +9,8 @@ import type { MenuItem } from "../browser/context-menus.ts";
 export const MENU_CLIP_PAGE = "clip-page";
 export const MENU_CLIP_SELECTION = "clip-selection";
 export const MENU_SHOW_RELATED = "show-related";
+export const MENU_DEFINE = "define-selection";
+export const MENU_RELATED_TO_SELECTION = "related-to-selection";
 
 /**
  * Menu ids and the manifest's command names (`src/manifest/manifest.ts`) are
@@ -37,9 +39,24 @@ export const MENU_ITEMS: readonly MenuItem[] = Object.freeze([
     title: "Show related in Nimbus",
     contexts: ["page", "link", "image", "selection"],
   },
+  // The two selection-only entries. `selection` alone, unlike `show-related`
+  // above: each needs the selected text to mean anything, and Chrome shows a
+  // selection item only when there IS a selection, so this is the one context
+  // where a narrow list is the correct one rather than a way to disappear.
+  { id: MENU_DEFINE, title: "Define in Nimbus", contexts: ["selection"] },
+  {
+    id: MENU_RELATED_TO_SELECTION,
+    title: "What's related to this?",
+    contexts: ["selection"],
+  },
 ]);
 
-export type MenuAction = "clip-article" | "clip-selection" | "show-related";
+export type MenuAction =
+  | "clip-article"
+  | "clip-selection"
+  | "show-related"
+  | "define-selection"
+  | "related-to-selection";
 
 /**
  * The action an id means, or null when the id is not ours.
@@ -56,6 +73,10 @@ export function menuAction(menuItemId: string): MenuAction | null {
       return "clip-selection";
     case MENU_SHOW_RELATED:
       return "show-related";
+    case MENU_DEFINE:
+      return "define-selection";
+    case MENU_RELATED_TO_SELECTION:
+      return "related-to-selection";
     default:
       return null;
   }

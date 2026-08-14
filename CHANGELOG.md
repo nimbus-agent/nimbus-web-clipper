@@ -48,6 +48,19 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 - **Asking Nimbus to fetch an item tells you which item.** The panel's fetch
   button now names the service, the type and the address before your gateway
   reaches out for it.
+- **Ask Nimbus what a word means, on any page.** Select a term, right-click →
+  **Define in Nimbus**, and the panel answers from your own glossary. It works
+  wherever the panel opens — including pages Nimbus does not recognise, because
+  this question is about the word, not the page; the term is all that is sent, no
+  URL. Select a passage instead of a phrase and it says so rather than answering
+  about the first few words of it.
+- **See what's related to a phrase, not just to the page.** Select text →
+  **What's related to this?** and the Related lane re-runs against exactly that.
+  Both new entries reach an already-open panel without closing it.
+- **Picking which item a page is now gets you the answers.** When Nimbus cannot
+  tell which indexed item an ambiguous page is, it asks — and until now, choosing
+  one left you looking at a header with no lanes under it. The two pull-request
+  lanes now appear on the item you picked, and answer about that item.
 - **The related panel no longer depends on a keyboard shortcut that may not
   exist.** Right-click any page → **Show related in Nimbus** opens the same
   panel the hotkey does. And Options now lists each Nimbus shortcut with the

@@ -30,19 +30,41 @@ export const AGENT_RUN_CACHE_TTL_MS = 10 * 60_000;
 export const MAX_STORED_RUNS = 16;
 
 /**
+ * How many of `MAX_STORED_RUNS` may be TERM entries at once.
+ *
+ * The reason is an asymmetry in cardinality, not a worry about bursts. Item and
+ * service subjects are bounded by what the user visits — a handful of pull
+ * requests, five connectors. A term is bounded only by what can be selected,
+ * which is every substring of every page. Terms are the one subject that can
+ * grow without limit, so they are the one subject that needs a limit of its own.
+ *
+ * Without it the unbounded subject evicts the bounded ones, which is backwards:
+ * a PR brief is expensive to regenerate and tied to work in progress, while a
+ * term lookup is cheap and usually asked once. The TOTAL is unchanged — holding
+ * more than the gateway retains would cache briefs it has already evicted.
+ */
+export const MAX_STORED_TERM_RUNS = 6;
+
+/**
  * What a run is ABOUT.
  *
  * `item` is C2.1's shape: a lane answering about one indexed item. `service` is
  * C2.3's: a lane answering about a whole connector, which has no item to key on.
+ * `term` is the glossary lane's: a lane answering about a word the user selected,
+ * which belongs to no page and no connector at all.
+ *
  * A discriminated union rather than a synthetic string like "service:bitbucket"
  * because upstream item ids are already `${service}:${externalId}`
  * (packages/gateway/src/index/item-key.ts), so a synthetic key would share a
  * namespace SHAPE with real ids — confusable by inspection, and one connector
- * rename away from being ambiguous in fact.
+ * rename away from being ambiguous in fact. The `term` arm is what stops a second
+ * term silently replaying the first term's answer, which is precisely the failure
+ * the union was built to prevent.
  */
 export type RunSubject =
   | { readonly kind: "item"; readonly id: string }
-  | { readonly kind: "service"; readonly service: string };
+  | { readonly kind: "service"; readonly service: string }
+  | { readonly kind: "term"; readonly term: string };
 
 export interface StoredRun {
   readonly subject: RunSubject;
@@ -60,7 +82,10 @@ export interface StoredRun {
 const KEY_SEP = "\u0000";
 
 function subjectValue(subject: RunSubject): string {
-  return subject.kind === "item" ? subject.id : subject.service;
+  if (subject.kind === "item") {
+    return subject.id;
+  }
+  return subject.kind === "service" ? subject.service : subject.term;
 }
 
 function makeKey(subject: RunSubject, lane: AgentLane): string {
@@ -77,6 +102,9 @@ function isRunSubject(v: unknown): v is RunSubject {
   }
   if (v["kind"] === "item") {
     return typeof v["id"] === "string";
+  }
+  if (v["kind"] === "term") {
+    return typeof v["term"] === "string";
   }
   return v["kind"] === "service" && typeof v["service"] === "string";
 }
@@ -190,6 +218,16 @@ export function putRun(run: StoredRun, nowMs: number): Promise<void> {
     // Oldest write survives longest against the cap; evict by writtenAtMs, not
     // by incidental object-key insertion order.
     entries.sort(([, a], [, b]) => a.writtenAtMs - b.writtenAtMs);
+    // Terms are evicted against their OWN budget first, before the global cap is
+    // consulted at all — see MAX_STORED_TERM_RUNS. Doing it in this order is the
+    // whole point: an over-budget term must displace the oldest term, never the
+    // oldest item, however recently that term was written.
+    let termCount = entries.filter(([, e]) => e.subject.kind === "term").length;
+    while (termCount > MAX_STORED_TERM_RUNS) {
+      const oldestTerm = entries.findIndex(([, e]) => e.subject.kind === "term");
+      entries.splice(oldestTerm, 1);
+      termCount -= 1;
+    }
     while (entries.length > MAX_STORED_RUNS) {
       entries.shift();
     }

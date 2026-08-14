@@ -607,10 +607,24 @@ need a browser-viable shape first; see C2.4.*
 > dashboard resolves to none. `agents.glossary` is not in this slice — it needs
 > selection plumbing into the lane path that does not exist yet, its own slice.
 > `agents.huddle` and `agents.janitor` are also unaddressed.
+> **Update (2026-08-14): the glossary lane has now shipped**, in the slice that
+> also closed **C2.5** and **4.2**. It is the first lane whose input is not the
+> page, and it needed two things this brief did not anticipate. `LANE_SURFACES`
+> became **`LANE_RULES`**, a discriminated union — `{input:"page", surfaces}` vs
+> `{input:"term"}` — so a term lane cannot be given surfaces and a page lane
+> cannot omit them. And the term arm declares **no surfaces at all**: the lane
+> answers on any page the panel opens on, including one the recogniser rejects,
+> because `POST /v1/agents/glossary` takes `{ term }` and no URL, so the gate that
+> decides which page URLs may reach the gateway has nothing to gate here. The
+> lane materialises only once a term exists — no term, no lane, anywhere — and an
+> over-long selection is refused in the lane rather than truncated into a question
+> nobody asked. Its three upstream modes (`list`/`term`/`miss`) need no client
+> branch: the run route returns one `brief` string for every agent, so all three
+> arrive as text. `agents.huddle` and `agents.janitor` remain unaddressed.
 > **Done when** Every shipped lane appears only where it is useful, and the
 > rule that put it there is written down. ✅ for the three lanes shipped here;
 > unit suite green. The plan's manual dev-load pass (`docs/development.md`) is
-> still outstanding.
+> still outstanding — and now also covers the glossary lane's two menu entries.
 
 ### C2.4 A browser-viable "why" · 🟡 · M
 > **What** Answer *why does this change exist* from the browser, without
@@ -633,7 +647,18 @@ need a browser-viable shape first; see C2.4.*
 > pull request, without requiring the browser to have a local checkout of
 > anything.
 
-### C2.5 The lanes on a candidate you picked · 🟢 · S
+### C2.5 The lanes on a candidate you picked · 🟢 · S — ✅ shipped
+> **Status** Shipped, together with the glossary lane C2.3 deferred and 4.2, as
+> the "lane path takes an input" slice — the three share one contract change.
+> `agent-run`/`agent-state` grew an optional `itemId`, guarded in `messages.ts`
+> like every other cross-boundary value, and `resolveForAgent` honours it **only
+> after confirming it appears in the candidate set that resolve produced** — an
+> id the gateway never offered is refused. No extra call: the resolve had to
+> happen anyway. The `item` the lane path carries is typed `ResolveCandidate`,
+> not `ResolvedItem`, so nothing downstream can read a `modifiedAt` a picked
+> candidate does not have. The panel's lane gate moved into a new pure
+> `src/panel/lane-input.ts` rather than growing inside the 1,256-line
+> `panel-in-page.ts`.
 > **What** Offer the two C2.1 lanes on an **ambiguous** page once the user has
 > picked which indexed item it is — today they appear only under a `resolved`
 > header, so an ambiguous page shows no lanes at all, before or after the pick.
@@ -1000,11 +1025,18 @@ engine to grow.*
 > **Reframe** Retained as the first lane of the **C1.3** shell — same content,
 > rendered inside the panel's lane contract instead of alongside it.
 
-### 4.2 Related-on-selection · 🟢 · S
+### 4.2 Related-on-selection · 🟢 · S — ✅ shipped
 > **What** Highlight text → see what's related to *that*, not just the page.
 > **Touches** `src/panel/`, `src/background/service-worker.ts` (selection payload
 > already supported by `RelatedRequest`).
 > **Done when** Selecting text updates the related panel to that selection.
+> **Status** Shipped with **C2.5** and the glossary lane. Half of it turned out
+> to exist already: `readContext()` has always sent the live selection with the
+> related request at panel-open. What was missing was re-running related with a
+> NEW selection while the panel is open — a **What's related to this?**
+> context-menu entry now does exactly that, and unlike *Define in Nimbus* it
+> spends no agent run: the glossary lane appears for the same selection, but
+> collapsed and unasked.
 
 ### 4.3 "You've read N things about this" · 🟡 · M
 > **What** A meaning-level ambient signal about a topic, not just page matches.
