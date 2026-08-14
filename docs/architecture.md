@@ -266,6 +266,50 @@ The gateway's status codes are mapped to a small, closed set of typed reasons in
 terminal is the whole game** — it decides whether a failed clip is queued for
 retry or reported and dropped.
 
+## Showing what leaves (Phase 1.3 / C4.2)
+
+Two different outbound requests get a confirm step: the popup's clip, and the
+panel's targeted fetch. They share **one pure builder module**
+([`shared/preview.ts`](../src/shared/preview.ts)) and **one pure renderer**
+([`shared/preview-view.ts`](../src/shared/preview-view.ts)); the popup and the
+panel each supply only their own DOM around them.
+
+```
+ClipPayload  ──► buildClipPreview  ──┐
+                                     ├──► renderPreview(doc, …) ──► popup DOM │ panel Shadow DOM
+FetchTarget  ──► buildFetchPreview ──┘
+```
+
+- **One builder per request shape, both fed the real thing.** `buildClipPreview`
+  takes the `ClipPayload` the popup is *about to send* — not a second
+  description assembled for display — so the preview cannot describe one request
+  while another goes out. `buildFetchPreview` does the same for `FetchTarget`.
+  A drift between what is shown and what is sent would need a change to the send
+  path itself, which is the point.
+- **Fields are listed explicitly, never iterated off the object.** This is the
+  defence of the one hard invariant here: *the bearer token must never appear in
+  a preview.* An `Object.keys(payload)` loop would faithfully render whatever a
+  future caller happened to pass in — which is exactly how a secret reaches a
+  screen. Adding a field to the preview is a deliberate line of code; inheriting
+  one is not possible. (The token is not in `ClipPayload` today. This holds the
+  property by construction rather than by remembering to re-check.)
+- **The excerpt is cut; the reported length is not.** `bodyLength` is the length
+  of the **whole** body even when only `EXCERPT_CHARS` of it is shown, because
+  the user is agreeing to send the whole body. A preview that quietly reported
+  only the part it displayed would understate what leaves — the same failure
+  mode as no preview at all, wearing a preview's clothes.
+- **Only the popup gets an off switch, and only for clips.** `preview-pref.ts`
+  stores `preview-enabled` and **defaults to on, including when the read fails**
+  — fail safe, not fail quiet: showing a preview the user turned off is an
+  annoyance, while sending without one because storage returned something odd is
+  precisely what this surface exists to prevent. The fetch confirm has no switch
+  at all; it is an I13 write under the user's stored provider credential.
+- **Quick-clip has no preview, deliberately.** The context menu and
+  `Alt+Shift+C` are *one-gesture* paths — there is no popup DOM to render into,
+  and interposing a confirm step would defeat the gesture. They report in the
+  toast afterwards, and the trust panel says so in those words rather than
+  implying every clip is confirmed.
+
 ## The recognition pipeline
 
 Capture pushes a page *into* the index. Recognition asks the opposite question —
@@ -516,6 +560,16 @@ not-indexed, fetchable ─{ click "Fetch this from GitHub" }─►  panel-in-pag
   happens, so nothing is in flight and a second click is exactly as safe as the
   first. Reopening the panel is the deliberate escape hatch — a fresh resolve by
   then either finds the item or offers the button again.
+- **The confirm step sits in front of the request, and `fetchSent` stays behind
+  it.** Clicking Fetch no longer sends anything: it names the target and opens
+  the preview (see [Showing what leaves](#showing-what-leaves-phase-13--c42)
+  above). The latch is set where it always was — inside the confirmed path, in
+  `sendFetch` — and **not** when the preview opens. Opening a preview is not an
+  attempt: nothing is in flight, so nothing needs latching. Setting it on open
+  would mean a cancelled preview permanently disabled the button, turning "no
+  thanks" into "never again" for that panel. Both routes into a fetch (the
+  initial button and a `rate_limited` "Try again") go through the same confirm,
+  because both fire the same outbound provider request.
 
 ## The ambient path (Phase C1.3, the deferred half)
 

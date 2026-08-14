@@ -40,6 +40,14 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **See exactly what leaves, before it leaves.** Clipping from the toolbar now
+  shows you the whole payload first — title, URL, tags, and the body it will
+  send — and sends nothing until you say so. The hotkey and right-click stay one
+  gesture and tell you afterwards, as before. You can switch the preview off in
+  Options if you'd rather not be asked.
+- **Asking Nimbus to fetch an item tells you which item.** The panel's fetch
+  button now names the service, the type and the address before your gateway
+  reaches out for it.
 - **The related panel no longer depends on a keyboard shortcut that may not
   exist.** Right-click any page → **Show related in Nimbus** opens the same
   panel the hotkey does. And Options now lists each Nimbus shortcut with the

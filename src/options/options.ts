@@ -1,5 +1,6 @@
 import { getAmbientHosts, setAmbientHost } from "../background/ambient-prefs.ts";
 import { getOrigins, setOrigins } from "../background/origin-store.ts";
+import { isPreviewEnabled, setPreviewEnabled } from "../background/preview-pref.ts";
 import { getAllCommands } from "../browser/commands.ts";
 import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.ts";
 import { isFirefoxRuntime, sendMessage } from "../browser/runtime.ts";
@@ -379,6 +380,39 @@ async function onSurfaceClick(event: Event): Promise<void> {
   await refreshSurfaces();
 }
 
+function previewToggle(): HTMLInputElement | null {
+  const el = document.getElementById("preview-toggle");
+  return el instanceof HTMLInputElement ? el : null;
+}
+
+/**
+ * Paints the switch from the stored preference.
+ *
+ * The try/catch is REQUIRED, not decoration — same rule as `refreshShortcuts`
+ * above: this is `void`-called from DOMContentLoaded, so a rejecting read would
+ * surface as an unhandled rejection and fail the Vitest run. On a failed read we
+ * leave the checkbox at its markup default (checked), which matches
+ * `isPreviewEnabled`'s own fail-safe: an unreadable preference means the preview
+ * SHOWS, because a preview the user switched off is a minor annoyance and a send
+ * without one is the outcome this whole surface exists to prevent.
+ */
+async function refreshPreviewToggle(): Promise<void> {
+  const toggle = previewToggle();
+  if (toggle === null) {
+    return;
+  }
+  try {
+    toggle.checked = await isPreviewEnabled();
+  } catch {
+    toggle.checked = true;
+  }
+}
+
+function onPreviewChange(): Promise<void> {
+  const toggle = previewToggle();
+  return toggle === null ? Promise.resolve() : setPreviewEnabled(toggle.checked);
+}
+
 function onAmbientChange(event: Event): Promise<void> {
   const target = event.target;
   if (!(target instanceof HTMLInputElement) || target.dataset["action"] !== "ambient") {
@@ -403,7 +437,11 @@ document.addEventListener("DOMContentLoaded", () => {
   document
     .getElementById("surface-list")
     ?.addEventListener("change", (event) => void onAmbientChange(event));
+  document.getElementById("preview-toggle")?.addEventListener("change", () => {
+    void onPreviewChange();
+  });
   void refreshConnection();
   void refreshSurfaces();
   void refreshShortcuts();
+  void refreshPreviewToggle();
 });

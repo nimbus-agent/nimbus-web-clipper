@@ -28,6 +28,9 @@ code { font-family: ui-monospace, monospace; padding: 1px 4px; border-radius: 4p
 .surfaces__ambient input:disabled + span {
   opacity: 0.55;
 }
+/* The preview off switch. Its label wraps the checkbox, so the box and its
+   words share one hit target — the same arrangement .surfaces__ambient uses. */
+.options__toggle label { display: inline-flex; align-items: baseline; gap: 6px; }
 .stage[data-state="locked"] { opacity: 0.45; }
 .stage[data-state="locked"] button,
 .stage[data-state="locked"] input,
