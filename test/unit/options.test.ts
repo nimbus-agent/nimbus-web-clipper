@@ -57,8 +57,15 @@ const paired: ConnectionResponse = {
 
 let harness: ChromeHarness;
 
-function flush(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+/** Drain pending promise chains chained after refreshSurfaces(). A single
+ * macrotask tick does not reliably drain the awaits in refreshSurfaces() →
+ * surfaceRows() → (getAmbientHosts() + hasOrigin() per row) → render → write,
+ * so the assertion would race the DOM update. Multiple rounds ensure every
+ * layer of chained awaits gets a turn. */
+async function flush(rounds = 8): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 function el(id: string): HTMLElement {
