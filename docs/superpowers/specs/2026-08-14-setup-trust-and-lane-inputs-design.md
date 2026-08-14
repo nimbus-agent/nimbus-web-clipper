@@ -74,10 +74,22 @@ anything, or the trust panel is answering a question they have already had to
 commit to.
 
 The stage-state decision is pure: a new `src/options/setup-view.ts` exports
-`stagesFrom(status)` returning each stage's `"active" | "done" | "locked"` from
-the connection status alone. `options.ts` renders it. No stage logic in the DOM
-glue — the repo's standing rule, and this is the first Options code with enough
-branching for it to matter.
+`stagesFrom(status)` returning each stage's state from the connection status
+alone. `options.ts` renders it. No stage logic in the DOM glue — the repo's
+standing rule, and this is the first Options code with enough branching for it to
+matter.
+
+**Locking is for never-configured, never for broken.** The state is
+`"active" | "done" | "needs-attention" | "locked"`, and a stage that has completed
+once never returns to `locked`. A stale token or an unreachable gateway moves
+stage 1 to `needs-attention` and leaves 2 and 3 open.
+
+This is not a nicety. **Unpair lives in stage 2** (`options.html:25`), so a rule
+that re-locks on a bad connection would hide the only control that fixes a bad
+connection — the user would be locked out of recovery by the very condition
+recovery exists for. Same for stage 3: revoking page access for a host must stay
+possible when the gateway is down, because a user who wants to withdraw access is
+most likely to want it when something is wrong.
 
 ### Discovery probes, and does not scan
 
@@ -90,6 +102,20 @@ A new pure `src/shared/discovery.ts` owns the ordered candidate list —
 `http://127.0.0.1:7474` then `http://localhost:7474` — and the pure "which probe
 won" decision. `gateway-client.ts` grows `probeHealth(origin)`: a `GET` with a
 short (~800 ms) timeout, mapping to `{ reachable: boolean }`.
+
+**The order is load-bearing, and the probes stay sequential.** `127.0.0.1` is
+first because the gateway binds `127.0.0.1` and nothing else (**I6**), so it is
+the literal address of the thing we are looking for. `localhost` is second and
+will rarely fire: on Windows in particular it may resolve to `::1` first under
+dual-stack resolution, and a gateway bound to IPv4 loopback refuses that — which
+is exactly why it must not be probed first, and why it is kept at all only for a
+gateway reached by name.
+
+Probing the two concurrently was considered and rejected. It would always open a
+connection to the candidate we expect to fail, and when both succeed it needs a
+tiebreak rule that buys nothing — the two are the same gateway. A refused
+connection returns fast rather than consuming the timeout, so the sequential
+worst case is one short refusal plus one 800 ms budget, not two full budgets.
 
 **Two rules, both non-negotiable:**
 
@@ -258,6 +284,24 @@ are untrusted cross-boundary input and both are narrowed by a guard in
 `messages.ts` — the repo's standing rule, and the reason this is a contract change
 rather than a render tweak.
 
+**`term` is normalised and bounded in that guard, and an over-long one is
+refused, not truncated.** A selection is whatever the user happened to drag, so
+it can be a paragraph. The guard collapses runs of whitespace, strips control
+characters, trims, and rejects anything longer than **128 characters** — the
+lane then renders *"That's a passage, not a term — select a word or phrase."*
+
+Truncating instead was considered and rejected: silently cutting a 3,000-character
+selection down to its first 128 characters produces a query the user never asked
+and an answer about a term they never selected, which looks like the feature
+working. Refusing says what happened.
+
+The bound is not about the wire. The term travels in the JSON body of
+`POST /v1/agents/{agent}`, so no header limit is in play. It matters because
+**the term becomes part of the cache key** — `makeKey` composes the subject value
+into the `chrome.storage.local` key (`agent-run-store.ts:66`), so an unbounded
+term writes an unbounded key into extension storage, and because a paragraph is
+not a glossary lookup any agent run could usefully answer.
+
 ### A picked candidate is honoured, but verified first
 
 C2.5's problem: `handleAgentRun` re-resolves the page for itself, and on an
@@ -293,7 +337,7 @@ preserving the property C2.3 established.
 ### The run cache takes a third subject, not a rework
 
 `RunSubject` in `agent-run-store.ts` is already a discriminated union — `item` and
-`service` — keyed through `makeKey` with a `` separator chosen so no arm can
+`service` — keyed through `makeKey` with a NUL separator chosen so no arm can
 collide with another. A term-scoped run is a third arm:
 
 ```ts
@@ -304,11 +348,20 @@ No key-scheme change, no migration. Without it, a second term would silently
 replay the first term's answer, which is the failure mode the union was built to
 prevent.
 
-**Honest gap:** `MAX_STORED_RUNS` is 16, deliberately mirroring the gateway's own
-retention. Term runs share that budget with item and service runs, so a burst of
-glossary lookups can evict a PR's cached briefs early. That is a correct-but-
-noticeable behaviour, not a defect; it is recorded here so the first person to see
-it does not go looking for a bug.
+**Term runs get a sub-budget of 6 within the existing 16.** `MAX_STORED_RUNS` is
+16, deliberately mirroring the gateway's own `MAX_RETAINED_TERMINAL_AGENT_RUNS`;
+that total is unchanged, because holding more would cache briefs the gateway has
+already evicted. What changes is that `putRun` evicts the oldest **term** entry
+first once term entries exceed 6, before touching the global cap.
+
+The reason is an asymmetry in cardinality, not a worry about bursts. Item and
+service subjects are bounded by what the user visits — a handful of PRs, five
+connectors. A term is bounded only by what can be selected, which is every
+substring of every page. Terms are the one subject that can grow without limit,
+so they are the one subject that needs a limit of its own. Without it, the
+unbounded subject evicts the bounded ones, which is backwards: a PR brief is
+expensive to regenerate and tied to work in progress, while a term lookup is
+cheap and usually asked once.
 
 ### Selection reaches the lane path by menu, with a snapshot fallback
 
@@ -387,6 +440,42 @@ this lookup, and a scope-gap error in the popup would be a warning about a featu
 they never invoked, on a surface whose job is to clip. The existing named re-grant
 path (`nimbus clip scopes`) stays where it already is, in the panel.
 
+**And the request is not made at all, because the client already knows its
+scopes — it has just been throwing them away.** `POST /v1/clips/pair/confirm`
+responds with `{ token, label, scopes }`
+(`packages/gateway/src/ipc/http-write-routes.ts:1109`, asserted in
+`http-write-routes.test.ts:869`), and `confirmPair` reads only `token` and
+`label` (`gateway-client.ts:144`). The third field is dropped on the floor.
+
+So this slice persists `scopes` on the connection record alongside `label` and
+`pairedAt`, and the popup lookup checks for `resolve` locally before it opens a
+socket. A pairing without the scope makes **no request per popup open**, rather
+than one failed request per popup open.
+
+Two consequences worth stating:
+
+- **The token is still never parsed.** Scopes come from the pairing *response
+  body*, not from decoding the credential. The token stays an opaque secret, as
+  every rule in this repo requires; nothing here inspects it.
+- **A re-grant without a re-pair must not strand the feature.** The owner can run
+  `nimbus clip scopes` to widen an existing pairing, which the client would not
+  otherwise hear about. The stored scope list is therefore refreshed from any
+  `ScopeGap` the client receives — it already carries `granted`
+  (`types.ts:222–226`) — so the record self-heals from the next authed call
+  instead of pinning a stale "no" forever.
+
+**Scope note:** the stored scopes are used *only* to gate this lookup. Every
+other scope-gap path in the client keeps its current
+ask-and-handle-the-answer behaviour. Pre-checking those too is a real
+improvement and explicitly out of this spec's scope — it would touch the panel,
+the fetch path and the lanes, none of which this work otherwise opens.
+
+**Migration:** connections paired before this ships have no stored scope list.
+That is `undefined`, not `[]`, and it means *unknown* — the lookup proceeds and
+learns from the response, exactly as it would have without this change. Treating
+unknown as "no scopes" would silently disable the feature for every existing
+user.
+
 ## Testing
 
 Unchanged from the repo's standing rules; the point is that this design keeps the
@@ -435,7 +524,48 @@ does not fix it globally either; `HTTP_EXCLUDED_AGENT_METHODS` still has four
 members (`preflight`, `premortem`, `whyPeek`, `negotiate`), and `glossary` is not
 among them.
 
+**4. `CLAUDE.md`'s pairing contract is stale.** It records
+`POST /v1/clips/pair/confirm` as returning `{ token, label }`. Upstream returns
+`{ token, label, scopes }`, and has for as long as token scopes have existed. The
+line is corrected by the slice that starts using the third field (slice 5), not
+here — the same convention every other roadmap correction in this repo follows.
+
 **Verified and unchanged:** 4.2's claim that `RelatedRequest` already supports a
 selection payload is true (`messages.ts:62`). C1.5's own 2026-08-11 correction —
 that the panel had a popup button all along and was never unreachable — is
 accurate; this spec builds the remaining half it names.
+
+## Review dispositions
+
+Findings from
+[2026-08-14-setup-trust-and-lane-inputs-design-review.md](./2026-08-14-setup-trust-and-lane-inputs-design-review.md),
+each verified against the code before it was accepted or argued with. All five
+are addressed above; three are accepted as written, two are accepted with the
+proposed mechanism replaced.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| 1 | Stale/revoked state locks the user out of stages 2–3 | **Fixed as proposed.** Confirmed real. |
+| 2 | Glossary term needs a length bound and sanitation | **Fixed; mechanism corrected.** Reject, don't truncate. |
+| 3 | `localhost` dual-stack could make the probe fail | **Already handled; rationale now written down.** Concurrency rejected. |
+| 4 | Term runs can evict item/service briefs | **Fixed as proposed.** Sub-budget of 6. |
+| 5 | Don't re-request when the token lacks the scope | **Fixed; better mechanism available.** Scopes are already returned at pairing. |
+
+**On 2** — the review's stated risk was HTTP header size. That does not apply: the
+term travels in the JSON body of `POST /v1/agents/{agent}`. The real exposure is
+the cache key, since `makeKey` composes the subject value into a
+`chrome.storage.local` key. The bound is kept, for a different and verifiable
+reason, and the review's *truncate* is replaced by *reject* so a mangled query
+cannot masquerade as a working one.
+
+**On 3** — the candidate list was already ordered `127.0.0.1` first, which is what
+the finding asks for; the spec stated the order without justifying it, which is
+why the concern was reasonable to raise. Concurrent probing is declined: it always
+dials a candidate expected to fail and needs a tiebreak that buys nothing.
+
+**On 5** — the review offered two mechanisms: cache the failure, or decode the
+token. Decoding is out — the token is an opaque secret this repo never parses.
+Caching a failure is unnecessary, because the gateway hands the client its scope
+list at pairing and the client currently discards it. Persisting what we are
+already given beats remembering what failed: it is correct on the first popup open
+rather than the second, and it has no stale-negative to invalidate.
