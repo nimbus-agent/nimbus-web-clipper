@@ -37,6 +37,9 @@ const paired: ConnectionResponse = {
   label: "MacBook",
   origin: "http://127.0.0.1:7474",
   pairedAt: Date.UTC(2026, 5, 27, 12, 0, 0),
+  queueDepth: 0,
+  reachable: true,
+  stale: false,
 };
 
 let harness: ChromeHarness;

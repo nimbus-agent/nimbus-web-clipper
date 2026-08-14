@@ -233,6 +233,11 @@ export type ConnectionResponse =
       readonly label: string;
       readonly origin: string;
       readonly pairedAt: number;
+      /** Absent when no clip has ever succeeded — including on a fresh pairing. */
+      readonly lastClipAt?: number;
+      readonly queueDepth: number;
+      readonly reachable: boolean;
+      readonly stale: boolean;
     };
 
 export type ExtensionResponse =
@@ -576,7 +581,11 @@ export function isConnectionResponse(v: unknown): v is ConnectionResponse {
     return (
       typeof v["label"] === "string" &&
       typeof v["origin"] === "string" &&
-      typeof v["pairedAt"] === "number"
+      typeof v["pairedAt"] === "number" &&
+      typeof v["queueDepth"] === "number" &&
+      typeof v["reachable"] === "boolean" &&
+      typeof v["stale"] === "boolean" &&
+      (v["lastClipAt"] === undefined || typeof v["lastClipAt"] === "number")
     );
   }
   return false;
