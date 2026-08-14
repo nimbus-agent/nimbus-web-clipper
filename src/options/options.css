@@ -34,3 +34,8 @@ code { font-family: ui-monospace, monospace; padding: 1px 4px; border-radius: 4p
 .stage[data-state="locked"] select { pointer-events: none; }
 .stage[data-state="needs-attention"] .stage__num { color: #b23; }
 .stage__num { font-variant-numeric: tabular-nums; opacity: 0.6; margin-right: 0.4em; }
+.stage__sub { font-size: 0.95rem; margin: 1.2em 0 0.4em; }
+.shortcut { display: flex; justify-content: space-between; gap: 1em; padding: 0.25em 0; }
+.shortcut__key { font-family: ui-monospace, monospace; opacity: 0.8; }
+/* The unbound row is the whole point of this block — mark it, don't just word it. */
+.shortcut[data-bound="false"] .shortcut__key { color: #b23; font-style: italic; }

@@ -1,7 +1,8 @@
 import { getAmbientHosts, setAmbientHost } from "../background/ambient-prefs.ts";
 import { getOrigins, setOrigins } from "../background/origin-store.ts";
+import { getAllCommands } from "../browser/commands.ts";
 import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.ts";
-import { sendMessage } from "../browser/runtime.ts";
+import { isFirefoxRuntime, sendMessage } from "../browser/runtime.ts";
 import {
   type DiscoverResponse,
   isConnectionResponse,
@@ -17,6 +18,7 @@ import {
 import { BUILT_IN_SURFACES } from "../shared/recognise.ts";
 import type { ConfiguredOrigin } from "../shared/types.ts";
 import { applyStages, healthLine, stagesFrom } from "./setup-view.ts";
+import { renderShortcuts, shortcutRows, shortcutsHint } from "./shortcuts-view.ts";
 import { renderSurfaceList, type SurfaceRow, sharedHostNote } from "./surfaces-view.ts";
 
 const PAIR_MESSAGES: Record<string, string> = {
@@ -85,6 +87,32 @@ async function refreshConnection(): Promise<void> {
     // page-access controls — on a profile the extension never confirmed was
     // paired.
   }
+}
+
+async function refreshShortcuts(): Promise<void> {
+  const list = document.getElementById("shortcut-list");
+  const hint = document.getElementById("shortcut-hint");
+  if (list === null || hint === null) {
+    return;
+  }
+  // Read directly from the browser seam, not through the service worker: Options
+  // is an extension page with its own access to chrome.commands, so a message
+  // round-trip would add a failure mode without adding information.
+  //
+  // The try/catch is REQUIRED, not decoration. This is called as
+  // `void refreshShortcuts()`, which attaches no rejection handler — a rejecting
+  // `getAllCommands` would surface as an unhandled rejection and fail the Vitest
+  // run. Same rule `refreshConnection` above already follows.
+  try {
+    list.replaceChildren(renderShortcuts(document, shortcutRows(await getAllCommands())));
+  } catch {
+    // An empty list, not a half-rendered one. The hint below still renders, so a
+    // user who cannot see their bindings is at least told where to go and set them.
+    list.replaceChildren();
+  }
+  // Outside the try on purpose: isFirefoxRuntime has its own catch and cannot
+  // throw, and the hint is the more useful half when the binding read failed.
+  hint.textContent = shortcutsHint(isFirefoxRuntime());
 }
 
 async function pair(): Promise<void> {
@@ -377,4 +405,5 @@ document.addEventListener("DOMContentLoaded", () => {
     ?.addEventListener("change", (event) => void onAmbientChange(event));
   void refreshConnection();
   void refreshSurfaces();
+  void refreshShortcuts();
 });

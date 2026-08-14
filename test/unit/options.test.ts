@@ -26,6 +26,8 @@ const FIXTURE = `
     <output id="connection-status"></output>
     <button id="unpair" type="button">Unpair this browser</button>
     <button id="unpair-cancel" type="button" hidden>Cancel</button>
+    <div id="shortcut-list"></div>
+    <p id="shortcut-hint"></p>
   </section>
   <section id="stage-sites">
     <input id="surface-origin" type="text" />
@@ -682,5 +684,55 @@ describe("refreshConnection failure", () => {
 
     expect(el("stage-connection").dataset["state"]).toBeUndefined();
     expect(el("stage-sites").dataset["state"]).toBeUndefined();
+  });
+});
+
+describe("options.html shortcuts block", () => {
+  test("stage 2 carries the shortcut list and hint slots", () => {
+    expect(html).toContain('id="shortcut-list"');
+    expect(html).toContain('id="shortcut-hint"');
+  });
+
+  test("the shortcut block lives inside stage 2, not its own stage", () => {
+    const stage2 = html.slice(
+      html.indexOf('id="stage-connection"'),
+      html.indexOf('id="stage-sites"'),
+    );
+    expect(stage2).toContain('id="shortcut-list"');
+  });
+});
+
+describe("shortcuts render into Options", () => {
+  test("a bound and an unbound command both render, with the unbound one marked", async () => {
+    // Seed BEFORE booting — see the harness note below. Never call boot() and
+    // then dispatch DOMContentLoaded again.
+    harness = installChromeMock();
+    harness.commandsGetAll = [
+      {
+        name: "show_related",
+        description: "Show related items in Nimbus",
+        shortcut: "Alt+Shift+R",
+      },
+      { name: "clip-page", description: "Clip the current page to Nimbus", shortcut: "" },
+    ];
+    await bootOptions();
+
+    const rows = el("shortcut-list").querySelectorAll(".shortcut");
+    expect(rows.length).toBe(2);
+    expect(el("shortcut-list").querySelectorAll('[data-bound="false"]').length).toBe(1);
+  });
+
+  test("the hint names a settings path the user can paste", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    expect(el("shortcut-hint").textContent?.toLowerCase()).toContain("paste");
+  });
+
+  test("no commands at all renders an empty list, not a broken page", async () => {
+    harness = installChromeMock();
+    harness.commandsGetAll = [];
+    await bootOptions();
+    expect(el("shortcut-list").querySelectorAll(".shortcut").length).toBe(0);
+    expect(el("shortcut-hint").textContent?.length).toBeGreaterThan(0);
   });
 });
