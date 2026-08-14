@@ -40,6 +40,18 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **Nimbus can find itself.** Setting up no longer starts with typing a URL:
+  press **Find my gateway** and the extension checks the two places a local
+  Nimbus listens. It checks exactly those two — it does not scan your ports.
+  The URL field is still there for a gateway on a different port.
+- **Options tells you the truth about the connection.** One line now says where
+  you are connected, when the last clip landed, and how many are waiting to sync
+  — and when your gateway has rejected this browser, it says *"Needs
+  re-pairing"* instead of leaving you to guess whether Nimbus is even running.
+- **One page that answers "where does my data go?"** Options now states the one
+  destination Nimbus talks to, which sites you have granted page access to, what
+  gets sent and when, and what happens to your pairing token — driven by your
+  real settings, not by a fixed blurb.
 - The panel now recognises a product's own dashboard — GitHub, GitLab, Bitbucket,
   Jira and Jenkins — and offers three lanes there: *What happened while I was
   away*, *What got decided* and *Who owns what*. They answer across the whole

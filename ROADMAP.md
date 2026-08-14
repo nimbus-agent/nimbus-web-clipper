@@ -458,6 +458,11 @@ is worthless without this — and half of C1 is buildable today.*
 > **Done when** The panel can be opened without touching the keyboard, on a
 > profile where the `show_related` shortcut is unbound, in both Chrome and
 > Firefox.
+> **Note (2026-08-14, Slice 1 — "Setup that works"):** that slice added a
+> staged Options flow whose stage 2 (Connection) is the natural home for
+> surfacing whether `show_related` is actually bound — but the readout itself
+> did **not** ship there. It remains this item's own scope, arriving with
+> Slice 2, not before.
 
 ## Phase C2 — Run the agents from the page 🟢/🟡
 
@@ -746,7 +751,7 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > `canonicalUrl` to *exclude* the current host, not to match it. This is the
 > shallow case of **C1.1** and should be built on the resolve read, not before it.
 
-### 1.2 "Where does my data go?" trust panel · 🟢 · S
+### 1.2 "Where does my data go?" trust panel · 🟢 · S — ✅ shipped
 > **What** A plain, always-reachable panel stating: one destination
 > (`127.0.0.1`), no telemetry, no remote host, MIT + no runtime deps.
 > **Why it wows** The privacy pitch becomes something a user can *read and verify*,
@@ -756,6 +761,11 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > connection store; link to the source and the loopback check in `shared/gateway.ts`.
 > **Done when** A user can see, in one place, exactly where clips go and what the
 > extension can and cannot reach.
+> **Status** Shipped as stage 4 of the staged Options flow — always open
+> regardless of pairing state, because the answer has to be reachable before
+> you commit to pairing, not only after. Driven by the real configured origin,
+> the sites you have granted page access to, and the current settings, rather
+> than fixed copy. See [`docs/architecture.md`](./docs/architecture.md#discovery-connection-health-and-the-trust-panel).
 
 ### 1.3 Show exactly what gets sent · 🟢 · M
 > **What** A pre-send preview of the clip payload — title, URL, mode, tags, and a
@@ -768,7 +778,7 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > **Done when** The user can inspect the outgoing payload and confirm/cancel; the
 > bearer token is never shown (invariant).
 
-### 1.4 Connection health at a glance · 🟢 · S
+### 1.4 Connection health at a glance · 🟢 · S — ✅ shipped
 > **What** A live indicator: paired/unpaired, the origin, last-successful-clip
 > time, and pending-queue depth.
 > **Why it wows** The tool feels *alive* and honest — you always know its state.
@@ -776,6 +786,13 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > `src/background/handlers.ts` (extend `handleConnectionStatus`).
 > **Done when** Connection state and queue depth are visible without guessing;
 > a dead token surfaces as "needs re-pairing," not a silent failure.
+> **Status** Shipped. `handleConnectionStatus` reports `{paired, origin, label,
+> pairedAt, lastClipAt, queueDepth, reachable, stale}`; Options renders it as
+> one honest line naming where you're connected, when the last clip landed,
+> and how many clips are waiting to sync — and a token the gateway has
+> rejected reads "Needs re-pairing" rather than leaving you to guess whether
+> Nimbus is even running. See
+> [`docs/architecture.md`](./docs/architecture.md#discovery-connection-health-and-the-trust-panel).
 
 ## Phase 2 — Capture anything, cleanly 🟢
 
@@ -919,7 +936,7 @@ organizing after.*
 > in Nimbus" that only fires when there is one real answer. See **C1.3** above
 > and `docs/superpowers/specs/2026-08-13-ambient-surfacing-design.md`.
 
-### 3.5 Zero-config gateway discovery · 🟢 · S
+### 3.5 Zero-config gateway discovery · 🟢 · S — ✅ shipped
 > **What** Find the local gateway automatically so pairing is the only setup step.
 > **Why it wows** Ten-second onboarding; the URL field disappears for most users.
 > **Touches** `src/shared/gateway.ts`, `src/options/options.ts`.
@@ -929,6 +946,14 @@ organizing after.*
 > manual override remains available.
 > **Reframe** Higher priority. A client you have to configure before it can
 > recognise anything is a client nobody keeps installed.
+> **Status** Shipped as a sequential probe of exactly two loopback
+> candidates — `http://127.0.0.1:7474`, then `http://localhost:7474` — never a
+> port scan. `127.0.0.1` goes first because that is the literal address
+> invariant I6 binds the gateway to; `localhost` is the fallback for dual-stack
+> resolution quirks. The manual URL field stays exactly as briefed: no match is
+> not a failure state, it's "ask the user." See
+> [`src/shared/discovery.ts`](./src/shared/discovery.ts) and
+> [`docs/architecture.md`](./docs/architecture.md#discovery-connection-health-and-the-trust-panel).
 
 ## Phase 4 — Ambient intelligence 🟢/🟡
 
@@ -1056,8 +1081,6 @@ another repo — ideal first contributions:
 - **Add a surface recogniser** — `src/shared/recognise.ts` is one table entry plus
   fixtures per product; the cleanest entry point into the reframe now that C1.2
   has shipped the scaffolding.
-- **1.2 Trust panel** — static, honest copy driven by the real origin. Pure UI.
-- **1.4 Connection health at a glance** — extend an existing handler + view.
 - **2.4 Full-page vs. readable toggle** — one setting, one capture branch.
 - **3.2 One-press undo** — a toast affordance + a short window (mind the gateway
   note).
