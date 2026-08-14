@@ -3,8 +3,11 @@
 // written via textContent (never innerHTML) — the indexed content is
 // attacker-influenceable, so plain-text rendering is the XSS backstop.
 import { formatAge } from "../shared/freshness.ts";
+import { buildFetchPreview } from "../shared/preview.ts";
+import { renderPreview } from "../shared/preview-view.ts";
 import { scopeCommand } from "../shared/scope-command.ts";
 import type {
+  FetchTarget,
   LaneState,
   Product,
   RelatedHit,
@@ -221,6 +224,22 @@ export interface PanelState {
    * `renderShell` a fifth positional argument.
    */
   readonly navAway?: { readonly pinnedRef: string | null; readonly onReread: () => void };
+  /**
+   * The pending "about to fetch" confirm target — set the moment the Fetch
+   * button (or a rate-limited Try again) is clicked, cleared on Send or
+   * Cancel. Rendered INSTEAD of `header`, in the same
+   * `nimbus-related__header-state` box `renderHeader` itself would occupy —
+   * the same precedence `fetchState` already has over `header` one level up
+   * in the caller, for the same reason: a targeted fetch is an I13 WRITE (the
+   * gateway reaching out to a configured provider under the user's stored
+   * credential), so the target must be named and agreed to before the request
+   * goes out, not after.
+   */
+  readonly fetchPreview?: {
+    readonly target: FetchTarget;
+    readonly onSend: () => void;
+    readonly onCancel: () => void;
+  };
 }
 
 function line(doc: Document, className: string, text: string): HTMLElement {
@@ -500,13 +519,67 @@ export function renderHeader(
   if (state.fetchable) {
     box.append(
       actionButton(
+        // A second, stable class beside the shared `nimbus-related__action` —
+        // this is the one control a confirm preview's own Send/Cancel controls
+        // (see `renderFetchPreview` below) could otherwise be confused with by
+        // a selector that picks "the first button" rather than this one by
+        // class. See that function's own doc comment.
         doc,
-        "nimbus-related__action",
+        "nimbus-related__action nimbus-related__fetch",
         `Fetch this from ${PRODUCT_NAMES[state.product]}`,
         () => onFetch?.("fetch"),
       ),
     );
   }
+  return box;
+}
+
+/**
+ * The "about to fetch" confirm step — names the target rather than asking a
+ * bare "Fetch this item?", because a targeted fetch is an I13 WRITE: the
+ * gateway reaches out to a configured provider under the user's own stored
+ * credential, and the user is authorising THAT, not merely answering yes/no.
+ *
+ * Built from `buildFetchPreview`/`renderPreview` (`shared/preview.ts` /
+ * `shared/preview-view.ts`) — the same preview machinery the popup's clip
+ * confirm uses, so the two previews can never describe an outbound request
+ * differently from each other or from the request actually sent.
+ *
+ * Rendered into a `nimbus-related__header-state` box — the SAME class
+ * `renderHeader` itself uses for its box — so every existing selector scoped
+ * to `.nimbus-related__header-state` keeps finding the panel's one primary
+ * action, confirm step included.
+ *
+ * Send and Cancel are built with `actionButton`, exactly like every other
+ * panel control (`type="button"`, `textContent`, `addEventListener` — never
+ * hand-rolled), and given their OWN stable classes
+ * (`nimbus-related__fetch-send` / `nimbus-related__fetch-cancel`), distinct
+ * from `nimbus-related__fetch` above and from the generic
+ * `nimbus-related__action` — a test (or a future control) that means "the
+ * Send button" must never be able to land on the Fetch button or on Cancel by
+ * picking "the first button" instead. Stacked full-width via
+ * `nimbus-related__fetch-actions` (own CSS in panel-in-page.ts's STYLES),
+ * never side by side: this is a narrow right-edge overlay, the same reason
+ * the candidate chooser (`nimbus-related__candidates`) stacks its own
+ * buttons, and a confirm step's own controls are the last ones that should
+ * end up truncated or cramped.
+ */
+export function renderFetchPreview(
+  doc: Document,
+  target: FetchTarget,
+  onSend: () => void,
+  onCancel: () => void,
+): HTMLElement {
+  const box = doc.createElement("div");
+  box.className = "nimbus-related__header-state";
+  box.append(renderPreview(doc, buildFetchPreview(target)));
+  const actions = doc.createElement("div");
+  actions.className = "nimbus-related__fetch-actions";
+  actions.append(
+    actionButton(doc, "nimbus-related__fetch-send", "Send", onSend),
+    actionButton(doc, "nimbus-related__fetch-cancel", "Cancel", onCancel),
+  );
+  box.append(actions);
   return box;
 }
 
@@ -735,7 +808,16 @@ export function renderShell(
 ): HTMLElement {
   const shell = doc.createElement("div");
   shell.className = "nimbus-related__shell";
-  shell.append(renderHeader(doc, state.header, onChoose, onFetch));
+  shell.append(
+    state.fetchPreview !== undefined
+      ? renderFetchPreview(
+          doc,
+          state.fetchPreview.target,
+          state.fetchPreview.onSend,
+          state.fetchPreview.onCancel,
+        )
+      : renderHeader(doc, state.header, onChoose, onFetch),
+  );
   if (state.navAway !== undefined) {
     shell.append(renderNavAway(doc, state.navAway));
   }

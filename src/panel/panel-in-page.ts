@@ -14,6 +14,7 @@ import { sameItem, surfaceLine } from "../shared/recognise.ts";
 import {
   AGENT_LANES,
   type AgentLane,
+  type FetchTarget,
   LANE_SURFACES,
   type LaneState,
   type Product,
@@ -258,6 +259,31 @@ const STYLES = `
    sit flush against the panel edge instead of lining up with it. */
 .nimbus-related__lane-body { padding: 4px 16px 12px; }
 .nimbus-related__lane-body .nimbus-related__status { padding: 0; }
+/* The confirm-fetch preview (renderFetchPreview, panel-view.ts): field rows
+   from shared/preview-view.ts, whose classes carry no styling of their own —
+   the popup gets its equivalent from popup.css, but this panel is a Shadow
+   DOM with no external stylesheet, so its own copy lives here. */
+.preview__row { display: flex; gap: 8px; padding: 2px 0; overflow-wrap: anywhere; }
+.preview__label { flex: 0 0 5.5em; color: var(--nimbus-muted); }
+.preview__value { word-break: break-all; }
+.preview__body { margin-top: 6px; max-height: 8em; overflow-y: auto; white-space: pre-wrap; color: var(--nimbus-muted); }
+.preview__note { margin: 4px 0 0; font-size: 12px; color: var(--nimbus-muted); }
+/* Send/Cancel: stacked full-width, never side by side — this is a narrow
+   right-edge overlay, the same reason nimbus-related__candidates stacks. */
+.nimbus-related__fetch-actions { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.nimbus-related__fetch-send, .nimbus-related__fetch-cancel {
+  all: unset;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  text-align: center;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+}
+.nimbus-related__fetch-send { background: var(--nimbus-accent); color: #fff; }
+.nimbus-related__fetch-cancel { background: var(--nimbus-border); color: var(--nimbus-fg); }
 `;
 
 interface NimbusHost extends HTMLElement {
@@ -505,6 +531,22 @@ function createPanel(body: HTMLElement): {
    * which is what keeps the button from reappearing.
    */
   let fetchState: HeaderState | null = null;
+  /**
+   * The "about to fetch" confirm target, shown INSTEAD of the normal header
+   * for as long as it is non-null — set by `handleFetchAction("fetch")`,
+   * reached from both the initial "Fetch this from X" button and a
+   * rate-limited "Try again" click, since both fire the SAME outbound
+   * provider request under the user's stored credential and both must be
+   * confirmed before it goes out.
+   *
+   * Setting this does NOT touch `fetchSent` — see that flag's own doc comment
+   * for why. Opening the preview is not an attempt; only `confirmFetch`
+   * (the Send control) hands off to the real `sendFetch`, which is where
+   * `fetchSent` latches. `cancelFetchPreview` (Cancel) clears this and
+   * repaints back to the ordinary header, leaving the Fetch button exactly as
+   * usable as before it was ever clicked.
+   */
+  let fetchPreview: FetchTarget | null = null;
   // Resolve and related land at different times and each triggers a full repaint,
   // so a lane the user collapsed in between would spring back open. Read the live
   // <details> state before replacing it and carry it into the next render.
@@ -767,6 +809,7 @@ function createPanel(body: HTMLElement): {
     chosen = null;
     fetchState = null;
     fetchSent = false;
+    fetchPreview = null;
     relatedBody = (doc) => renderError(doc, "Loading…");
     relatedExpanded = true;
     for (const lane of AGENT_LANES) {
@@ -958,6 +1001,10 @@ function createPanel(body: HTMLElement): {
           },
         }
       : undefined;
+    const fetchPreviewState =
+      fetchPreview === null
+        ? undefined
+        : { target: fetchPreview, onSend: confirmFetch, onCancel: cancelFetchPreview };
     body.replaceChildren(
       renderShell(
         document,
@@ -965,6 +1012,7 @@ function createPanel(body: HTMLElement): {
           header: shown,
           lanes,
           ...(navAwayState === undefined ? {} : { navAway: navAwayState }),
+          ...(fetchPreviewState === undefined ? {} : { fetchPreview: fetchPreviewState }),
         },
         (c) => {
           chosen = c;
@@ -1098,17 +1146,55 @@ function createPanel(body: HTMLElement): {
   }
 
   /**
-   * `renderShell`'s `onFetch` callback. `"fetch"` sends the (one, ever) targeted
-   * fetch; `"resolve"` re-checks via a normal resolve — used by the recovery
-   * button on `fetch-retry` states. Never conflate the two: a `still-working`
-   * retry that fired a fresh fetch would defeat the one-fetch-per-panel rule.
+   * The confirm preview's Send control. Clears `fetchPreview`, then runs the
+   * ordinary `sendFetch` — UNCHANGED, including its own `fetchSent` latch and
+   * every guard/comment on it. This is the one and only path that actually
+   * sends the outbound request; opening the preview never does.
+   */
+  function confirmFetch(): void {
+    fetchPreview = null;
+    sendFetch().catch(() => undefined);
+  }
+
+  /**
+   * The confirm preview's Cancel control. Clears `fetchPreview` and repaints
+   * back to the ordinary header — deliberately does NOT touch `fetchSent`.
+   * Declining once must leave the Fetch button exactly as usable as it was
+   * before the click that opened the preview; latching here would turn "no
+   * thanks" into "never again" for this panel.
+   */
+  function cancelFetchPreview(): void {
+    fetchPreview = null;
+    paint();
+  }
+
+  /**
+   * `renderShell`'s `onFetch` callback. `"resolve"` re-checks via a normal
+   * resolve — used by the recovery button on `fetch-retry` states; it is a
+   * read against our own gateway, not an outbound provider request, so it
+   * needs no confirm step. `"fetch"` — reached from both the initial "Fetch
+   * this from X" button and a rate-limited "Try again" click — no longer
+   * sends anything itself: it NAMES the target and opens the confirm preview
+   * (`fetchPreview`), and only `confirmFetch` (Send, above) goes on to call
+   * `sendFetch`. Never conflate `"resolve"` with `"fetch"`: a `still-working`
+   * retry that opened a fetch preview (or, worse, sent one) would defeat the
+   * one-fetch-per-panel rule.
    */
   async function handleFetchAction(action: "fetch" | "resolve"): Promise<void> {
     if (action === "resolve") {
       await loadHeader();
       return;
     }
-    await sendFetch();
+    // The surface KIND (`SurfaceKind`, e.g. "pr") comes from `pinnedRecognition`,
+    // not from `header` — same reasoning as `paint()`'s own `surfaceKind` above:
+    // the `not-indexed` HeaderState carries only the human surface LINE, not the
+    // typed kind `FetchTarget` needs.
+    const surfaceKind = pinnedRecognition?.ok === true ? pinnedRecognition.kind : null;
+    if (header.kind !== "not-indexed" || surfaceKind === null) {
+      return;
+    }
+    fetchPreview = { product: header.product, surface: surfaceKind, url: pinnedUrl };
+    paint();
   }
 
   async function loadRelated(): Promise<void> {

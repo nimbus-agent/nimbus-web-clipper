@@ -134,6 +134,29 @@ async function mountPanelWithScript(
   return body;
 }
 
+/**
+ * Selects the panel's Fetch button — by CLASS, not position. Once a fetch
+ * preview can be open, "the first button in the panel" is ambiguous between
+ * this control and the preview's own Send/Cancel (see the fetch-state-machine
+ * describe block below), so every caller that means "click Fetch" must say so
+ * by class, never `panel.querySelector("button")`.
+ */
+function clickFetch(root: ParentNode): void {
+  root.querySelector<HTMLButtonElement>("button.nimbus-related__fetch")?.click();
+}
+
+/** Selects the open preview's Send (confirm) control — by class, for the same
+ *  reason as `clickFetch` above. */
+function clickPreviewSend(root: ParentNode): void {
+  root.querySelector<HTMLButtonElement>("button.nimbus-related__fetch-send")?.click();
+}
+
+/** Selects the open preview's Cancel control — by class, for the same reason
+ *  as `clickFetch` above. */
+function clickPreviewCancel(root: ParentNode): void {
+  root.querySelector<HTMLButtonElement>("button.nimbus-related__fetch-cancel")?.click();
+}
+
 const hit: RelatedHit = {
   id: "1",
   title: "Doc",
@@ -671,6 +694,58 @@ describe("panel-in-page fetch state machine", () => {
     outcome: { kind: "rate-limited" },
   };
 
+  it("pressing Fetch shows the target and sends NO fetch yet", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [indexed],
+    });
+
+    clickFetch(panel);
+    await flush();
+
+    // The assertion that matters: the trace shows the resolve only.
+    expect(sent).toEqual(["resolve"]);
+    expect(panel.textContent).toContain("Address");
+  });
+
+  it("confirming sends exactly one fetch", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss, found()],
+      fetch: [indexed],
+    });
+
+    clickFetch(panel);
+    await flush();
+    clickPreviewSend(panel);
+    await flush();
+
+    expect(sent).toEqual(["resolve", "fetch", "resolve"]);
+  });
+
+  it("cancelling sends nothing AND leaves the fetch button usable", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss, found()],
+      fetch: [indexed],
+    });
+
+    clickFetch(panel);
+    await flush();
+    clickPreviewCancel(panel);
+    await flush();
+    expect(sent).toEqual(["resolve"]);
+
+    // `fetchSent` must NOT have latched. Cancelling is not an attempt, and a
+    // latch here would turn "no thanks" into "never again" for this panel.
+    clickFetch(panel);
+    await flush();
+    clickPreviewSend(panel);
+    await flush();
+    expect(sent).toEqual(["resolve", "fetch", "resolve"]);
+  });
+
   it("fetches on click, then re-resolves to show the item", async () => {
     const sent: string[] = [];
     const panel = await mountPanelWithScript(sent, {
@@ -678,7 +753,9 @@ describe("panel-in-page fetch state machine", () => {
       fetch: [indexed],
     });
 
-    (panel.querySelector("button") as HTMLButtonElement).click();
+    clickFetch(panel);
+    await flush();
+    clickPreviewSend(panel);
     await flush();
 
     expect(sent).toEqual(["resolve", "fetch", "resolve"]);
@@ -692,11 +769,13 @@ describe("panel-in-page fetch state machine", () => {
       fetch: [timedOut],
     });
 
-    (panel.querySelector("button") as HTMLButtonElement).click();
+    clickFetch(panel);
+    await flush();
+    clickPreviewSend(panel);
     await flush();
     expect(panel.textContent).toContain("Still working");
 
-    (panel.querySelector("button") as HTMLButtonElement).click();
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Check again
     await flush();
 
     // One fetch, ever. The recovery click is a resolve.
@@ -711,7 +790,9 @@ describe("panel-in-page fetch state machine", () => {
       fetch: [timedOut],
     });
 
-    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    clickFetch(panel); // Fetch
+    await flush();
+    clickPreviewSend(panel); // confirm
     await flush();
     (panel.querySelector("button") as HTMLButtonElement).click(); // Check again
     await flush();
@@ -730,7 +811,9 @@ describe("panel-in-page fetch state machine", () => {
       fetch: [rateLimited],
     });
 
-    (panel.querySelector("button") as HTMLButtonElement).click();
+    clickFetch(panel);
+    await flush();
+    clickPreviewSend(panel);
     await flush();
 
     expect(panel.textContent).toContain("Rate limited");
@@ -745,9 +828,13 @@ describe("panel-in-page fetch state machine", () => {
       fetch: [rateLimited, indexed],
     });
 
-    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    clickFetch(panel); // Fetch
     await flush();
-    (panel.querySelector("button") as HTMLButtonElement).click(); // Try again
+    clickPreviewSend(panel); // confirm the first fetch
+    await flush();
+    (panel.querySelector("button") as HTMLButtonElement).click(); // Try again -> a fresh preview
+    await flush();
+    clickPreviewSend(panel); // confirm the second fetch
     await flush();
 
     // rate_limited is returned before any outbound call happens — unlike
@@ -762,7 +849,9 @@ describe("panel-in-page fetch state machine", () => {
       fetch: [timedOut],
     });
 
-    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    clickFetch(panel); // Fetch
+    await flush();
+    clickPreviewSend(panel); // confirm
     await flush();
     (panel.querySelector("button") as HTMLButtonElement).click(); // Check again
     await flush();
@@ -796,7 +885,9 @@ describe("panel-in-page fetch state machine", () => {
       ],
     });
 
-    (panel.querySelector("button") as HTMLButtonElement).click(); // Fetch
+    clickFetch(panel); // Fetch
+    await flush();
+    clickPreviewSend(panel); // confirm
     await flush();
 
     expect(panel.textContent).toContain("GitHub PR · acme/web #1");
@@ -2059,10 +2150,13 @@ describe("following a client-side navigation", () => {
     const root = shadow();
     if (root === null) throw new Error("panel shadow root not found");
 
-    // Fetch on the pinned page. It times out — `fetchState` latches to
+    // Fetch on the pinned page — the first click opens the confirm preview,
+    // the second (Send) confirms it. It times out — `fetchState` latches to
     // `fetch-retry`/`still-working` and `fetchSent` latches `true`, per
     // `sendFetch`'s own doc comment, for the life of THIS page.
-    root.querySelector<HTMLButtonElement>(".nimbus-related__header-state button")?.click();
+    clickFetch(root);
+    await advanceTimers(0);
+    clickPreviewSend(root);
     await advanceTimers(0);
     expect(headerText()).toContain("Still working");
 
