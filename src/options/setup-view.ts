@@ -71,3 +71,19 @@ export function healthLine(res: ConnectionResponse, _nowMs: number): string {
   }
   return parts.join(" ");
 }
+
+/** Stamp the stage states onto the page. The CSS does the rest. */
+export function applyStages(doc: Document, stages: Stages): void {
+  const ids: ReadonlyArray<readonly [string, StageState]> = [
+    ["stage-connect", stages.connect],
+    ["stage-connection", stages.connection],
+    ["stage-sites", stages.sites],
+    ["stage-trust", stages.trust],
+  ];
+  for (const [id, state] of ids) {
+    const el = doc.getElementById(id);
+    if (el !== null) {
+      el.dataset["state"] = state;
+    }
+  }
+}

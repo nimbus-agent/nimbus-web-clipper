@@ -9,24 +9,31 @@
   <body>
     <main class="options">
       <h1>Nimbus Web Clipper</h1>
-      <section id="pairing-section">
-        <h2>Pair this browser</h2>
-        <p>Run <code>nimbus clip pair</code> on the machine running your Nimbus gateway, then enter the gateway URL and 6-digit code it prints (the URL is usually <code>http://127.0.0.1:7474</code>).</p>
+
+      <section id="stage-connect" class="stage">
+        <h2><span class="stage__num">1</span> Connect</h2>
+        <p>Nimbus runs on your own machine. Let's find it.</p>
+        <button id="discover" type="button">Find my gateway</button>
+        <output id="discover-status" class="options__status"></output>
         <label for="origin">Gateway URL</label>
         <input id="origin" type="text" placeholder="http://127.0.0.1:7474" />
+        <p>Run <code>nimbus clip pair</code> on that machine, then enter the 6-digit code it prints.</p>
         <label for="code">Pairing code</label>
         <input id="code" type="text" inputmode="numeric" placeholder="429173" />
         <button id="pair" type="button">Pair this browser</button>
         <output id="pairing-status" class="options__status"></output>
       </section>
-      <section id="connection-section" hidden>
-        <h2>Connection</h2>
+
+      <section id="stage-connection" class="stage">
+        <h2><span class="stage__num">2</span> Connection</h2>
+        <output id="health-line" class="options__status"></output>
         <output id="connection-status" class="options__status"></output>
         <button id="unpair" type="button">Unpair this browser</button>
         <button id="unpair-cancel" type="button" hidden>Cancel</button>
       </section>
-      <section id="surfaces-section">
-        <h2>Recognised surfaces</h2>
+
+      <section id="stage-sites" class="stage">
+        <h2><span class="stage__num">3</span> Your sites</h2>
         <p>Nimbus recognises Bitbucket Cloud, GitHub, GitLab and Jira Cloud out of the box — grant page access below to use them. Add self-hosted instances too: include the full URL and any sub-path, e.g. <code>https://corp.example/jira</code>.</p>
         <label for="surface-origin">Instance URL</label>
         <input id="surface-origin" type="text" placeholder="https://corp.example/jira" />
@@ -42,6 +49,15 @@
         <output id="surface-status" class="options__status"></output>
         <div id="surface-list"></div>
         <p class="options__status">Granting page access lets Nimbus recognise pages on that site without you opening the panel first. It never changes where Nimbus can send data — that stays your local gateway only. <strong>Surface automatically</strong> goes one step further: on a page Nimbus has indexed, a small cue appears in the corner so you don't have to open the panel to find out. Nothing runs until you click it.</p>
+      </section>
+
+      <section id="stage-trust" class="stage">
+        <h2><span class="stage__num">4</span> Where your data goes</h2>
+        <p><strong>One destination.</strong> Nimbus talks to <span id="trust-origin">your local gateway</span> and nowhere else. There is no cloud service, no analytics, and no remote host — the extension cannot reach one, because it asks for no permission to.</p>
+        <p><strong>Page access is separate, and it is yours to give.</strong> Nimbus can currently read the URL of pages on: <span id="trust-hosts">no sites yet</span>. Nothing is granted until you grant it, and revoking is one click in stage 3.</p>
+        <p><strong>What we send, and when.</strong> Clipping from the toolbar shows you the whole payload first, so nothing leaves without you seeing it — the hotkey shows you after, in the confirmation toast, because its whole point is being one gesture. And opening the popup sends the page's URL to your gateway to check whether you have already saved it.</p>
+        <p><strong>The secret stays secret.</strong> Your pairing token lives in extension storage, is never shown on this page, never written to a log, and never placed in any web page.</p>
+        <p><strong>You can check all of this.</strong> The extension is MIT-licensed, has no runtime dependencies, and its build is reproducible from source.</p>
       </section>
     </main>
     <script src="options.js"></script>

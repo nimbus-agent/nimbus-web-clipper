@@ -1,24 +1,33 @@
 // @vitest-environment jsdom
 // test/unit/options.test.ts
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import "../../src/options/options.ts";
 import type { ConnectionResponse, PairResponse } from "../../src/shared/messages.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const html = readFileSync(resolve(ROOT, "src/options/options.html"), "utf8");
+
 // Mirrors src/options/options.html's element ids.
 const FIXTURE = `
-  <section id="pairing-section">
+  <section id="stage-connect">
+    <button id="discover" type="button">Find my gateway</button>
+    <output id="discover-status"></output>
     <input id="origin" type="text" />
     <input id="code" type="text" />
     <button id="pair" type="button">Pair this browser</button>
     <output id="pairing-status"></output>
   </section>
-  <section id="connection-section" hidden>
+  <section id="stage-connection">
+    <output id="health-line"></output>
     <output id="connection-status"></output>
     <button id="unpair" type="button">Unpair this browser</button>
     <button id="unpair-cancel" type="button" hidden>Cancel</button>
   </section>
-  <section id="surfaces-section">
+  <section id="stage-sites">
     <input id="surface-origin" type="text" />
     <select id="surface-product">
       <option value="jenkins">Jenkins</option>
@@ -27,6 +36,10 @@ const FIXTURE = `
     <button id="surface-add" type="button">Add surface</button>
     <output id="surface-status"></output>
     <div id="surface-list"></div>
+  </section>
+  <section id="stage-trust">
+    <span id="trust-origin"></span>
+    <span id="trust-hosts"></span>
   </section>
 `;
 
@@ -135,21 +148,23 @@ afterEach(() => {
 });
 
 describe("options: initial load / refreshConnection", () => {
-  test("unpaired: shows the pairing section, hides the connection section", async () => {
+  test("unpaired: stage 1 is active, stage 2 is locked", async () => {
     await boot(unpaired);
 
     expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "connection-status" });
-    expect(el("connection-section").hidden).toBe(true);
-    expect(el("pairing-section").hidden).toBe(false);
+    expect(el("stage-connect").dataset["state"]).toBe("active");
+    expect(el("stage-connection").dataset["state"]).toBe("locked");
+    expect(el("health-line").textContent).toBe("Not paired.");
   });
 
-  test("paired: shows the connection section with label/origin/paired-since", async () => {
+  test("paired: stage 1 is done, stage 2 is active, with label/origin/paired-since", async () => {
     await boot(paired);
 
-    expect(el("connection-section").hidden).toBe(false);
-    expect(el("pairing-section").hidden).toBe(true);
-    expect(el("connection-status").textContent).toBe(
-      'Paired as "MacBook" to http://127.0.0.1:7474, since Jun 27, 2026.',
+    expect(el("stage-connect").dataset["state"]).toBe("done");
+    expect(el("stage-connection").dataset["state"]).toBe("active");
+    expect(el("connection-status").textContent).toBe('Paired as "MacBook".');
+    expect(el("health-line").textContent).toBe(
+      'Connected to http://127.0.0.1:7474 as "MacBook", since Jun 27, 2026.',
     );
   });
 });
@@ -190,8 +205,8 @@ describe("pair()", () => {
     });
     expect(input("code").value).toBe("");
     expect(el("pairing-status").textContent).toBe("");
-    expect(el("connection-section").hidden).toBe(false);
-    expect(el("pairing-section").hidden).toBe(true);
+    expect(el("stage-connection").dataset["state"]).toBe("active");
+    expect(el("connection-status").textContent).toBe('Paired as "MacBook".');
   });
 
   test("pairing_failed shows the mapped error status", async () => {
@@ -294,8 +309,8 @@ describe("onUnpairClick() / disarmUnpair()", () => {
     await flush();
 
     expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "unpair" });
-    expect(el("connection-section").hidden).toBe(true);
-    expect(el("pairing-section").hidden).toBe(false);
+    expect(el("stage-connect").dataset["state"]).toBe("active");
+    expect(el("stage-connection").dataset["state"]).toBe("locked");
     expect(button("unpair").textContent).toBe("Unpair this browser");
     expect(button("unpair").disabled).toBe(false);
     expect(button("unpair-cancel").hidden).toBe(true);
@@ -330,7 +345,7 @@ describe("onUnpairClick() / disarmUnpair()", () => {
     expect(button("unpair-cancel").hidden).toBe(true);
     expect(button("unpair-cancel").disabled).toBe(false);
     // renderConnection was never reached — the paired panel is untouched.
-    expect(el("connection-section").hidden).toBe(false);
+    expect(el("stage-connection").dataset["state"]).toBe("active");
   });
 });
 
@@ -581,5 +596,36 @@ describe("the ambient toggle", () => {
     }
 
     expect(harness.storage.get("ambient-hosts")).toEqual(["https://gitlab.com/*"]);
+  });
+});
+
+describe("options.html stages", () => {
+  test("has all four stages", () => {
+    for (const id of ["stage-connect", "stage-connection", "stage-sites", "stage-trust"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+  });
+
+  test("has the discovery control and its status output", () => {
+    expect(html).toContain('id="discover"');
+    expect(html).toContain('id="discover-status"');
+  });
+
+  test("has a health line and the trust panel's data-driven slots", () => {
+    expect(html).toContain('id="health-line"');
+    expect(html).toContain('id="trust-origin"');
+    expect(html).toContain('id="trust-hosts"');
+  });
+
+  test("the trust panel states the popup-lookup caveat", () => {
+    expect(html).toContain("opening the popup");
+  });
+
+  test("the trust panel does not overclaim about the hotkey path", () => {
+    expect(html).toContain("the hotkey shows you after");
+  });
+
+  test("the manual gateway URL field survives — discovery never removes it", () => {
+    expect(html).toContain('id="origin"');
   });
 });
