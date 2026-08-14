@@ -4,6 +4,7 @@ import {
   handleAgentState,
   handleClip,
   handleConnectionStatus,
+  handleDiscover,
   handleFetch,
   handlePair,
   handleQueueList,
@@ -359,25 +360,6 @@ describe("handleQueue* handlers", () => {
       { kind: "queue-remove", url: "a" },
     );
     expect(res.items.map((i) => i.url)).toEqual(["b"]);
-  });
-});
-
-describe("handleConnectionStatus", () => {
-  test("not paired → { paired: false }", async () => {
-    const res = await handleConnectionStatus({ getConnection: async () => null });
-    expect(res).toEqual({ kind: "connection", paired: false });
-  });
-  test("paired → token-free projection (label/origin/pairedAt; NO token)", async () => {
-    // `conn` (defined at the top of this file) carries a token; the response must not.
-    const res = await handleConnectionStatus({ getConnection: async () => conn });
-    expect(res).toEqual({
-      kind: "connection",
-      paired: true,
-      label: "chrome",
-      origin: "http://127.0.0.1:8765",
-      pairedAt: 100,
-    });
-    expect("token" in res).toBe(false);
   });
 });
 
@@ -1450,5 +1432,136 @@ describe("lane/surface pairing enforcement", () => {
     );
 
     expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+});
+
+describe("handleConnectionStatus", () => {
+  const conn = {
+    origin: "http://127.0.0.1:7474",
+    token: "tok",
+    label: "chrome",
+    pairedAt: 10,
+    lastClipAt: 20,
+  };
+
+  test("unpaired needs no probe and no queue read", async () => {
+    let probed = false;
+    const res = await handleConnectionStatus({
+      getConnection: async () => null,
+      getQueueDepth: async () => 5,
+      probeReachable: async () => {
+        probed = true;
+        return true;
+      },
+    });
+    expect(res).toEqual({ kind: "connection", paired: false });
+    expect(probed).toBe(false);
+  });
+
+  test("paired reports depth, reachability and the last clip", async () => {
+    const res = await handleConnectionStatus({
+      getConnection: async () => conn,
+      getQueueDepth: async () => 3,
+      probeReachable: async () => true,
+    });
+    expect(res).toEqual({
+      kind: "connection",
+      paired: true,
+      label: "chrome",
+      origin: "http://127.0.0.1:7474",
+      pairedAt: 10,
+      lastClipAt: 20,
+      queueDepth: 3,
+      reachable: true,
+      stale: false,
+    });
+  });
+
+  test("the token never crosses the boundary", async () => {
+    const res = await handleConnectionStatus({
+      getConnection: async () => conn,
+      getQueueDepth: async () => 0,
+      probeReachable: async () => true,
+    });
+    expect(JSON.stringify(res)).not.toContain("tok");
+  });
+
+  test("a stored stale flag is reported as stale", async () => {
+    const res = await handleConnectionStatus({
+      getConnection: async () => ({ ...conn, stale: true }),
+      getQueueDepth: async () => 0,
+      probeReachable: async () => true,
+    });
+    expect(res).toMatchObject({ paired: true, stale: true });
+  });
+
+  test("an unreachable gateway is reported, not thrown", async () => {
+    const res = await handleConnectionStatus({
+      getConnection: async () => conn,
+      getQueueDepth: async () => 0,
+      probeReachable: async () => false,
+    });
+    expect(res).toMatchObject({ paired: true, reachable: false });
+  });
+});
+
+describe("handleDiscover", () => {
+  test("returns the first candidate that answers", async () => {
+    const res = await handleDiscover({
+      probeReachable: async (origin) => origin === "http://127.0.0.1:7474",
+    });
+    expect(res).toEqual({ kind: "discover", origin: "http://127.0.0.1:7474" });
+  });
+
+  test("probes sequentially and stops at the first hit", async () => {
+    const seen: string[] = [];
+    await handleDiscover({
+      probeReachable: async (origin) => {
+        seen.push(origin);
+        return true;
+      },
+    });
+    expect(seen).toEqual(["http://127.0.0.1:7474"]);
+  });
+
+  test("falls through to the second candidate", async () => {
+    const seen: string[] = [];
+    const res = await handleDiscover({
+      probeReachable: async (origin) => {
+        seen.push(origin);
+        return origin === "http://localhost:7474";
+      },
+    });
+    expect(seen).toEqual(["http://127.0.0.1:7474", "http://localhost:7474"]);
+    expect(res).toEqual({ kind: "discover", origin: "http://localhost:7474" });
+  });
+
+  test("nothing answers → null, so Options keeps the manual field", async () => {
+    const res = await handleDiscover({ probeReachable: async () => false });
+    expect(res).toEqual({ kind: "discover", origin: null });
+  });
+
+  test("a throwing probe does not cost the next candidate its turn", async () => {
+    const seen: string[] = [];
+    const res = await handleDiscover({
+      probeReachable: async (origin) => {
+        seen.push(origin);
+        if (origin === "http://127.0.0.1:7474") {
+          throw new Error("boom");
+        }
+        return true;
+      },
+    });
+    expect(seen).toEqual(["http://127.0.0.1:7474", "http://localhost:7474"]);
+    expect(res).toEqual({ kind: "discover", origin: "http://localhost:7474" });
+  });
+
+  test("every probe throwing is a miss, not a rejection", async () => {
+    const res = await handleDiscover({
+      probeReachable: async () => {
+        throw new Error("boom");
+      },
+    });
+    expect(res).toEqual({ kind: "discover", origin: null });
   });
 });

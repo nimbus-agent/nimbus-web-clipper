@@ -1,4 +1,5 @@
 import { buildClipPayload } from "../shared/clip.ts";
+import { DISCOVERY_CANDIDATES, type ProbeResult, pickReachable } from "../shared/discovery.ts";
 import { isLoopbackOrigin } from "../shared/gateway.ts";
 import type {
   AgentRunRequest,
@@ -7,6 +8,7 @@ import type {
   ClipRequest,
   ClipResponse,
   ConnectionResponse,
+  DiscoverResponse,
   FetchRequest,
   FetchResponse,
   PairRequest,
@@ -611,6 +613,8 @@ export async function handleQueueRemove(
 
 export interface ConnectionStatusDeps {
   readonly getConnection: () => Promise<Connection | null>;
+  readonly getQueueDepth: () => Promise<number>;
+  readonly probeReachable: (origin: string) => Promise<boolean>;
 }
 
 export async function handleConnectionStatus(
@@ -618,8 +622,15 @@ export async function handleConnectionStatus(
 ): Promise<ConnectionResponse> {
   const conn = await deps.getConnection();
   if (conn === null) {
+    // No probe and no queue read: there is no origin to probe, and an unpaired
+    // browser has nothing to report. Doing the work anyway would put a network
+    // call behind opening Options on a fresh install.
     return { kind: "connection", paired: false };
   }
+  const [queueDepth, reachable] = await Promise.all([
+    deps.getQueueDepth(),
+    deps.probeReachable(conn.origin),
+  ]);
   // Explicit field-by-field projection — the token is deliberately omitted so it
   // never crosses the messaging boundary into the Options page.
   return {
@@ -628,7 +639,38 @@ export async function handleConnectionStatus(
     label: conn.label,
     origin: conn.origin,
     pairedAt: conn.pairedAt,
+    ...(conn.lastClipAt === undefined ? {} : { lastClipAt: conn.lastClipAt }),
+    queueDepth,
+    reachable,
+    stale: conn.stale === true,
   };
+}
+
+export interface DiscoverDeps {
+  readonly probeReachable: (origin: string) => Promise<boolean>;
+}
+
+/**
+ * Probe the candidates IN ORDER and stop at the first hit.
+ *
+ * Sequential on purpose — see the design spec. Concurrent probing would always
+ * dial a candidate we expect to fail, and needs a tiebreak between two routes to
+ * the same gateway that buys nothing.
+ */
+export async function handleDiscover(deps: DiscoverDeps): Promise<DiscoverResponse> {
+  const results: ProbeResult[] = [];
+  for (const origin of DISCOVERY_CANDIDATES) {
+    // One candidate's failure must never cost the next candidate its turn.
+    // `probeHealth` does not throw today, but the guard belongs HERE rather than
+    // in the probe: this loop's contract is "try each candidate", and it should
+    // hold for any probe implementation, including a future one that throws.
+    const reachable = await deps.probeReachable(origin).catch(() => false);
+    results.push({ origin, reachable });
+    if (reachable) {
+      break;
+    }
+  }
+  return { kind: "discover", origin: pickReachable(results) };
 }
 
 export interface UnpairDeps {
