@@ -360,6 +360,36 @@ was no way to grant page access to them. They're now listed alongside the
 user's entries, each with its own grant/revoke and toggle, and no Remove
 button (they aren't the user's to delete).
 
+## Manual verification — Service lanes (C2.3)
+
+**Outstanding — this pass has not yet been performed.**
+
+Prereq: paired, gateway running, a token scoped with `agents` (`resolve` and
+`fetch` are not required — a service lane needs neither, see
+`docs/architecture.md`'s "Item lanes vs. service lanes"). `bun run mock-gateway`
+(pair against `http://127.0.0.1:8765`) makes steps 1–5 reproducible, the same as
+the checklists above — its mock agent routes always return a fixed run id and
+report the run `done` immediately with a fixed brief (see the C2.1 section
+above). **Step 6 requires a real gateway with no git-aware
+`[[filesystem.roots]]` configured**: the gap brief it checks for comes from the
+real `ownership` agent noticing the absence of a configured root, which the
+mock's fixed brief cannot produce.
+
+1. On `https://github.com/` with page access granted, open the panel. The header
+   reads **GitHub dashboard** and names the scope; the three service lanes are
+   present; there is no Related lane and no fetch button.
+2. Expand *What happened while I was away*. It reaches `running`, then `done`
+   with a brief — or a named failure. Never an empty lane.
+3. Close and reopen the panel, then re-expand the same lane. The stored brief
+   replays; no second run starts.
+4. Open the panel on a pull request. Related, *What breaks if it lands* and
+   *Who should review it* are present; none of the three service lanes are.
+5. On the dashboard, confirm **no ambient cue** appears, with the per-host
+   toggle on.
+6. With no `[[filesystem.roots]]` configured, *Who owns what* renders the
+   gateway's gap brief including its `nimbus index add` line — not a blank
+   lane.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any

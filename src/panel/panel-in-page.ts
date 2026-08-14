@@ -92,6 +92,9 @@ const FETCH_MESSAGES: Record<string, string> = {
 const LANE_TITLES: Record<AgentLane, string> = {
   impact: "What breaks if it lands",
   expert: "Who should review it",
+  catchup: "What happened while I was away",
+  decisions: "What got decided",
+  ownership: "Who owns what",
 };
 
 /** How often an OPEN panel re-asks the worker for a running lane's state — a
@@ -292,6 +295,12 @@ function headerFrom(res: unknown, nowMs: number, fetchSent: boolean): HeaderStat
   }
   if (surface === null) {
     return { kind: "unrecognised" };
+  }
+  // Before any outcome is read. A home page carries an inert outcome
+  // (handlers.ts fills one in only because the response type demands it), so
+  // reading it here would render a dashboard as a miss.
+  if (res.recognition.ok && res.recognition.kind === "home") {
+    return { kind: "service", surface, product: res.recognition.product };
   }
   const outcome = res.outcome;
   if (outcome.kind === "found") {
@@ -512,10 +521,19 @@ function createPanel(body: HTMLElement): {
   const laneState: Record<AgentLane, LaneState> = {
     impact: { kind: "collapsed" },
     expert: { kind: "collapsed" },
+    catchup: { kind: "collapsed" },
+    decisions: { kind: "collapsed" },
+    ownership: { kind: "collapsed" },
   };
   // Whether each lane's own <details> is open, carried across repaints exactly
   // like `relatedExpanded` above.
-  const laneOpen: Record<AgentLane, boolean> = { impact: false, expert: false };
+  const laneOpen: Record<AgentLane, boolean> = {
+    impact: false,
+    expert: false,
+    catchup: false,
+    decisions: false,
+    ownership: false,
+  };
   /**
    * Lanes with an `agent-run` genuinely IN FLIGHT — sent but not yet answered.
    * Guards a double invoke on rapid toggling: expand -> collapse -> expand
@@ -886,10 +904,13 @@ function createPanel(body: HTMLElement): {
         : chosen !== null && header.kind === "ambiguous"
           ? { kind: "chosen", surface: header.surface, candidate: chosen }
           : header;
-    // The two agent lanes ask a question about ONE resolved item, on a surface
-    // where that question applies — see LANE_SURFACES (shared/types.ts). There is
-    // nothing to ask about on a miss, an error, or an ambiguous answer, and
-    // nothing worth asking `impact` about on a build or an issue.
+    // Which lanes render is gated by LANE_SURFACES (shared/types.ts) against the
+    // page's surface kind: the two item-scoped lanes (`impact`, `expert`) ask
+    // about ONE resolved item and need `shown.kind === "resolved"`; the three
+    // service-scoped lanes (`catchup`, `decisions`, `ownership`) ask about a
+    // whole connector and need `shown.kind === "service"` — a dashboard, with no
+    // item at all. There is nothing to ask about on a miss, an error, or an
+    // ambiguous answer.
     //
     // `chosen` is deliberately NOT included, even though the user has by then
     // pinned down which item this page is. `agent-run` carries only
@@ -906,25 +927,29 @@ function createPanel(body: HTMLElement): {
     // acme/web #482"), not the typed kind.
     const surfaceKind = pinnedRecognition?.ok === true ? pinnedRecognition.kind : null;
     const agentLanes: Lane[] =
-      shown.kind === "resolved" && surfaceKind !== null
+      (shown.kind === "resolved" || shown.kind === "service") && surfaceKind !== null
         ? AGENT_LANES.filter((lane) => LANE_SURFACES[lane].includes(surfaceKind)).map((lane) => ({
             id: lane,
             title: LANE_TITLES[lane],
             expanded: laneOpen[lane],
             render: (doc: Document) =>
-              // Every rendered lane gets a REAL Re-run handler — never omitted.
-              // `renderLaneBody`'s third argument is optional so it can be unit
-              // tested without one, but a lane rendered here without it would
-              // ship a Re-run button that silently does nothing.
               renderLaneBody(doc, laneState[lane], () => {
                 sendAgentRun(lane).catch(() => undefined);
               }),
           }))
         : [];
-    const lanes: Lane[] = [
-      { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
-      ...agentLanes,
-    ];
+    // No related lane on a dashboard: `/v1/clips/related` keyed on a dashboard's
+    // title and URL returns noise dressed as recall. The related REQUEST is still
+    // sent — it is fired in parallel with the resolve, before the recognition is
+    // known, and serialising the two would slow every item page to save one
+    // loopback call on a dashboard. Its answer is simply not rendered.
+    const lanes: Lane[] =
+      surfaceKind === "home"
+        ? agentLanes
+        : [
+            { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
+            ...agentLanes,
+          ];
     const navAwayState = navAway
       ? {
           pinnedRef: pinnedRecognition?.ok === true ? pinnedRecognition.ref : null,

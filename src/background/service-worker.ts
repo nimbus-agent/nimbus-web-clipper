@@ -39,6 +39,8 @@ import {
 import type { AgentError, AgentLane, LaneState, Recognition } from "../shared/types.ts";
 import {
   AGENT_RUN_CACHE_TTL_MS,
+  clearRuns,
+  type RunSubject,
   type StoredRun,
   getRun as storeGetRun,
   listRunning as storeListRunning,
@@ -169,7 +171,7 @@ const clipDeps = { getConnection, postClip: postClipPaced, updateQueue, nowMs: (
 // one place "now" is read and the TTL applied, mirroring how postClipPaced wraps
 // postClip with the side effects handleClip itself stays free of.
 const agentStoreDeps = {
-  getRun: (itemId: string, lane: AgentLane) => storeGetRun(itemId, lane, Date.now()),
+  getRun: (subject: RunSubject, lane: AgentLane) => storeGetRun(subject, lane, Date.now()),
 };
 
 const agentRunDeps = {
@@ -202,6 +204,25 @@ const agentStateDeps = { getOrigins, getConnection, resolveItem, ...agentStoreDe
 // A fresh worker start (real eviction, or this module reloading in tests) means
 // an empty Set — exactly the case the alarm needs to be ABLE to resume into.
 const activeAgentPolls = new Set<string>();
+
+/**
+ * Bumped whenever the pairing changes (a successful pair, or unpair) — see
+ * `clearRunsAndBumpGeneration` below, the one place this is incremented.
+ *
+ * Defends against a poll outliving the pairing it started under: `clearRuns()`
+ * empties the store, but a `tickAgentPoll` already awaiting `getConnection` or
+ * `getAgentRun` completes AFTER that clear and would otherwise `putRun` a brief
+ * from the gateway the browser has just left, silently repopulating the store
+ * `clearRuns` just emptied. A poll captures this counter when it starts and
+ * re-checks it after every await; a mismatch means the pairing moved on under
+ * it, so it drops the run from `activeAgentPolls` and writes nothing — not even
+ * a terminal `failed` state, which would be exactly the same kind of write this
+ * exists to stop.
+ *
+ * Deliberately a plain module-level integer, not a new abstraction — the
+ * simplest thing that lets a poll tell "my pairing" from "the current one".
+ */
+let pairingGeneration = 0;
 
 /**
  * The wire's `failed` status is a NORMAL terminal outcome — the transport
@@ -248,6 +269,12 @@ function terminalLaneState(
  *  expiry reports the failure actually observed, not an invented one. */
 type PollContinueReason = "running" | "unreachable" | "server_error";
 
+/** True once `pairingGeneration` has moved on from the value a poll captured
+ *  when it started — see that counter's own doc comment. */
+function pairingChangedSince(generation: number): boolean {
+  return generation !== pairingGeneration;
+}
+
 /**
  * One poll attempt, right now (no delay). `running` and a transient
  * `unreachable`/`server_error` both reschedule via `scheduleAgentPoll` — the
@@ -269,11 +296,20 @@ async function tickAgentPoll(
   run: StoredRun,
   delayMs: number,
   lastReason: PollContinueReason,
+  generation: number,
 ): Promise<void> {
+  // Checked BEFORE the expiry give-up below on purpose: that path also writes
+  // (a terminal `stale`/`unreachable`/`server_error` state), and a poll whose
+  // pairing has moved on must not write ANYTHING — see pairingGeneration's doc
+  // comment.
+  if (pairingChangedSince(generation)) {
+    activeAgentPolls.delete(run.runId);
+    return;
+  }
   if (run.expiresAtMs <= Date.now()) {
     activeAgentPolls.delete(run.runId);
     await agentRunDeps.putRun({
-      itemId: run.itemId,
+      subject: run.subject,
       lane: run.lane,
       runId: run.runId,
       state: { kind: "failed", reason: lastReason === "running" ? "stale" : lastReason },
@@ -281,6 +317,13 @@ async function tickAgentPoll(
     return;
   }
   const conn = await getConnection();
+  // Re-checked after every await in this function, not only at entry: the
+  // whole point is a pairing change that happens WHILE one of these is in
+  // flight.
+  if (pairingChangedSince(generation)) {
+    activeAgentPolls.delete(run.runId);
+    return;
+  }
   if (conn === null) {
     // No connection to poll with: unlike a transient gateway failure, waiting
     // it out buys nothing — only the user re-pairing can fix this, and Re-run
@@ -288,7 +331,7 @@ async function tickAgentPoll(
     // they have.
     activeAgentPolls.delete(run.runId);
     await agentRunDeps.putRun({
-      itemId: run.itemId,
+      subject: run.subject,
       lane: run.lane,
       runId: run.runId,
       state: { kind: "failed", reason: "not_paired" },
@@ -296,17 +339,21 @@ async function tickAgentPoll(
     return;
   }
   const result = await getAgentRun(conn.origin, conn.token, run.runId);
+  if (pairingChangedSince(generation)) {
+    activeAgentPolls.delete(run.runId);
+    return;
+  }
   if (result.ok && result.status === "running") {
-    scheduleAgentPoll(run, Math.min(POLL_MAX_MS, delayMs * 1.5), "running");
+    scheduleAgentPoll(run, Math.min(POLL_MAX_MS, delayMs * 1.5), "running", generation);
     return;
   }
   if (!result.ok && (result.reason === "unreachable" || result.reason === "server_error")) {
-    scheduleAgentPoll(run, Math.min(POLL_MAX_MS, delayMs * 1.5), result.reason);
+    scheduleAgentPoll(run, Math.min(POLL_MAX_MS, delayMs * 1.5), result.reason, generation);
     return;
   }
   activeAgentPolls.delete(run.runId);
   await agentRunDeps.putRun({
-    itemId: run.itemId,
+    subject: run.subject,
     lane: run.lane,
     runId: run.runId,
     state: terminalLaneState(result, conn.label),
@@ -314,23 +361,32 @@ async function tickAgentPoll(
 }
 
 /** Schedule the NEXT poll attempt after `delayMs`. Real `setTimeout`, not
- *  `chrome.alarms` — see `AGENT_POLL_ALARM`'s doc comment for why. */
-function scheduleAgentPoll(run: StoredRun, delayMs: number, lastReason: PollContinueReason): void {
+ *  `chrome.alarms` — see `AGENT_POLL_ALARM`'s doc comment for why. `generation`
+ *  is the pairing generation the run was started under, carried forward
+ *  unchanged from tick to tick — see `pairingGeneration`'s doc comment. */
+function scheduleAgentPoll(
+  run: StoredRun,
+  delayMs: number,
+  lastReason: PollContinueReason,
+  generation: number,
+): void {
   setTimeout(() => {
-    tickAgentPoll(run, delayMs, lastReason).catch(() => {
+    tickAgentPoll(run, delayMs, lastReason, generation).catch(() => {
       activeAgentPolls.delete(run.runId);
     });
   }, delayMs);
 }
 
 /** Start the in-worker loop for a freshly-persisted `running` run. Idempotent
- *  per runId via `activeAgentPolls` — see its own doc comment. */
+ *  per runId via `activeAgentPolls` — see its own doc comment. Captures the
+ *  CURRENT pairing generation: this run belongs to whichever pairing is live
+ *  right now. */
 function startAgentPollLoop(run: StoredRun): void {
   if (activeAgentPolls.has(run.runId)) {
     return;
   }
   activeAgentPolls.add(run.runId);
-  scheduleAgentPoll(run, POLL_START_MS, "running");
+  scheduleAgentPoll(run, POLL_START_MS, "running", pairingGeneration);
 }
 
 /**
@@ -349,7 +405,9 @@ async function resumeAgentPolls(): Promise<void> {
       .filter((run) => !activeAgentPolls.has(run.runId))
       .map((run) => {
         activeAgentPolls.add(run.runId);
-        return tickAgentPoll(run, POLL_START_MS, "running").catch(() => {
+        // Captures the CURRENT pairing generation, same as startAgentPollLoop —
+        // a resumed run is tracked against whichever pairing is live right now.
+        return tickAgentPoll(run, POLL_START_MS, "running", pairingGeneration).catch(() => {
           activeAgentPolls.delete(run.runId);
         });
       }),
@@ -418,6 +476,19 @@ addMenuClickListener((menuItemId, tabId) => {
  * cognitive complexity than the branch itself (SonarCloud S3776, which this
  * pushed to 16 against a threshold of 15). The router routes; this decides.
  */
+/**
+ * The ONE place `pairingGeneration` is bumped: both `handlePair` (on a
+ * confirmed new token) and `handleUnpair` call `clearRuns` — never anywhere
+ * else — so wrapping this single seam covers both without touching either
+ * handler. Bumped BEFORE the (async) clear itself, so the counter moves the
+ * moment the pairing changes rather than after `clearRuns`'s own storage write
+ * settles.
+ */
+function clearRunsAndBumpGeneration(): Promise<void> {
+  pairingGeneration += 1;
+  return clearRuns();
+}
+
 function openPanelForCue(tabId: number | undefined): void {
   if (tabId === undefined) {
     return;
@@ -429,7 +500,15 @@ function openPanelForCue(tabId: number | undefined): void {
 
 addMessageListener((message, respond, sender) => {
   if (isPairRequest(message)) {
-    handlePair({ confirmPair, setConnection, nowMs: () => Date.now() }, message)
+    handlePair(
+      {
+        confirmPair,
+        setConnection,
+        clearRuns: clearRunsAndBumpGeneration,
+        nowMs: () => Date.now(),
+      },
+      message,
+    )
       .then(respond)
       .catch(() => {
         respond({ kind: "pair", ok: false, reason: "server_error" });
@@ -560,7 +639,7 @@ addMessageListener((message, respond, sender) => {
     return true;
   }
   if (isUnpairRequest(message)) {
-    handleUnpair({ clearConnection })
+    handleUnpair({ clearConnection, clearRuns: clearRunsAndBumpGeneration })
       .then(respond)
       .catch(() => {
         respond({ kind: "connection", paired: false });

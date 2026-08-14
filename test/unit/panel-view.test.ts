@@ -779,3 +779,41 @@ describe("the navigated-away notice", () => {
     expect(shell.querySelectorAll("[disabled]")).toHaveLength(0);
   });
 });
+
+describe("the service header", () => {
+  const state = {
+    kind: "service" as const,
+    surface: "Jenkins dashboard",
+    product: "jenkins" as const,
+  };
+
+  it("names the surface and states the scope", () => {
+    const el = renderHeader(document, state);
+    expect(el.textContent).toContain("Jenkins dashboard");
+    expect(el.textContent).toContain("across all indexed Jenkins builds");
+  });
+
+  it("offers no fetch button, no freshness line and no item link", () => {
+    const el = renderHeader(document, state);
+    expect(el.querySelector("button")).toBeNull();
+    expect(el.querySelector("a")).toBeNull();
+    expect(el.textContent).not.toContain("Updated");
+    expect(el.textContent).not.toContain("Not indexed");
+  });
+
+  it("renders exactly the surface line and the scope line", () => {
+    // No assertion here names the instance host directly, because the `service`
+    // arm carries no host field — `{surface, product}` only — so a host is
+    // unrenderable by construction; there is nothing to withhold. This exact-
+    // content check is what would catch a regression that reintroduced one: any
+    // extra line (a host, a freshness line, a stray label) fails it, unlike a
+    // substring check against a fixture that never contained a host to begin
+    // with.
+    const el = renderHeader(document, state);
+    const lines = [...el.children].map((c) => c.textContent);
+    expect(lines).toEqual([
+      "Jenkins dashboard",
+      "Nimbus can answer across all indexed Jenkins builds.",
+    ]);
+  });
+});

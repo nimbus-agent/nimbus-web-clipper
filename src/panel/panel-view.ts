@@ -23,6 +23,17 @@ const PRODUCT_NAMES: Record<Product, string> = {
   jira: "Jira",
 };
 
+/** What a connector's indexed items ARE, for the dashboard scope line. The
+ *  lanes answer across the whole connector, so this noun is a claim about
+ *  coverage — a wrong one reads as a promise the answer does not keep. */
+const PRODUCT_CORPUS: Record<Product, string> = {
+  bitbucket: "Bitbucket repositories",
+  github: "GitHub repositories",
+  gitlab: "GitLab projects",
+  jenkins: "Jenkins builds",
+  jira: "Jira projects",
+};
+
 /** Returns the parsed href when the scheme is http or https; null otherwise.
  *  Rejects javascript:, data:, vbscript:, relative paths, and malformed URLs. */
 function safeHttpUrl(raw: string): string | null {
@@ -99,6 +110,13 @@ export function renderHits(doc: Document, items: RelatedHit[]): HTMLElement {
 export type HeaderState =
   | { readonly kind: "loading" }
   | { readonly kind: "unrecognised" }
+  /**
+   * A recognised page with NO indexed item, and that is correct rather than a
+   * failure: a product's own dashboard. Deliberately not `not-indexed`, which
+   * describes a page that should have resolved and didn't — and which offers a
+   * fetch button that would propose indexing a dashboard as an item.
+   */
+  | { readonly kind: "service"; readonly surface: string; readonly product: Product }
   | {
       readonly kind: "resolved";
       readonly surface: string;
@@ -335,6 +353,22 @@ export function renderHeader(
   }
 
   box.append(line(doc, "nimbus-related__surface", state.surface));
+
+  if (state.kind === "service") {
+    // The scope line, not the host. Stripped of the item link, the freshness
+    // line and the fetch button, this header would otherwise be a bare product
+    // name — and the scope is the one fact needed to read the lanes correctly:
+    // `{service}` spans the whole connector, so the answer covers every indexed
+    // instance, not the one in the address bar.
+    box.append(
+      line(
+        doc,
+        "nimbus-related__status",
+        `Nimbus can answer across all indexed ${PRODUCT_CORPUS[state.product]}.`,
+      ),
+    );
+    return box;
+  }
 
   if (state.kind === "resolved") {
     box.append(candidateLine(doc, state.item));

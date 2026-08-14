@@ -65,8 +65,42 @@ export interface CueState {
 /** A product whose pages the client can recognise. */
 export type Product = "bitbucket" | "github" | "gitlab" | "jenkins" | "jira";
 
-/** What kind of item a recognised page is. */
-export type SurfaceKind = "pr" | "build" | "issue";
+/**
+ * The gateway's connector id for each recognised product.
+ *
+ * MIRRORS upstream's per-connector `SERVICE_ID` constants
+ * (packages/gateway/src/connectors/<product>-sync.ts) — the value written to
+ * `item.service` and the value `agents.catchup`/`decisions`/`ownership` filter
+ * on. Today it is an identity map, and it is written out anyway on purpose:
+ * the agreement between this union and those constants is CONVENTION BETWEEN
+ * TWO REPOSITORIES, not contract.
+ *
+ * What this buys is discoverability, NOT enforcement. The type only checks that
+ * every `Product` has an entry — if upstream renamed "jenkins" to "jenkins-ci",
+ * this map would keep typechecking green while every Jenkins lane quietly asked
+ * about a service that no longer exists. Validating against
+ * `GET /v1/connectors` was considered and rejected: it reads the `sync_state`
+ * table, so an unconfigured connector is absent from it exactly like a renamed
+ * one, and it cannot tell the two apart.
+ */
+export const PRODUCT_SERVICE_ID: Record<Product, string> = {
+  bitbucket: "bitbucket",
+  github: "github",
+  gitlab: "gitlab",
+  jenkins: "jenkins",
+  jira: "jira",
+};
+
+/**
+ * What kind of item a recognised page is.
+ *
+ * `home` is the odd one out and deliberately so: it is a page the recogniser
+ * knows and that has NO indexed item — a product's own dashboard. It exists
+ * because the service-scoped agents (`catchup`/`decisions`/`ownership`) answer
+ * about a whole connector, so they need a page whose scope matches that answer.
+ * See LANE_SURFACES below.
+ */
+export type SurfaceKind = "pr" | "build" | "issue" | "home";
 
 /**
  * An origin whose pages may be recognised, declared by the user (or built in for
@@ -237,16 +271,22 @@ export type FetchError =
   | "server_error";
 
 /**
- * The lanes this phase ships, and the agent each maps to.
+ * The lanes this client ships, and the agent each maps to. A member IS the wire
+ * agent name — `invokeAgent` passes it straight through as `{agent}` in
+ * `POST /v1/agents/{agent}` — so these must be spelled exactly as upstream's
+ * handler keys. Order here is render order, and `catchup` is declared first
+ * AMONG THE HOME LANES — not first overall — because it is the question a
+ * dashboard exists to answer.
  *
- * `why` is deliberately ABSENT. `agents.why` takes `{ ref, line? }` where `ref` is
- * a LOCAL filesystem path resolved against configured `[[filesystem.roots]]` and
- * answered by git blame on a local checkout — it answers "why does this line
- * exist", not "why does this change exist", and a browser on a pull-request page
- * has neither the path nor necessarily the repo. The roadmap's C2.1 brief names it
- * (and `whyPeek`, which is HTTP-excluded); both are corrected there.
+ * `why` is deliberately ABSENT — see the existing note above.
+ *
+ * `preflight`, `premortem`, `whyPeek` and `negotiate` are absent because
+ * upstream excludes them from the HTTP surface entirely
+ * (HTTP_EXCLUDED_AGENT_METHODS in packages/gateway/src/ipc/agents-rpc.ts).
+ * `ghost` and `conflicts` are absent because both require `{ file }` — a local
+ * checkout the browser does not have.
  */
-export const AGENT_LANES = ["impact", "expert"] as const;
+export const AGENT_LANES = ["impact", "expert", "catchup", "decisions", "ownership"] as const;
 export type AgentLane = (typeof AGENT_LANES)[number];
 
 /**
@@ -266,6 +306,12 @@ export type AgentLane = (typeof AGENT_LANES)[number];
 export const LANE_SURFACES: Record<AgentLane, readonly SurfaceKind[]> = {
   impact: ["pr"],
   expert: ["pr"],
+  // Service-scoped: these answer about a whole connector, so they belong on the
+  // one page whose scope is the connector. On an item page they would repeat
+  // the same answer for every item on that host.
+  catchup: ["home"],
+  decisions: ["home"],
+  ownership: ["home"],
 };
 
 /**

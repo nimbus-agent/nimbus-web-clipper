@@ -59,6 +59,7 @@ const KIND_NAMES: Record<SurfaceKind, string> = {
   pr: "PR",
   build: "build",
   issue: "issue",
+  home: "dashboard",
 };
 
 const NUMBER = /^\d+$/;
@@ -77,7 +78,9 @@ interface Match {
 function matchGithub(s: readonly string[]): Match | null {
   const [owner, repo, section, num] = s;
   if (owner === undefined || repo === undefined || section !== "pull") {
-    return null;
+    // The signed-in dashboard is the bare root. Checked only after the PR
+    // pattern above has declined, so /acme/web/pull/1 can never land here.
+    return s.length === 0 ? homeMatch("/") : null;
   }
   if (num === undefined || !NUMBER.test(num)) {
     return null;
@@ -90,7 +93,9 @@ function matchGitlab(s: readonly string[]): Match | null {
   const dash = s.indexOf("-");
   // At least group/project before the "-" separator.
   if (dash < 2 || s[dash + 1] !== "merge_requests") {
-    return null;
+    return s.length === 0 || (s.length === 1 && s[0] === "dashboard")
+      ? homeMatch(s.length === 0 ? "/" : "/dashboard")
+      : null;
   }
   const num = s[dash + 2];
   if (num === undefined || !NUMBER.test(num)) {
@@ -127,7 +132,7 @@ function matchBitbucket(s: readonly string[]): Match | null {
   // Bitbucket Cloud: /{workspace}/{repo}/pull-requests/{n}
   const [workspace, repo, section, num] = s;
   if (workspace === undefined || repo === undefined || section !== "pull-requests") {
-    return null;
+    return s[0] === "dashboard" ? homeMatch(`/${s.join("/")}`) : null;
   }
   if (num === undefined || !NUMBER.test(num)) {
     return null;
@@ -154,7 +159,11 @@ function matchJenkins(s: readonly string[]): Match | null {
     i += 2;
   }
   const num = s[i];
-  if (names.length === 0 || num === undefined || !NUMBER.test(num)) {
+  if (names.length === 0) {
+    // The instance root, after any configured path prefix is stripped.
+    return s.length === 0 ? homeMatch("/") : null;
+  }
+  if (num === undefined || !NUMBER.test(num)) {
     return null;
   }
   const path = `/${names.map((n) => `job/${n}`).join("/")}/${num}`;
@@ -164,12 +173,28 @@ function matchJenkins(s: readonly string[]): Match | null {
 function matchJira(s: readonly string[]): Match | null {
   const [section, key] = s;
   if (section !== "browse" || key === undefined || !JIRA_KEY.test(key)) {
-    return null;
+    // Cloud's "Your work" and Server's dashboard servlet.
+    const isHome =
+      (s.length === 2 && section === "jira" && key === "your-work") ||
+      (s.length === 2 && section === "secure" && key === "Dashboard.jspa");
+    return isHome ? homeMatch(`/${s.join("/")}`) : null;
   }
   // Jira treats issue keys as upper-case; normalising here means one issue has
   // exactly one resolveUrl regardless of how the link was typed.
   const upper = key.toUpperCase();
   return { kind: "issue", ref: upper, path: `/browse/${upper}`, matchedPath: `/browse/${key}` };
+}
+
+/**
+ * A dashboard match. `ref` is the EMPTY STRING, constant per product, and that
+ * is load-bearing: `sameItem` compares `(product, kind, ref)`, so two
+ * self-hosted instances of one product compare equal here. That is correct,
+ * not a bug — `service` is a flat connector id, so both instances are the same
+ * scope and share one answer. `path`/`matchedPath` echo the incoming path so
+ * `resolveUrl` is left exactly as it arrived (nothing resolves a dashboard).
+ */
+function homeMatch(path: string): Match {
+  return { kind: "home", ref: "", path, matchedPath: path };
 }
 
 const MATCHERS: Record<Product, (s: readonly string[]) => Match | null> = {
@@ -245,9 +270,17 @@ export function recognise(url: string, origins: readonly ConfiguredOrigin[]): Re
   };
 }
 
-/** "Bitbucket PR · acme/web #482" — the panel header's first line. */
+/**
+ * "Bitbucket PR · acme/web #482" — the panel header's first line.
+ *
+ * A home recognition carries an EMPTY `ref` (see `homeMatch`), so it renders as
+ * the label alone rather than trailing a bare separator.
+ */
 export function surfaceLine(r: Recognition): string | null {
-  return r.ok ? `${r.label} · ${r.ref}` : null;
+  if (!r.ok) {
+    return null;
+  }
+  return r.ref === "" ? r.label : `${r.label} · ${r.ref}`;
 }
 
 /**

@@ -24,24 +24,26 @@ import type {
 import { enqueue, type QueuedClip, removeFromQueue, toView } from "../shared/queue.ts";
 import { recognise } from "../shared/recognise.ts";
 import { buildRelatedQuery, type RelatedQuery } from "../shared/related.ts";
-import type {
-  AgentError,
-  AgentLane,
-  ClipPostResult,
-  ConfiguredOrigin,
-  Connection,
-  FetchError,
-  FetchOutcome,
-  LaneState,
-  PairError,
-  RelatedError,
-  RelatedHit,
-  ResolvedItem,
-  ResolveError,
-  ResolveOutcome,
-  ScopeGap,
+import {
+  type AgentError,
+  type AgentLane,
+  type ClipPostResult,
+  type ConfiguredOrigin,
+  type Connection,
+  type FetchError,
+  type FetchOutcome,
+  LANE_SURFACES,
+  type LaneState,
+  type PairError,
+  PRODUCT_SERVICE_ID,
+  type RelatedError,
+  type RelatedHit,
+  type ResolvedItem,
+  type ResolveError,
+  type ResolveOutcome,
+  type ScopeGap,
 } from "../shared/types.ts";
-import type { StoredRun } from "./agent-run-store.ts";
+import type { RunSubject, StoredRun } from "./agent-run-store.ts";
 
 export interface PairDeps {
   readonly confirmPair: (
@@ -49,6 +51,8 @@ export interface PairDeps {
     code: string,
   ) => Promise<{ ok: true; token: string; label: string } | { ok: false; reason: PairError }>;
   readonly setConnection: (c: Connection) => Promise<void>;
+  /** Cached briefs belong to the gateway that produced them — see clearRuns. */
+  readonly clearRuns: () => Promise<void>;
   readonly nowMs: () => number;
 }
 
@@ -79,6 +83,14 @@ export async function handlePair(deps: PairDeps, req: PairRequest): Promise<Pair
     label: r.label,
     pairedAt: deps.nowMs(),
   });
+  // A confirmed new token may be a different gateway than the one that produced
+  // any cached briefs — a cached brief belongs to the gateway that produced it,
+  // the same reason unpair clears (see handleUnpair). But the pairing itself is
+  // the user-visible outcome here, already durably stored above — a stale cache
+  // is a lesser problem than telling the user pairing failed when it worked, so
+  // a `clearRuns` rejection must not fail this call. `setConnection`'s own
+  // errors are NOT swallowed; only this best-effort cleanup is.
+  await deps.clearRuns().catch(() => undefined);
   return { kind: "pair", ok: true, label: r.label };
 }
 
@@ -185,9 +197,32 @@ export async function handleResolve(
       outcome: { kind: "not-indexed", fetchable: false },
     };
   }
+  // Read BEFORE the home branch, on purpose: this is a `chrome.storage` read,
+  // not a gateway call, so it does not break the "a dashboard never triggers a
+  // resolve request" rule below — it only decides which no-gateway answer an
+  // unpaired user gets. Without this ordering, an unpaired dashboard would
+  // report a home page's normal `service` header instead of the `not_paired`
+  // guidance every other recognised surface shows unpaired (see
+  // `resolveForAgent`, which checks this first for the same reason). Do not
+  // "optimise" this back below the home branch.
   const conn = await deps.getConnection();
   if (conn === null) {
     return { kind: "resolve", ok: false, recognition, reason: "not_paired" };
+  }
+  if (recognition.kind === "home") {
+    // A dashboard has no indexed item and is not supposed to have one, so there
+    // is nothing to ask the gateway. The outcome below is INERT: `headerFrom`
+    // (panel-in-page.ts) branches on `recognition.kind` before it reads an
+    // outcome, so a home page never renders as a miss. It is filled in only
+    // because `ResolveResponse`'s ok arm requires one — the same synthetic the
+    // unrecognised branch above already uses. `fetchable:false` keeps the C3.1
+    // button away from a page that is not a fetch candidate.
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: false },
+    };
   }
   const r = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!r.ok) {
@@ -229,6 +264,17 @@ export interface FetchDeps {
 export async function handleFetch(deps: FetchDeps, req: FetchRequest): Promise<FetchResponse> {
   const recognition = recognise(req.pageUrl, await deps.getOrigins());
   if (!recognition.ok) {
+    return { kind: "fetch", ok: true, recognition, outcome: { kind: "unfetchable" } };
+  }
+  if (recognition.kind === "home") {
+    // Defence in depth on an OUTBOUND path: the fetch button never renders for
+    // a dashboard (it only appears on the `not-indexed` header arm, which
+    // `handleResolve` never reaches for a home page), so this is unreachable
+    // through the UI today. It is guarded anyway, for the same reason
+    // `handleResolve` refuses a home page before touching the gateway — a
+    // dashboard is not a fetch candidate, and this is the one path where
+    // getting that wrong costs an outbound request under the user's stored
+    // credential, not just a wasted local read.
     return { kind: "fetch", ok: true, recognition, outcome: { kind: "unfetchable" } };
   }
   const conn = await deps.getConnection();
@@ -281,7 +327,7 @@ export interface AgentRunDeps {
     | { ok: false; reason: AgentError; scopeGap?: RawScopeGap }
     | { ok: false; reason: "busy"; retryAfterMs: number }
   >;
-  readonly getRun: (itemId: string, lane: AgentLane) => Promise<StoredRun | null>;
+  readonly getRun: (subject: RunSubject, lane: AgentLane) => Promise<StoredRun | null>;
   readonly putRun: (run: Omit<StoredRun, "expiresAtMs">) => Promise<void>;
 }
 
@@ -289,7 +335,7 @@ export interface AgentStateDeps {
   readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
   readonly getConnection: () => Promise<{ origin: string; token: string; label: string } | null>;
   readonly resolveItem: AgentRunDeps["resolveItem"];
-  readonly getRun: (itemId: string, lane: AgentLane) => Promise<StoredRun | null>;
+  readonly getRun: (subject: RunSubject, lane: AgentLane) => Promise<StoredRun | null>;
 }
 
 function delay(ms: number): Promise<void> {
@@ -328,15 +374,31 @@ async function invokeWithRetry(
   return second.reason === "busy" ? { ok: false, reason: "server_error" } : second;
 }
 
+/**
+ * What a lane needs before it can invoke. Two success arms, because a lane is
+ * about one of two things: an indexed ITEM (C2.1) or a whole SERVICE (C2.3).
+ * The service arm exists precisely so the home path can skip the resolve call —
+ * there is no item to resolve, and a dashboard URL sent to `resolve` would come
+ * back `unresolvable`, reporting a miss for a page that was never meant to hit.
+ */
 type ResolveForAgent =
   | {
       readonly ok: true;
+      readonly scope: "item";
       readonly origin: string;
       readonly token: string;
       readonly label: string;
       /** The URL sent to `resolve` — the same one `impact` is given. */
       readonly resolveUrl: string;
       readonly item: ResolvedItem;
+    }
+  | {
+      readonly ok: true;
+      readonly scope: "service";
+      readonly origin: string;
+      readonly token: string;
+      readonly label: string;
+      readonly service: string;
     }
   | { readonly ok: false; readonly reason: AgentError; readonly scopeGap?: ScopeGap };
 
@@ -352,6 +414,7 @@ type ResolveForAgent =
  */
 async function resolveForAgent(
   deps: Pick<AgentStateDeps, "getOrigins" | "getConnection" | "resolveItem">,
+  lane: AgentLane,
   pageUrl: string,
 ): Promise<ResolveForAgent> {
   const recognition = recognise(pageUrl, await deps.getOrigins());
@@ -360,9 +423,38 @@ async function resolveForAgent(
     // which URLs may reach it at all. No resolve call, no invoke.
     return { ok: false, reason: "not_resolved" };
   }
+  // Enforce, in the handler, what `LANE_SURFACES` already enforces in the panel's
+  // render gate: a lane must belong on the page's recognised surface. The panel
+  // never sends a mismatched pair — it renders only lanes `LANE_SURFACES` allows
+  // for the current surface — so this branch is unreachable from the shipped UI.
+  // But `agent-run`/`agent-state` arrive from a content script, and their guards
+  // (`isAgentRunRequest`/`isAgentStateRequest` in shared/messages.ts) validate only
+  // that `lane` is an `AgentLane` and `pageUrl` is a string, never the pairing
+  // between them. Cross-boundary data is untrusted here regardless of what the UI
+  // would send, so without this check a forged `agent-run` could ask `impact`
+  // about a dashboard or `catchup` about a pull request. Placed before any
+  // connection read, cache access or invoke — same "no gateway call for a
+  // condition of the page" rule the unrecognised-page branch above follows.
+  if (!LANE_SURFACES[lane].includes(recognition.kind)) {
+    return { ok: false, reason: "not_resolved" };
+  }
   const conn = await deps.getConnection();
   if (conn === null) {
     return { ok: false, reason: "not_paired" };
+  }
+  if (recognition.kind === "home") {
+    // No resolve call: a dashboard has no indexed item, and `Recognition.product`
+    // IS the gateway's connector id, so the only parameter these lanes need is
+    // already in hand. This is also why a service lane works on a pairing that
+    // never received the `resolve` scope — it needs only `agents`.
+    return {
+      ok: true,
+      scope: "service",
+      origin: conn.origin,
+      token: conn.token,
+      label: conn.label,
+      service: PRODUCT_SERVICE_ID[recognition.product],
+    };
   }
   const resolved = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!resolved.ok) {
@@ -381,6 +473,7 @@ async function resolveForAgent(
   }
   return {
     ok: true,
+    scope: "item",
     origin: conn.origin,
     token: conn.token,
     label: conn.label,
@@ -389,12 +482,31 @@ async function resolveForAgent(
   };
 }
 
-/** The gateway validates this body verbatim, so each agent gets exactly what it
- *  accepts: `impact` takes the page's PR URL, `expert` free text to match
- *  against indexed titles (the repo name would parse too, but answers a
- *  broader question — the same people for every PR in the repo). */
-function agentParams(lane: AgentLane, resolveUrl: string, item: ResolvedItem): unknown {
-  return lane === "impact" ? { fileOrPrUrl: resolveUrl } : { topicOrFile: item.title };
+/**
+ * The gateway validates this body verbatim, so each agent gets exactly what it
+ * accepts: `impact` takes the page's PR URL, `expert` free text to match against
+ * indexed titles (the repo name would parse too, but answers a broader
+ * question — the same people for every PR in the repo), and the three service
+ * lanes take the connector id alone.
+ *
+ * No `sinceMs`, `minConfidence` or `limit` is sent. The gateway owns those
+ * defaults and re-reads its config per call, so a client-side knob would only
+ * be a second place for the same number to disagree.
+ */
+function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }): unknown {
+  if (resolved.scope === "service") {
+    return { service: resolved.service };
+  }
+  return lane === "impact"
+    ? { fileOrPrUrl: resolved.resolveUrl }
+    : { topicOrFile: resolved.item.title };
+}
+
+/** The cache key for a lane: the item it is about, or the service it is about. */
+function subjectFor(resolved: ResolveForAgent & { ok: true }): RunSubject {
+  return resolved.scope === "service"
+    ? { kind: "service", service: resolved.service }
+    : { kind: "item", id: resolved.item.id };
 }
 
 /** Build the response for a `failed` lane, attaching the scope gap only when
@@ -420,13 +532,13 @@ export async function handleAgentRun(
   deps: AgentRunDeps,
   req: AgentRunRequest,
 ): Promise<AgentStateResponse> {
-  const resolved = await resolveForAgent(deps, req.pageUrl);
+  const resolved = await resolveForAgent(deps, req.lane, req.pageUrl);
   if (!resolved.ok) {
     return failedResponse(req.lane, resolved.reason, resolved.scopeGap);
   }
-  const { origin, token, label, resolveUrl, item } = resolved;
 
-  const cached = await deps.getRun(item.id, req.lane);
+  const subject = subjectFor(resolved);
+  const cached = await deps.getRun(subject, req.lane);
   // Only `running` and `done` short-circuit. A `failed` state is not an answer, and
   // `agent-run` only arrives from an explicit user action — expanding a lane or
   // pressing Re-run — so re-asking is what the user just asked for. It also self-heals:
@@ -436,16 +548,15 @@ export async function handleAgentRun(
     return { kind: "agent-state", lane: req.lane, state: cached.state };
   }
 
-  const params = agentParams(req.lane, resolveUrl, item);
-  const invoked = await invokeWithRetry(deps, origin, token, req.lane, params);
+  const params = agentParams(req.lane, resolved);
+  const invoked = await invokeWithRetry(deps, resolved.origin, resolved.token, req.lane, params);
   if (!invoked.ok) {
-    // Only `handlers.ts` holds a `Connection`, so the device label is attached
-    // here — exactly as `handleResolve` and `handleFetch` already do.
-    const scopeGap = invoked.scopeGap === undefined ? undefined : { label, ...invoked.scopeGap };
+    const scopeGap =
+      invoked.scopeGap === undefined ? undefined : { label: resolved.label, ...invoked.scopeGap };
     return failedResponse(req.lane, invoked.reason, scopeGap);
   }
   const state = { kind: "running" as const, runId: invoked.runId };
-  await deps.putRun({ itemId: item.id, lane: req.lane, runId: invoked.runId, state });
+  await deps.putRun({ subject, lane: req.lane, runId: invoked.runId, state });
   return { kind: "agent-state", lane: req.lane, state };
 }
 
@@ -455,11 +566,11 @@ export async function handleAgentState(
   deps: AgentStateDeps,
   req: AgentStateRequest,
 ): Promise<AgentStateResponse> {
-  const resolved = await resolveForAgent(deps, req.pageUrl);
+  const resolved = await resolveForAgent(deps, req.lane, req.pageUrl);
   if (!resolved.ok) {
     return failedResponse(req.lane, resolved.reason, resolved.scopeGap);
   }
-  const cached = await deps.getRun(resolved.item.id, req.lane);
+  const cached = await deps.getRun(subjectFor(resolved), req.lane);
   return { kind: "agent-state", lane: req.lane, state: cached?.state ?? { kind: "collapsed" } };
 }
 
@@ -522,9 +633,12 @@ export async function handleConnectionStatus(
 
 export interface UnpairDeps {
   readonly clearConnection: () => Promise<void>;
+  /** Cached briefs belong to the gateway that produced them — see clearRuns. */
+  readonly clearRuns: () => Promise<void>;
 }
 
 export async function handleUnpair(deps: UnpairDeps): Promise<ConnectionResponse> {
   await deps.clearConnection();
+  await deps.clearRuns();
   return { kind: "connection", paired: false };
 }
