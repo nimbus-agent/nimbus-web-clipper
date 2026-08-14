@@ -23,6 +23,14 @@ export const GATEWAY_PATHS = {
   resolve: "/v1/items/resolve",
   itemsFetch: "/v1/items/fetch",
   /**
+   * Unauthenticated liveness — the ONLY route this client calls without a bearer
+   * token. Served by the same server as the clip routes
+   * (packages/gateway/src/ipc/http-server.ts, dispatchReadOnlyDataGet), so an
+   * answer here means the gateway that ingests clips is up, not merely that
+   * something is listening on the port.
+   */
+  health: "/v1/health",
+  /**
    * BASES, not complete paths: both agent routes carry a path parameter
    * (`/v1/agents/{agent}`, `/v1/agents/runs/{id}`) which this static map cannot
    * express. Callers append the segment. Kept here anyway so every contracted

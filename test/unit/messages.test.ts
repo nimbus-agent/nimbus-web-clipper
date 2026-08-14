@@ -148,6 +148,9 @@ describe("isConnectionResponse", () => {
         label: "chrome",
         origin: "http://127.0.0.1:8765",
         pairedAt: 1,
+        queueDepth: 0,
+        reachable: true,
+        stale: false,
       }),
     ).toBe(true);
   });
@@ -521,5 +524,56 @@ describe("isCueOpenRequest", () => {
 
   test("carries no page-supplied payload — there is nothing for a hostile page to forge", () => {
     expect(Object.keys({ kind: "cue-open" } satisfies CueOpenRequest)).toEqual(["kind"]);
+  });
+});
+
+describe("ConnectionResponse health fields", () => {
+  test("a full paired response is accepted", () => {
+    expect(
+      isConnectionResponse({
+        kind: "connection",
+        paired: true,
+        label: "chrome",
+        origin: "http://127.0.0.1:7474",
+        pairedAt: 1,
+        lastClipAt: 2,
+        queueDepth: 3,
+        reachable: true,
+        stale: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("lastClipAt is optional — a fresh pairing has never clipped", () => {
+    expect(
+      isConnectionResponse({
+        kind: "connection",
+        paired: true,
+        label: "chrome",
+        origin: "http://127.0.0.1:7474",
+        pairedAt: 1,
+        queueDepth: 0,
+        reachable: true,
+        stale: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("a paired response missing queueDepth is rejected", () => {
+    expect(
+      isConnectionResponse({
+        kind: "connection",
+        paired: true,
+        label: "chrome",
+        origin: "http://127.0.0.1:7474",
+        pairedAt: 1,
+        reachable: true,
+        stale: false,
+      }),
+    ).toBe(false);
+  });
+
+  test("the unpaired arm is unchanged", () => {
+    expect(isConnectionResponse({ kind: "connection", paired: false })).toBe(true);
   });
 });

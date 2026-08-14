@@ -143,6 +143,99 @@ if (isClipRequest(message)) {
 }
 ```
 
+## Discovery, connection health, and the trust panel
+
+Setup used to mean typing a gateway URL before Nimbus could say anything about
+the page you were on. This closes that gap: the extension finds a local
+gateway itself, tells the truth about whether the connection is actually
+healthy, and answers "where does my data go?" from real settings rather than a
+fixed blurb.
+
+### Discovery is two candidates, never a scan
+
+[`DISCOVERY_CANDIDATES`](../src/shared/discovery.ts) is a frozen two-element
+array — `http://127.0.0.1:7474`, then `http://localhost:7474` — not a port
+range. A sweep is slow, it is the one behavior in this extension that would
+look like malware to anyone watching the socket table, and it buys a case the
+manual URL field already covers (a gateway on a nonstandard port). `127.0.0.1`
+goes first because it is the literal address invariant **I6** binds the
+gateway to; `localhost` is the fallback, and deliberately never probed first,
+because on Windows it can resolve to `::1` under dual-stack resolution — an
+address a gateway bound to IPv4 loopback only refuses. `handleDiscover`
+(`src/background/handlers.ts`) probes the two candidates **sequentially**,
+stopping at the first hit: concurrent probing would always dial a candidate
+expected to fail, for a tiebreak between two routes to the same gateway that
+buys nothing. Each `probeReachable` call is guarded with `.catch(() => false)`
+so one candidate's rejection can never cost the next one its turn.
+`pickReachable` returning `null` is not a failure state — it means "ask the
+user," and the manual URL field never goes away.
+
+### The health probe is the one tokenless call, and repeats the loopback check
+
+`probeHealth` (`src/background/gateway-client.ts`) — `GET /v1/health`, an
+800ms timeout — is the only route in the gateway client that carries no bearer
+token. Every other route inherits the origin discipline of a stored
+`Connection`; this one has no connection to inherit it from, which is exactly
+why it re-asserts `isLoopbackOrigin` itself rather than trusting its caller.
+Today `DISCOVERY_CANDIDATES` is a frozen constant, so the check can never
+actually fail — it is asserted anyway, for whoever makes that list
+configurable later, so **I6** stays enforced at the one place nothing else is
+enforcing it. A non-loopback origin never reaches `fetch` at all.
+
+### `stale` is set from one wrap around `respond`, not a hook per route
+
+A response carrying `reason: "unauthorized"` means the gateway rejected the
+stored token, and every route that can 401 must react the same way — flip
+`stale`, so Options can say "Needs re-pairing" instead of leaving the user to
+guess. `service-worker.ts` does this in exactly one place: the message
+listener wraps `rawRespond` in a local `respond` that checks
+`carriesUnauthorized(res)` before every send, rather than a hook wired into
+each handler. A per-handler hook would drift the moment someone added a new
+route and forgot it; wrapping the one function every route already calls means
+the check cannot drift, and a future route inherits the behavior for free
+just by calling `respond`.
+
+The write this triggers — `markStale()` — and every other writer of the
+connection record (`setConnection`, `clearConnection`, `markClipSuccess`,
+`clearStale`) go through **one serialised write chain** in
+[`connection-store.ts`](../src/background/connection-store.ts) rather than
+writing `chrome.storage.local` directly. The obvious reason is the usual
+lost-update guard: a clip success and a 401 arriving together would both read
+the pre-change record, and the second write would drop the first one's edit.
+The less obvious reason is why `setConnection` and `clearConnection` — which
+replace the whole record, called from `handlePair` and `handleUnpair` — go
+through the same chain rather than writing directly: without it, a queue flush
+that 401s while the user is re-pairing can interleave as *read-modify-write
+reads the OLD record → `setConnection` writes the NEW one → the read-modify-write
+writes back its transform of the old one*, silently reverting a fresh token to
+the dead one it just replaced and telling the user to re-pair a browser they
+have just re-paired. Narrow window, severe outcome — closed by putting every
+writer on one chain. The chain is in-memory only, and that is sufficient: it
+orders overlapping writes within one service-worker lifetime, and MV3 runs
+exactly one service-worker instance at a time — across an eviction there is no
+chain, and no other writer alive to race with either.
+
+### Staged Options: locking is for never-configured, never for broken
+
+`stagesFrom` (`src/options/setup-view.ts`) drives four ordered Options
+stages — connect, connection, sites, trust — and the rule that decides which
+are open is deliberate: **locking is for never-configured, never for
+broken.** An unpaired browser locks stages 2 and 3; a *paired* browser with a
+stale token or an unreachable gateway flags stage 1 as needing attention but
+leaves 2 and 3 open. The reason is concrete, not a general principle:
+**Unpair lives in stage 2**, and re-locking a broken connection's stage 2
+would hide the only control that fixes the very condition that caused the
+lock. Stage 4 — the trust panel — is **always** open regardless of pairing
+state, because "where does my data go?" has to be answerable before you
+commit to pairing, not only after. Locked stages are dimmed and inert in the
+CSS, never removed from the DOM — a hidden stage is indistinguishable from a
+missing feature, and a locked one at least tells you it exists. `healthLine`
+checks `stale` before `reachable` for the same never-broken-silently reason: a
+revoked token and a stopped gateway look identical from the outside, and only
+one of them has a fix the user can act on — telling someone to check whether
+their gateway is running when the real answer is "re-pair" is exactly the
+silent failure this ordering exists to end.
+
 ## The clip pipeline
 
 One pipeline serves **both** entry points — the popup's `clip` message and the

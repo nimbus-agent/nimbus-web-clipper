@@ -7,6 +7,7 @@ import {
   parseRetryAfterMs,
   postClip,
   postRelated,
+  probeHealth,
   resolveItem,
 } from "../../src/background/gateway-client.ts";
 import type { ClipPayload } from "../../src/shared/clip.ts";
@@ -855,5 +856,53 @@ describe("getAgentRun", () => {
         reason: "server_error",
       });
     }
+  });
+});
+
+describe("probeHealth", () => {
+  test("200 with status ok → reachable", async () => {
+    const doFetch = async (): Promise<Response> =>
+      new Response(JSON.stringify({ status: "ok", gateway: "read_only_http" }), {
+        status: 200,
+      });
+    expect(await probeHealth("http://127.0.0.1:7474", doFetch)).toBe(true);
+  });
+
+  test("a non-200 is not reachable", async () => {
+    const doFetch = async (): Promise<Response> => new Response("nope", { status: 404 });
+    expect(await probeHealth("http://127.0.0.1:7474", doFetch)).toBe(false);
+  });
+
+  test("a 200 that is not this gateway's health shape is not reachable", async () => {
+    const doFetch = async (): Promise<Response> =>
+      new Response(JSON.stringify({ hello: "world" }), { status: 200 });
+    expect(await probeHealth("http://127.0.0.1:7474", doFetch)).toBe(false);
+  });
+
+  test("a thrown fetch (connection refused, abort) is not reachable", async () => {
+    const doFetch = async (): Promise<Response> => {
+      throw new Error("ECONNREFUSED");
+    };
+    expect(await probeHealth("http://127.0.0.1:7474", doFetch)).toBe(false);
+  });
+
+  test("a non-loopback origin is refused WITHOUT a request (I6)", async () => {
+    let called = false;
+    const doFetch = async (): Promise<Response> => {
+      called = true;
+      return new Response("{}", { status: 200 });
+    };
+    expect(await probeHealth("https://evil.example", doFetch)).toBe(false);
+    expect(called).toBe(false);
+  });
+
+  test("a loopback lookalike host is refused without a request", async () => {
+    let called = false;
+    const doFetch = async (): Promise<Response> => {
+      called = true;
+      return new Response("{}", { status: 200 });
+    };
+    expect(await probeHealth("http://127.0.0.1.attacker.com", doFetch)).toBe(false);
+    expect(called).toBe(false);
   });
 });

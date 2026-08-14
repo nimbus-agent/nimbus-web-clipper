@@ -362,7 +362,10 @@ button (they aren't the user's to delete).
 
 ## Manual verification — Service lanes (C2.3)
 
-**Outstanding — this pass has not yet been performed.**
+**Outstanding — this pass has not yet been performed.** Its summary form is
+folded into "Manual verification — Setup that works" below (item 8), so it is
+tracked as one backlog item rather than two — run either checklist to clear
+it.
 
 Prereq: paired, gateway running, a token scoped with `agents` (`resolve` and
 `fetch` are not required — a service lane needs neither, see
@@ -389,6 +392,28 @@ mock's fixed brief cannot produce.
 6. With no `[[filesystem.roots]]` configured, *Who owns what* renders the
    gateway's gap brief including its `nimbus index add` line — not a blank
    lane.
+
+## Manual verification — Setup that works (discovery, connection health, the trust panel)
+
+Prereq: a Nimbus gateway available to start/stop on demand. Step 1 needs a
+fresh, never-paired profile; steps 2–6 need to be able to stop and restart the
+gateway. Step 8 folds in the Service lanes (C2.3) manual pass below, which had
+never been run — this is that backlog being cleared, not new work.
+
+1. Load unpacked in Chrome. On a fresh profile, Options shows stage 1 active
+   and 2–3 dimmed.
+2. With the gateway stopped, press **Find my gateway** → "No gateway found",
+   URL field still editable.
+3. Start the gateway, press it again → the URL fills in.
+4. Pair. Stages 2 and 3 open; the health line names the origin.
+5. Clip a page, reopen Options → the health line reports the last clip.
+6. Stop the gateway, reopen Options → "Can't reach …", and stages 2 and 3 are
+   **still usable** (confirm Unpair is clickable).
+7. Repeat 1–6 in Firefox.
+8. **C2.3 backlog:** on a GitHub/GitLab/Bitbucket/Jira/Jenkins dashboard,
+   confirm the three service lanes render and answer, and that the ambient cue
+   stays silent there. See "Manual verification — Service lanes (C2.3)" above
+   for the fuller six-step version of this pass.
 
 ## Security check
 

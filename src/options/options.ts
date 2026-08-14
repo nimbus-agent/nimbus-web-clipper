@@ -2,7 +2,11 @@ import { getAmbientHosts, setAmbientHost } from "../background/ambient-prefs.ts"
 import { getOrigins, setOrigins } from "../background/origin-store.ts";
 import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.ts";
 import { sendMessage } from "../browser/runtime.ts";
-import { isConnectionResponse, type PairResponse } from "../shared/messages.ts";
+import {
+  type DiscoverResponse,
+  isConnectionResponse,
+  type PairResponse,
+} from "../shared/messages.ts";
 import {
   hostPermissionPattern,
   isProduct,
@@ -12,7 +16,7 @@ import {
 } from "../shared/origins.ts";
 import { BUILT_IN_SURFACES } from "../shared/recognise.ts";
 import type { ConfiguredOrigin } from "../shared/types.ts";
-import { formatPairedSince } from "./connection-view.ts";
+import { applyStages, healthLine, stagesFrom } from "./setup-view.ts";
 import { renderSurfaceList, type SurfaceRow, sharedHostNote } from "./surfaces-view.ts";
 
 const PAIR_MESSAGES: Record<string, string> = {
@@ -48,29 +52,39 @@ function disarmUnpair(): void {
 }
 
 function renderConnection(res: unknown): void {
-  const pairing = document.getElementById("pairing-section");
-  const connection = document.getElementById("connection-section");
+  if (!isConnectionResponse(res)) {
+    return;
+  }
+  applyStages(document, stagesFrom(res));
+  const health = document.getElementById("health-line");
+  if (health !== null) {
+    health.textContent = healthLine(res, Date.now());
+  }
   const status = document.getElementById("connection-status");
-  if (
-    !(pairing instanceof HTMLElement) ||
-    !(connection instanceof HTMLElement) ||
-    status === null
-  ) {
-    return;
+  if (status !== null) {
+    // Stage 2's detail line stays as it was; healthLine above carries the state.
+    status.textContent = res.paired ? `Paired as "${res.label}".` : "";
   }
-  if (!isConnectionResponse(res) || !res.paired) {
-    connection.hidden = true;
-    pairing.hidden = false;
+  if (!res.paired) {
     disarmUnpair();
-    return;
   }
-  status.textContent = `Paired as "${res.label}" to ${res.origin}, since ${formatPairedSince(res.pairedAt)}.`;
-  pairing.hidden = true;
-  connection.hidden = false;
+  const trustOrigin = document.getElementById("trust-origin");
+  if (trustOrigin !== null) {
+    trustOrigin.textContent = res.paired ? res.origin : "your local gateway (not paired yet)";
+  }
 }
 
 async function refreshConnection(): Promise<void> {
-  renderConnection(await sendMessage({ kind: "connection-status" }));
+  try {
+    renderConnection(await sendMessage({ kind: "connection-status" }));
+  } catch {
+    // The message channel rejected (service worker asleep or erroring) —
+    // leave the shipped HTML defaults in place (stages 2 and 3 locked) rather
+    // than throwing away the render. Without this, a silent failure here
+    // would leave every stage rendering fully active — including Unpair and
+    // page-access controls — on a profile the extension never confirmed was
+    // paired.
+  }
 }
 
 async function pair(): Promise<void> {
@@ -102,6 +116,40 @@ async function pair(): Promise<void> {
   } catch {
     // The message channel rejected — recover the status rather than sticking on "Pairing…".
     setStatus("Couldn't reach the extension — please try again.");
+  }
+}
+
+function isDiscoverResponse(v: unknown): v is DiscoverResponse {
+  return typeof v === "object" && v !== null && (v as { kind?: unknown }).kind === "discover";
+}
+
+function setDiscoverStatus(text: string): void {
+  const el = document.getElementById("discover-status");
+  if (el !== null) {
+    el.textContent = text;
+  }
+}
+
+async function discover(): Promise<void> {
+  const originEl = document.getElementById("origin");
+  if (!(originEl instanceof HTMLInputElement)) {
+    return;
+  }
+  setDiscoverStatus("Looking…");
+  try {
+    const res = await sendMessage({ kind: "discover" });
+    if (!isDiscoverResponse(res)) {
+      setDiscoverStatus("Unexpected response.");
+      return;
+    }
+    if (res.origin === null) {
+      setDiscoverStatus("No gateway found. Start Nimbus, or enter its URL below.");
+      return;
+    }
+    originEl.value = res.origin;
+    setDiscoverStatus(`Found Nimbus at ${res.origin}.`);
+  } catch {
+    setDiscoverStatus("Couldn't reach the extension — please try again.");
   }
 }
 
@@ -228,11 +276,17 @@ async function surfaceRows(): Promise<SurfaceRow[]> {
 }
 
 async function refreshSurfaces(): Promise<void> {
+  const rows = await surfaceRows();
   const list = document.getElementById("surface-list");
-  if (list === null) {
-    return;
+  if (list !== null) {
+    list.replaceChildren(renderSurfaceList(document, rows));
   }
-  list.replaceChildren(renderSurfaceList(document, await surfaceRows()));
+  const hosts = document.getElementById("trust-hosts");
+  if (hosts !== null) {
+    const granted = rows.filter((r) => r.granted).map((r) => r.origin);
+    // textContent, never innerHTML — these strings are user-supplied origins.
+    hosts.textContent = granted.length === 0 ? "no sites yet" : granted.join(", ");
+  }
 }
 
 async function addSurface(): Promise<void> {
@@ -310,6 +364,7 @@ function onAmbientChange(event: Event): Promise<void> {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("discover")?.addEventListener("click", () => void discover());
   document.getElementById("pair")?.addEventListener("click", () => void pair());
   document.getElementById("unpair")?.addEventListener("click", () => void onUnpairClick());
   document.getElementById("unpair-cancel")?.addEventListener("click", () => disarmUnpair());

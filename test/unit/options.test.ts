@@ -1,24 +1,33 @@
 // @vitest-environment jsdom
 // test/unit/options.test.ts
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import "../../src/options/options.ts";
 import type { ConnectionResponse, PairResponse } from "../../src/shared/messages.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const html = readFileSync(resolve(ROOT, "src/options/options.html"), "utf8");
+
 // Mirrors src/options/options.html's element ids.
 const FIXTURE = `
-  <section id="pairing-section">
+  <section id="stage-connect">
+    <button id="discover" type="button">Find my gateway</button>
+    <output id="discover-status"></output>
     <input id="origin" type="text" />
     <input id="code" type="text" />
     <button id="pair" type="button">Pair this browser</button>
     <output id="pairing-status"></output>
   </section>
-  <section id="connection-section" hidden>
+  <section id="stage-connection">
+    <output id="health-line"></output>
     <output id="connection-status"></output>
     <button id="unpair" type="button">Unpair this browser</button>
     <button id="unpair-cancel" type="button" hidden>Cancel</button>
   </section>
-  <section id="surfaces-section">
+  <section id="stage-sites">
     <input id="surface-origin" type="text" />
     <select id="surface-product">
       <option value="jenkins">Jenkins</option>
@@ -27,6 +36,10 @@ const FIXTURE = `
     <button id="surface-add" type="button">Add surface</button>
     <output id="surface-status"></output>
     <div id="surface-list"></div>
+  </section>
+  <section id="stage-trust">
+    <span id="trust-origin"></span>
+    <span id="trust-hosts"></span>
   </section>
 `;
 
@@ -37,12 +50,22 @@ const paired: ConnectionResponse = {
   label: "MacBook",
   origin: "http://127.0.0.1:7474",
   pairedAt: Date.UTC(2026, 5, 27, 12, 0, 0),
+  queueDepth: 0,
+  reachable: true,
+  stale: false,
 };
 
 let harness: ChromeHarness;
 
-function flush(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+/** Drain pending promise chains chained after refreshSurfaces(). A single
+ * macrotask tick does not reliably drain the awaits in refreshSurfaces() →
+ * surfaceRows() → (getAmbientHosts() + hasOrigin() per row) → render → write,
+ * so the assertion would race the DOM update. Multiple rounds ensure every
+ * layer of chained awaits gets a turn. */
+async function flush(rounds = 8): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 function el(id: string): HTMLElement {
@@ -132,21 +155,23 @@ afterEach(() => {
 });
 
 describe("options: initial load / refreshConnection", () => {
-  test("unpaired: shows the pairing section, hides the connection section", async () => {
+  test("unpaired: stage 1 is active, stage 2 is locked", async () => {
     await boot(unpaired);
 
     expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "connection-status" });
-    expect(el("connection-section").hidden).toBe(true);
-    expect(el("pairing-section").hidden).toBe(false);
+    expect(el("stage-connect").dataset["state"]).toBe("active");
+    expect(el("stage-connection").dataset["state"]).toBe("locked");
+    expect(el("health-line").textContent).toBe("Not paired.");
   });
 
-  test("paired: shows the connection section with label/origin/paired-since", async () => {
+  test("paired: stage 1 is done, stage 2 is active, with label/origin/paired-since", async () => {
     await boot(paired);
 
-    expect(el("connection-section").hidden).toBe(false);
-    expect(el("pairing-section").hidden).toBe(true);
-    expect(el("connection-status").textContent).toBe(
-      'Paired as "MacBook" to http://127.0.0.1:7474, since Jun 27, 2026.',
+    expect(el("stage-connect").dataset["state"]).toBe("done");
+    expect(el("stage-connection").dataset["state"]).toBe("active");
+    expect(el("connection-status").textContent).toBe('Paired as "MacBook".');
+    expect(el("health-line").textContent).toBe(
+      'Connected to http://127.0.0.1:7474 as "MacBook", since Jun 27, 2026.',
     );
   });
 });
@@ -187,8 +212,8 @@ describe("pair()", () => {
     });
     expect(input("code").value).toBe("");
     expect(el("pairing-status").textContent).toBe("");
-    expect(el("connection-section").hidden).toBe(false);
-    expect(el("pairing-section").hidden).toBe(true);
+    expect(el("stage-connection").dataset["state"]).toBe("active");
+    expect(el("connection-status").textContent).toBe('Paired as "MacBook".');
   });
 
   test("pairing_failed shows the mapped error status", async () => {
@@ -291,8 +316,8 @@ describe("onUnpairClick() / disarmUnpair()", () => {
     await flush();
 
     expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "unpair" });
-    expect(el("connection-section").hidden).toBe(true);
-    expect(el("pairing-section").hidden).toBe(false);
+    expect(el("stage-connect").dataset["state"]).toBe("active");
+    expect(el("stage-connection").dataset["state"]).toBe("locked");
     expect(button("unpair").textContent).toBe("Unpair this browser");
     expect(button("unpair").disabled).toBe(false);
     expect(button("unpair-cancel").hidden).toBe(true);
@@ -327,7 +352,7 @@ describe("onUnpairClick() / disarmUnpair()", () => {
     expect(button("unpair-cancel").hidden).toBe(true);
     expect(button("unpair-cancel").disabled).toBe(false);
     // renderConnection was never reached — the paired panel is untouched.
-    expect(el("connection-section").hidden).toBe(false);
+    expect(el("stage-connection").dataset["state"]).toBe("active");
   });
 });
 
@@ -578,5 +603,84 @@ describe("the ambient toggle", () => {
     }
 
     expect(harness.storage.get("ambient-hosts")).toEqual(["https://gitlab.com/*"]);
+  });
+});
+
+describe("options.html stages", () => {
+  test("has all four stages", () => {
+    for (const id of ["stage-connect", "stage-connection", "stage-sites", "stage-trust"]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+  });
+
+  test("has the discovery control and its status output", () => {
+    expect(html).toContain('id="discover"');
+    expect(html).toContain('id="discover-status"');
+  });
+
+  test("has a health line and the trust panel's data-driven slots", () => {
+    expect(html).toContain('id="health-line"');
+    expect(html).toContain('id="trust-origin"');
+    expect(html).toContain('id="trust-hosts"');
+  });
+
+  test("the trust panel describes what clipping actually sends — no payload preview promise", () => {
+    expect(html).toContain(
+      "sends the page's title, URL, and the extracted article or selected text",
+    );
+    expect(html).not.toContain("shows you the whole payload first");
+  });
+
+  test("the trust panel does not claim a popup URL lookup", () => {
+    expect(html).not.toContain("opening the popup");
+  });
+
+  test("stage 2 and stage 3 default to locked in the shipped HTML", () => {
+    expect(html).toMatch(/id="stage-connection"\s+class="stage"\s+data-state="locked"/);
+    expect(html).toMatch(/id="stage-sites"\s+class="stage"\s+data-state="locked"/);
+  });
+
+  test("the manual gateway URL field survives — discovery never removes it", () => {
+    expect(html).toContain('id="origin"');
+  });
+});
+
+describe("trust panel content (#trust-origin / #trust-hosts)", () => {
+  // These are the only assertions on what the data-driven half of the trust
+  // panel actually RENDERS, as opposed to the ids merely existing in the
+  // markup — the case that would catch a future switch from textContent back
+  // to innerHTML going unnoticed.
+  test("#trust-origin shows the real configured origin when paired", async () => {
+    await boot(paired);
+    expect(el("trust-origin").textContent).toBe("http://127.0.0.1:7474");
+  });
+
+  test("#trust-origin shows the not-paired wording when not paired", async () => {
+    await boot(unpaired);
+    expect(el("trust-origin").textContent).toBe("your local gateway (not paired yet)");
+  });
+
+  test("#trust-hosts reads 'no sites yet' with no grants", async () => {
+    await boot();
+    expect(el("trust-hosts").textContent).toBe("no sites yet");
+  });
+
+  test("#trust-hosts lists a granted origin", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.sendMessage.mockResolvedValue(unpaired);
+    await bootOptions();
+    expect(el("trust-hosts").textContent).toBe("github.com");
+  });
+});
+
+describe("refreshConnection failure", () => {
+  test("a rejecting connection-status leaves the shipped locked defaults, rather than throwing", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockRejectedValue(new Error("channel closed"));
+    await bootOptions();
+
+    expect(el("stage-connection").dataset["state"]).toBeUndefined();
+    expect(el("stage-sites").dataset["state"]).toBeUndefined();
   });
 });

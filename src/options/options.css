@@ -28,3 +28,9 @@ code { font-family: ui-monospace, monospace; padding: 1px 4px; border-radius: 4p
 .surfaces__ambient input:disabled + span {
   opacity: 0.55;
 }
+.stage[data-state="locked"] { opacity: 0.45; }
+.stage[data-state="locked"] button,
+.stage[data-state="locked"] input,
+.stage[data-state="locked"] select { pointer-events: none; }
+.stage[data-state="needs-attention"] .stage__num { color: #b23; }
+.stage__num { font-variant-numeric: tabular-nums; opacity: 0.6; margin-right: 0.4em; }

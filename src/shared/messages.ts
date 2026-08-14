@@ -134,6 +134,11 @@ export interface UnpairRequest {
   readonly kind: "unpair";
 }
 
+/** Ask the service worker to find a local gateway (roadmap 3.5). */
+export interface DiscoverRequest {
+  readonly kind: "discover";
+}
+
 export type ExtensionRequest =
   | PairRequest
   | ClipRequest
@@ -148,7 +153,8 @@ export type ExtensionRequest =
   | QueueRetryRequest
   | QueueRemoveRequest
   | ConnectionStatusRequest
-  | UnpairRequest;
+  | UnpairRequest
+  | DiscoverRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -233,7 +239,18 @@ export type ConnectionResponse =
       readonly label: string;
       readonly origin: string;
       readonly pairedAt: number;
+      /** Absent when no clip has ever succeeded — including on a fresh pairing. */
+      readonly lastClipAt?: number;
+      readonly queueDepth: number;
+      readonly reachable: boolean;
+      readonly stale: boolean;
     };
+
+export type DiscoverResponse = {
+  readonly kind: "discover";
+  /** The origin that answered, or null — null means "ask the user", not "error". */
+  readonly origin: string | null;
+};
 
 export type ExtensionResponse =
   | PairResponse
@@ -244,7 +261,8 @@ export type ExtensionResponse =
   | RecognitionResponse
   | AgentStateResponse
   | QueueResponse
-  | ConnectionResponse;
+  | ConnectionResponse
+  | DiscoverResponse;
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -565,6 +583,10 @@ export function isUnpairRequest(v: unknown): v is UnpairRequest {
   return isObject(v) && v["kind"] === "unpair";
 }
 
+export function isDiscoverRequest(v: unknown): v is DiscoverRequest {
+  return isObject(v) && v["kind"] === "discover";
+}
+
 export function isConnectionResponse(v: unknown): v is ConnectionResponse {
   if (!isObject(v) || v["kind"] !== "connection") {
     return false;
@@ -576,7 +598,11 @@ export function isConnectionResponse(v: unknown): v is ConnectionResponse {
     return (
       typeof v["label"] === "string" &&
       typeof v["origin"] === "string" &&
-      typeof v["pairedAt"] === "number"
+      typeof v["pairedAt"] === "number" &&
+      typeof v["queueDepth"] === "number" &&
+      typeof v["reachable"] === "boolean" &&
+      typeof v["stale"] === "boolean" &&
+      (v["lastClipAt"] === undefined || typeof v["lastClipAt"] === "number")
     );
   }
   return false;

@@ -1,5 +1,5 @@
 import type { ClipPayload } from "../shared/clip.ts";
-import { endpointUrl, type GatewayEndpoint } from "../shared/gateway.ts";
+import { endpointUrl, type GatewayEndpoint, isLoopbackOrigin } from "../shared/gateway.ts";
 import { isRelatedHit, type RelatedQuery } from "../shared/related.ts";
 import {
   type AgentError,
@@ -26,6 +26,7 @@ const RELATED_TIMEOUT_MS = 8_000;
 const RESOLVE_TIMEOUT_MS = 8_000;
 const FETCH_TIMEOUT_MS = 30_000;
 const AGENT_TIMEOUT_MS = 15_000;
+const HEALTH_TIMEOUT_MS = 800;
 
 const DEFAULT_RETRY_AFTER_MS = 60_000; // the gateway's full rate-limit window
 const MAX_RETRY_AFTER_MS = 120_000;
@@ -150,6 +151,45 @@ export async function confirmPair(
     return { ok: false, reason: "pairing_failed" };
   }
   return { ok: false, reason: "server_error" };
+}
+
+/**
+ * Is a Nimbus gateway answering on this origin?
+ *
+ * The only tokenless call this client makes. That is exactly why the loopback
+ * check is repeated here rather than assumed: every other route carries a bearer
+ * token and inherits the origin discipline of the stored connection, so this must
+ * not become the one place I6 is enforced more loosely. Today `DISCOVERY_CANDIDATES`
+ * is a frozen constant and the check cannot fail — it is asserted anyway, for
+ * whoever makes that list configurable.
+ *
+ * Returns a plain boolean: a probe has exactly two outcomes the caller can act
+ * on, and any richer result would tempt a caller into treating "the gateway said
+ * something odd" as "the gateway is up".
+ */
+export async function probeHealth(origin: string, doFetch: FetchLike = fetch): Promise<boolean> {
+  if (!isLoopbackOrigin(origin)) {
+    return false;
+  }
+  let res: Response;
+  try {
+    res = await getJsonAt(doFetch, endpointUrl(origin, "health"), {}, HEALTH_TIMEOUT_MS);
+  } catch {
+    // Connection refused, DNS failure, or the 800ms abort. All mean "not here".
+    return false;
+  }
+  if (!res.ok) {
+    return false;
+  }
+  // Shape-check the body: something else listening on 7474 can return 200.
+  //
+  // `readJson` is deliberately OUTSIDE the try above, and that is safe: it is
+  // total — it catches its own `res.json()` rejection and returns null
+  // (gateway-client.ts:119-125), so a non-JSON body from whatever else is on
+  // this port yields `null` here, not a throw. Do not widen the try to cover it;
+  // a catch that can never fire reads as a real failure mode to the next person.
+  const data = await readJson(res);
+  return isObject(data) && data["status"] === "ok";
 }
 
 export async function postClip(

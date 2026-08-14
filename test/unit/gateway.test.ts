@@ -2,13 +2,14 @@ import { describe, expect, it, test } from "vitest";
 import { endpointUrl, GATEWAY_PATHS, isLoopbackOrigin } from "../../src/shared/gateway.ts";
 
 describe("GATEWAY_PATHS", () => {
-  it("is the seven contracted gateway paths", () => {
+  it("is the eight contracted gateway paths", () => {
     expect(GATEWAY_PATHS).toEqual({
       ingest: "/v1/clips",
       pairConfirm: "/v1/clips/pair/confirm",
       related: "/v1/clips/related",
       resolve: "/v1/items/resolve",
       itemsFetch: "/v1/items/fetch",
+      health: "/v1/health",
       agents: "/v1/agents",
       agentRuns: "/v1/agents/runs",
     });
@@ -55,5 +56,11 @@ describe("isLoopbackOrigin", () => {
     ]) {
       expect(isLoopbackOrigin(o)).toBe(false);
     }
+  });
+});
+
+describe("health endpoint", () => {
+  test("health is a contracted path", () => {
+    expect(endpointUrl("http://127.0.0.1:7474", "health")).toBe("http://127.0.0.1:7474/v1/health");
   });
 });
