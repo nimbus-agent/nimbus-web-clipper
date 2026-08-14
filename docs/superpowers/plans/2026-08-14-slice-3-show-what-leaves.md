@@ -33,7 +33,7 @@ Slice 1 shipped a trust panel whose "What we send, and when" paragraph had to be
 
 **Create:**
 - `src/shared/preview.ts` — pure. Both preview shapes, built from data the caller already has.
-- `src/popup/preview-view.ts` — pure. Renders the clip preview.
+- `src/shared/preview-view.ts` — pure. Renders EITHER preview shape. In `shared/`, not `popup/`, because both the popup and the panel render it — see Ruling 1.
 - `src/background/preview-pref.ts` — the on/off switch, stored like `ambient-prefs.ts`.
 - `test/unit/preview.test.ts`, `test/unit/preview-view.test.ts`, `test/unit/preview-pref.test.ts`
 
@@ -286,12 +286,12 @@ git commit -m "feat(preview): name what leaves, field by explicit field"
 ## Task 2: The preview renderer (pure)
 
 **Files:**
-- Create: `src/popup/preview-view.ts`
+- Create: `src/shared/preview-view.ts`
 - Test: `test/unit/preview-view.test.ts`
 
 **Interfaces:**
 - Consumes: `ClipPreview`, `FetchPreview`, `PreviewField` from `src/shared/preview.ts` (Task 1)
-- Produces: `renderPreview(doc: Document, preview: ClipPreview | FetchPreview): DocumentFragment`
+- Produces: `renderPreview(doc: Document, preview: ClipPreview | FetchPreview): DocumentFragment` (from `src/shared/preview-view.ts`)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -301,7 +301,7 @@ Create `test/unit/preview-view.test.ts`:
 // @vitest-environment jsdom
 // test/unit/preview-view.test.ts
 import { describe, expect, test } from "vitest";
-import { renderPreview } from "../../src/popup/preview-view.ts";
+import { renderPreview } from "../../src/shared/preview-view.ts";
 import type { ClipPreview, FetchPreview } from "../../src/shared/preview.ts";
 
 const clip: ClipPreview = {
@@ -371,15 +371,15 @@ describe("renderPreview", () => {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `bun run test -- preview-view`
-Expected: FAIL — `Cannot find module '../../src/popup/preview-view.ts'`
+Expected: FAIL — `Cannot find module '../../src/shared/preview-view.ts'`
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/popup/preview-view.ts`:
+Create `src/shared/preview-view.ts`:
 
 ```ts
 // Renders either preview shape. Pure: takes a Document, returns a fragment.
-import type { ClipPreview, FetchPreview, PreviewField } from "../shared/preview.ts";
+import type { ClipPreview, FetchPreview, PreviewField } from "./preview.ts";
 
 function row(doc: Document, field: PreviewField): HTMLElement {
   const el = doc.createElement("div");
@@ -437,7 +437,7 @@ Expected: PASS (6 tests)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/popup/preview-view.ts test/unit/preview-view.test.ts
+git add src/shared/preview-view.ts test/unit/preview-view.test.ts
 git commit -m "feat(popup): render a preview as text, never as markup"
 ```
 
@@ -560,71 +560,168 @@ git commit -m "feat(preview): an off switch that fails safe"
 Append to `test/unit/popup.test.ts`, following that file's existing boot/flush helpers:
 
 ```ts
+/** Stubs the two-step capture the way every existing clip test in this file does. */
+function stubCapture(): void {
+  harness.executeScript
+    .mockResolvedValueOnce([{ result: undefined }])
+    .mockResolvedValueOnce([{ result: ARTICLE_CAPTURE }]);
+}
+
+function previewSection(): HTMLElement {
+  const el = document.getElementById("preview");
+  if (!(el instanceof HTMLElement)) {
+    throw new Error("missing #preview");
+  }
+  return el;
+}
+
+function clipKinds(): string[] {
+  return harness.sendMessage.mock.calls
+    .map((c) => (c[0] as { kind?: string }).kind)
+    .filter((k): k is string => k === "clip");
+}
+
 describe("preview before sending", () => {
   test("clicking Clip page shows the preview and sends NOTHING yet", async () => {
-    await bootPopup();
+    stubCapture();
     harness.sendMessage.mockClear();
-    clickButton("clip-page");
-    await flush();
 
-    expect(el("preview").hidden).toBe(false);
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+
     // The assertion that matters: no clip message left the popup.
-    const kinds = harness.sendMessage.mock.calls.map((c) => (c[0] as { kind?: string }).kind);
-    expect(kinds).not.toContain("clip");
+    expect(clipKinds()).toEqual([]);
   });
 
   test("confirming sends the clip", async () => {
-    await bootPopup();
-    clickButton("clip-page");
-    await flush();
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
     harness.sendMessage.mockClear();
-    clickButton("preview-confirm");
-    await flush();
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "clip",
+      ok: true,
+      status: "created",
+      bookmarked: false,
+    });
 
-    const kinds = harness.sendMessage.mock.calls.map((c) => (c[0] as { kind?: string }).kind);
-    expect(kinds).toContain("clip");
+    click("preview-confirm");
+
+    await vi.waitFor(() => expect(statusText()).toBe("Saved to Nimbus."));
+    expect(clipKinds()).toEqual(["clip"]);
   });
 
   test("cancelling sends nothing and hides the preview", async () => {
-    await bootPopup();
-    clickButton("clip-page");
-    await flush();
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
     harness.sendMessage.mockClear();
-    clickButton("preview-cancel");
-    await flush();
 
-    const kinds = harness.sendMessage.mock.calls.map((c) => (c[0] as { kind?: string }).kind);
-    expect(kinds).not.toContain("clip");
-    expect(el("preview").hidden).toBe(true);
+    click("preview-cancel");
+
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(true));
+    expect(clipKinds()).toEqual([]);
+    expect(statusText()).toBe("Cancelled — nothing was sent.");
   });
 
   test("with the preference OFF, clipping sends immediately and shows no preview", async () => {
-    harness = installChromeMock();
     harness.storage.set("preview-enabled", false);
-    await bootPopup();
-    clickButton("clip-page");
-    await flush();
+    stubCapture();
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "clip",
+      ok: true,
+      status: "created",
+      bookmarked: false,
+    });
 
-    const kinds = harness.sendMessage.mock.calls.map((c) => (c[0] as { kind?: string }).kind);
-    expect(kinds).toContain("clip");
-    expect(el("preview").hidden).toBe(true);
+    click("clip-page");
+
+    await vi.waitFor(() => expect(statusText()).toBe("Saved to Nimbus."));
+    expect(previewSection().hidden).toBe(true);
   });
 
   test("the preview names the page being clipped", async () => {
-    await bootPopup();
-    clickButton("clip-page");
-    await flush();
-    expect(el("preview").textContent).toContain("https://ex.com/p");
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+    expect(previewSection().textContent).toContain(ARTICLE_CAPTURE.url);
+  });
+
+  test("the capture buttons and the tags field are locked while a decision is pending", async () => {
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+
+    const actions = document.querySelector(".popup__actions");
+    const tags = document.getElementById("tags");
+    expect(actions instanceof HTMLElement && actions.hidden).toBe(true);
+    expect(tags instanceof HTMLInputElement && tags.disabled).toBe(true);
+  });
+
+  test("cancelling unlocks them again", async () => {
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+
+    click("preview-cancel");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(true));
+
+    const actions = document.querySelector(".popup__actions");
+    const tags = document.getElementById("tags");
+    expect(actions instanceof HTMLElement && actions.hidden).toBe(false);
+    expect(tags instanceof HTMLInputElement && tags.disabled).toBe(false);
+  });
+
+  test("the tags SENT are the tags PREVIEWED, even if the field changes after", async () => {
+    const tags = document.getElementById("tags");
+    if (tags instanceof HTMLInputElement) {
+      tags.value = "research";
+    }
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+
+    // Simulate the field being changed behind the preview's back. The composer
+    // lock makes this unreachable by hand, which is the point — this asserts the
+    // send path does not RE-READ it even if something else does.
+    if (tags instanceof HTMLInputElement) {
+      tags.value = "totally-different";
+    }
+    harness.sendMessage.mockClear();
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "clip",
+      ok: true,
+      status: "created",
+      bookmarked: false,
+    });
+
+    click("preview-confirm");
+    await vi.waitFor(() => expect(statusText()).toBe("Saved to Nimbus."));
+
+    const sent = harness.sendMessage.mock.calls[0]?.[0] as { tags?: string[] };
+    expect(sent.tags).toEqual(["research"]);
   });
 });
 ```
 
-> **Harness note.** `test/unit/popup.test.ts` already has boot/flush machinery and
-> a chrome mock whose `activeTab` and capture results are seeded. Read the file
-> and reuse its existing helpers and seeding — the names above (`bootPopup`,
-> `clickButton`, `el`) are indicative; **use whatever that file actually
-> defines** rather than introducing parallel helpers. If the capture stub does
-> not yield a URL, seed it the way the existing clip tests do.
+> **Harness facts — verified, use these exactly.** `test/unit/popup.test.ts` has
+> no `boot*` helper: a `beforeEach` installs the mock, writes `FIXTURE` into
+> `document.body`, dispatches `DOMContentLoaded`, and waits for the first
+> `sendMessage` call. Its helpers are **`click(id)`** and **`statusText()`**, and
+> it settles with **`vi.waitFor(...)`**, not a custom `flush()`. Capture is
+> stubbed with two `harness.executeScript.mockResolvedValueOnce` calls (inject,
+> then invoke) — `ARTICLE_CAPTURE` is already defined in the file with url
+> `https://example.com/article`.
+>
+> **You must extend that file's `FIXTURE`** with the `#preview` section, exactly
+> as added to `popup.html` — `bootOptions`-style, the fixture is hand-rolled and
+> does not read the real HTML. Without it every test here throws
+> `missing #preview` and the failure looks like a missing implementation.
+>
+> The `beforeEach` waits for **exactly one** `sendMessage` (the initial
+> `refreshQueue`). `isPreviewEnabled()` reads `chrome.storage` through the browser
+> seam, **not** a message, so it does not disturb that count — do not "fix" the
+> beforeEach.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -813,55 +910,79 @@ git commit -m "feat(popup): show the payload, then send it"
 
 Append to `test/unit/panel-in-page.test.ts`, using that file's existing harness:
 
+Use **`mountPanelWithScript`**, which exists in this file precisely for the fetch
+state machine: it scripts responses per message kind and records each
+`resolve`/`fetch` into a `sent` array — already the assertion surface for
+"exactly one fetch, ever". It returns the panel **body**, so
+`panel.querySelector(...)` does not pick up the shadow root's own close button.
+
+Read its doc comment and the existing fetch tests beside it, then follow their
+shape exactly. The three tests to add:
+
 ```ts
 describe("fetch preview", () => {
-  test("pressing Fetch shows what will be fetched and sends NOTHING yet", async () => {
-    // Boot the panel on a recognised, not-indexed page using this file's
-    // existing helper for that state.
-    await bootNotIndexed();
-    sendMessageMock.mockClear();
-    clickFetchButton();
+  test("pressing Fetch shows the target and sends NO fetch yet", async () => {
+    const { panel, sent } = await mountPanelWithScript({
+      resolve: [NOT_INDEXED_FETCHABLE],
+      fetch: [FETCH_INDEXED],
+    });
+
+    clickFetch(panel);
     await flush();
 
-    const kinds = sendMessageMock.mock.calls.map((c) => (c[0] as { kind?: string }).kind);
-    expect(kinds).not.toContain("fetch");
-    expect(panelText()).toContain("github");
+    // The assertion that matters: the trace shows the resolve only.
+    expect(sent).toEqual(["resolve"]);
+    expect(panel.textContent).toContain("github");
   });
 
-  test("confirming sends the fetch", async () => {
-    await bootNotIndexed();
-    clickFetchButton();
+  test("confirming sends exactly one fetch", async () => {
+    const { panel, sent } = await mountPanelWithScript({
+      resolve: [NOT_INDEXED_FETCHABLE],
+      fetch: [FETCH_INDEXED],
+    });
+
+    clickFetch(panel);
     await flush();
-    sendMessageMock.mockClear();
-    clickConfirm();
+    clickPreviewSend(panel);
     await flush();
 
-    const kinds = sendMessageMock.mock.calls.map((c) => (c[0] as { kind?: string }).kind);
-    expect(kinds).toContain("fetch");
+    expect(sent).toEqual(["resolve", "fetch"]);
   });
 
-  test("cancelling sends nothing and the Fetch button is still usable", async () => {
-    await bootNotIndexed();
-    clickFetchButton();
-    await flush();
-    sendMessageMock.mockClear();
-    clickCancel();
-    await flush();
+  test("cancelling sends nothing AND leaves the fetch button usable", async () => {
+    const { panel, sent } = await mountPanelWithScript({
+      resolve: [NOT_INDEXED_FETCHABLE],
+      fetch: [FETCH_INDEXED],
+    });
 
-    const kinds = sendMessageMock.mock.calls.map((c) => (c[0] as { kind?: string }).kind);
-    expect(kinds).not.toContain("fetch");
-    // `fetchSent` must NOT have latched — cancelling is not an attempt.
-    clickFetchButton();
+    clickFetch(panel);
     await flush();
-    expect(panelText()).toContain("github");
+    clickPreviewCancel(panel);
+    await flush();
+    expect(sent).toEqual(["resolve"]);
+
+    // `fetchSent` must NOT have latched. Cancelling is not an attempt, and a
+    // latch here would turn "no thanks" into "never again" for this panel.
+    clickFetch(panel);
+    await flush();
+    clickPreviewSend(panel);
+    await flush();
+    expect(sent).toEqual(["resolve", "fetch"]);
   });
 });
 ```
 
-> **Harness note.** `test/unit/panel-in-page.test.ts` already boots the panel
-> against a mocked `sendMessage` and has helpers for reaching the not-indexed
-> state and clicking panel controls. **Read the file and use its real helpers** —
-> the names above are indicative. Do not add a second harness.
+> **Harness facts — verified.** `mountPanelWithScript` is real and returns the
+> panel body plus the `sent` trace; `mountPanelWithResolve`, `loadPanel`,
+> `flush`, `shadow`, `headerText` and `status` are its siblings. There is **no**
+> `bootNotIndexed`, `clickFetchButton`, `panelText` or `sendMessageMock` — do not
+> invent them.
+>
+> The fixture names above (`NOT_INDEXED_FETCHABLE`, `FETCH_INDEXED`) and the
+> click helpers (`clickFetch`, `clickPreviewSend`, `clickPreviewCancel`) are
+> **placeholders for whatever the existing fetch tests already use**. Read those
+> tests first and reuse their fixtures and click idiom verbatim; add a small
+> local helper only if none exists. Do not add a second harness.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
