@@ -919,12 +919,16 @@ state machine: it scripts responses per message kind and records each
 Read its doc comment and the existing fetch tests beside it, then follow their
 shape exactly. The three tests to add:
 
+Add these to the **existing fetch `describe` block**, beside
+`"fetches on click, then re-resolves to show the item"`. That block already
+defines the `miss`, `found()`, `indexed` and `timedOut` fixtures — reuse them.
+
 ```ts
-describe("fetch preview", () => {
-  test("pressing Fetch shows the target and sends NO fetch yet", async () => {
-    const { panel, sent } = await mountPanelWithScript({
-      resolve: [NOT_INDEXED_FETCHABLE],
-      fetch: [FETCH_INDEXED],
+  it("pressing Fetch shows the target and sends NO fetch yet", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [indexed],
     });
 
     clickFetch(panel);
@@ -932,13 +936,14 @@ describe("fetch preview", () => {
 
     // The assertion that matters: the trace shows the resolve only.
     expect(sent).toEqual(["resolve"]);
-    expect(panel.textContent).toContain("github");
+    expect(panel.textContent).toContain("Address");
   });
 
-  test("confirming sends exactly one fetch", async () => {
-    const { panel, sent } = await mountPanelWithScript({
-      resolve: [NOT_INDEXED_FETCHABLE],
-      fetch: [FETCH_INDEXED],
+  it("confirming sends exactly one fetch", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss, found()],
+      fetch: [indexed],
     });
 
     clickFetch(panel);
@@ -946,13 +951,14 @@ describe("fetch preview", () => {
     clickPreviewSend(panel);
     await flush();
 
-    expect(sent).toEqual(["resolve", "fetch"]);
+    expect(sent).toEqual(["resolve", "fetch", "resolve"]);
   });
 
-  test("cancelling sends nothing AND leaves the fetch button usable", async () => {
-    const { panel, sent } = await mountPanelWithScript({
-      resolve: [NOT_INDEXED_FETCHABLE],
-      fetch: [FETCH_INDEXED],
+  it("cancelling sends nothing AND leaves the fetch button usable", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss, found()],
+      fetch: [indexed],
     });
 
     clickFetch(panel);
@@ -967,22 +973,30 @@ describe("fetch preview", () => {
     await flush();
     clickPreviewSend(panel);
     await flush();
-    expect(sent).toEqual(["resolve", "fetch"]);
+    expect(sent).toEqual(["resolve", "fetch", "resolve"]);
   });
-});
 ```
 
-> **Harness facts — verified.** `mountPanelWithScript` is real and returns the
-> panel body plus the `sent` trace; `mountPanelWithResolve`, `loadPanel`,
-> `flush`, `shadow`, `headerText` and `status` are its siblings. There is **no**
-> `bootNotIndexed`, `clickFetchButton`, `panelText` or `sendMessageMock` — do not
-> invent them.
+> **Harness facts — verified against the file, use these exactly.**
+> The signature is **`mountPanelWithScript(sent, { resolve: [...], fetch: [...] })`**
+> — the `sent` array is passed IN and mutated, not returned. It returns the panel
+> **body** element. Settle with **`await flush()`**. Tests in this block use
+> **`it(...)`**, not `test(...)`. The fixtures `miss`, `found()`, `indexed` and
+> `timedOut` already exist in that describe block.
 >
-> The fixture names above (`NOT_INDEXED_FETCHABLE`, `FETCH_INDEXED`) and the
-> click helpers (`clickFetch`, `clickPreviewSend`, `clickPreviewCancel`) are
-> **placeholders for whatever the existing fetch tests already use**. Read those
-> tests first and reuse their fixtures and click idiom verbatim; add a small
-> local helper only if none exists. Do not add a second harness.
+> **THE BUTTON-SELECTION HAZARD — read this before writing `clickFetch`.**
+> Every existing fetch test clicks `(panel.querySelector("button") as HTMLButtonElement).click()`
+> — the **first** button in the panel body. Once your preview adds Send and
+> Cancel, "the first button" is ambiguous and those existing tests may start
+> clicking the wrong control.
+>
+> So: give the three controls **stable, distinct class names** (e.g.
+> `nimbus-related__fetch`, `nimbus-related__fetch-send`,
+> `nimbus-related__fetch-cancel`) and write three tiny local helpers that select
+> by class, not by position. **Check whether the pre-existing fetch tests still
+> pass unchanged** — if any now grabs the wrong button, update it to select by
+> class too, and say so in your report. Do NOT leave a positional selector that
+> happens to work today.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
