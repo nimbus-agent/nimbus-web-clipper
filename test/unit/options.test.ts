@@ -624,15 +624,63 @@ describe("options.html stages", () => {
     expect(html).toContain('id="trust-hosts"');
   });
 
-  test("the trust panel states the popup-lookup caveat", () => {
-    expect(html).toContain("opening the popup");
+  test("the trust panel describes what clipping actually sends — no payload preview promise", () => {
+    expect(html).toContain(
+      "sends the page's title, URL, and the extracted article or selected text",
+    );
+    expect(html).not.toContain("shows you the whole payload first");
   });
 
-  test("the trust panel does not overclaim about the hotkey path", () => {
-    expect(html).toContain("the hotkey shows you after");
+  test("the trust panel does not claim a popup URL lookup", () => {
+    expect(html).not.toContain("opening the popup");
+  });
+
+  test("stage 2 and stage 3 default to locked in the shipped HTML", () => {
+    expect(html).toMatch(/id="stage-connection"\s+class="stage"\s+data-state="locked"/);
+    expect(html).toMatch(/id="stage-sites"\s+class="stage"\s+data-state="locked"/);
   });
 
   test("the manual gateway URL field survives — discovery never removes it", () => {
     expect(html).toContain('id="origin"');
+  });
+});
+
+describe("trust panel content (#trust-origin / #trust-hosts)", () => {
+  // These are the only assertions on what the data-driven half of the trust
+  // panel actually RENDERS, as opposed to the ids merely existing in the
+  // markup — the case that would catch a future switch from textContent back
+  // to innerHTML going unnoticed.
+  test("#trust-origin shows the real configured origin when paired", async () => {
+    await boot(paired);
+    expect(el("trust-origin").textContent).toBe("http://127.0.0.1:7474");
+  });
+
+  test("#trust-origin shows the not-paired wording when not paired", async () => {
+    await boot(unpaired);
+    expect(el("trust-origin").textContent).toBe("your local gateway (not paired yet)");
+  });
+
+  test("#trust-hosts reads 'no sites yet' with no grants", async () => {
+    await boot();
+    expect(el("trust-hosts").textContent).toBe("no sites yet");
+  });
+
+  test("#trust-hosts lists a granted origin", async () => {
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://github.com/*");
+    harness.sendMessage.mockResolvedValue(unpaired);
+    await bootOptions();
+    expect(el("trust-hosts").textContent).toBe("github.com");
+  });
+});
+
+describe("refreshConnection failure", () => {
+  test("a rejecting connection-status leaves the shipped locked defaults, rather than throwing", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockRejectedValue(new Error("channel closed"));
+    await bootOptions();
+
+    expect(el("stage-connection").dataset["state"]).toBeUndefined();
+    expect(el("stage-sites").dataset["state"]).toBeUndefined();
   });
 });

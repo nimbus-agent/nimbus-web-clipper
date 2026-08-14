@@ -74,10 +74,6 @@ export function markStale(): Promise<void> {
   return mutate((c) => ({ ...c, stale: true }));
 }
 
-export function clearStale(): Promise<void> {
-  return mutate((c) => ({ ...c, stale: false }));
-}
-
 export function setConnection(c: Connection): Promise<void> {
   return enqueue(() => storageSet(CONNECTION_KEY, c));
 }

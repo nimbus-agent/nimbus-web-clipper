@@ -75,7 +75,16 @@ function renderConnection(res: unknown): void {
 }
 
 async function refreshConnection(): Promise<void> {
-  renderConnection(await sendMessage({ kind: "connection-status" }));
+  try {
+    renderConnection(await sendMessage({ kind: "connection-status" }));
+  } catch {
+    // The message channel rejected (service worker asleep or erroring) —
+    // leave the shipped HTML defaults in place (stages 2 and 3 locked) rather
+    // than throwing away the render. Without this, a silent failure here
+    // would leave every stage rendering fully active — including Unpair and
+    // page-access controls — on a profile the extension never confirmed was
+    // paired.
+  }
 }
 
 async function pair(): Promise<void> {

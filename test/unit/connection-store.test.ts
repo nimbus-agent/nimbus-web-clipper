@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   clearConnection,
-  clearStale,
   getConnection,
   markClipSuccess,
   markStale,
@@ -72,13 +71,6 @@ describe("connection health facts", () => {
     const loaded = await getConnection();
     expect(loaded?.stale).toBe(true);
     expect(loaded?.token).toBe("tok");
-  });
-
-  test("clearStale unsets it", async () => {
-    installChromeStub();
-    await setConnection({ ...conn, stale: true });
-    await clearStale();
-    expect((await getConnection())?.stale).toBe(false);
   });
 
   test("marking with no connection stored is a no-op, not a crash", async () => {

@@ -913,6 +913,26 @@ describe("quick clip — context menu + shortcut routes", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(harness.setBadgeText).toHaveBeenCalledWith({ text: "!" });
   });
+
+  // Regression for quick-clip being one of the four clip paths that used to
+  // bypass `stale` entirely — this route calls handleClip directly, never
+  // through the message router's `respond` wrap, so only postClipPaced can
+  // catch it.
+  test("a 401 on the quick-clip (hotkey) path sets stale, alongside the error toast", async () => {
+    await load();
+    seedQuickClip(harness);
+    globalThis.fetch = vi.fn(async () => jsonRes(401, { error: "unauthorized" }));
+
+    harness.emitCommand("clip-page");
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        args: [{ variant: "error", text: "Pairing expired — re-pair in Options." }],
+      }),
+    );
+    expect((harness.storage.get(CONNECTION_KEY) as Connection).stale).toBe(true);
+  });
 });
 
 describe("rate-limit pacing", () => {
@@ -1848,6 +1868,23 @@ describe("a rejected token is remembered", () => {
     await settle();
 
     expect((harness.storage.get(CONNECTION_KEY) as Connection).stale).toBeUndefined();
+  });
+
+  // Regression for the queue drain being one of the four clip paths that used to
+  // bypass `stale` entirely — postClipPaced is the seam shared by clipDeps AND
+  // flushDeps, so a 401 discovered by the background drain must set it too.
+  test("a 401 discovered by the queue drain (background alarm) sets stale", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.storage.set(QUEUE_KEY, [queued("https://ex.com/a")]);
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(401, { error: "unauthorized" }));
+
+    harness.emitAlarm(FLUSH_ALARM);
+    await settle();
+
+    expect((harness.storage.get(CONNECTION_KEY) as Connection).stale).toBe(true);
+    // The entry stays queued — a dead token is not something a retry can fix.
+    expect(harness.storage.get(QUEUE_KEY)).toHaveLength(1);
   });
 });
 

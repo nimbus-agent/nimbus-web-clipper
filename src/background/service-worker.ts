@@ -105,16 +105,23 @@ export const AGENT_POLL_ALARM = "nimbus-agent-poll";
 const POLL_START_MS = 500;
 const POLL_MAX_MS = 2_000;
 
-// The one place the rate-limit pause is written. Wrapping the seam — rather than
+// The one place the rate-limit pause is written — and, for the same reason, the
+// one place `stale` is set for EVERY clip path. Wrapping this seam — rather than
 // threading a dependency through handleClip and flushQueue — keeps both of those
-// pure and means a 429 from EITHER path (interactive clip or queue drain) paces the
-// next drain. A storage failure here must never fail the clip itself.
+// pure and means a 429 or a 401 from ANY path (interactive clip, quick-clip, or
+// the queue drain) is handled once. `clipDeps` and `flushDeps` both go through
+// this single function, which is what makes it the right seam: the message
+// router's `respond` wrap (below) catches only the routes it fronts — the panel
+// lanes — and never sees quick-clip or the background drain at all. A storage
+// failure here must never fail the clip itself.
 const postClipPaced: FlushDeps["postClip"] = async (origin, token, payload) => {
   const r = await postClip(origin, token, payload);
   if (r.ok) {
     await endPause().catch(() => undefined);
   } else if (r.reason === "rate_limited") {
     await setPauseUntil(Date.now() + (r.retryAfterMs ?? 60_000)).catch(() => undefined);
+  } else if (r.reason === "unauthorized") {
+    await markStale().catch(() => undefined);
   }
   return r;
 };
