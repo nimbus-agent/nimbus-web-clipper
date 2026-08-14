@@ -459,13 +459,14 @@ describe("options.html shortcuts block", () => {
 
 describe("shortcuts render into Options", () => {
   test("a bound and an unbound command both render, with the unbound one marked", async () => {
-    await boot();
+    // Seed BEFORE booting — see the harness note below. Never call boot() and
+    // then dispatch DOMContentLoaded again.
+    harness = installChromeMock();
     harness.commandsGetAll = [
       { name: "show_related", description: "Show related items in Nimbus", shortcut: "Alt+Shift+R" },
       { name: "clip-page", description: "Clip the current page to Nimbus", shortcut: "" },
     ];
-    document.dispatchEvent(new Event("DOMContentLoaded"));
-    await flush();
+    await bootOptions();
 
     const rows = el("shortcut-list").querySelectorAll(".shortcut");
     expect(rows.length).toBe(2);
@@ -473,13 +474,34 @@ describe("shortcuts render into Options", () => {
   });
 
   test("the hint names a settings path the user can paste", async () => {
-    await boot();
-    document.dispatchEvent(new Event("DOMContentLoaded"));
-    await flush();
+    harness = installChromeMock();
+    await bootOptions();
     expect(el("shortcut-hint").textContent?.toLowerCase()).toContain("paste");
+  });
+
+  test("no commands at all renders an empty list, not a broken page", async () => {
+    harness = installChromeMock();
+    harness.commandsGetAll = [];
+    await bootOptions();
+    expect(el("shortcut-list").querySelectorAll(".shortcut").length).toBe(0);
+    expect(el("shortcut-hint").textContent?.length).toBeGreaterThan(0);
   });
 });
 ```
+
+> **Two harness facts this test depends on — get both right or it fails for the
+> wrong reason.**
+>
+> **Seed before boot.** The established pattern in this file is
+> `harness = installChromeMock(); <seed harness state>; await bootOptions();`
+> (see the "built-in surfaces in the list" tests). `boot()` installs the mock
+> *and* dispatches `DOMContentLoaded` in one step, so seeding after it and
+> dispatching again would register every Options listener a second time.
+>
+> **Extend `FIXTURE`.** `bootOptions` writes a hand-rolled `FIXTURE` string into
+> `document.body`, not the real `options.html`. The new `shortcut-list` and
+> `shortcut-hint` elements must be added to it, inside its stage-2 block, or
+> `el("shortcut-list")` throws `missing #shortcut-list`.
 
 > **Harness note — this one DOES need adding.** The mock's `chrome.commands`
 > (`test/unit/helpers/chrome-mock.ts:178`) currently exposes only `onCommand`;
