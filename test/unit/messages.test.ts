@@ -401,6 +401,50 @@ describe("agent-lane guards", () => {
     );
   });
 
+  describe("the optional lane inputs", () => {
+    const base = { kind: "agent-run", lane: "impact", pageUrl: "https://x/y" };
+
+    test("accepts a picked item id", () => {
+      expect(isAgentRunRequest({ ...base, itemId: "github:42" })).toBe(true);
+    });
+
+    // An empty id can only be a bug: it would key a cache entry under nothing.
+    test("rejects an empty or non-string item id", () => {
+      expect(isAgentRunRequest({ ...base, itemId: "" })).toBe(false);
+      expect(isAgentRunRequest({ ...base, itemId: 42 })).toBe(false);
+      expect(isAgentRunRequest({ ...base, itemId: null })).toBe(false);
+    });
+
+    test("accepts a normalised term", () => {
+      expect(isAgentRunRequest({ ...base, lane: "glossary", term: "blast radius" })).toBe(true);
+      expect(
+        isAgentStateRequest({ kind: "agent-state", lane: "glossary", pageUrl: "u", term: "x" }),
+      ).toBe(true);
+    });
+
+    // The boundary validates; it must not quietly repair. A guard that accepted
+    // a ragged term would be claiming the sender sent something it did not.
+    test("rejects a term that is not already in normal form", () => {
+      expect(isAgentRunRequest({ ...base, term: "  padded  " })).toBe(false);
+      expect(isAgentRunRequest({ ...base, term: "two\nlines" })).toBe(false);
+      expect(isAgentRunRequest({ ...base, term: "" })).toBe(false);
+    });
+
+    // Refused, not truncated — see shared/term.ts.
+    test("rejects a passage", () => {
+      expect(isAgentRunRequest({ ...base, term: "x".repeat(129) })).toBe(false);
+      expect(isAgentRunRequest({ ...base, term: "x".repeat(128) })).toBe(true);
+    });
+
+    // The run and the poll key ONE cache entry, so the poll's guard has to hold
+    // the request to exactly the same standard the run's does.
+    test("holds agent-state to the same rules as agent-run", () => {
+      const poll = { kind: "agent-state", lane: "glossary", pageUrl: "https://x/y" };
+      expect(isAgentStateRequest({ ...poll, term: "  padded  " })).toBe(false);
+      expect(isAgentStateRequest({ ...poll, itemId: "" })).toBe(false);
+    });
+  });
+
   describe("isAgentStateResponse", () => {
     it("accepts every LaneState arm", () => {
       const states = [

@@ -110,7 +110,7 @@ export const PRODUCT_SERVICE_ID: Record<Product, string> = {
  * knows and that has NO indexed item — a product's own dashboard. It exists
  * because the service-scoped agents (`catchup`/`decisions`/`ownership`) answer
  * about a whole connector, so they need a page whose scope matches that answer.
- * See LANE_SURFACES below.
+ * See LANE_RULES below.
  */
 export type SurfaceKind = "pr" | "build" | "issue" | "home";
 
@@ -308,34 +308,90 @@ export type FetchError =
  * (HTTP_EXCLUDED_AGENT_METHODS in packages/gateway/src/ipc/agents-rpc.ts).
  * `ghost` and `conflicts` are absent because both require `{ file }` — a local
  * checkout the browser does not have.
+ *
+ * `glossary` is declared FIRST because order here is render order and it is the
+ * only lane the user summons by name: it exists in a panel because they just
+ * selected a word and asked what it means, so it leads the answer rather than
+ * sitting under two lanes they did not ask for. See `LANE_RULES` below for why
+ * it is also the only lane with no surface list.
  */
-export const AGENT_LANES = ["impact", "expert", "catchup", "decisions", "ownership"] as const;
+export const AGENT_LANES = [
+  "glossary",
+  "impact",
+  "expert",
+  "catchup",
+  "decisions",
+  "ownership",
+] as const;
 export type AgentLane = (typeof AGENT_LANES)[number];
 
 /**
- * Which recognised surfaces each lane belongs on.
+ * What a lane needs before it can be asked anything.
  *
- * The panel renders only the lanes whose entry contains the page's recognised
- * `SurfaceKind`. Before this table, lanes were gated on "the page resolved to an
- * item" alone, so a resolved Jira issue offered *What breaks if it lands* and
- * handed the issue URL to `agents.impact` as its `fileOrPrUrl` — a question that
- * does not apply, answered from an input the agent was not built for.
+ * A discriminated union rather than two parallel tables, because the two arms
+ * are genuinely exclusive and each carries a field the other must not have:
  *
- * Keyed by `AgentLane`, so adding a lane without declaring its surfaces is a type
- * error rather than a lane that silently appears everywhere. Gated on the
- * RECOGNISER's kind — a closed union this repo owns — not on `ResolvedItem.type`,
- * which is a free-form string from the wire.
+ * - `page` — the lane's whole input is derived from the page, so it must declare
+ *   which recognised `SurfaceKind`s it belongs on. Every lane through C2.3.
+ * - `term` — the lane's input is supplied by the user (a selection), so a
+ *   surface list would be meaningless: there is no page property that makes a
+ *   term more or less answerable. Declaring `surfaces` on this arm is a type
+ *   error, which is the point — it stops a future editor from "fixing" the
+ *   asymmetry by pinning glossary to the surfaces that happen to exist today.
+ *
+ * Keyed by `AgentLane`, so adding a lane without declaring its rule stays a type
+ * error rather than a lane that silently appears everywhere — the property C2.3
+ * established, now covering both questions instead of one.
  */
-export const LANE_SURFACES: Record<AgentLane, readonly SurfaceKind[]> = {
-  impact: ["pr"],
-  expert: ["pr"],
+export type LaneRule =
+  | { readonly input: "page"; readonly surfaces: readonly SurfaceKind[] }
+  | { readonly input: "term" };
+
+/**
+ * Which lane belongs where, and on what input.
+ *
+ * Before this table, lanes were gated on "the page resolved to an item" alone,
+ * so a resolved Jira issue offered *What breaks if it lands* and handed the
+ * issue URL to `agents.impact` as its `fileOrPrUrl` — a question that does not
+ * apply, answered from an input the agent was not built for. The surface gate is
+ * on the RECOGNISER's kind — a closed union this repo owns — not on
+ * `ResolvedItem.type`, which is a free-form string from the wire.
+ *
+ * Renamed from `LANE_SURFACES`: the value is no longer a surface list, and a
+ * name that says otherwise is exactly the drift the table exists to prevent.
+ */
+export const LANE_RULES: Record<AgentLane, LaneRule> = {
+  // No surfaces, and not an omission. `POST /v1/agents/glossary` takes
+  // `{ term, limit }` — no URL, no item — so this lane answers on any page the
+  // panel opens on, including one the recogniser rejects. The recogniser gate
+  // exists to stop page URLs reaching the gateway; this lane sends none, so the
+  // reason for the gate does not apply to it. The term you most need defined is
+  // usually on the unfamiliar internal wiki that has no connector at all.
+  glossary: { input: "term" },
+  impact: { input: "page", surfaces: ["pr"] },
+  expert: { input: "page", surfaces: ["pr"] },
   // Service-scoped: these answer about a whole connector, so they belong on the
   // one page whose scope is the connector. On an item page they would repeat
   // the same answer for every item on that host.
-  catchup: ["home"],
-  decisions: ["home"],
-  ownership: ["home"],
+  catchup: { input: "page", surfaces: ["home"] },
+  decisions: { input: "page", surfaces: ["home"] },
+  ownership: { input: "page", surfaces: ["home"] },
 };
+
+/**
+ * Does this page-derived lane belong on this surface?
+ *
+ * Always false for a term lane — not because a term lane is unwelcome on the
+ * surface, but because the question is the wrong one to ask about it. Callers
+ * deciding what to render must branch on `LANE_RULES[lane].input` first; this
+ * helper is the answer for the `page` arm alone, and answering `false` rather
+ * than throwing keeps the two call sites (the panel's render gate and the
+ * handler's forged-message check) from each inventing their own default.
+ */
+export function laneBelongsOnSurface(lane: AgentLane, kind: SurfaceKind): boolean {
+  const rule = LANE_RULES[lane];
+  return rule.input === "page" && rule.surfaces.includes(kind);
+}
 
 /**
  * What one lane is doing. `collapsed` is also the state of a lane never opened.
@@ -398,6 +454,16 @@ export const AGENT_ERRORS = [
   // would say "this gateway can't run agents yet" about a gateway that runs
   // them fine.
   "not_resolved",
+  /**
+   * A lane whose `LANE_RULES` entry is `{input:"term"}` was asked to run with no
+   * term. Unreachable from the shipped UI — the panel materialises a term lane
+   * only once a term exists — so this exists for the same reason the handler's
+   * surface check does: `agent-run` arrives from a content script, and a forged
+   * or stale one deserves an honest answer rather than a borrowed
+   * `not_resolved`, which would blame the page for a missing input the page was
+   * never the source of.
+   */
+  "no_term",
   "stale",
   "unreachable",
   "server_error",

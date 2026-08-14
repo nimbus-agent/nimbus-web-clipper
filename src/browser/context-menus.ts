@@ -38,8 +38,20 @@ export async function removeAllMenus(): Promise<void> {
   });
 }
 
+/**
+ * `selectionText` is passed through because it is the AUTHORITATIVE selection at
+ * click time, and the page is not: it is captured by the browser when the menu
+ * opens, so it survives a page script that clears the selection in response to
+ * the interaction, and it carries text selected inside an `<input>` or
+ * `<textarea>`, which `window.getSelection()` in the page reports as empty.
+ *
+ * Undefined for a non-selection context — every entry that reads it is
+ * registered on `["selection"]` only.
+ */
 export function addMenuClickListener(
-  fn: (menuItemId: string, tabId: number | undefined) => void,
+  fn: (menuItemId: string, tabId: number | undefined, selectionText: string | undefined) => void,
 ): void {
-  chrome.contextMenus.onClicked.addListener((info, tab) => fn(String(info.menuItemId), tab?.id));
+  chrome.contextMenus.onClicked.addListener((info, tab) =>
+    fn(String(info.menuItemId), tab?.id, info.selectionText),
+  );
 }

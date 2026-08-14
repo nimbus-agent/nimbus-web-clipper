@@ -780,13 +780,19 @@ describe("quick clip — context menu + shortcut routes", () => {
       .mockResolvedValue([{ result: undefined }]);
   }
 
-  test("registers the three context menus on startup (removeAll before create)", async () => {
+  test("registers every context menu on startup (removeAll before create)", async () => {
     await load();
 
     expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
-    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(3);
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(5);
     const ids = harness.contextMenusCreate.mock.calls.map((c) => (c[0] as { id: string }).id);
-    expect(ids).toEqual(["clip-page", "clip-selection", "show-related"]);
+    expect(ids).toEqual([
+      "clip-page",
+      "clip-selection",
+      "show-related",
+      "define-selection",
+      "related-to-selection",
+    ]);
   });
 
   test("onInstalled re-registers the menus (removeAll first, no duplicate ids)", async () => {
@@ -798,7 +804,7 @@ describe("quick clip — context menu + shortcut routes", () => {
     await settle();
 
     expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
-    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(3);
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(5);
   });
 
   test("clip-page command captures the active tab and posts a clip", async () => {
@@ -1987,9 +1993,107 @@ describe("show-related context menu", () => {
     expect(harness.executeScript).not.toHaveBeenCalled();
   });
 
-  test("the menu registers all three entries", async () => {
+  test("the menu registers every entry", async () => {
     await load();
     const ids = harness.contextMenusCreate.mock.calls.map((c) => (c[0] as { id: string }).id);
-    expect(ids).toEqual(["clip-page", "clip-selection", "show-related"]);
+    expect(ids).toEqual([
+      "clip-page",
+      "clip-selection",
+      "show-related",
+      "define-selection",
+      "related-to-selection",
+    ]);
+  });
+});
+
+describe("the selection context menus", () => {
+  /** The call the worker makes to reach an open panel's hook: a `func`
+   *  injection, never `files: ["panel.js"]` — that entry self-toggles and would
+   *  close the panel it was trying to hand a selection to. */
+  function hookCalls(): unknown[] {
+    return harness.executeScript.mock.calls
+      .map((c) => c[0] as { func?: unknown; args?: unknown[] })
+      .filter((arg) => typeof arg.func === "function");
+  }
+
+  function fileCalls(): unknown[] {
+    return harness.executeScript.mock.calls
+      .map((c) => c[0] as { files?: string[] })
+      .filter((arg) => arg.files !== undefined);
+  }
+
+  test("hands the selection to an ALREADY-OPEN panel without re-injecting it", async () => {
+    await load();
+    harness.executeScript.mockClear();
+    // The hook reports it handled the delivery — a panel is open.
+    harness.executeScript.mockResolvedValue([{ result: true }]);
+
+    harness.emitMenuClick("define-selection", 42, "blast radius");
+    await settle();
+
+    expect(hookCalls()).toHaveLength(1);
+    // The load-bearing assertion: panel.js is NOT injected, so the open panel
+    // stays open instead of being toggled shut.
+    expect(fileCalls()).toEqual([]);
+    const [arg] = hookCalls() as Array<{ args: unknown[] }>;
+    expect(arg?.args?.[2]).toEqual({ text: "blast radius", intent: "define" });
+  });
+
+  test("mounts a panel first when none is open, then delivers", async () => {
+    await load();
+    harness.executeScript.mockClear();
+    // First hook call finds no panel; the injection resolves; the retry lands.
+    harness.executeScript
+      .mockResolvedValueOnce([{ result: false }])
+      .mockResolvedValueOnce([{ result: undefined }])
+      .mockResolvedValue([{ result: true }]);
+
+    harness.emitMenuClick("related-to-selection", 7, "canary");
+    await settle();
+
+    expect(fileCalls()).toEqual([expect.objectContaining({ files: ["panel.js"] })]);
+    expect(hookCalls()).toHaveLength(2);
+    const last = hookCalls().at(-1) as { args: unknown[] };
+    expect(last.args[2]).toEqual({ text: "canary", intent: "related" });
+  });
+
+  test("targets the RIGHT-CLICKED tab", async () => {
+    await load();
+    harness.executeScript.mockClear();
+    harness.executeScript.mockResolvedValue([{ result: true }]);
+
+    harness.emitMenuClick("define-selection", 99, "canary");
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenCalledWith(
+      expect.objectContaining({ target: { tabId: 99 } }),
+    );
+  });
+
+  // A selection belongs to ONE page. Falling back to the active tab — as the
+  // plain panel entry does — could put a term from one page into a panel
+  // describing another.
+  test("does nothing at all without a tab id", async () => {
+    await load();
+    harness.executeScript.mockClear();
+
+    harness.emitMenuClick("define-selection", undefined, "canary");
+    await settle();
+
+    expect(harness.executeScript).not.toHaveBeenCalled();
+  });
+
+  // The browser only offers a selection entry when there IS a selection, so an
+  // empty one is a browser-level surprise: open the panel and let its own
+  // mount-time snapshot do better than a request built on nothing.
+  test("falls back to opening the panel when the browser sends no text", async () => {
+    await load();
+    harness.executeScript.mockClear();
+
+    harness.emitMenuClick("define-selection", 5, "");
+    await settle();
+
+    expect(fileCalls()).toEqual([expect.objectContaining({ files: ["panel.js"] })]);
+    expect(hookCalls()).toEqual([]);
   });
 });

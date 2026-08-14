@@ -34,13 +34,14 @@ import {
   type Connection,
   type FetchError,
   type FetchOutcome,
-  LANE_SURFACES,
+  LANE_RULES,
   type LaneState,
+  laneBelongsOnSurface,
   type PairError,
   PRODUCT_SERVICE_ID,
   type RelatedError,
   type RelatedHit,
-  type ResolvedItem,
+  type ResolveCandidate,
   type ResolveError,
   type ResolveOutcome,
   type ScopeGap,
@@ -377,11 +378,14 @@ async function invokeWithRetry(
 }
 
 /**
- * What a lane needs before it can invoke. Two success arms, because a lane is
- * about one of two things: an indexed ITEM (C2.1) or a whole SERVICE (C2.3).
+ * What a lane needs before it can invoke. Three success arms, because a lane is
+ * about one of three things: an indexed ITEM (C2.1), a whole SERVICE (C2.3), or
+ * a TERM the user selected (C2.3's deferred glossary lane).
+ *
  * The service arm exists precisely so the home path can skip the resolve call —
  * there is no item to resolve, and a dashboard URL sent to `resolve` would come
  * back `unresolvable`, reporting a miss for a page that was never meant to hit.
+ * The term arm skips more than that: see `resolveForAgent` below.
  */
 type ResolveForAgent =
   | {
@@ -392,7 +396,15 @@ type ResolveForAgent =
       readonly label: string;
       /** The URL sent to `resolve` — the same one `impact` is given. */
       readonly resolveUrl: string;
-      readonly item: ResolvedItem;
+      /**
+       * `ResolveCandidate`, NOT `ResolvedItem`: this arm now also carries a
+       * candidate the user picked out of an ambiguous answer, and a candidate
+       * has no `modifiedAt` — the gateway does not send one. Typing the field as
+       * the narrower shape is what stops anything downstream reading a freshness
+       * that, on the picked-candidate path, does not exist. Only `id` and
+       * `title` are read (`subjectFor`, `agentParams`), so nothing is lost.
+       */
+      readonly item: ResolveCandidate;
     }
   | {
       readonly ok: true;
@@ -402,13 +414,29 @@ type ResolveForAgent =
       readonly label: string;
       readonly service: string;
     }
+  | {
+      readonly ok: true;
+      readonly scope: "term";
+      readonly origin: string;
+      readonly token: string;
+      readonly label: string;
+      readonly term: string;
+    }
   | { readonly ok: false; readonly reason: AgentError; readonly scopeGap?: ScopeGap };
 
 /**
- * Recognise the page, then resolve it to at most one indexed item — exactly the
- * shared prefix `handleAgentRun` and `handleAgentState` both need: the recogniser
- * gate (no gateway call for a page we cannot classify) and the item id a lane is
- * cached under.
+ * The fields of an `agent-run`/`agent-state` request this prefix reads. Both
+ * request types satisfy it structurally, so the prefix takes the request itself
+ * rather than a growing list of positional arguments — the third and fourth
+ * (`itemId`, `term`) are optional and easy to transpose at a call site.
+ */
+type LaneInvocation = Pick<AgentRunRequest, "lane" | "pageUrl" | "itemId" | "term">;
+
+/**
+ * Work out what a lane is about — exactly the shared prefix `handleAgentRun` and
+ * `handleAgentState` both need: for a page lane, the recogniser gate (no gateway
+ * call for a page we cannot classify) and the item id a lane is cached under;
+ * for a term lane, neither.
  *
  * `not_resolved` is a condition of the PAGE — unrecognised, or a resolve
  * miss/ambiguous answer — never of the gateway; it must not be confused with
@@ -416,28 +444,62 @@ type ResolveForAgent =
  */
 async function resolveForAgent(
   deps: Pick<AgentStateDeps, "getOrigins" | "getConnection" | "resolveItem">,
-  lane: AgentLane,
-  pageUrl: string,
+  req: LaneInvocation,
 ): Promise<ResolveForAgent> {
-  const recognition = recognise(pageUrl, await deps.getOrigins());
+  const lane = req.lane;
+  if (LANE_RULES[lane].input === "term") {
+    // A term lane skips the recogniser gate AND the resolve call, and both are
+    // deliberate rather than an optimisation.
+    //
+    // The recogniser gate exists to decide which page URLs may reach the
+    // gateway at all. `POST /v1/agents/glossary` takes `{ term }` — no URL, no
+    // item — so this path sends no page URL, and the reason for the gate does
+    // not apply to it. Gating anyway would confine definitions to the surfaces a
+    // connector already covers, when the term you most need defined is on the
+    // unfamiliar internal wiki that has no connector at all.
+    //
+    // Skipping the resolve call also means this lane works on a pairing that
+    // never received the `resolve` scope — like the service lanes, it needs only
+    // `agents`.
+    if (req.term === undefined) {
+      // Unreachable from the shipped UI: the panel materialises a glossary lane
+      // only once a term exists, so it never sends one without. Reachable from a
+      // forged message, and answered honestly rather than borrowing
+      // `not_resolved`, which would blame the page for a missing input.
+      return { ok: false, reason: "no_term" };
+    }
+    const termConn = await deps.getConnection();
+    if (termConn === null) {
+      return { ok: false, reason: "not_paired" };
+    }
+    return {
+      ok: true,
+      scope: "term",
+      origin: termConn.origin,
+      token: termConn.token,
+      label: termConn.label,
+      term: req.term,
+    };
+  }
+  const recognition = recognise(req.pageUrl, await deps.getOrigins());
   if (!recognition.ok) {
     // Nothing to ask the gateway about — the recogniser is the boundary deciding
     // which URLs may reach it at all. No resolve call, no invoke.
     return { ok: false, reason: "not_resolved" };
   }
-  // Enforce, in the handler, what `LANE_SURFACES` already enforces in the panel's
-  // render gate: a lane must belong on the page's recognised surface. The panel
-  // never sends a mismatched pair — it renders only lanes `LANE_SURFACES` allows
-  // for the current surface — so this branch is unreachable from the shipped UI.
-  // But `agent-run`/`agent-state` arrive from a content script, and their guards
-  // (`isAgentRunRequest`/`isAgentStateRequest` in shared/messages.ts) validate only
-  // that `lane` is an `AgentLane` and `pageUrl` is a string, never the pairing
-  // between them. Cross-boundary data is untrusted here regardless of what the UI
-  // would send, so without this check a forged `agent-run` could ask `impact`
-  // about a dashboard or `catchup` about a pull request. Placed before any
-  // connection read, cache access or invoke — same "no gateway call for a
+  // Enforce, in the handler, what `LANE_RULES` already enforces in the panel's
+  // render gate: a page lane must belong on the page's recognised surface. The
+  // panel never sends a mismatched pair — it renders only lanes `LANE_RULES`
+  // allows for the current surface — so this branch is unreachable from the
+  // shipped UI. But `agent-run`/`agent-state` arrive from a content script, and
+  // their guards (`isAgentRunRequest`/`isAgentStateRequest` in shared/messages.ts)
+  // validate only that `lane` is an `AgentLane` and `pageUrl` is a string, never
+  // the pairing between them. Cross-boundary data is untrusted here regardless of
+  // what the UI would send, so without this check a forged `agent-run` could ask
+  // `impact` about a dashboard or `catchup` about a pull request. Placed before
+  // any connection read, cache access or invoke — same "no gateway call for a
   // condition of the page" rule the unrecognised-page branch above follows.
-  if (!LANE_SURFACES[lane].includes(recognition.kind)) {
+  if (!laneBelongsOnSurface(lane, recognition.kind)) {
     return { ok: false, reason: "not_resolved" };
   }
   const conn = await deps.getConnection();
@@ -468,9 +530,36 @@ async function resolveForAgent(
           scopeGap: { label: conn.label, ...resolved.scopeGap },
         };
   }
+  // The picked-candidate path (C2.5). An ambiguous page is the one case where the
+  // user has told the panel something it could not work out for itself, and
+  // before this the answer was thrown away one control later: the panel would
+  // send `agent-run`, this function would re-resolve, get `ambiguous` a second
+  // time, and refuse — putting "couldn't pin this page to one indexed item" under
+  // a header naming the item the user had just picked.
+  //
+  // The id is honoured ONLY if it appears in the candidate set THIS resolve
+  // produced. It arrives from a content script, so an id the gateway never
+  // offered is refused exactly like any other unverified cross-boundary value —
+  // and re-checking against a fresh resolve costs nothing here, because the
+  // resolve had to happen anyway to reach this line.
+  if (resolved.outcome.kind === "ambiguous" && req.itemId !== undefined) {
+    const picked = resolved.outcome.candidates.find((c) => c.id === req.itemId);
+    if (picked === undefined) {
+      return { ok: false, reason: "not_resolved" };
+    }
+    return {
+      ok: true,
+      scope: "item",
+      origin: conn.origin,
+      token: conn.token,
+      label: conn.label,
+      resolveUrl: recognition.resolveUrl,
+      item: picked,
+    };
+  }
   if (resolved.outcome.kind !== "found") {
-    // A miss (not-indexed / unresolvable / ambiguous) means there is no single
-    // item to ask about — refuse rather than guess.
+    // A miss (not-indexed / unresolvable / ambiguous with nothing picked) means
+    // there is no single item to ask about — refuse rather than guess.
     return { ok: false, reason: "not_resolved" };
   }
   return {
@@ -499,15 +588,25 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
   if (resolved.scope === "service") {
     return { service: resolved.service };
   }
+  if (resolved.scope === "term") {
+    // `{ term }` and nothing else. `agents.glossary` also accepts `limit`, and
+    // omitting it follows the same rule as the lanes above: the gateway owns its
+    // defaults and re-reads config per call, so a client-side knob would only be
+    // a second place for the same number to disagree.
+    return { term: resolved.term };
+  }
   return lane === "impact"
     ? { fileOrPrUrl: resolved.resolveUrl }
     : { topicOrFile: resolved.item.title };
 }
 
-/** The cache key for a lane: the item it is about, or the service it is about. */
+/** The cache key for a lane: the item, the service, or the term it is about. */
 function subjectFor(resolved: ResolveForAgent & { ok: true }): RunSubject {
-  return resolved.scope === "service"
-    ? { kind: "service", service: resolved.service }
+  if (resolved.scope === "service") {
+    return { kind: "service", service: resolved.service };
+  }
+  return resolved.scope === "term"
+    ? { kind: "term", term: resolved.term }
     : { kind: "item", id: resolved.item.id };
 }
 
@@ -534,7 +633,7 @@ export async function handleAgentRun(
   deps: AgentRunDeps,
   req: AgentRunRequest,
 ): Promise<AgentStateResponse> {
-  const resolved = await resolveForAgent(deps, req.lane, req.pageUrl);
+  const resolved = await resolveForAgent(deps, req);
   if (!resolved.ok) {
     return failedResponse(req.lane, resolved.reason, resolved.scopeGap);
   }
@@ -568,7 +667,7 @@ export async function handleAgentState(
   deps: AgentStateDeps,
   req: AgentStateRequest,
 ): Promise<AgentStateResponse> {
-  const resolved = await resolveForAgent(deps, req.lane, req.pageUrl);
+  const resolved = await resolveForAgent(deps, req);
   if (!resolved.ok) {
     return failedResponse(req.lane, resolved.reason, resolved.scopeGap);
   }

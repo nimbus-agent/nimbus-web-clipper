@@ -5,6 +5,7 @@ import {
   getRun,
   listRunning,
   MAX_STORED_RUNS,
+  MAX_STORED_TERM_RUNS,
   putRun,
 } from "../../src/background/agent-run-store.ts";
 import { installChromeMock } from "./helpers/chrome-mock.ts";
@@ -70,6 +71,79 @@ describe("agent-run-store", () => {
     ).not.toBeNull();
   });
 
+  describe("the term subject", () => {
+    const termRun = (t: string, expiresAtMs = NOW + 60_000) => ({
+      subject: { kind: "term" as const, term: t },
+      lane: "glossary" as const,
+      runId: `run_${t}`,
+      state: { kind: "done" as const, brief: `about ${t}` },
+      expiresAtMs,
+    });
+
+    // Without its own arm, a second term would replay the first term's answer —
+    // exactly the failure the discriminated subject exists to prevent.
+    it("keeps two terms apart", async () => {
+      await putRun(termRun("canary"), NOW);
+      await putRun(termRun("blast radius"), NOW + 1);
+      expect(await getRun({ kind: "term", term: "canary" }, "glossary", NOW)).toMatchObject({
+        runId: "run_canary",
+      });
+      expect(await getRun({ kind: "term", term: "blast radius" }, "glossary", NOW)).toMatchObject({
+        runId: "run_blast radius",
+      });
+    });
+
+    it("cannot collide with an item or a service of the same value", async () => {
+      await putRun(termRun("github"), NOW);
+      expect(await getRun({ kind: "service", service: "github" }, "glossary", NOW)).toBeNull();
+      expect(await getRun({ kind: "item", id: "github" }, "glossary", NOW)).toBeNull();
+    });
+
+    // The asymmetry this budget exists for: terms are unbounded in cardinality,
+    // items and services are not, so an unbounded subject must never evict a
+    // bounded one.
+    it("evicts the oldest TERM before touching an item, once past its own budget", async () => {
+      expect(MAX_STORED_TERM_RUNS).toBe(6);
+      await putRun(run("keep-me", "impact", NOW + 60_000), NOW);
+      for (let i = 0; i < MAX_STORED_TERM_RUNS + 1; i++) {
+        await putRun(termRun(`t${i}`), NOW + 10 + i);
+      }
+      // The item written FIRST — and therefore the oldest entry in the store —
+      // survives, because the seventh term displaced the first term instead.
+      expect(await getRun({ kind: "item", id: "keep-me" }, "impact", NOW)).not.toBeNull();
+      expect(await getRun({ kind: "term", term: "t0" }, "glossary", NOW)).toBeNull();
+      expect(await getRun({ kind: "term", term: "t1" }, "glossary", NOW)).not.toBeNull();
+      expect(
+        await getRun({ kind: "term", term: `t${MAX_STORED_TERM_RUNS}` }, "glossary", NOW),
+      ).not.toBeNull();
+    });
+
+    it("holds its full budget when nothing else is stored", async () => {
+      for (let i = 0; i < MAX_STORED_TERM_RUNS; i++) {
+        await putRun(termRun(`t${i}`), NOW + i);
+      }
+      for (let i = 0; i < MAX_STORED_TERM_RUNS; i++) {
+        expect(await getRun({ kind: "term", term: `t${i}` }, "glossary", NOW)).not.toBeNull();
+      }
+    });
+
+    it("drops a malformed term subject on read", async () => {
+      chrome.storage.local.set({
+        agentRuns: {
+          [realKey("term", "canary", "glossary")]: {
+            subject: { kind: "term" },
+            lane: "glossary",
+            runId: "r",
+            state: { kind: "done", brief: "B" },
+            expiresAtMs: NOW + 1000,
+            writtenAtMs: NOW,
+          },
+        },
+      });
+      expect(await getRun({ kind: "term", term: "canary" }, "glossary", NOW)).toBeNull();
+    });
+  });
+
   it("lists only running entries, and only unexpired ones", async () => {
     await putRun(
       { ...run("i1", "impact", NOW + 1000), state: { kind: "running", runId: "r1" } },
@@ -78,7 +152,7 @@ describe("agent-run-store", () => {
     await putRun(run("i2", "impact", NOW + 1000), NOW); // done
     await putRun({ ...run("i3", "impact", NOW - 1), state: { kind: "running", runId: "r3" } }, NOW);
     const out = await listRunning(NOW);
-    expect(out.map((r) => (r.subject.kind === "item" ? r.subject.id : r.subject.service))).toEqual([
+    expect(out.map((r) => (r.subject.kind === "item" ? r.subject.id : "not-an-item"))).toEqual([
       "i1",
     ]);
   });

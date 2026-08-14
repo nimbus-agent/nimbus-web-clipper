@@ -900,21 +900,79 @@ client sends exactly the shape each agent's own scope expects, no more.
 
 ### Which lanes appear where
 
-`LANE_SURFACES` (`src/shared/types.ts`) maps each lane to the `SurfaceKind`s it
-belongs on; the panel renders only the lanes matching the recognised kind.
-`impact` and `expert` are `["pr"]`; `catchup`, `decisions` and `ownership` are
-`["home"]` — see the next section for what `"home"` is and why these three
-lanes could not simply join the other two.
+`LANE_RULES` (`src/shared/types.ts`) says what each lane needs before it can be
+asked anything. It is a discriminated union, not a table of independent fields,
+because the two arms are exclusive and each carries something the other must not
+have:
+
+- `{input: "page", surfaces}` — the lane's whole input comes from the page, so it
+  declares which `SurfaceKind`s it belongs on. `impact` and `expert` are
+  `["pr"]`; `catchup`, `decisions` and `ownership` are `["home"]` — see the next
+  section for what `"home"` is and why those three could not simply join the
+  other two.
+- `{input: "term"}` — the lane's input is a selection the user made, so a surface
+  list would be meaningless. `glossary` is the only member.
 
 `impact` and `expert` were previously gated on "the page resolved to an item"
 alone, so a resolved Jira issue or Jenkins build offered *What breaks if it
 lands* and handed that page's URL to `agents.impact` as its `fileOrPrUrl` — a
 question that does not apply, from an input the agent was not built for.
 
-The table is keyed by `AgentLane`, so adding a lane without declaring its
-surfaces is a type error. It is gated on the recogniser's `kind` — a closed union
-this repo owns — and not on `ResolvedItem.type`, which is a free-form string from
-the wire.
+The table is keyed by `AgentLane`, so adding a lane without declaring its rule is
+a type error. Surface gating is on the recogniser's `kind` — a closed union this
+repo owns — and not on `ResolvedItem.type`, which is a free-form string from the
+wire.
+
+### Lanes that take an input (C2.5 · glossary · 4.2)
+
+Two optional fields on `agent-run`/`agent-state` carry everything a lane needs
+beyond the page, both narrowed in `messages.ts` because both arrive from a
+content script. The run and the poll must send identically: they key one cache
+entry, so a poll that dropped a field would look up a different subject and
+report `collapsed` forever. `src/panel/lane-input.ts` is the single source both
+read from, which is what makes that impossible rather than merely unlikely.
+
+**`itemId` — the candidate the user picked.** On an ambiguous page the panel
+offers a chooser; before this the answer was thrown away one control later,
+because `handleAgentRun` re-resolved for itself, got `ambiguous` again, and
+refused with `not_resolved` under a header naming the item just picked.
+`resolveForAgent` now honours a supplied id **only after confirming it appears in
+the candidate set that resolve produced** — an id the gateway never offered is
+refused. The carried item is typed `ResolveCandidate`, not `ResolvedItem`, so
+nothing downstream can read a `modifiedAt` that a picked candidate does not have.
+
+**`term` — a selection.** `glossary` skips the recogniser gate and the resolve
+call entirely: `POST /v1/agents/glossary` takes `{ term }` and no URL, and the
+gate exists to decide which page URLs may reach the gateway. So the lane answers
+on any page the panel opens on, including one the recogniser rejects — often
+exactly where an unfamiliar term is. Like a service lane, it needs only the
+`agents` scope. The term is normalised once, in `shared/term.ts` (whitespace
+collapsed, control characters turned into spaces so two lines do not weld into
+one word), and anything over 128 characters is **refused, never truncated** —
+answering about the first 128 characters of a 3,000-character selection would
+look exactly like the feature working. The panel renders that refusal itself,
+without a round trip, because it is the side that still has the user in front of
+it; the message guard refuses the same input independently.
+
+`RunSubject` (`agent-run-store.ts`) grew a third arm for terms, with a
+**sub-budget of 6 inside the unchanged 16**: items and services are bounded by
+what the user visits, a term is bounded only by what can be selected, so the
+unbounded subject must not evict the bounded ones. A PR brief is expensive to
+regenerate; a term lookup is cheap and usually asked once.
+
+**Delivery.** Two selection-context menu entries — *Define in Nimbus* and *What's
+related to this?* — carry `info.selectionText`, which is authoritative in a way
+the page is not: the browser captures it when the menu opens, so it survives a
+page script that clears the selection, and it includes text selected inside an
+`<input>` or `<textarea>`, which `window.getSelection()` reports as empty. The
+worker cannot deliver by re-injecting `panel.js` — that entry self-toggles and
+would close the panel it is trying to reach — so `deliverSelection`
+(`browser/scripting.ts`) calls a hook on the mounted panel's host element and
+injects only on a miss. The element id and hook name live in
+`src/shared/panel-host.ts` so the two sides cannot drift; a mismatch there fails
+silently, which is the worst way for this to fail. A panel also snapshots any
+live selection when it mounts, so the lane appears — collapsed — without a menu
+entry at all; that is the convenience path, and the menu is the contract.
 
 ### Item lanes vs. service lanes (Phase C2.3)
 

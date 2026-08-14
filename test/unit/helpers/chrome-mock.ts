@@ -69,8 +69,9 @@ export interface ChromeHarness {
   emitCommand(command: string): void;
   /** Fire an alarm through every registered alarm listener. */
   emitAlarm(name: string): void;
-  /** Fire a context-menu click. */
-  emitMenuClick(menuItemId: string, tabId?: number): void;
+  /** Fire a context-menu click. `selectionText` is what the browser captured
+   *  when the menu opened — present only for a selection-context entry. */
+  emitMenuClick(menuItemId: string, tabId?: number, selectionText?: string): void;
   /** Fire runtime.onInstalled. */
   emitInstalled(): void;
   /** Fire a tab update through every registered listener. */
@@ -95,8 +96,12 @@ export function installChromeMock(): ChromeHarness {
   // not an in-place mutation) is visible to the `getAll` closure below.
   let commandsGetAllValue: unknown[] = [];
   const alarmListeners: Array<(alarm: { name: string }) => void> = [];
-  const menuClickListeners: Array<(info: { menuItemId: string }, tab?: { id?: number }) => void> =
-    [];
+  const menuClickListeners: Array<
+    (
+      info: { menuItemId: string; selectionText?: string | undefined },
+      tab?: { id?: number },
+    ) => void
+  > = [];
   const installedListeners: Array<() => void> = [];
 
   const sendMessage = vi.fn(async (): Promise<unknown> => undefined);
@@ -292,9 +297,9 @@ export function installChromeMock(): ChromeHarness {
     }
   }
 
-  function emitMenuClick(menuItemId: string, tabId?: number): void {
+  function emitMenuClick(menuItemId: string, tabId?: number, selectionText?: string): void {
     for (const cb of menuClickListeners) {
-      cb({ menuItemId }, tabId === undefined ? undefined : { id: tabId });
+      cb({ menuItemId, selectionText }, tabId === undefined ? undefined : { id: tabId });
     }
   }
 

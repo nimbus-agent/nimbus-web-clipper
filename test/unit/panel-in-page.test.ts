@@ -1042,18 +1042,16 @@ describe("panel-in-page agent lanes", () => {
   });
 
   /**
-   * The other half of the pair above: an AMBIGUOUS answer offers no lanes either
-   * before or after the user picks a candidate.
+   * The other half of the pair above: an AMBIGUOUS answer offers no lanes until
+   * the user picks a candidate — and both lanes the moment they do (ROADMAP
+   * C2.5).
    *
-   * `agent-run` carries only `{lane, pageUrl}`, so `handleAgentRun` re-resolves
-   * the page and gets the same ambiguous answer back, which `resolveForAgent`
-   * refuses with `not_resolved`. A lane rendered on the `chosen` header would
-   * therefore read "Nimbus couldn't pin this page to one indexed item." directly
-   * under a header naming the item the user just picked — and `not_resolved`
-   * withholds Re-run, so it is terminal. Deferred to ROADMAP C2.5, which needs
-   * the picked id carried through the message.
+   * Before the pick there is nothing to ask about. After it there is, and the
+   * picked id rides along on `agent-run` so `resolveForAgent` can honour it
+   * instead of re-resolving into the same ambiguity and refusing with
+   * `not_resolved` under a header naming the item just picked.
    */
-  it("shows no lanes on an ambiguous page, before or after a candidate is chosen", async () => {
+  it("shows the lanes on an ambiguous page only once a candidate is chosen", async () => {
     const sent: string[] = [];
     harness.sendMessage.mockImplementation(async (message: unknown) => {
       const kind = (message as { kind?: string }).kind;
@@ -1098,14 +1096,73 @@ describe("panel-in-page agent lanes", () => {
     (body.querySelectorAll("button.nimbus-related__candidate")[1] as HTMLButtonElement).click();
     await flush();
 
-    // After the pick: the header names the chosen candidate — and still no lanes.
+    // After the pick: the header names the chosen candidate, and the two
+    // pull-request lanes are offered against it.
     expect(body.textContent).toContain("Two");
     expect(body.querySelectorAll("button.nimbus-related__candidate")).toHaveLength(0);
-    for (const lane of AGENT_LANES) {
-      expect(body.querySelector(`details[data-lane="${lane}"]`)).toBeNull();
-    }
-    // Nothing was asked of the worker either — no agent-run, no agent-state.
+    expect(body.querySelector('details[data-lane="impact"]')).not.toBeNull();
+    expect(body.querySelector('details[data-lane="expert"]')).not.toBeNull();
+    // Still no glossary lane: nothing has selected a term.
+    expect(body.querySelector('details[data-lane="glossary"]')).toBeNull();
+    // Rendering lanes is not asking anything of them — a lane invokes on its
+    // first expand, never on a repaint.
     expect(sent).toEqual([]);
+  });
+
+  // The reason the picked id has to travel: without it the worker re-resolves,
+  // gets `ambiguous` a second time, and refuses.
+  it("carries the picked candidate id on agent-run", async () => {
+    const runs: Array<Record<string, unknown>> = [];
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const msg = message as Record<string, unknown>;
+      const kind = String(msg["kind"]);
+      if (kind === "resolve") {
+        return {
+          kind: "resolve",
+          ok: true,
+          recognition,
+          outcome: {
+            kind: "ambiguous",
+            fetchable: false,
+            truncated: false,
+            candidates: [
+              { id: "a", service: "github", type: "pr", title: "One", url: null },
+              { id: "b", service: "github", type: "pr", title: "Two", url: null },
+            ],
+          },
+        };
+      }
+      if (kind === "related") {
+        return { kind: "related", ok: true, items: [] };
+      }
+      if (kind === "agent-run") {
+        runs.push(msg);
+        return { kind: "agent-state", lane: msg["lane"], state: { kind: "done", brief: "ok" } };
+      }
+      return { kind: "agent-state", lane: msg["lane"], state: { kind: "collapsed" } };
+    });
+
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    const body = shadow()?.querySelector<HTMLElement>(".nimbus-related__body");
+    if (body === null || body === undefined) {
+      throw new Error("panel body not found");
+    }
+    (body.querySelectorAll("button.nimbus-related__candidate")[1] as HTMLButtonElement).click();
+    await flush();
+
+    const lane = body.querySelector<HTMLDetailsElement>('details[data-lane="impact"]');
+    if (lane === null) {
+      throw new Error("impact lane not rendered on the chosen candidate");
+    }
+    lane.open = true;
+    lane.dispatchEvent(new Event("toggle"));
+    await flush();
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.["itemId"]).toBe("b");
   });
 
   // The rapid-toggle race the cached-state check alone cannot close: unlike the
@@ -2239,5 +2296,211 @@ describe("the dashboard panel", () => {
   it("still shows related and the item lanes on a pull request", async () => {
     const root = await mountPanelWithResolve(PR_RESOLVE);
     expect(laneIds(root)).toEqual(["related", "impact", "expert"]);
+  });
+});
+
+describe("the glossary lane", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #1",
+    resolveUrl: "https://github.com/acme/web/pull/1",
+  } as const;
+
+  const PR_RESOLVE = {
+    kind: "resolve",
+    ok: true,
+    recognition,
+    outcome: {
+      kind: "found",
+      matchKind: "exact",
+      item: {
+        id: "i1",
+        service: "github",
+        type: "pr",
+        title: "Add thing",
+        url: "https://github.com/acme/web/pull/1",
+        modifiedAt: 1_700_000_000_000,
+      },
+    },
+  };
+
+  const UNRECOGNISED_RESOLVE = {
+    kind: "resolve",
+    ok: true,
+    recognition: { ok: false, reason: "unknown-host" },
+  };
+
+  /** Put a real selection on the page, the way a user would. */
+  function selectText(text: string): void {
+    const p = document.createElement("p");
+    p.textContent = text;
+    document.body.append(p);
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+
+  /** Hand a selection to the mounted panel, exactly as the service worker's
+   *  `deliverSelection` does — by calling the hook on the host element. */
+  function deliver(text: string, intent: "define" | "related"): void {
+    const el = document.getElementById(HOST_ID) as
+      | (HTMLElement & { __nimbusSelection?: (s: unknown) => void })
+      | null;
+    if (el?.__nimbusSelection === undefined) {
+      throw new Error("no selection hook on the panel host");
+    }
+    el.__nimbusSelection({ text, intent });
+  }
+
+  function lane(root: ShadowRoot): HTMLDetailsElement | null {
+    return root.querySelector<HTMLDetailsElement>('details[data-lane="glossary"]');
+  }
+
+  /** Mounts with a caller-supplied message script. NOT `mountPanelWithResolve`,
+   *  which installs its own implementation and would silently replace one set
+   *  here — every test below needs to script `agent-run` itself. */
+  async function mountWith(
+    impl: (message: Record<string, unknown>) => unknown,
+  ): Promise<ShadowRoot> {
+    harness.sendMessage.mockImplementation(async (message: unknown) =>
+      impl(message as Record<string, unknown>),
+    );
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    const root = shadow();
+    if (root === null) {
+      throw new Error("no panel");
+    }
+    return root;
+  }
+
+  it("does not exist until a term does", async () => {
+    const root = await mountPanelWithResolve(PR_RESOLVE);
+    expect(lane(root)).toBeNull();
+  });
+
+  it("appears titled with the term when a selection is live at mount, and asks nothing", async () => {
+    selectText("  idempotency   key ");
+    const sent: string[] = [];
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const kind = String((message as { kind?: string }).kind);
+      sent.push(kind);
+      return kind === "resolve" ? PR_RESOLVE : { kind: "related", ok: true, items: [] };
+    });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    const root = shadow();
+    if (root === null) {
+      throw new Error("no panel");
+    }
+    // Normalised on the way in — the title is the term, not the raw drag.
+    expect(lane(root)?.querySelector("summary")?.textContent).toContain("idempotency key");
+    // The mount snapshot is the convenience path: it makes the term visible,
+    // it does not ask a question nobody asked.
+    expect(sent).not.toContain("agent-run");
+  });
+
+  it("runs on Define, carrying the term", async () => {
+    const runs: Array<Record<string, unknown>> = [];
+    const root = await mountWith((msg) => {
+      const kind = String(msg["kind"]);
+      if (kind === "resolve") {
+        return PR_RESOLVE;
+      }
+      if (kind === "related") {
+        return { kind: "related", ok: true, items: [] };
+      }
+      if (kind === "agent-run") {
+        runs.push(msg);
+        return {
+          kind: "agent-state",
+          lane: "glossary",
+          state: { kind: "done", brief: "A token…" },
+        };
+      }
+      return { kind: "agent-state", lane: msg["lane"], state: { kind: "collapsed" } };
+    });
+    deliver("idempotency key", "define");
+    await flush();
+
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ lane: "glossary", term: "idempotency key" });
+    // Expanded and answered, because the user asked a question.
+    expect(lane(root)?.open).toBe(true);
+    expect(root.textContent).toContain("A token…");
+  });
+
+  it("re-runs related on the selection without spending an agent run", async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const root = await mountWith((msg) => {
+      sent.push(msg);
+      return String(msg["kind"]) === "resolve"
+        ? PR_RESOLVE
+        : { kind: "related", ok: true, items: [] };
+    });
+    deliver("blast radius", "related");
+    await flush();
+
+    const related = sent.filter((m) => m["kind"] === "related");
+    expect(related.at(-1)?.["selection"]).toBe("blast radius");
+    expect(sent.some((m) => m["kind"] === "agent-run")).toBe(false);
+    // The term is visible to the panel now, so the lane is there — collapsed,
+    // and unasked.
+    expect(lane(root)).not.toBeNull();
+    expect(lane(root)?.open).toBe(false);
+  });
+
+  // Refused, never truncated: answering about the first 128 characters of a
+  // 3,000-character selection would look exactly like the feature working.
+  it("refuses a passage in the lane instead of sending it", async () => {
+    const sent: string[] = [];
+    const root = await mountWith((msg) => {
+      const kind = String(msg["kind"]);
+      sent.push(kind);
+      return kind === "resolve" ? PR_RESOLVE : { kind: "related", ok: true, items: [] };
+    });
+    deliver("x".repeat(400), "define");
+    await flush();
+
+    expect(sent).not.toContain("agent-run");
+    expect(root.textContent).toContain("That's a passage, not a term");
+    // No term to name, so the lane falls back to its generic title.
+    expect(lane(root)?.querySelector("summary")?.textContent).toContain("Definition");
+  });
+
+  // The decision this slice turns on: glossary's input is not the page, so no
+  // property of the page can withhold it.
+  it("works on a page the recogniser rejects", async () => {
+    const runs: Array<Record<string, unknown>> = [];
+    const root = await mountWith((msg) => {
+      const kind = String(msg["kind"]);
+      if (kind === "resolve") {
+        return UNRECOGNISED_RESOLVE;
+      }
+      if (kind === "related") {
+        return { kind: "related", ok: true, items: [] };
+      }
+      if (kind === "agent-run") {
+        runs.push(msg);
+        return { kind: "agent-state", lane: "glossary", state: { kind: "done", brief: "defined" } };
+      }
+      return { kind: "agent-state", lane: msg["lane"], state: { kind: "collapsed" } };
+    });
+    deliver("runbook", "define");
+    await flush();
+
+    expect(lane(root)).not.toBeNull();
+    expect(runs[0]).toMatchObject({ lane: "glossary", term: "runbook" });
+    // And still no page lanes, which DO depend on the page.
+    expect(root.querySelector('details[data-lane="impact"]')).toBeNull();
   });
 });
