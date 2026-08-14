@@ -525,7 +525,20 @@ async function refreshShortcuts(): Promise<void> {
   // Read directly from the browser seam, not through the service worker: Options
   // is an extension page with its own access to chrome.commands, so a message
   // round-trip would add a failure mode without adding information.
-  list.replaceChildren(renderShortcuts(document, shortcutRows(await getAllCommands())));
+  //
+  // The try/catch is REQUIRED, not decoration. This is called as
+  // `void refreshShortcuts()`, which attaches no rejection handler — a rejecting
+  // `getAllCommands` would surface as an unhandled rejection and fail the Vitest
+  // run. Same rule `refreshConnection` above already follows.
+  try {
+    list.replaceChildren(renderShortcuts(document, shortcutRows(await getAllCommands())));
+  } catch {
+    // An empty list, not a half-rendered one. The hint below still renders, so a
+    // user who cannot see their bindings is at least told where to go and set them.
+    list.replaceChildren();
+  }
+  // Outside the try on purpose: isFirefoxRuntime has its own catch and cannot
+  // throw, and the hint is the more useful half when the binding read failed.
   hint.textContent = shortcutsHint(isFirefoxRuntime());
 }
 ```
@@ -643,6 +656,34 @@ describe("registerMenus", () => {
       `create:${MENU_SHOW_RELATED}`,
     ]);
   });
+
+  test("one failing entry does not cost the others — especially the last one", async () => {
+    const created: string[] = [];
+    await registerMenus({
+      removeAll: async () => undefined,
+      create: (item) => {
+        // The FIRST entry throws. Without per-item isolation this would abort the
+        // loop and `show-related` — the entry this slice adds, and the last in
+        // the table — would never be registered at all.
+        if (item.id === MENU_CLIP_PAGE) {
+          throw new Error("duplicate id");
+        }
+        created.push(item.id);
+      },
+    });
+    expect(created).toEqual([MENU_CLIP_SELECTION, MENU_SHOW_RELATED]);
+  });
+
+  test("registerMenus itself does not reject when an entry fails", async () => {
+    await expect(
+      registerMenus({
+        removeAll: async () => undefined,
+        create: () => {
+          throw new Error("nope");
+        },
+      }),
+    ).resolves.toBeUndefined();
+  });
 });
 ```
 
@@ -718,7 +759,21 @@ export interface RegisterMenusDeps {
 export async function registerMenus(deps: RegisterMenusDeps): Promise<void> {
   await deps.removeAll();
   for (const item of MENU_ITEMS) {
-    deps.create(item);
+    // Each entry registers independently: one failure must not cost the others.
+    //
+    // This is not defensive noise. `show-related` is LAST in MENU_ITEMS, so a
+    // throw while creating either clip entry would take out precisely the entry
+    // this slice exists to add — and the caller already swallows
+    // (`registerContextMenus().catch(() => undefined)`), so that loss would be
+    // silent. Isolating does not make it any quieter; it just stops one bad
+    // entry from deleting the rest.
+    //
+    // Swallowed rather than logged because `noConsole` bans console.* in src/.
+    try {
+      deps.create(item);
+    } catch {
+      // Intentionally empty — see above.
+    }
   }
 }
 ```
@@ -900,3 +955,63 @@ git commit -m "docs: record slice 2 — a panel you can always reach"
 **Deliberately not in this slice:** the popup's *Show related* button already exists and already calls `injectPanel` — it needs no change, and the roadmap's own 2026-08-11 correction records that the panel was never actually unreachable. The `openPanel` helper does not replace the popup's direct call, because the popup runs in its own context and cannot reach a service-worker-local function; the convergence that matters is among the service worker's own three triggers.
 
 **Known follow-up:** `service-worker.ts` loses ~20 lines here but remains the largest file in the repo. If slice 4 (the lane inputs) grows it further, the ambient-cue machinery is the next coherent piece to lift out.
+
+---
+
+## Review Dispositions
+
+Findings from
+[2026-08-14-slice-2-panel-entry-points-review.md](./2026-08-14-slice-2-panel-entry-points-review.md),
+each checked against the code before being accepted or argued with.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| 1 | `getAllCommands` should guard `typeof chrome === "undefined"` | **Declined**, with reasoning below |
+| 2 | `refreshShortcuts` can leave an unhandled rejection | **Fixed as proposed** |
+| 3 | One failing `create` aborts the rest of the menu | **Fixed**, with a sharper reason and two tests |
+
+**On 1 — declined, and not on style grounds.** The mechanism is real: referencing
+a bare `chrome` when the global does not exist throws `ReferenceError` rather
+than yielding `undefined`. Two things argue against guarding it anyway.
+
+First, consistency: **no sibling seam does this.** All eight of
+`action`/`alarms`/`context-menus`/`permissions`/`runtime`/`scripting`/`storage`/`tabs`
+reference `chrome.*` bare — verified, zero occurrences of `typeof chrome` across
+`src/browser/`. Guarding in exactly one of the nine implies the other eight are
+unsafe, and they are not: every caller is an extension page or the service
+worker, and every test installs a chrome stub before importing.
+
+Second, and decisive: **`chrome` being absent means this code is not running in
+an extension at all.** Returning `[]` there would render an empty shortcut list
+and a hint telling the user where to change bindings that do not exist — a
+confidently wrong page. A `ReferenceError` says the environment is wrong, which
+is the true statement. The `chrome.commands` check that IS present guards a
+different and genuinely reachable case: a browser that ships extensions without
+the commands API.
+
+Task 2's test file imports only `type CommandBinding` from `commands.ts`, which
+is erased at compile time, so no test loads that module without a stub.
+
+**On 2 — correct, and it matches a rule this repo learned the hard way.** `void
+refreshShortcuts()` attaches no rejection handler, so a rejecting
+`getAllCommands` becomes an unhandled rejection that fails the Vitest run. This
+is the same defect class as slice 1's `void markStale()`. `refreshConnection`
+already carries the equivalent guard. One refinement on the proposal: the hint
+assignment stays *outside* the try, because `isFirefoxRuntime` cannot throw and
+the hint is the more useful half precisely when the binding read failed.
+
+**On 3 — accepted, with a sharper reason than the one given.** The finding says
+a failure blocks subsequent registrations. True, and the consequence is worse
+than generic: `show-related` is **last** in `MENU_ITEMS`, so a throw on either
+clip entry removes exactly the entry this slice exists to add. The caller
+already swallows (`registerContextMenus().catch(() => undefined)`), so that loss
+is silent today — isolation does not make it quieter, it stops one bad entry
+from deleting the rest. The suggestion to log is not available: `noConsole` bans
+`console.*` in `src/`. Two tests added, one asserting the last entry survives a
+first-entry failure.
+
+**Deferred, found while checking finding 2:** `refreshSurfaces` (`options.ts:278`)
+is also called as `void refreshSurfaces()` with unguarded awaits — the same
+unhandled-rejection shape, pre-existing and unrelated to C1.5. Not fixed here to
+keep this slice's diff to its own subject; worth a follow-up alongside the other
+deferred Options items from slice 1's final review.
