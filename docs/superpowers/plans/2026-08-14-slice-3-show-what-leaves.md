@@ -662,8 +662,30 @@ In `src/popup/popup.css`:
 In `src/popup/popup.ts`, hold the pending payload and split `clip()` into capture-then-send:
 
 ```ts
-/** The payload captured and shown, waiting on the user's yes. */
-let pending: ClipPayload | null = null;
+/**
+ * What was captured and shown, waiting on the user's yes.
+ *
+ * Holds the CAPTURE AND TAGS, not just the built payload — `send` transmits
+ * `{ kind: "clip", capture, tags }`, so it must use exactly the values the
+ * preview was built from. Re-reading the tags input at send time would let a
+ * user edit tags after the preview and send something the preview never showed:
+ * the preview would be a lie about the one field the user most likely changed.
+ */
+let pending: { capture: CaptureResult; tags: string[] } | null = null;
+
+/** The controls that must not be reachable while a decision is pending. */
+function setComposerEnabled(on: boolean): void {
+  const actions = document.querySelector(".popup__actions");
+  const tags = document.getElementById("tags");
+  if (actions instanceof HTMLElement) {
+    actions.hidden = !on;
+  }
+  if (tags instanceof HTMLInputElement) {
+    // Disabled, not hidden: the tags stay READABLE so the user can check them
+    // against the preview, but cannot be edited into disagreeing with it.
+    tags.disabled = !on;
+  }
+}
 
 function hidePreview(): void {
   const section = document.getElementById("preview");
@@ -671,22 +693,32 @@ function hidePreview(): void {
     section.hidden = true;
   }
   pending = null;
+  setComposerEnabled(true);
 }
 
-function showPreview(payload: ClipPayload): void {
+function showPreview(capture: CaptureResult, tags: string[]): void {
   const section = document.getElementById("preview");
   const body = document.getElementById("preview-body");
   if (!(section instanceof HTMLElement) || body === null) {
     // No preview UI in the DOM — send rather than silently dropping the clip.
-    void send(payload);
+    void send(capture, tags);
     return;
   }
-  pending = payload;
-  body.replaceChildren(renderPreview(document, buildClipPreview(payload)));
+  pending = { capture, tags };
+  body.replaceChildren(
+    renderPreview(document, buildClipPreview(buildClipPayload(capture, tags, Date.now()))),
+  );
   section.hidden = false;
+  setComposerEnabled(false);
+  // Clears any leftover "Cancelled — nothing was sent." from a previous round,
+  // so the status line never describes the last decision while asking for a new one.
   setStatus("");
 }
 ```
+
+`send(capture: CaptureResult, tags: string[])` holds the existing message-send and
+status-mapping code, unchanged, and sends `{ kind: "clip", capture, tags }` using
+**its arguments** — it must not read `#tags` itself.
 
 Rework `clip(mode)` so that after a successful capture it builds the payload with `buildClipPreview`'s input (`buildClipPayload(capture, tags, Date.now())`), then either calls `send(payload)` directly or `showPreview(payload)` depending on `await isPreviewEnabled()`. Move the existing message-send and status-mapping code into `send(payload: ClipPayload)` unchanged — **do not rewrite the status vocabulary**; it is shared with the quick-clip toast on purpose.
 
@@ -694,15 +726,43 @@ Wire the two buttons in `DOMContentLoaded`:
 
 ```ts
   document.getElementById("preview-confirm")?.addEventListener("click", () => {
-    const payload = pending;
+    const p = pending;
     hidePreview();
-    if (payload !== null) {
-      void send(payload);
+    if (p !== null) {
+      void send(p.capture, p.tags);
     }
   });
   document.getElementById("preview-cancel")?.addEventListener("click", () => {
     hidePreview();
     setStatus("Cancelled — nothing was sent.");
+  });
+```
+
+Add these two tests to the ones in Step 1 — they pin the composer lock:
+
+```ts
+  test("the capture buttons and the tags field are locked while a decision is pending", async () => {
+    await bootPopup();
+    clickButton("clip-page");
+    await flush();
+
+    const actions = document.querySelector(".popup__actions");
+    const tags = document.getElementById("tags");
+    expect(actions instanceof HTMLElement && actions.hidden).toBe(true);
+    expect(tags instanceof HTMLInputElement && tags.disabled).toBe(true);
+  });
+
+  test("cancelling unlocks them again", async () => {
+    await bootPopup();
+    clickButton("clip-page");
+    await flush();
+    clickButton("preview-cancel");
+    await flush();
+
+    const actions = document.querySelector(".popup__actions");
+    const tags = document.getElementById("tags");
+    expect(actions instanceof HTMLElement && actions.hidden).toBe(false);
+    expect(tags instanceof HTMLInputElement && tags.disabled).toBe(false);
   });
 ```
 
@@ -819,7 +879,11 @@ In `src/panel/panel-in-page.ts`, split `sendFetch` in two. The button handler no
 
 **`fetchSent` must stay exactly where it is — inside the confirmed path.** It is the one-fetch-per-panel latch. Setting it when the preview *opens* would mean a cancelled preview permanently disables the button, turning "no thanks" into "never again". A test asserts the button still works after a cancel.
 
-In `src/panel/panel-view.ts`, render the preview block from `renderPreview(doc, buildFetchPreview(target))` plus Send / Cancel controls, in the same style as the existing fetch button.
+In `src/panel/panel-view.ts`, render the preview block from `renderPreview(doc, buildFetchPreview(target))` plus Send / Cancel controls.
+
+**Build both controls with the existing `actionButton(doc, className, text, onClick)` helper** (`panel-view.ts:251`) — the same one the fetch button and the candidate chooser use. Do not hand-roll a button; that helper exists so every panel control gets `type="button"` and `textContent` (never `innerHTML`) by construction.
+
+**Stack them full-width, not side by side.** The panel is a narrow right-edge overlay, and the candidate chooser (`nimbus-related__candidates`) already stacks its buttons for that reason. Two side-by-side controls in that width would either truncate their labels or force the confirm target uncomfortably small — and this is a confirm step, so the control the user is agreeing with must be unambiguous.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -964,3 +1028,54 @@ git commit -m "feat(options): an off switch, and a trust panel that matches what
 2. **`fetchSent` must not latch on preview-open.** Otherwise a cancelled preview permanently disables the fetch button — "no thanks" becoming "never again".
 
 **Known follow-up:** `src/popup/popup.ts` grows a state machine (idle → previewing → sending). It stays small here, but if slice 5 adds the already-clipped lookup to the same file, the two should be lifted into a pure `popup-state.ts` rather than interleaved as flags.
+
+---
+
+## Review Dispositions
+
+Findings from
+[2026-08-14-slice-3-show-what-leaves-review.md](./2026-08-14-slice-3-show-what-leaves-review.md),
+each checked against the code and the plan before being accepted or argued with.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| 1 | Disable/hide the main actions while the preview is open | **Fixed — and it was hiding a worse bug than the one reported** |
+| 2 | Render tags as badges rather than a joined string | **Declined** (YAGNI) |
+| 3 | Clear the cancel status when a new preview opens | **Already handled** — no change needed |
+| Q1 | Note that the toggle applies only to toolbar clips | **Already handled** — the label says so |
+| Q2 | How should the panel's Send/Cancel be laid out? | **Answered and specified in Task 5** |
+
+**On 1 — accepted, and the reported symptom was the smaller half.** "State confusion"
+is real, but the sharp version is a **preview that lies**. The clip message carries
+`{ capture, tags }`, so if `send` re-read `#tags` at confirm time, a user could open
+the preview, edit the tags, confirm, and send tags the preview never showed — and
+tags are the single field a user is most likely to fiddle with while looking at a
+summary of them. The plan now (a) holds `capture` **and** `tags` in `pending` so
+`send` uses exactly what was previewed and never touches the DOM, and (b) locks the
+composer while a decision is pending: the actions are hidden, and the tags field is
+**disabled rather than hidden** so it stays readable for checking against the preview
+but cannot be edited into disagreeing with it. Two tests pin the lock and its release.
+
+**On 2 — declined.** Badges are a styling preference, not a correctness or clarity
+gap, and this slice's job is to state what leaves. The wrapping concern is already
+handled: `.preview__value` sets `word-break: break-all` and the row is a flex child,
+so a long tag list wraps rather than overflowing. Adding badge markup would also mean
+`renderPreview` growing per-field-type rendering rules, which is exactly the kind of
+special-casing that makes a shared renderer drift between its two callers.
+
+**On 3 — already in the plan.** `showPreview` ends with `setStatus("")`, so opening a
+new preview clears "Cancelled — nothing was sent." I have added a comment there saying
+*why*, since the reviewer looked for it and did not find it — an unexplained
+`setStatus("")` reads as incidental cleanup rather than a deliberate guarantee.
+
+**On Q1 — already in the plan.** The toggle's label is *"Show me the payload before
+sending, when I clip from the toolbar"* — the scope is in the control's own words,
+which is better than a note beside it that can be missed or drift. The stage-4
+paragraph states the hotkey behaviour as well.
+
+**On Q2 — a real gap; now specified.** Task 5 previously said "in the same style as
+the existing fetch button" without saying how. It now names the existing
+`actionButton` helper (`panel-view.ts:251`, already shared by the fetch button and the
+candidate chooser) and specifies **stacked full-width**, matching
+`nimbus-related__candidates` — the panel is a narrow right-edge overlay, and a confirm
+control that is truncated or cramped is the wrong thing to be ambiguous about.
