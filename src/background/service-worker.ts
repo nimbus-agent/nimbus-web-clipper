@@ -5,13 +5,10 @@
 // keeps the toolbar badge in sync with the pending count.
 import { setBadgeBackground, setBadgeCount, setBadgeText } from "../browser/action.ts";
 import { addAlarmListener, clearAlarm, ensureAlarm, rearmAlarm } from "../browser/alarms.ts";
+import { addCommandListener } from "../browser/commands.ts";
 import { addMenuClickListener, createMenu, removeAllMenus } from "../browser/context-menus.ts";
 import { hasOrigin } from "../browser/permissions.ts";
-import {
-  addCommandListener,
-  addInstalledListener,
-  addMessageListener,
-} from "../browser/runtime.ts";
+import { addInstalledListener, addMessageListener } from "../browser/runtime.ts";
 import { injectPanel, runCapture, showCue, showToast } from "../browser/scripting.ts";
 import {
   activeTab,
@@ -84,6 +81,7 @@ import {
   handleResolve,
   handleUnpair,
 } from "./handlers.ts";
+import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
 import { type FlushDeps, flushQueue } from "./queue-flush.ts";
 import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
@@ -459,11 +457,9 @@ const quickClipDeps: QuickClipDeps = {
 // Single-flighted because on a fresh install the startup sequence and onInstalled
 // both register: interleaved removeAll/create pairs could otherwise hit a duplicate
 // id and surface an unchecked runtime.lastError.
-const registerContextMenus = singleFlight(async (): Promise<void> => {
-  await removeAllMenus();
-  createMenu({ id: "clip-page", title: "Clip page to Nimbus", contexts: ["page"] });
-  createMenu({ id: "clip-selection", title: "Clip selection to Nimbus", contexts: ["selection"] });
-});
+const registerContextMenus = singleFlight(
+  async (): Promise<void> => await registerMenus({ removeAll: removeAllMenus, create: createMenu }),
+);
 
 // Both quick-clip routes fail closed like every other listener: the user-visible
 // result is the toast/badge, and a rejection here has nowhere to be reported.
@@ -471,12 +467,64 @@ addInstalledListener(() => {
   registerContextMenus().catch(() => undefined);
 });
 
+/**
+ * The ONE way the panel gets opened from INSIDE the service worker. Three
+ * in-worker triggers converge here — the hotkey, the context menu's
+ * `show-related` branch, and the ambient cue's `openPanelForCue` — so the
+ * panel cannot behave differently depending on how it was summoned, which is
+ * what C1.5 exists to prevent.
+ *
+ * The popup is a separate context and cannot reach this function at all — it
+ * is its own bundle and calls `injectPanel` directly, then reports its own
+ * failure ("Nimbus can't show related on browser system pages") rather than
+ * failing silently like the callers below. So the popup's convergence with
+ * this function is on *behavior*, not on a shared call site.
+ *
+ * A restricted page rejects injection; fail closed and silently, because there
+ * is no surface to report on when the panel is the surface.
+ */
+function openPanel(tabId?: number): void {
+  if (tabId !== undefined) {
+    injectPanel(tabId).catch(() => undefined);
+    return;
+  }
+  activeTab()
+    .then((tab) => injectPanel(tab.id))
+    .catch(() => undefined);
+}
+
 addMenuClickListener((menuItemId, tabId) => {
-  // Clip the tab that was RIGHT-CLICKED (it may not be the active tab of the focused
-  // window, and the activeTab grant belongs to it).
-  quickClip(quickClipDeps, menuItemId === "clip-selection" ? "selection" : "article", tabId).catch(
-    () => undefined,
-  );
+  const action = menuAction(menuItemId);
+  if (action === null) {
+    return;
+  }
+  // A switch on the action, not a ternary: a ternary has no exhaustiveness
+  // check, so a future MenuAction member (e.g. a link/image clip entry) would
+  // fall through the `default` silently rather than failing to compile. The
+  // `never` assignment below is what turns "someone added a MenuAction arm
+  // and forgot this switch" into a compile error instead of a page quietly
+  // getting clipped as an article. This is the action→mode half of the same
+  // guarantee `menuAction` already gives the id→action step by returning
+  // `null` instead of defaulting — see its own doc comment.
+  switch (action) {
+    case "show-related":
+      // The RIGHT-CLICKED tab, falling back to the active one. A right-click in a
+      // non-focused window targets a different tab than tabs.query({active}), and
+      // the activeTab grant belongs to the clicked tab — the same reasoning the
+      // clip path already documents.
+      openPanel(tabId);
+      return;
+    case "clip-article":
+      quickClip(quickClipDeps, "article", tabId).catch(() => undefined);
+      return;
+    case "clip-selection":
+      quickClip(quickClipDeps, "selection", tabId).catch(() => undefined);
+      return;
+    default: {
+      const unreachable: never = action;
+      return unreachable;
+    }
+  }
 });
 
 /**
@@ -511,7 +559,7 @@ function openPanelForCue(tabId: number | undefined): void {
   }
   // Fire-and-forget: no response is sent, the cue does not wait, and the panel
   // appearing is the answer. A restricted page rejects injection — fail closed.
-  injectPanel(tabId).catch(() => undefined);
+  openPanel(tabId);
 }
 
 /**
@@ -721,9 +769,7 @@ addMessageListener((message, rawRespond, sender) => {
 // the command gesture; a restricted page rejects injection — fail closed silently.
 addCommandListener((command) => {
   if (command === "show_related") {
-    activeTab()
-      .then((tab) => injectPanel(tab.id))
-      .catch(() => undefined);
+    openPanel();
     return;
   }
   if (command === "clip-page") {

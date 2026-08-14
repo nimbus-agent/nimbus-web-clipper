@@ -780,13 +780,13 @@ describe("quick clip — context menu + shortcut routes", () => {
       .mockResolvedValue([{ result: undefined }]);
   }
 
-  test("registers the two context menus on startup (removeAll before create)", async () => {
+  test("registers the three context menus on startup (removeAll before create)", async () => {
     await load();
 
     expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
-    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(2);
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(3);
     const ids = harness.contextMenusCreate.mock.calls.map((c) => (c[0] as { id: string }).id);
-    expect(ids).toEqual(["clip-page", "clip-selection"]);
+    expect(ids).toEqual(["clip-page", "clip-selection", "show-related"]);
   });
 
   test("onInstalled re-registers the menus (removeAll first, no duplicate ids)", async () => {
@@ -798,7 +798,7 @@ describe("quick clip — context menu + shortcut routes", () => {
     await settle();
 
     expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
-    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(2);
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(3);
   });
 
   test("clip-page command captures the active tab and posts a clip", async () => {
@@ -896,6 +896,45 @@ describe("quick clip — context menu + shortcut routes", () => {
       expect.objectContaining({ target: { tabId: 5 }, args: ["selection"] }),
     );
     expect(globalThis.fetch).toHaveBeenCalled();
+  });
+
+  // Regression for the menu-click listener's action→mode switch: these two
+  // prove the exhaustiveness refactor (a switch with a `never`-typed default,
+  // replacing `action === "clip-selection" ? "selection" : "article"`) still
+  // sends the RIGHT mode on the wire for both clip menu entries, not just that
+  // some clip happens. A ternary would compile clean even if the switch's
+  // cases were swapped or one were deleted; the request body is what would
+  // actually catch that.
+  test("the clip-page menu item posts an article clip", async () => {
+    await load();
+    seedQuickClip(harness, "article");
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+
+    harness.emitMenuClick("clip-page", 5);
+    await settle();
+
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(call[1]?.body))).toEqual(expect.objectContaining({ mode: "article" }));
+  });
+
+  test("the clip-selection menu item posts a selection clip", async () => {
+    await load();
+    seedQuickClip(harness, "selection");
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+
+    harness.emitMenuClick("clip-selection", 5);
+    await settle();
+
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(call[1]?.body))).toEqual(
+      expect.objectContaining({ mode: "selection" }),
+    );
   });
 
   test("a restricted page flashes the badge instead of injecting a toast", async () => {
@@ -1926,5 +1965,31 @@ describe("discover route", () => {
     const init = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock
       .calls[0]?.[1];
     expect(JSON.stringify(init)).not.toContain("Authorization");
+  });
+});
+
+describe("show-related context menu", () => {
+  test("clicking it injects the panel into the RIGHT-CLICKED tab", async () => {
+    await load();
+    harness.executeScript.mockClear();
+    harness.emitMenuClick("show-related", 42);
+    await settle();
+    expect(harness.executeScript).toHaveBeenCalledWith(
+      expect.objectContaining({ target: { tabId: 42 }, files: ["panel.js"] }),
+    );
+  });
+
+  test("an unknown menu id does nothing at all — it does not fall through to a clip", async () => {
+    await load();
+    harness.executeScript.mockClear();
+    harness.emitMenuClick("not-ours", 42);
+    await settle();
+    expect(harness.executeScript).not.toHaveBeenCalled();
+  });
+
+  test("the menu registers all three entries", async () => {
+    await load();
+    const ids = harness.contextMenusCreate.mock.calls.map((c) => (c[0] as { id: string }).id);
+    expect(ids).toEqual(["clip-page", "clip-selection", "show-related"]);
   });
 });

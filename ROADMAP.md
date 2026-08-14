@@ -423,7 +423,7 @@ is worthless without this — and half of C1 is buildable today.*
 > then no way to grant page access to any of them. Built-in rows (with grant/
 > revoke and no Remove) now close that gap.
 
-### C1.5 A second way into the panel · 🟢 · S
+### C1.5 A second way into the panel · 🟢 · S — ✅ shipped
 > **What** Add a panel entry point the browser cannot silently withhold — a
 > context-menu item, and Options surfacing whether the `show_related` shortcut is
 > actually bound.
@@ -463,6 +463,20 @@ is worthless without this — and half of C1 is buildable today.*
 > surfacing whether `show_related` is actually bound — but the readout itself
 > did **not** ship there. It remains this item's own scope, arriving with
 > Slice 2, not before.
+> **Status** Shipped both halves this brief named. A **Show related in
+> Nimbus** context-menu entry (`src/background/menus.ts`) opens the panel
+> through the same `openPanel` path the hotkey and the C1.3 ambient cue use —
+> right-clicking a page in a non-focused window opens the panel in the
+> clicked tab, not the focused one. Options stage 2 now lists all three
+> commands with the shortcut the browser actually bound
+> (`src/browser/commands.ts`), never the manifest's `suggested_key`; an
+> unbound command reads **Not set**, alongside a copyable per-target path
+> (`chrome://extensions/shortcuts` / `about:addons`) to fix it — Chrome
+> refuses to let an extension page link there directly. Closed along the way:
+> the previous context-menu routing treated every unrecognised id as "clip
+> the page," so adding this third entry without also fixing that would have
+> made a right-click on it silently clip instead of opening the panel. See
+> [`docs/architecture.md`](./docs/architecture.md#a-second-way-into-the-panel-phase-c15).
 
 ## Phase C2 — Run the agents from the page 🟢/🟡
 

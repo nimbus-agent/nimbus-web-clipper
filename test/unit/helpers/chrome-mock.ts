@@ -37,6 +37,9 @@ export interface ChromeHarness {
   readonly storage: Map<string, unknown>;
   readonly messageListeners: MessageListener[];
   readonly commandListeners: Array<(command: string) => void>;
+  /** Backing list for `chrome.commands.getAll`; seed it to control what
+   *  `getAllCommands()` resolves with. Defaults to `[]`. */
+  commandsGetAll: unknown[];
   readonly alarmListeners: Array<(alarm: { name: string }) => void>;
   readonly contextMenusCreate: ReturnType<typeof vi.fn>;
   readonly contextMenusRemoveAll: ReturnType<typeof vi.fn>;
@@ -87,6 +90,10 @@ export function installChromeMock(): ChromeHarness {
   const storage = new Map<string, unknown>();
   const messageListeners: MessageListener[] = [];
   const commandListeners: Array<(command: string) => void> = [];
+  // Mutable backing value for `commandsGetAll` — exposed on the returned harness
+  // via an accessor so a test's `harness.commandsGetAll = [...]` (a reassignment,
+  // not an in-place mutation) is visible to the `getAll` closure below.
+  let commandsGetAllValue: unknown[] = [];
   const alarmListeners: Array<(alarm: { name: string }) => void> = [];
   const menuClickListeners: Array<(info: { menuItemId: string }, tab?: { id?: number }) => void> =
     [];
@@ -180,6 +187,9 @@ export function installChromeMock(): ChromeHarness {
         addListener: (cb: (command: string) => void): void => {
           commandListeners.push(cb);
         },
+      },
+      getAll: (cb: (commands: unknown[]) => void): void => {
+        cb(commandsGetAllValue);
       },
     },
     action: { setBadgeText, setBadgeBackgroundColor },
@@ -345,6 +355,12 @@ export function installChromeMock(): ChromeHarness {
     storage,
     messageListeners,
     commandListeners,
+    get commandsGetAll(): unknown[] {
+      return commandsGetAllValue;
+    },
+    set commandsGetAll(v: unknown[]) {
+      commandsGetAllValue = v;
+    },
     alarmListeners,
     contextMenusCreate,
     contextMenusRemoveAll,

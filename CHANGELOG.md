@@ -40,6 +40,13 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **The related panel no longer depends on a keyboard shortcut that may not
+  exist.** Right-click any page → **Show related in Nimbus** opens the same
+  panel the hotkey does. And Options now lists each Nimbus shortcut with the
+  keys your browser *actually* bound — `Alt+Shift+R` is only a suggestion, and
+  when another extension already claims it your browser silently leaves it
+  unset. A shortcut that never bound now reads **Not set** instead of looking
+  like a broken feature.
 - **Nimbus can find itself.** Setting up no longer starts with typing a URL:
   press **Find my gateway** and the extension checks the two places a local
   Nimbus listens. It checks exactly those two — it does not scan your ports.

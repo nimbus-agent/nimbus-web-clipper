@@ -13,7 +13,7 @@
       "!**/node_modules",
       "!**/*.d.ts",
       "!**/.claude/settings.local.json",
-      "!**/.claude/worktrees"
+      "!.claude/worktrees"
     ]
   },
   "formatter": {
