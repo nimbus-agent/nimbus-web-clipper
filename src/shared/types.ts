@@ -128,6 +128,17 @@ export interface ConfiguredOrigin {
   readonly product: Product;
 }
 
+/**
+ * What a targeted fetch is ABOUT — the three facts a user needs before agreeing
+ * to have the gateway reach out on their behalf. Assembled by the panel from the
+ * recognition it already holds; no new gateway read.
+ */
+export interface FetchTarget {
+  readonly product: Product;
+  readonly surface: SurfaceKind;
+  readonly url: string;
+}
+
 /** The result of classifying a page URL. Resolution is at most one item. */
 export type Recognition =
   | {
