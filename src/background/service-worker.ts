@@ -26,6 +26,7 @@ import {
   isClipRequest,
   isConnectionStatusRequest,
   isCueOpenRequest,
+  isDiscoverRequest,
   isFetchRequest,
   isPairRequest,
   isQueueListRequest,
@@ -49,7 +50,13 @@ import {
 import { type AmbientDeps, decideAmbient } from "./ambient.ts";
 import { getAmbientHosts } from "./ambient-prefs.ts";
 import { getQueue, updateQueue } from "./clip-queue-store.ts";
-import { clearConnection, getConnection, setConnection } from "./connection-store.ts";
+import {
+  clearConnection,
+  getConnection,
+  markClipSuccess,
+  markStale,
+  setConnection,
+} from "./connection-store.ts";
 import { showFeedback } from "./feedback.ts";
 import {
   confirmPair,
@@ -58,6 +65,7 @@ import {
   invokeAgent,
   postClip,
   postRelated,
+  probeHealth,
   resolveItem,
 } from "./gateway-client.ts";
 import {
@@ -65,6 +73,7 @@ import {
   handleAgentState,
   handleClip,
   handleConnectionStatus,
+  handleDiscover,
   handleFetch,
   handlePair,
   handleQueueList,
@@ -498,7 +507,36 @@ function openPanelForCue(tabId: number | undefined): void {
   injectPanel(tabId).catch(() => undefined);
 }
 
-addMessageListener((message, respond, sender) => {
+/**
+ * True when a response tells us the gateway rejected our token.
+ *
+ * Checked in ONE place rather than hooked into each handler: every route that can
+ * 401 already reports it the same way, so a single wrap around `respond` cannot
+ * drift, and adding a route later gets the behaviour for free.
+ */
+function carriesUnauthorized(res: unknown): boolean {
+  return (
+    typeof res === "object" &&
+    res !== null &&
+    (res as { reason?: unknown }).reason === "unauthorized"
+  );
+}
+
+addMessageListener((message, rawRespond, sender) => {
+  const respond = (res: unknown): void => {
+    if (carriesUnauthorized(res)) {
+      // Fire-and-forget: the user's answer must not wait on a storage write, and
+      // a failed write only means the flag is set on the next 401.
+      //
+      // `.catch` is REQUIRED, not decoration. `void` does not attach a rejection
+      // handler, so a failing `chrome.storage.local.set` here would surface as an
+      // unhandled rejection in the service worker — and fail the Vitest run. This
+      // is the same `.catch(() => undefined)` the file already uses for its other
+      // fire-and-forget calls (`injectPanel`, `endPause`, `ensureAlarm`).
+      void markStale().catch(() => undefined);
+    }
+    rawRespond(res);
+  };
   if (isPairRequest(message)) {
     handlePair(
       {
@@ -518,6 +556,11 @@ addMessageListener((message, respond, sender) => {
   if (isClipRequest(message)) {
     handleClip(clipDeps, message)
       .then(async (res) => {
+        if (res.ok) {
+          // Same rule as markStale above: `void` alone would leave a rejection
+          // unhandled.
+          void markClipSuccess(Date.now()).catch(() => undefined);
+        }
         await syncQueueState();
         respond(res);
       })
@@ -631,10 +674,24 @@ addMessageListener((message, respond, sender) => {
     return true;
   }
   if (isConnectionStatusRequest(message)) {
-    handleConnectionStatus({ getConnection })
+    handleConnectionStatus({
+      getConnection,
+      getQueueDepth: async () => (await getQueue()).length,
+      probeReachable: (origin) => probeHealth(origin),
+    })
       .then(respond)
       .catch(() => {
         respond({ kind: "connection", paired: false });
+      });
+    return true;
+  }
+  if (isDiscoverRequest(message)) {
+    handleDiscover({ probeReachable: (origin) => probeHealth(origin) })
+      .then(respond)
+      .catch(() => {
+        // A discovery failure is "we did not find one", never an error state —
+        // the manual URL field is the fallback and it is always present.
+        respond({ kind: "discover", origin: null });
       });
     return true;
   }

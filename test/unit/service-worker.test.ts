@@ -512,6 +512,9 @@ describe("message routing — success shapes", () => {
   test("connection-status: paired → token-free projection", async () => {
     await load();
     harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(jsonRes(200, { status: "ok", gateway: "read_only_http" }));
 
     const res = await harness.emitMessage({ kind: "connection-status" });
 
@@ -521,6 +524,9 @@ describe("message routing — success shapes", () => {
       label: conn.label,
       origin: conn.origin,
       pairedAt: conn.pairedAt,
+      queueDepth: 0,
+      reachable: true,
+      stale: false,
     });
     expect(JSON.stringify(res)).not.toContain(conn.token);
   });
@@ -1804,5 +1810,84 @@ describe("ambient surfacing", () => {
     // sender rather than the message, so there is nothing here to fall back to.
     await harness.emitMessage({ kind: "cue-open" });
     expect(harness.executeScript).not.toHaveBeenCalled();
+  });
+});
+
+describe("a rejected token is remembered", () => {
+  test("a 401 from the gateway sets stale on the stored connection", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(401, { error: "unauthorized" }));
+
+    const res = await harness.emitMessage({ kind: "clip", capture, tags: [] });
+    await settle();
+
+    expect(res).toMatchObject({ kind: "clip", ok: false, reason: "unauthorized" });
+    expect((harness.storage.get(CONNECTION_KEY) as Connection).stale).toBe(true);
+  });
+
+  test("a successful clip records the time and leaves stale false", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, { ...conn, stale: true });
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+
+    await harness.emitMessage({ kind: "clip", capture, tags: [] });
+    await settle();
+
+    const stored = harness.storage.get(CONNECTION_KEY) as Connection;
+    expect(stored.stale).toBe(false);
+    expect(typeof stored.lastClipAt).toBe("number");
+  });
+
+  test("an unreachable gateway is NOT a rejected token", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+
+    await harness.emitMessage({ kind: "clip", capture, tags: [] });
+    await settle();
+
+    expect((harness.storage.get(CONNECTION_KEY) as Connection).stale).toBeUndefined();
+  });
+});
+
+describe("discover route", () => {
+  test("responds with the first origin that answers", async () => {
+    await load();
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(jsonRes(200, { status: "ok", gateway: "read_only_http" }));
+
+    const res = await harness.emitMessage({ kind: "discover" });
+
+    expect(res).toEqual({ kind: "discover", origin: "http://127.0.0.1:7474" });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "http://127.0.0.1:7474/v1/health",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  test("nothing listening responds with null, not an error", async () => {
+    await load();
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+
+    const res = await harness.emitMessage({ kind: "discover" });
+
+    expect(res).toEqual({ kind: "discover", origin: null });
+  });
+
+  test("discovery needs no pairing — it is the step before pairing", async () => {
+    await load();
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(jsonRes(200, { status: "ok", gateway: "read_only_http" }));
+
+    const res = await harness.emitMessage({ kind: "discover" });
+
+    expect(res).toEqual({ kind: "discover", origin: "http://127.0.0.1:7474" });
+    // No Authorization header on the only tokenless route in the client.
+    const init = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock
+      .calls[0]?.[1];
+    expect(JSON.stringify(init)).not.toContain("Authorization");
   });
 });
