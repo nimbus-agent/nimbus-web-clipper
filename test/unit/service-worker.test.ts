@@ -780,13 +780,13 @@ describe("quick clip — context menu + shortcut routes", () => {
       .mockResolvedValue([{ result: undefined }]);
   }
 
-  test("registers the two context menus on startup (removeAll before create)", async () => {
+  test("registers the three context menus on startup (removeAll before create)", async () => {
     await load();
 
     expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
-    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(2);
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(3);
     const ids = harness.contextMenusCreate.mock.calls.map((c) => (c[0] as { id: string }).id);
-    expect(ids).toEqual(["clip-page", "clip-selection"]);
+    expect(ids).toEqual(["clip-page", "clip-selection", "show-related"]);
   });
 
   test("onInstalled re-registers the menus (removeAll first, no duplicate ids)", async () => {
@@ -798,7 +798,7 @@ describe("quick clip — context menu + shortcut routes", () => {
     await settle();
 
     expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
-    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(2);
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(3);
   });
 
   test("clip-page command captures the active tab and posts a clip", async () => {
@@ -1926,5 +1926,31 @@ describe("discover route", () => {
     const init = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock
       .calls[0]?.[1];
     expect(JSON.stringify(init)).not.toContain("Authorization");
+  });
+});
+
+describe("show-related context menu", () => {
+  test("clicking it injects the panel into the RIGHT-CLICKED tab", async () => {
+    await load();
+    harness.executeScript.mockClear();
+    harness.emitMenuClick("show-related", 42);
+    await settle();
+    expect(harness.executeScript).toHaveBeenCalledWith(
+      expect.objectContaining({ target: { tabId: 42 }, files: ["panel.js"] }),
+    );
+  });
+
+  test("an unknown menu id does nothing at all — it does not fall through to a clip", async () => {
+    await load();
+    harness.executeScript.mockClear();
+    harness.emitMenuClick("not-ours", 42);
+    await settle();
+    expect(harness.executeScript).not.toHaveBeenCalled();
+  });
+
+  test("the menu registers all three entries", async () => {
+    await load();
+    const ids = harness.contextMenusCreate.mock.calls.map((c) => (c[0] as { id: string }).id);
+    expect(ids).toEqual(["clip-page", "clip-selection", "show-related"]);
   });
 });

@@ -81,6 +81,7 @@ import {
   handleResolve,
   handleUnpair,
 } from "./handlers.ts";
+import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
 import { type FlushDeps, flushQueue } from "./queue-flush.ts";
 import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
@@ -456,11 +457,9 @@ const quickClipDeps: QuickClipDeps = {
 // Single-flighted because on a fresh install the startup sequence and onInstalled
 // both register: interleaved removeAll/create pairs could otherwise hit a duplicate
 // id and surface an unchecked runtime.lastError.
-const registerContextMenus = singleFlight(async (): Promise<void> => {
-  await removeAllMenus();
-  createMenu({ id: "clip-page", title: "Clip page to Nimbus", contexts: ["page"] });
-  createMenu({ id: "clip-selection", title: "Clip selection to Nimbus", contexts: ["selection"] });
-});
+const registerContextMenus = singleFlight(
+  async (): Promise<void> => await registerMenus({ removeAll: removeAllMenus, create: createMenu }),
+);
 
 // Both quick-clip routes fail closed like every other listener: the user-visible
 // result is the toast/badge, and a rejection here has nowhere to be reported.
@@ -468,10 +467,39 @@ addInstalledListener(() => {
   registerContextMenus().catch(() => undefined);
 });
 
+/**
+ * The ONE way the panel gets opened. Four triggers converge here — the hotkey,
+ * the context menu, the popup button (via its own injectPanel call) and the
+ * ambient cue — so the panel cannot behave differently depending on how it was
+ * summoned, which is what C1.5 exists to prevent.
+ *
+ * A restricted page rejects injection; fail closed and silently, because there
+ * is no surface to report on when the panel is the surface.
+ */
+function openPanel(tabId?: number): void {
+  if (tabId !== undefined) {
+    injectPanel(tabId).catch(() => undefined);
+    return;
+  }
+  activeTab()
+    .then((tab) => injectPanel(tab.id))
+    .catch(() => undefined);
+}
+
 addMenuClickListener((menuItemId, tabId) => {
-  // Clip the tab that was RIGHT-CLICKED (it may not be the active tab of the focused
-  // window, and the activeTab grant belongs to it).
-  quickClip(quickClipDeps, menuItemId === "clip-selection" ? "selection" : "article", tabId).catch(
+  const action = menuAction(menuItemId);
+  if (action === null) {
+    return;
+  }
+  if (action === "show-related") {
+    // The RIGHT-CLICKED tab, falling back to the active one. A right-click in a
+    // non-focused window targets a different tab than tabs.query({active}), and
+    // the activeTab grant belongs to the clicked tab — the same reasoning the
+    // clip path already documents.
+    openPanel(tabId);
+    return;
+  }
+  quickClip(quickClipDeps, action === "clip-selection" ? "selection" : "article", tabId).catch(
     () => undefined,
   );
 });
@@ -508,7 +536,7 @@ function openPanelForCue(tabId: number | undefined): void {
   }
   // Fire-and-forget: no response is sent, the cue does not wait, and the panel
   // appearing is the answer. A restricted page rejects injection — fail closed.
-  injectPanel(tabId).catch(() => undefined);
+  openPanel(tabId);
 }
 
 /**
@@ -718,9 +746,7 @@ addMessageListener((message, rawRespond, sender) => {
 // the command gesture; a restricted page rejects injection — fail closed silently.
 addCommandListener((command) => {
   if (command === "show_related") {
-    activeTab()
-      .then((tab) => injectPanel(tab.id))
-      .catch(() => undefined);
+    openPanel();
     return;
   }
   if (command === "clip-page") {
