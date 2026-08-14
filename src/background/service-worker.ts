@@ -468,10 +468,17 @@ addInstalledListener(() => {
 });
 
 /**
- * The ONE way the panel gets opened. Four triggers converge here — the hotkey,
- * the context menu, the popup button (via its own injectPanel call) and the
- * ambient cue — so the panel cannot behave differently depending on how it was
- * summoned, which is what C1.5 exists to prevent.
+ * The ONE way the panel gets opened from INSIDE the service worker. Three
+ * in-worker triggers converge here — the hotkey, the context menu's
+ * `show-related` branch, and the ambient cue's `openPanelForCue` — so the
+ * panel cannot behave differently depending on how it was summoned, which is
+ * what C1.5 exists to prevent.
+ *
+ * The popup is a separate context and cannot reach this function at all — it
+ * is its own bundle and calls `injectPanel` directly, then reports its own
+ * failure ("Nimbus can't show related on browser system pages") rather than
+ * failing silently like the callers below. So the popup's convergence with
+ * this function is on *behavior*, not on a shared call site.
  *
  * A restricted page rejects injection; fail closed and silently, because there
  * is no surface to report on when the panel is the surface.
@@ -491,17 +498,33 @@ addMenuClickListener((menuItemId, tabId) => {
   if (action === null) {
     return;
   }
-  if (action === "show-related") {
-    // The RIGHT-CLICKED tab, falling back to the active one. A right-click in a
-    // non-focused window targets a different tab than tabs.query({active}), and
-    // the activeTab grant belongs to the clicked tab — the same reasoning the
-    // clip path already documents.
-    openPanel(tabId);
-    return;
+  // A switch on the action, not a ternary: a ternary has no exhaustiveness
+  // check, so a future MenuAction member (e.g. a link/image clip entry) would
+  // fall through the `default` silently rather than failing to compile. The
+  // `never` assignment below is what turns "someone added a MenuAction arm
+  // and forgot this switch" into a compile error instead of a page quietly
+  // getting clipped as an article. This is the action→mode half of the same
+  // guarantee `menuAction` already gives the id→action step by returning
+  // `null` instead of defaulting — see its own doc comment.
+  switch (action) {
+    case "show-related":
+      // The RIGHT-CLICKED tab, falling back to the active one. A right-click in a
+      // non-focused window targets a different tab than tabs.query({active}), and
+      // the activeTab grant belongs to the clicked tab — the same reasoning the
+      // clip path already documents.
+      openPanel(tabId);
+      return;
+    case "clip-article":
+      quickClip(quickClipDeps, "article", tabId).catch(() => undefined);
+      return;
+    case "clip-selection":
+      quickClip(quickClipDeps, "selection", tabId).catch(() => undefined);
+      return;
+    default: {
+      const unreachable: never = action;
+      return unreachable;
+    }
   }
-  quickClip(quickClipDeps, action === "clip-selection" ? "selection" : "article", tabId).catch(
-    () => undefined,
-  );
 });
 
 /**

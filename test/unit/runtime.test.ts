@@ -1,6 +1,5 @@
 // test/unit/runtime.test.ts
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { addCommandListener } from "../../src/browser/commands.ts";
 import {
   addInstalledListener,
   addMessageListener,
@@ -74,17 +73,6 @@ describe("browser/runtime seam", () => {
     // key present with an explicit undefined) — toEqual treats those as equal
     // and would not catch a regression to the latter.
     expect(received).toStrictEqual({});
-  });
-
-  test("addCommandListener forwards keyboard commands", () => {
-    let received = "";
-    addCommandListener((command) => {
-      received = command;
-    });
-
-    harness.emitCommand("clip-page");
-
-    expect(received).toBe("clip-page");
   });
 
   test("addInstalledListener is invoked on runtime.onInstalled", () => {

@@ -898,6 +898,45 @@ describe("quick clip — context menu + shortcut routes", () => {
     expect(globalThis.fetch).toHaveBeenCalled();
   });
 
+  // Regression for the menu-click listener's action→mode switch: these two
+  // prove the exhaustiveness refactor (a switch with a `never`-typed default,
+  // replacing `action === "clip-selection" ? "selection" : "article"`) still
+  // sends the RIGHT mode on the wire for both clip menu entries, not just that
+  // some clip happens. A ternary would compile clean even if the switch's
+  // cases were swapped or one were deleted; the request body is what would
+  // actually catch that.
+  test("the clip-page menu item posts an article clip", async () => {
+    await load();
+    seedQuickClip(harness, "article");
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+
+    harness.emitMenuClick("clip-page", 5);
+    await settle();
+
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(call[1]?.body))).toEqual(expect.objectContaining({ mode: "article" }));
+  });
+
+  test("the clip-selection menu item posts a selection clip", async () => {
+    await load();
+    seedQuickClip(harness, "selection");
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+
+    harness.emitMenuClick("clip-selection", 5);
+    await settle();
+
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(call[1]?.body))).toEqual(
+      expect.objectContaining({ mode: "selection" }),
+    );
+  });
+
   test("a restricted page flashes the badge instead of injecting a toast", async () => {
     await load();
     harness.storage.set(CONNECTION_KEY, conn);

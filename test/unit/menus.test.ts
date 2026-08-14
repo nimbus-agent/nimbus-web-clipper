@@ -18,10 +18,13 @@ describe("MENU_ITEMS", () => {
     ]);
   });
 
-  test("clip-selection appears on a selection; show-related on the page", () => {
+  test("clip-selection appears on a selection; show-related on page, link, image and selection", () => {
     const byId = new Map(MENU_ITEMS.map((i) => [i.id, i]));
     expect(byId.get(MENU_CLIP_SELECTION)?.contexts).toEqual(["selection"]);
-    expect(byId.get(MENU_SHOW_RELATED)?.contexts).toEqual(["page"]);
+    // Wider than just "page": Chrome only shows a plain page-context item when
+    // nothing else is under the cursor, and this entry needs to be reachable
+    // on a right-click that lands on a link, image, or selected text too.
+    expect(byId.get(MENU_SHOW_RELATED)?.contexts).toEqual(["page", "link", "image", "selection"]);
   });
 
   test("every entry has a non-empty title and at least one context", () => {

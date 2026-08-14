@@ -11,16 +11,32 @@ export const MENU_CLIP_SELECTION = "clip-selection";
 export const MENU_SHOW_RELATED = "show-related";
 
 /**
- * Hyphenated ids, deliberately unlike the manifest's `show_related` COMMAND name.
- * They are different namespaces — a menu id and a command name — and making them
- * identical would invite a future reader to route one through the other.
+ * Menu ids and the manifest's command names (`src/manifest/manifest.ts`) are
+ * separate namespaces, even where their spellings happen to coincide.
+ * `MENU_CLIP_PAGE` / `MENU_CLIP_SELECTION` are byte-identical to the
+ * `"clip-page"` / `"clip-selection"` command names — that overlap is
+ * incidental, not a contract — while `MENU_SHOW_RELATED` ("show-related")
+ * deliberately does NOT match the command name `show_related`. Neither
+ * direction should be routed through the other: a menu click reaches
+ * `menuAction` here, a command reaches its own listener in
+ * `service-worker.ts`, and nothing in either path treats a matching spelling
+ * as meaningful.
  */
 export const MENU_ITEMS: readonly MenuItem[] = Object.freeze([
   { id: MENU_CLIP_PAGE, title: "Clip page to Nimbus", contexts: ["page"] },
   { id: MENU_CLIP_SELECTION, title: "Clip selection to Nimbus", contexts: ["selection"] },
   // The entry this slice exists for: a way into the panel the browser cannot
-  // silently withhold, unlike a hotkey the browser may decline to bind.
-  { id: MENU_SHOW_RELATED, title: "Show related in Nimbus", contexts: ["page"] },
+  // silently withhold, unlike a hotkey the browser may decline to bind. Chrome
+  // only shows a plain "page" item when nothing else is under the cursor, so
+  // "page" alone would make this entry invisible on exactly the kind of page
+  // it targets — a GitHub PR is mostly links, images and selectable text, so a
+  // right-click almost never lands on bare page background. The wider list
+  // makes the item reachable wherever the user actually right-clicks.
+  {
+    id: MENU_SHOW_RELATED,
+    title: "Show related in Nimbus",
+    contexts: ["page", "link", "image", "selection"],
+  },
 ]);
 
 export type MenuAction = "clip-article" | "clip-selection" | "show-related";

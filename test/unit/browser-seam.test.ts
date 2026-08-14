@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { setBadgeCount } from "../../src/browser/action.ts";
 import { clearAlarm, ensureAlarm, rearmAlarm } from "../../src/browser/alarms.ts";
-import { getAllCommands } from "../../src/browser/commands.ts";
+import { addCommandListener, getAllCommands } from "../../src/browser/commands.ts";
 import { isFirefoxRuntime } from "../../src/browser/runtime.ts";
 import { injectPanel, runCapture, showCue } from "../../src/browser/scripting.ts";
 import { storageGet, storageRemove, storageSet } from "../../src/browser/storage.ts";
@@ -186,6 +186,20 @@ describe("browser/tabs navigation seam", () => {
     harness = installChromeMock();
     harness.tabsGet.mockResolvedValueOnce({});
     expect(await tabUrl(7)).toBeNull();
+  });
+});
+
+describe("addCommandListener", () => {
+  test("addCommandListener forwards keyboard commands", () => {
+    harness = installChromeMock();
+    let received = "";
+    addCommandListener((command) => {
+      received = command;
+    });
+
+    harness.emitCommand("clip-page");
+
+    expect(received).toBe("clip-page");
   });
 });
 
