@@ -39,7 +39,7 @@ Copied from the spec and `CLAUDE.md`. Every task's requirements implicitly inclu
 - `src/shared/gateway.ts` — add the `health` endpoint to `GATEWAY_PATHS`
 - `src/background/gateway-client.ts` — add `probeHealth`
 - `src/shared/types.ts` — `Connection` grows `lastClipAt?` / `stale?`
-- `src/background/connection-store.ts` — `markClipSuccess`, `markStale`, `clearStale`
+- `src/background/connection-store.ts` — `markClipSuccess`, `markStale`, `clearStale`, and a shared write chain that `setConnection` / `clearConnection` now also use
 - `src/shared/messages.ts` — `ConnectionResponse` paired arm grows four fields; add `DiscoverRequest` / `DiscoverResponse` + guards
 - `src/background/handlers.ts` — `handleConnectionStatus` extended; new `handleDiscover`
 - `src/background/service-worker.ts` — wrap `respond`; route `discover`
@@ -324,6 +324,12 @@ export async function probeHealth(
     return false;
   }
   // Shape-check the body: something else listening on 7474 can return 200.
+  //
+  // `readJson` is deliberately OUTSIDE the try above, and that is safe: it is
+  // total — it catches its own `res.json()` rejection and returns null
+  // (gateway-client.ts:119-125), so a non-JSON body from whatever else is on
+  // this port yields `null` here, not a throw. Do not widen the try to cover it;
+  // a catch that can never fire reads as a real failure mode to the next person.
   const data = await readJson(res);
   return isObject(data) && data["status"] === "ok";
 }
@@ -404,6 +410,41 @@ describe("connection health facts", () => {
     await markClipSuccess(1);
     expect(await getConnection()).toBeNull();
   });
+
+  test("a re-pair racing a 401 keeps the NEW token, not the old one", async () => {
+    installChromeStub();
+    await setConnection(conn);
+    const fresh: Connection = { ...conn, token: "new-tok", label: "re-paired", pairedAt: 99 };
+
+    // A queue flush 401s at the same moment the user re-pairs. Both are started
+    // before either is awaited, which is exactly how they interleave in the
+    // service worker.
+    const marking = markStale();
+    const pairing = setConnection(fresh);
+    await Promise.all([marking, pairing]);
+
+    const stored = await getConnection();
+    expect(stored?.token).toBe("new-tok");
+    expect(stored?.label).toBe("re-paired");
+    // THIS is the assertion that distinguishes fixed from unfixed, so do not
+    // drop it as redundant. On the shared chain, markStale runs FIRST (it was
+    // enqueued first) and setConnection's whole-record write lands after it, so
+    // the fresh record has no `stale` field at all. Without the chain,
+    // setConnection writes immediately and markStale's read-modify-write lands
+    // after it — re-flagging the brand-new token as rejected.
+    expect(stored?.stale).toBeUndefined();
+  });
+
+  test("unpair racing a clip success leaves nothing behind", async () => {
+    installChromeStub();
+    await setConnection(conn);
+
+    const marking = markClipSuccess(5);
+    const clearing = clearConnection();
+    await Promise.all([marking, clearing]);
+
+    expect(await getConnection()).toBeNull();
+  });
 });
 ```
 
@@ -437,30 +478,53 @@ export interface Connection {
 }
 ```
 
-In `src/background/connection-store.ts`, keep `isConnection` as-is — the new fields are optional and an old record must still load — and add:
+In `src/background/connection-store.ts`, keep `isConnection` as-is — the new fields are optional and an old record must still load — and add the write chain. **`setConnection` and `clearConnection` must be routed through it too**, not left as direct writes:
 
 ```ts
 /**
- * Read-modify-write the stored connection, or do nothing when there is none.
+ * ONE serialised chain for every write to the connection key.
  *
- * Serialised on one chain for the same reason the origin list is
- * (options.ts's `mutateOrigins`): a clip success and a 401 arriving together
- * would both read the pre-change record and the second write would drop the
- * first one's edit.
+ * The read-modify-write helpers below are the obvious reason: a clip success and
+ * a 401 arriving together would both read the pre-change record, and the second
+ * write would drop the first one's edit — the same lost-update guard
+ * `options.ts`'s `mutateOrigins` applies to the origin list.
+ *
+ * The NON-obvious reason is why `setConnection` and `clearConnection` go through
+ * it as well. They replace the whole record, and their callers are `handlePair`
+ * and `handleUnpair`. A queue flush that 401s while the user is re-pairing would
+ * otherwise interleave as: `mutate` reads the OLD record → `setConnection` writes
+ * the NEW one → `mutate` writes back its transform of the old one. The fresh
+ * token is silently reverted to the dead one it just replaced, and the user is
+ * told to re-pair a browser they have just re-paired. Narrow window, severe
+ * outcome, and it costs one shared chain to close.
+ *
+ * In-memory only, and that is sufficient: the chain orders overlapping writes
+ * within one service-worker lifetime, and MV3 runs exactly one service-worker
+ * instance. Across an eviction there is no chain — and no concurrency either,
+ * because there is no other writer alive to race with.
  */
 let writes: Promise<void> = Promise.resolve();
 
-function mutate(transform: (c: Connection) => Connection): Promise<void> {
-  writes = writes
-    .catch(() => undefined)
-    .then(async () => {
-      const current = await getConnection();
-      if (current === null) {
-        return;
-      }
-      await storageSet(CONNECTION_KEY, transform(current));
-    });
+function enqueue(op: () => Promise<void>): Promise<void> {
+  writes = writes.catch(() => undefined).then(op);
   return writes;
+}
+
+/**
+ * Read-modify-write the stored connection, or do nothing when there is none.
+ *
+ * `transform` returns a NEW object (`{ ...c, stale: true }`); it must never
+ * mutate its argument in place, since callers elsewhere may hold the record it
+ * was handed.
+ */
+function mutate(transform: (c: Connection) => Connection): Promise<void> {
+  return enqueue(async () => {
+    const current = await getConnection();
+    if (current === null) {
+      return;
+    }
+    await storageSet(CONNECTION_KEY, transform(current));
+  });
 }
 
 /** A successful clip proves the token works, so it also clears `stale`. */
@@ -474,6 +538,19 @@ export function markStale(): Promise<void> {
 
 export function clearStale(): Promise<void> {
   return mutate((c) => ({ ...c, stale: false }));
+}
+```
+
+Then change the two existing whole-record writers to use the chain. Their
+signatures and behaviour are unchanged — only their ordering guarantee improves:
+
+```ts
+export function setConnection(c: Connection): Promise<void> {
+  return enqueue(() => storageSet(CONNECTION_KEY, c));
+}
+
+export function clearConnection(): Promise<void> {
+  return enqueue(() => storageRemove(CONNECTION_KEY));
 }
 ```
 
@@ -736,6 +813,30 @@ describe("handleDiscover", () => {
     const res = await handleDiscover({ probeReachable: async () => false });
     expect(res).toEqual({ kind: "discover", origin: null });
   });
+
+  test("a throwing probe does not cost the next candidate its turn", async () => {
+    const seen: string[] = [];
+    const res = await handleDiscover({
+      probeReachable: async (origin) => {
+        seen.push(origin);
+        if (origin === "http://127.0.0.1:7474") {
+          throw new Error("boom");
+        }
+        return true;
+      },
+    });
+    expect(seen).toEqual(["http://127.0.0.1:7474", "http://localhost:7474"]);
+    expect(res).toEqual({ kind: "discover", origin: "http://localhost:7474" });
+  });
+
+  test("every probe throwing is a miss, not a rejection", async () => {
+    const res = await handleDiscover({
+      probeReachable: async () => {
+        throw new Error("boom");
+      },
+    });
+    expect(res).toEqual({ kind: "discover", origin: null });
+  });
 });
 ```
 
@@ -817,7 +918,11 @@ export interface DiscoverDeps {
 export async function handleDiscover(deps: DiscoverDeps): Promise<DiscoverResponse> {
   const results: ProbeResult[] = [];
   for (const origin of DISCOVERY_CANDIDATES) {
-    const reachable = await deps.probeReachable(origin);
+    // One candidate's failure must never cost the next candidate its turn.
+    // `probeHealth` does not throw today, but the guard belongs HERE rather than
+    // in the probe: this loop's contract is "try each candidate", and it should
+    // hold for any probe implementation, including a future one that throws.
+    const reachable = await deps.probeReachable(origin).catch(() => false);
     results.push({ origin, reachable });
     if (reachable) {
       break;
@@ -982,7 +1087,13 @@ addMessageListener((message, rawRespond, sender) => {
     if (carriesUnauthorized(res)) {
       // Fire-and-forget: the user's answer must not wait on a storage write, and
       // a failed write only means the flag is set on the next 401.
-      void markStale();
+      //
+      // `.catch` is REQUIRED, not decoration. `void` does not attach a rejection
+      // handler, so a failing `chrome.storage.local.set` here would surface as an
+      // unhandled rejection in the service worker — and fail the Vitest run. This
+      // is the same `.catch(() => undefined)` the file already uses for its other
+      // fire-and-forget calls (`injectPanel`, `endPause`, `ensureAlarm`).
+      void markStale().catch(() => undefined);
     }
     rawRespond(res);
   };
@@ -1026,7 +1137,9 @@ In the clip route, record success. Locate the `isClipRequest` branch and extend 
 ```ts
       .then((res) => {
         if (res.ok) {
-          void markClipSuccess(Date.now());
+          // Same rule as markStale above: `void` alone would leave a rejection
+          // unhandled.
+          void markClipSuccess(Date.now()).catch(() => undefined);
         }
         respond(res);
       })
@@ -1689,3 +1802,55 @@ git commit -m "docs: record slice 1 — discovery, connection health, the trust 
 **Out of scope, by design:** the preview off-switch named for stage 4 in the spec arrives with slice 3 (there is nothing to switch until the preview exists); the shortcut-binding readout in stage 2 arrives with slice 2; persisted `scopes` arrive with slice 5.
 
 **Known follow-up:** `src/options/options.ts` is 325 lines and grows here. It stays under the threshold that would justify a split, and slice 2 adds only a shortcut readout. If slice 2 pushes it past ~450 lines, split the surfaces half into `src/options/surfaces-controller.ts` at that point — not now.
+
+---
+
+## Review Dispositions
+
+Findings from
+[2026-08-14-slice-1-setup-that-works-review.md](./2026-08-14-slice-1-setup-that-works-review.md),
+each checked against the code before being accepted or argued with.
+
+| # | Finding | Disposition |
+| --- | --- | --- |
+| 1 | `readJson` outside the try in `probeHealth` | **Premise declined; real version fixed one layer up.** |
+| 2 | `void markStale()` can leave a rejection unhandled | **Fixed as proposed**, and extended to `markClipSuccess`. |
+| 3 | Notes on the write chain's scope and copy semantics | **Both answered; the investigation found a real race, now fixed.** |
+
+**On 1 — the premise is wrong, the instinct is right.** `readJson` cannot throw:
+it catches its own `res.json()` rejection and returns `null`
+(`gateway-client.ts:119-125`), so a non-JSON body from whatever else is listening
+on 7474 yields `null`, not an exception. Widening the try to cover it would add a
+catch that can never fire, which reads to the next maintainer as a real failure
+mode and invites someone to "handle" it. **But the consequence the finding
+describes — one bad candidate costing the next its turn — was genuinely
+unguarded**, just not where it was reported: `handleDiscover`'s loop awaited
+`probeReachable` bare. The guard now lives there, because that loop's contract is
+"try each candidate" and it should hold for any probe implementation, including a
+future one that does throw. Two tests were added for it.
+
+**On 2 — correct, and it matches an existing convention.** `void` does not attach
+a rejection handler, so a failing `chrome.storage.local.set` would surface as an
+unhandled rejection in the service worker and fail the Vitest run. The file
+already uses `.catch(() => undefined)` for its other fire-and-forget calls
+(`injectPanel`, `endPause`, `ensureAlarm`, `syncQueueState`). The review flagged
+`markStale`; `markClipSuccess` in the clip route has the identical problem and is
+fixed with it.
+
+**On 3 — both notes answered, and a third thing found.** The two questions asked
+have clean answers, and both are now written into the code comment: the in-memory
+chain is sufficient because it orders overlapping writes within one
+service-worker lifetime and MV3 runs exactly one instance — across an eviction
+there is no chain and no concurrent writer either; and `transform` returning
+`{ ...c, stale: true }` is a fresh object, so no caller's record is mutated in
+place.
+
+Tracing who else writes that key turned up a defect neither note named.
+**`setConnection` and `clearConnection` bypassed the chain entirely**, and their
+callers are `handlePair` and `handleUnpair`. A queue flush that 401s while the
+user is re-pairing interleaves as: `mutate` reads the OLD record →
+`setConnection` writes the NEW one → `mutate` writes back its transform of the
+old one. The fresh token is silently reverted to the dead one it just replaced,
+and the user is told to re-pair a browser they have just re-paired. Both writers
+now share the chain, with a regression test whose `stale` assertion is what
+distinguishes the fixed ordering from the broken one.
