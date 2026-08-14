@@ -28,6 +28,7 @@
     "mock-gateway": "bun scripts/screenshots/mock-gateway.ts",
     "screenshots:setup": "playwright install chromium",
     "screenshots": "node scripts/screenshots/capture.ts",
+    "verify:setup": "node scripts/verify-setup.ts",
     "promo": "node scripts/gen-promo.ts"
   },
   "devDependencies": {
