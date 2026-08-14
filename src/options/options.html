@@ -58,7 +58,13 @@
         <h2><span class="stage__num">4</span> Where your data goes</h2>
         <p><strong>One destination.</strong> Nimbus only ever sends data to <span id="trust-origin">your local gateway</span>. There is no cloud service and no analytics. Page access, granted in stage 3, is a separate axis — it lets Nimbus read pages you allow, but it never changes where anything is sent.</p>
         <p><strong>Page access is separate, and it is yours to give.</strong> Nimbus can currently read the contents of pages on: <span id="trust-hosts">no sites yet</span>. Nothing is granted until you grant it, and revoking is one click in stage 3.</p>
-        <p><strong>What we send, and when.</strong> Clipping — from the toolbar or the hotkey — sends the page's title, URL, and the extracted article or selected text to your gateway the moment you ask it to. The confirmation toast tells you the outcome afterwards.</p>
+        <p><strong>What we send, and when.</strong> Clipping from the toolbar shows you the whole payload — title, URL, tags, and the body text — before it is sent, and sends nothing until you confirm. The hotkey and the right-click menu stay one gesture: they send straight away and the toast reports the outcome afterwards. Asking Nimbus to fetch an item names that item — the service, the type, and the address — before your gateway reaches out for it.</p>
+        <p class="options__toggle">
+          <label for="preview-toggle">
+            <input id="preview-toggle" type="checkbox" checked />
+            Show me the payload before sending, when I clip from the toolbar
+          </label>
+        </p>
         <p><strong>The secret stays secret.</strong> Your pairing token lives in extension storage, is never shown on this page, never written to a log, and never placed in any web page.</p>
         <p><strong>You can check all of this.</strong> The extension is MIT-licensed, has no runtime dependencies, and its build is reproducible from source.</p>
       </section>

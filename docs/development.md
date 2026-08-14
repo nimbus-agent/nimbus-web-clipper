@@ -435,6 +435,48 @@ never been run — this is that backlog being cleared, not new work.
    stays silent there. See "Manual verification — Service lanes (C2.3)" above
    for the fuller six-step version of this pass.
 
+## Manual verification — Show what leaves (1.3 / C4.2)
+
+Prereq: paired, and a gateway you can watch the request log of (or a proxy) —
+several steps assert that **nothing was sent**, which only the gateway side can
+confirm.
+
+The clip preview (popup):
+
+1. On an article page, open the popup and press **Clip page**. The payload
+   appears *before* anything is sent: Title, URL, Mode, Tags, and a body
+   excerpt with a length. Confirm the gateway logged **no** request yet.
+2. Press **Cancel** → still nothing sent, and the popup is usable again (you
+   can immediately clip once more).
+3. Press **Clip page** → **Send**. Exactly one clip lands, and the status
+   reports it as before.
+4. Type tags first, then clip → the preview lists those tags. With no tags it
+   reads **none**, not a blank.
+5. On a long article, check the excerpt is cut but the reported length is the
+   **whole** body — the number is bigger than the text shown.
+6. Repeat 1 and 3 with **Clip selection**: the preview says `selection` and
+   shows the selected text.
+7. Confirm the preview contains no token: DevTools → inspect the popup DOM.
+
+The off switch:
+
+8. Options stage 4 → uncheck **Show me the payload before sending…**. Reopen
+   the popup and clip → it sends straight away, as it did before this slice.
+9. Re-check it → the preview is back. Reload Options and confirm the checkbox
+   still reflects the stored value.
+
+The fetch preview (panel) — this one has **no** off switch:
+
+10. On a fetchable-but-not-indexed item (see "Targeted fetch (C3.1)" above),
+    open the panel and press **Fetch this from …**. The panel names Service,
+    Type and Address. Confirm the gateway logged **no** `/v1/items/fetch`.
+11. Press **Cancel** → nothing sent, **and the Fetch button still works**.
+    Press it again → the preview reopens.
+12. Press **Send** → exactly one fetch, then the re-resolve, as before.
+13. Force a `rate_limited` outcome and press **Try again** → it opens a fresh
+    preview rather than re-sending, and step 12's behaviour repeats.
+14. Repeat 1, 3, 10 and 12 in Firefox.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any

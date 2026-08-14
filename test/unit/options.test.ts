@@ -42,6 +42,7 @@ const FIXTURE = `
   <section id="stage-trust">
     <span id="trust-origin"></span>
     <span id="trust-hosts"></span>
+    <input id="preview-toggle" type="checkbox" checked />
   </section>
 `;
 
@@ -626,11 +627,16 @@ describe("options.html stages", () => {
     expect(html).toContain('id="trust-hosts"');
   });
 
-  test("the trust panel describes what clipping actually sends — no payload preview promise", () => {
-    expect(html).toContain(
-      "sends the page's title, URL, and the extracted article or selected text",
-    );
-    expect(html).not.toContain("shows you the whole payload first");
+  // Slice 1 shipped this guard inverted — it pinned the copy to NOT promise a
+  // payload preview, because back then there wasn't one and a trust panel that
+  // overclaims is worse than none. Slice 3 ships the preview, so the guard flips
+  // with it: the same defect in the opposite direction is a panel still
+  // describing a product that no longer exists. What it guards is unchanged —
+  // this paragraph says exactly what the shipped gestures do, no more, no less.
+  test("the trust panel describes what clipping actually sends — preview included", () => {
+    expect(html).toContain("shows you the whole payload");
+    expect(html).toContain("sends nothing until you confirm");
+    expect(html).toContain("send straight away");
   });
 
   test("the trust panel does not claim a popup URL lookup", () => {
@@ -734,5 +740,44 @@ describe("shortcuts render into Options", () => {
     await bootOptions();
     expect(el("shortcut-list").querySelectorAll(".shortcut").length).toBe(0);
     expect(el("shortcut-hint").textContent?.length).toBeGreaterThan(0);
+  });
+});
+
+describe("preview toggle", () => {
+  test("reflects the stored preference", async () => {
+    harness = installChromeMock();
+    harness.storage.set("preview-enabled", false);
+    await bootOptions();
+    const toggle = document.getElementById("preview-toggle");
+    expect(toggle instanceof HTMLInputElement && toggle.checked).toBe(false);
+  });
+
+  test("defaults to on when nothing is stored", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    const toggle = document.getElementById("preview-toggle");
+    expect(toggle instanceof HTMLInputElement && toggle.checked).toBe(true);
+  });
+
+  test("switching it off persists", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    const toggle = document.getElementById("preview-toggle");
+    if (toggle instanceof HTMLInputElement) {
+      toggle.checked = false;
+      toggle.dispatchEvent(new Event("change"));
+    }
+    await flush();
+    expect(harness.storage.get("preview-enabled")).toBe(false);
+  });
+});
+
+describe("the trust panel matches what ships", () => {
+  test("it now states the popup shows you the payload first", () => {
+    expect(html.toLowerCase()).toContain("before it is sent");
+  });
+
+  test("it still says the hotkey does not preview", () => {
+    expect(html.toLowerCase()).toContain("hotkey");
   });
 });

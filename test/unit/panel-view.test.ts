@@ -5,6 +5,7 @@ import {
   type HeaderState,
   type Lane,
   renderError,
+  renderFetchPreview,
   renderHeader,
   renderHit,
   renderHits,
@@ -12,7 +13,7 @@ import {
   renderLaneBody,
   renderShell,
 } from "../../src/panel/panel-view.ts";
-import type { RelatedHit, ResolvedItem } from "../../src/shared/types.ts";
+import type { FetchTarget, RelatedHit, ResolvedItem } from "../../src/shared/types.ts";
 import { AGENT_ERRORS } from "../../src/shared/types.ts";
 
 const base: RelatedHit = {
@@ -777,6 +778,94 @@ describe("the navigated-away notice", () => {
     expect(classes[0]).toContain("nimbus-related__header-state");
     expect(classes[1]).toContain("nimbus-related__navaway");
     expect(shell.querySelectorAll("[disabled]")).toHaveLength(0);
+  });
+});
+
+describe("the fetch preview", () => {
+  const target: FetchTarget = {
+    product: "github",
+    surface: "pr",
+    url: "https://github.com/acme/web/pull/1",
+  };
+
+  it("names the target — Service/Type/Address, not a bare question", () => {
+    const el = renderFetchPreview(
+      document,
+      target,
+      () => undefined,
+      () => undefined,
+    );
+    expect(el.textContent).toContain("Service");
+    expect(el.textContent).toContain("github");
+    expect(el.textContent).toContain("Type");
+    expect(el.textContent).toContain("pr");
+    expect(el.textContent).toContain("Address");
+    expect(el.textContent).toContain(target.url);
+    expect(el.textContent?.toLowerCase()).not.toContain("fetch this item?");
+  });
+
+  it("renders in the same header-state box renderHeader itself uses", () => {
+    const el = renderFetchPreview(
+      document,
+      target,
+      () => undefined,
+      () => undefined,
+    );
+    expect(el.classList.contains("nimbus-related__header-state")).toBe(true);
+  });
+
+  it("offers Send and Cancel, each with its own stable class — never the shared action class alone", () => {
+    const el = renderFetchPreview(
+      document,
+      target,
+      () => undefined,
+      () => undefined,
+    );
+    const send = el.querySelector<HTMLButtonElement>("button.nimbus-related__fetch-send");
+    const cancel = el.querySelector<HTMLButtonElement>("button.nimbus-related__fetch-cancel");
+    expect(send?.textContent).toBe("Send");
+    expect(send?.type).toBe("button");
+    expect(cancel?.textContent).toBe("Cancel");
+    expect(cancel?.type).toBe("button");
+  });
+
+  it("Send and Cancel report their own click, and only their own", () => {
+    const onSend = vi.fn();
+    const onCancel = vi.fn();
+    const el = renderFetchPreview(document, target, onSend, onCancel);
+    el.querySelector<HTMLButtonElement>("button.nimbus-related__fetch-send")?.click();
+    expect(onSend).toHaveBeenCalledTimes(1);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("stacks Send and Cancel full-width, not side by side, in one actions container", () => {
+    const el = renderFetchPreview(
+      document,
+      target,
+      () => undefined,
+      () => undefined,
+    );
+    const actions = el.querySelector(".nimbus-related__fetch-actions");
+    expect(actions).not.toBeNull();
+    expect(actions?.children).toHaveLength(2);
+    expect(actions?.children[0]?.className).toContain("nimbus-related__fetch-send");
+    expect(actions?.children[1]?.className).toContain("nimbus-related__fetch-cancel");
+  });
+
+  it("renderShell shows the preview INSTEAD of the header when fetchPreview is set", () => {
+    const el = renderShell(document, {
+      header: {
+        kind: "not-indexed",
+        surface: "GitHub PR · a/b #1",
+        product: "github",
+        fetchable: true,
+      },
+      lanes: [],
+      fetchPreview: { target, onSend: () => undefined, onCancel: () => undefined },
+    });
+    expect(el.textContent).not.toContain("Fetch this from");
+    expect(el.textContent).not.toContain("Not indexed");
+    expect(el.textContent).toContain("Address");
   });
 });
 

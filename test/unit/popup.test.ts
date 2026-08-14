@@ -12,6 +12,14 @@ const FIXTURE = `
       <button id="clip-page" type="button">Clip page</button>
       <button id="clip-selection" type="button">Clip selection</button>
     </div>
+    <section id="preview" hidden>
+      <h2>This is what gets sent</h2>
+      <div id="preview-body"></div>
+      <div class="preview__actions">
+        <button id="preview-confirm" type="button">Send to Nimbus</button>
+        <button id="preview-cancel" type="button">Cancel</button>
+      </div>
+    </section>
     <button id="show-related" type="button">Show related</button>
     <section id="queue" hidden>
       <h2>Waiting to sync (<span id="queue-count">0</span>)</h2>
@@ -40,6 +48,16 @@ function click(id: string): void {
   document.getElementById(id)?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 
+/**
+ * The preview defaults ON, so every pre-existing clip test below now lands on
+ * the preview instead of sending straight away. This waits for it and clicks
+ * through, so those tests keep exercising send()'s behaviour unchanged.
+ */
+async function confirmPreview(): Promise<void> {
+  await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+  click("preview-confirm");
+}
+
 beforeEach(async () => {
   harness = installChromeMock();
   document.body.innerHTML = FIXTURE;
@@ -66,6 +84,7 @@ describe("clip(article)", () => {
     });
 
     click("clip-page");
+    await confirmPreview();
 
     await vi.waitFor(() => expect(statusText()).toBe("Saved to Nimbus."));
 
@@ -98,6 +117,7 @@ describe("clip(article)", () => {
     }
 
     click("clip-page");
+    await confirmPreview();
 
     await vi.waitFor(() => expect(statusText()).toBe("Saved to Nimbus."));
     expect(harness.sendMessage).toHaveBeenCalledWith({
@@ -119,6 +139,7 @@ describe("clip(article)", () => {
     });
 
     click("clip-page");
+    await confirmPreview();
 
     await vi.waitFor(() => expect(statusText()).toBe("Saved as a bookmark."));
   });
@@ -135,6 +156,7 @@ describe("clip(article)", () => {
     });
 
     click("clip-page");
+    await confirmPreview();
 
     await vi.waitFor(() => expect(statusText()).toBe("Updated in Nimbus."));
   });
@@ -157,6 +179,7 @@ describe("clip(article)", () => {
     harness.sendMessage.mockResolvedValueOnce({ not: "a clip response" });
 
     click("clip-page");
+    await confirmPreview();
 
     await vi.waitFor(() => expect(statusText()).toBe("Unexpected response."));
   });
@@ -191,6 +214,7 @@ describe("clip(selection)", () => {
     });
 
     click("clip-selection");
+    await confirmPreview();
 
     await vi.waitFor(() => expect(statusText()).toBe("Saved to Nimbus."));
     expect(harness.executeScript).toHaveBeenNthCalledWith(2, {
@@ -225,6 +249,7 @@ describe("clip error mapping", () => {
         .mockResolvedValueOnce({ kind: "queue", items: [] });
 
       click("clip-page");
+      await confirmPreview();
 
       await vi.waitFor(() => expect(statusText()).toBe(message));
       await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledTimes(3));
@@ -241,6 +266,7 @@ describe("clip error mapping", () => {
       .mockResolvedValueOnce({ kind: "queue", items: [] });
 
     click("clip-page");
+    await confirmPreview();
 
     await vi.waitFor(() => expect(statusText()).toBe("Couldn't save this page."));
   });
@@ -255,6 +281,7 @@ describe("clip error mapping", () => {
       .mockResolvedValueOnce({ kind: "queue", items: [] });
 
     click("clip-page");
+    await confirmPreview();
 
     await vi.waitFor(() =>
       expect(statusText()).toBe("Nimbus is busy — queued, will retry shortly."),
@@ -270,6 +297,7 @@ describe("clip error mapping", () => {
       .mockResolvedValueOnce({ kind: "queue", items: [] });
 
     click("clip-page");
+    await confirmPreview();
 
     await vi.waitFor(() =>
       expect(statusText()).toBe("Saved offline — will sync when Nimbus is back."),
@@ -411,5 +439,148 @@ describe("onQueueClick", () => {
     await vi.waitFor(() =>
       expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "queue-retry" }),
     );
+  });
+});
+
+/** Stubs the two-step capture the way every existing clip test in this file does. */
+function stubCapture(): void {
+  harness.executeScript
+    .mockResolvedValueOnce([{ result: undefined }])
+    .mockResolvedValueOnce([{ result: ARTICLE_CAPTURE }]);
+}
+
+function previewSection(): HTMLElement {
+  const el = document.getElementById("preview");
+  if (!(el instanceof HTMLElement)) {
+    throw new Error("missing #preview");
+  }
+  return el;
+}
+
+function clipKinds(): string[] {
+  return harness.sendMessage.mock.calls
+    .map((c) => (c[0] as { kind?: string }).kind)
+    .filter((k): k is string => k === "clip");
+}
+
+describe("preview before sending", () => {
+  test("clicking Clip page shows the preview and sends NOTHING yet", async () => {
+    stubCapture();
+    harness.sendMessage.mockClear();
+
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+
+    // The assertion that matters: no clip message left the popup.
+    expect(clipKinds()).toEqual([]);
+  });
+
+  test("confirming sends the clip", async () => {
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+    harness.sendMessage.mockClear();
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "clip",
+      ok: true,
+      status: "created",
+      bookmarked: false,
+    });
+
+    click("preview-confirm");
+
+    await vi.waitFor(() => expect(statusText()).toBe("Saved to Nimbus."));
+    expect(clipKinds()).toEqual(["clip"]);
+  });
+
+  test("cancelling sends nothing and hides the preview", async () => {
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+    harness.sendMessage.mockClear();
+
+    click("preview-cancel");
+
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(true));
+    expect(clipKinds()).toEqual([]);
+    expect(statusText()).toBe("Cancelled — nothing was sent.");
+  });
+
+  test("with the preference OFF, clipping sends immediately and shows no preview", async () => {
+    harness.storage.set("preview-enabled", false);
+    stubCapture();
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "clip",
+      ok: true,
+      status: "created",
+      bookmarked: false,
+    });
+
+    click("clip-page");
+
+    await vi.waitFor(() => expect(statusText()).toBe("Saved to Nimbus."));
+    expect(previewSection().hidden).toBe(true);
+  });
+
+  test("the preview names the page being clipped", async () => {
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+    expect(previewSection().textContent).toContain(ARTICLE_CAPTURE.url);
+  });
+
+  test("the capture buttons and the tags field are locked while a decision is pending", async () => {
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+
+    const actions = document.querySelector(".popup__actions");
+    const tags = document.getElementById("tags");
+    expect(actions instanceof HTMLElement && actions.hidden).toBe(true);
+    expect(tags instanceof HTMLInputElement && tags.disabled).toBe(true);
+  });
+
+  test("cancelling unlocks them again", async () => {
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+
+    click("preview-cancel");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(true));
+
+    const actions = document.querySelector(".popup__actions");
+    const tags = document.getElementById("tags");
+    expect(actions instanceof HTMLElement && actions.hidden).toBe(false);
+    expect(tags instanceof HTMLInputElement && tags.disabled).toBe(false);
+  });
+
+  test("the tags SENT are the tags PREVIEWED, even if the field changes after", async () => {
+    const tags = document.getElementById("tags");
+    if (tags instanceof HTMLInputElement) {
+      tags.value = "research";
+    }
+    stubCapture();
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+
+    // Simulate the field being changed behind the preview's back. The composer
+    // lock makes this unreachable by hand, which is the point — this asserts the
+    // send path does not RE-READ it even if something else does.
+    if (tags instanceof HTMLInputElement) {
+      tags.value = "totally-different";
+    }
+    harness.sendMessage.mockClear();
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "clip",
+      ok: true,
+      status: "created",
+      bookmarked: false,
+    });
+
+    click("preview-confirm");
+    await vi.waitFor(() => expect(statusText()).toBe("Saved to Nimbus."));
+
+    const sent = harness.sendMessage.mock.calls[0]?.[0] as { tags?: string[] };
+    expect(sent.tags).toEqual(["research"]);
   });
 });

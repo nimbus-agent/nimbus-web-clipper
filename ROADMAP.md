@@ -732,7 +732,7 @@ grow a second half to match.*
 > **Done when** Every gateway-side fetch the panel triggered is listed with
 > time, target and outcome, and the list does not contradict the gateway's own.
 
-### C4.2 Preview before a fetch · 🟢 · S
+### C4.2 Preview before a fetch · 🟢 · S — ✅ shipped
 > **What** Extend the pre-send preview (1.3) to cover fetch requests: show
 > exactly which item you are asking the gateway to go and get, before it goes.
 > **Why it wows** Same promise as 1.3, applied to the new direction of travel.
@@ -740,6 +740,13 @@ grow a second half to match.*
 > into 1.3's preview component.
 > **Done when** No gateway-side fetch happens without the user having seen what
 > it will fetch, or having turned the confirmation off deliberately.
+> **Status** Shipped, folded into **1.3**'s preview exactly as briefed: one pure
+> builder in `src/shared/preview.ts` produces both previews and one renderer
+> draws both, so the fetch confirm and the clip confirm cannot drift from each
+> other or from the request actually sent. The panel's fetch button now names
+> the service, the type and the address and waits for Send. Unlike the clip
+> preview, this one has **no off switch** — a targeted fetch is an I13 write
+> under your own stored credential, so it is always confirmed.
 
 ---
 
@@ -781,7 +788,7 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > the sites you have granted page access to, and the current settings, rather
 > than fixed copy. See [`docs/architecture.md`](./docs/architecture.md#discovery-connection-health-and-the-trust-panel).
 
-### 1.3 Show exactly what gets sent · 🟢 · M
+### 1.3 Show exactly what gets sent · 🟢 · M — ✅ shipped
 > **What** A pre-send preview of the clip payload — title, URL, mode, tags, and a
 > body excerpt — before it leaves the browser.
 > **Why it wows** "Nothing leaves without you seeing it" is a promise you can now
@@ -791,6 +798,16 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > preview; optional as a setting so power users can turn it off.
 > **Done when** The user can inspect the outgoing payload and confirm/cancel; the
 > bearer token is never shown (invariant).
+> **Status** Shipped for the **toolbar popup only** — the gesture that already
+> had a surface to confirm on. The hotkey and the right-click menu stay one
+> gesture and report in the toast afterwards; giving a one-gesture path a
+> confirm step would defeat the point of the gesture, and there is no popup DOM
+> to render into. Off switch in Options stage 4. The fields are named one by one
+> in a pure builder rather than iterated off the payload, so a field added to
+> `ClipPayload` later can never leak into the preview unnamed — the token
+> invariant holds by construction, not by review. The excerpt is cut, but the
+> reported length is of the **whole** body, so a cut excerpt can never
+> understate what leaves. Extended to fetch requests by **C4.2** above.
 
 ### 1.4 Connection health at a glance · 🟢 · S — ✅ shipped
 > **What** A live indicator: paired/unpaired, the origin, last-successful-clip
