@@ -32,4 +32,28 @@ describe("preview-pref", () => {
     installChromeStub({ storage: { "preview-enabled": "nope" } });
     expect(await isPreviewEnabled()).toBe(true);
   });
+
+  test("falsy non-boolean values fall back to ON", async () => {
+    // A falsy value (e.g. "") distinguishes typeof from Boolean() coercion:
+    // Boolean("") is false, but Boolean("nope") is true, so only a falsy
+    // non-boolean proves the guard is a typeof narrowing and not a coercion.
+    // This case catches the mistake `return Boolean(value)`.
+    installChromeStub({ storage: { "preview-enabled": "" } });
+    expect(await isPreviewEnabled()).toBe(true);
+  });
+
+  test("falsy numeric values fall back to ON", async () => {
+    // A falsy number (e.g. 0) also falls back to ON. Boolean(0) is false,
+    // so this catches the same Boolean() mistake from a different angle.
+    installChromeStub({ storage: { "preview-enabled": 0 } });
+    expect(await isPreviewEnabled()).toBe(true);
+  });
+
+  test("null stored value falls back to ON", async () => {
+    // null must also fail safe. A naive guard like value ?? true would correctly
+    // return true here, but this case verifies we are using typeof to narrow,
+    // not just falsy-checking or coercion.
+    installChromeStub({ storage: { "preview-enabled": null } });
+    expect(await isPreviewEnabled()).toBe(true);
+  });
 });
