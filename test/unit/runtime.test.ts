@@ -1,7 +1,7 @@
 // test/unit/runtime.test.ts
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { addCommandListener } from "../../src/browser/commands.ts";
 import {
-  addCommandListener,
   addInstalledListener,
   addMessageListener,
   sendMessage,

@@ -5,13 +5,10 @@
 // keeps the toolbar badge in sync with the pending count.
 import { setBadgeBackground, setBadgeCount, setBadgeText } from "../browser/action.ts";
 import { addAlarmListener, clearAlarm, ensureAlarm, rearmAlarm } from "../browser/alarms.ts";
+import { addCommandListener } from "../browser/commands.ts";
 import { addMenuClickListener, createMenu, removeAllMenus } from "../browser/context-menus.ts";
 import { hasOrigin } from "../browser/permissions.ts";
-import {
-  addCommandListener,
-  addInstalledListener,
-  addMessageListener,
-} from "../browser/runtime.ts";
+import { addInstalledListener, addMessageListener } from "../browser/runtime.ts";
 import { injectPanel, runCapture, showCue, showToast } from "../browser/scripting.ts";
 import {
   activeTab,

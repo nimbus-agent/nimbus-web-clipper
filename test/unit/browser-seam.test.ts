@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { setBadgeCount } from "../../src/browser/action.ts";
 import { clearAlarm, ensureAlarm, rearmAlarm } from "../../src/browser/alarms.ts";
+import { getAllCommands } from "../../src/browser/commands.ts";
+import { isFirefoxRuntime } from "../../src/browser/runtime.ts";
 import { injectPanel, runCapture, showCue } from "../../src/browser/scripting.ts";
 import { storageGet, storageRemove, storageSet } from "../../src/browser/storage.ts";
 import {
@@ -184,5 +186,68 @@ describe("browser/tabs navigation seam", () => {
     harness = installChromeMock();
     harness.tabsGet.mockResolvedValueOnce({});
     expect(await tabUrl(7)).toBeNull();
+  });
+});
+
+describe("getAllCommands", () => {
+  test("maps chrome.commands.getAll into plain bindings", async () => {
+    installChromeStub();
+    (globalThis as unknown as { chrome: Record<string, unknown> }).chrome["commands"] = {
+      getAll: (cb: (c: unknown[]) => void) =>
+        cb([
+          {
+            name: "show_related",
+            description: "Show related items in Nimbus",
+            shortcut: "Alt+Shift+R",
+          },
+          { name: "clip-page", description: "Clip the current page to Nimbus", shortcut: "" },
+        ]),
+    };
+    expect(await getAllCommands()).toEqual([
+      {
+        name: "show_related",
+        description: "Show related items in Nimbus",
+        shortcut: "Alt+Shift+R",
+      },
+      { name: "clip-page", description: "Clip the current page to Nimbus", shortcut: "" },
+    ]);
+  });
+
+  test("a command with no shortcut field reads as unbound, not undefined", async () => {
+    installChromeStub();
+    (globalThis as unknown as { chrome: Record<string, unknown> }).chrome["commands"] = {
+      getAll: (cb: (c: unknown[]) => void) => cb([{ name: "show_related" }]),
+    };
+    expect(await getAllCommands()).toEqual([
+      { name: "show_related", description: "", shortcut: "" },
+    ]);
+  });
+
+  test("an absent chrome.commands API yields an empty list, not a throw", async () => {
+    installChromeStub();
+    expect(await getAllCommands()).toEqual([]);
+  });
+});
+
+describe("isFirefoxRuntime", () => {
+  test("true for a moz-extension runtime URL", () => {
+    installChromeStub();
+    (globalThis as unknown as { chrome: Record<string, unknown> }).chrome["runtime"] = {
+      getURL: () => "moz-extension://abc/",
+    };
+    expect(isFirefoxRuntime()).toBe(true);
+  });
+
+  test("false for a chrome-extension runtime URL", () => {
+    installChromeStub();
+    (globalThis as unknown as { chrome: Record<string, unknown> }).chrome["runtime"] = {
+      getURL: () => "chrome-extension://abc/",
+    };
+    expect(isFirefoxRuntime()).toBe(false);
+  });
+
+  test("false rather than throwing when getURL is unavailable", () => {
+    installChromeStub();
+    expect(isFirefoxRuntime()).toBe(false);
   });
 });
