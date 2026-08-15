@@ -407,7 +407,6 @@ function appendFetchBlocked(
   // an unsafe label or scope name leaks neither the label nor `--set`.
   appendScopeGuidance(doc, box, "This pairing can't fetch pages yet.", state.scopeGap);
   return;
-
 }
 
 /**
@@ -424,9 +423,7 @@ function appendFetchRetry(
     // rate_limited is returned before any outbound call happens, so retrying
     // is safe to send as a fresh fetch.
     box.append(line(doc, "nimbus-related__status", "Rate limited — try again shortly."));
-    box.append(
-      actionButton(doc, "nimbus-related__action", "Try again", () => onFetch?.("fetch")),
-    );
+    box.append(actionButton(doc, "nimbus-related__action", "Try again", () => onFetch?.("fetch")));
     return;
   }
   // still-working: our timeout fired, not a failure — the gateway may still be
@@ -443,7 +440,6 @@ function appendFetchRetry(
     actionButton(doc, "nimbus-related__action", "Check again", () => onFetch?.("resolve")),
   );
   return;
-
 }
 
 export function renderHeader(
