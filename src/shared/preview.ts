@@ -48,13 +48,12 @@ export function buildClipPreview(payload: ClipPayload): ClipPreview {
   if (payload.canonicalUrl !== undefined) {
     fields.push({ label: "Canonical URL", value: payload.canonicalUrl });
   }
-  fields.push({ label: "Mode", value: payload.mode });
-  // The word "none", not an empty string: a blank cell reads as a rendering bug,
-  // and the same reasoning already governs the shortcuts readout's "Not set".
-  fields.push({
-    label: "Tags",
-    value: payload.tags.length === 0 ? "none" : payload.tags.join(", "),
-  });
+  fields.push(
+    { label: "Mode", value: payload.mode },
+    // The word "none", not an empty string: a blank cell reads as a rendering bug,
+    // and the same reasoning already governs the shortcuts readout's "Not set".
+    { label: "Tags", value: payload.tags.length === 0 ? "none" : payload.tags.join(", ") },
+  );
   const truncated = payload.body.length > EXCERPT_CHARS;
   return {
     fields,

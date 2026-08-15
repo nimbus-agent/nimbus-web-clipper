@@ -755,11 +755,13 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
   // if that guard ever grew a hole, returning the never-typed value directly
   // (as the sibling backstop in `renderHeader` above does) would put a raw
   // reason CODE on screen as the lane body instead of failing loudly. The
-  // `_never` assignment below still does its compile-time job — a future
-  // unhandled `AgentError` member fails to typecheck here exactly as before.
+  // `satisfies never` below still does its compile-time job — a future unhandled
+  // `AgentError` member fails to typecheck here exactly as before.
   if (state.reason !== "agent_failed") {
-    const _never: never = state.reason;
-    void _never;
+    // `satisfies never` rather than an unused `const _never: never` plus `void` to
+    // silence it: identical exhaustiveness check, no throwaway binding, and nothing
+    // for a reader to mistake for a discarded call.
+    state.reason satisfies never;
     return box;
   }
   // The run reached the agent and it could not answer — the CALL succeeded, so

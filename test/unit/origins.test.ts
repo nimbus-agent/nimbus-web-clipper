@@ -63,6 +63,34 @@ describe("splitOrigin", () => {
       prefix: "/jira",
     });
   });
+  test("strips every trailing slash, not just one", () => {
+    expect(splitOrigin("https://corp.example/jira//")).toEqual({
+      base: "https://corp.example",
+      prefix: "/jira",
+    });
+  });
+  test("keeps interior slashes and a path that is only slashes collapses to empty", () => {
+    expect(splitOrigin("https://corp.example/a//b/")?.prefix).toBe("/a//b");
+    expect(splitOrigin("https://corp.example///")?.prefix).toBe("");
+  });
+  test("stays linear on a long slash run that does not reach the end", () => {
+    // The shape that made the old `replace(/\/+$/, "")` quadratic: the engine
+    // matched the run, failed `$`, gave a character back, failed again, then
+    // restarted the whole walk from the next position in the run. 20 000 slashes
+    // took 90 ms and 40 000 took 363 ms — 2x input for 4x time.
+    //
+    // This is user-reachable: the string comes from `new URL()` over whatever is
+    // pasted into the options page. It is also re-paid on every use rather than
+    // once at entry, because a stored origin is re-split on every page recognition
+    // and once per row when the surfaces list renders.
+    const origin = `https://corp.example/${"/".repeat(40_000)}a`;
+    const started = performance.now();
+    const split = splitOrigin(origin);
+    expect(performance.now() - started).toBeLessThan(50);
+    // Correctness alongside the bound: no trailing slash to strip here, so the
+    // path is returned intact rather than truncated by the scan.
+    expect(split?.prefix.endsWith("a")).toBe(true);
+  });
 });
 
 describe("upsertOrigin / removeConfiguredOrigin", () => {

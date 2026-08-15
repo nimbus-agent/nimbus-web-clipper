@@ -25,7 +25,7 @@ describe("renderPreview", () => {
   test("renders one row per field, label and value both present", () => {
     const frag = renderPreview(document, clip);
     const rows = frag.querySelectorAll(".preview__row");
-    expect(rows.length).toBe(2);
+    expect(rows).toHaveLength(2);
     expect(rows[0]?.textContent).toContain("Title");
     expect(rows[0]?.textContent).toContain("Designing local-first software");
   });

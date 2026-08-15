@@ -10,8 +10,13 @@
 // is now a decision over four inputs with two independent gates, and inlining it
 // would bury the C2.5 rule inside a 60-line repaint function.
 import { normaliseTerm } from "../shared/term.ts";
-import type { SurfaceKind } from "../shared/types.ts";
-import { AGENT_LANES, type AgentLane, LANE_RULES, laneBelongsOnSurface } from "../shared/types.ts";
+import {
+  AGENT_LANES,
+  type AgentLane,
+  LANE_RULES,
+  laneBelongsOnSurface,
+  type SurfaceKind,
+} from "../shared/types.ts";
 
 /**
  * The selected term, as far as this panel is concerned.

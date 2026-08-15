@@ -52,7 +52,7 @@ describe("buildClipPreview", () => {
   test("a long body is excerpted, and reports its TRUE length", () => {
     const body = "x".repeat(EXCERPT_CHARS + 500);
     const p = buildClipPreview({ ...payload, body });
-    expect(p.excerpt.length).toBe(EXCERPT_CHARS);
+    expect(p.excerpt).toHaveLength(EXCERPT_CHARS);
     expect(p.truncated).toBe(true);
     // The whole point: the user is told what actually gets sent, which is the
     // FULL body — the excerpt is a display convenience, not the payload.

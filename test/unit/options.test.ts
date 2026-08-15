@@ -724,8 +724,8 @@ describe("shortcuts render into Options", () => {
     await bootOptions();
 
     const rows = el("shortcut-list").querySelectorAll(".shortcut");
-    expect(rows.length).toBe(2);
-    expect(el("shortcut-list").querySelectorAll('[data-bound="false"]').length).toBe(1);
+    expect(rows).toHaveLength(2);
+    expect(el("shortcut-list").querySelectorAll('[data-bound="false"]')).toHaveLength(1);
   });
 
   test("the hint names a settings path the user can paste", async () => {
@@ -738,7 +738,7 @@ describe("shortcuts render into Options", () => {
     harness = installChromeMock();
     harness.commandsGetAll = [];
     await bootOptions();
-    expect(el("shortcut-list").querySelectorAll(".shortcut").length).toBe(0);
+    expect(el("shortcut-list").querySelectorAll(".shortcut")).toHaveLength(0);
     expect(el("shortcut-hint").textContent?.length).toBeGreaterThan(0);
   });
 });
