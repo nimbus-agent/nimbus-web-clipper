@@ -442,44 +442,56 @@ type LaneInvocation = Pick<AgentRunRequest, "lane" | "pageUrl" | "itemId" | "ter
  * miss/ambiguous answer — never of the gateway; it must not be confused with
  * `unsupported`, which means the gateway itself has no agents surface.
  */
+/**
+ * The term-lane half of {@link resolveForAgent}, which shares no step with the page
+ * half — no recogniser gate, no resolve call, no `Recognition` — so it reads better as
+ * its own function than as a 35-line early branch. Extracted to bring
+ * `resolveForAgent` back under the cognitive-complexity gate (Sonar `S3776`); the
+ * behaviour and the return shapes are unchanged.
+ *
+ * Both omissions are deliberate rather than an optimisation.
+ *
+ * The recogniser gate exists to decide which page URLs may reach the gateway at all.
+ * `POST /v1/agents/glossary` takes `{ term }` — no URL, no item — so this path sends no
+ * page URL, and the reason for the gate does not apply to it. Gating anyway would
+ * confine definitions to the surfaces a connector already covers, when the term you
+ * most need defined is on the unfamiliar internal wiki that has no connector at all.
+ *
+ * Skipping the resolve call also means this lane works on a pairing that never received
+ * the `resolve` scope — like the service lanes, it needs only `agents`.
+ */
+async function resolveTermLane(
+  deps: Pick<AgentStateDeps, "getConnection">,
+  req: LaneInvocation,
+): Promise<ResolveForAgent> {
+  if (req.term === undefined) {
+    // Unreachable from the shipped UI: the panel materialises a glossary lane
+    // only once a term exists, so it never sends one without. Reachable from a
+    // forged message, and answered honestly rather than borrowing
+    // `not_resolved`, which would blame the page for a missing input.
+    return { ok: false, reason: "no_term" };
+  }
+  const termConn = await deps.getConnection();
+  if (termConn === null) {
+    return { ok: false, reason: "not_paired" };
+  }
+  return {
+    ok: true,
+    scope: "term",
+    origin: termConn.origin,
+    token: termConn.token,
+    label: termConn.label,
+    term: req.term,
+  };
+}
+
 async function resolveForAgent(
   deps: Pick<AgentStateDeps, "getOrigins" | "getConnection" | "resolveItem">,
   req: LaneInvocation,
 ): Promise<ResolveForAgent> {
   const lane = req.lane;
   if (LANE_RULES[lane].input === "term") {
-    // A term lane skips the recogniser gate AND the resolve call, and both are
-    // deliberate rather than an optimisation.
-    //
-    // The recogniser gate exists to decide which page URLs may reach the
-    // gateway at all. `POST /v1/agents/glossary` takes `{ term }` — no URL, no
-    // item — so this path sends no page URL, and the reason for the gate does
-    // not apply to it. Gating anyway would confine definitions to the surfaces a
-    // connector already covers, when the term you most need defined is on the
-    // unfamiliar internal wiki that has no connector at all.
-    //
-    // Skipping the resolve call also means this lane works on a pairing that
-    // never received the `resolve` scope — like the service lanes, it needs only
-    // `agents`.
-    if (req.term === undefined) {
-      // Unreachable from the shipped UI: the panel materialises a glossary lane
-      // only once a term exists, so it never sends one without. Reachable from a
-      // forged message, and answered honestly rather than borrowing
-      // `not_resolved`, which would blame the page for a missing input.
-      return { ok: false, reason: "no_term" };
-    }
-    const termConn = await deps.getConnection();
-    if (termConn === null) {
-      return { ok: false, reason: "not_paired" };
-    }
-    return {
-      ok: true,
-      scope: "term",
-      origin: termConn.origin,
-      token: termConn.token,
-      label: termConn.label,
-      term: req.term,
-    };
+    return await resolveTermLane(deps, req);
   }
   const recognition = recognise(req.pageUrl, await deps.getOrigins());
   if (!recognition.ok) {

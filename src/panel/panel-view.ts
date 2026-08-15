@@ -336,6 +336,43 @@ function chooser(
   return list;
 }
 
+/**
+ * The `resolved` arm of {@link renderHeader}, which carries more lines than any other
+ * and is the reason that function was over the cognitive-complexity gate (Sonar
+ * `S3776`). Extracted verbatim; rendering is unchanged.
+ */
+function appendResolvedHeader(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<HeaderState, { kind: "resolved" }>,
+): void {
+  box.append(candidateLine(doc, state.item));
+  box.append(
+    line(
+      doc,
+      "nimbus-related__status",
+      // "Updated", NOT "Indexed". `modifiedAt` is the ITEM's last-modified time
+      // as the source system reports it — for a synced PR that is GitHub's own
+      // `updated_at`, which can be days old on a row written seconds ago. Saying
+      // "Indexed 3 days ago" about an item just fetched is a false claim, and it
+      // is the kind this header exists to avoid making.
+      //
+      // The mislabel survived unit tests and a manual pass because every fixture
+      // used a web CLIP, whose `modified_at` IS its clip time — so "Indexed" was
+      // accurate by coincidence until the first connector-sourced item appeared.
+      `Updated ${formatAge(state.item.modifiedAt, state.nowMs)}`,
+    ),
+  );
+  // Only rung 3 gets a hedge. Rungs 1 and 2 differ by query params, which carry
+  // no identity on any surface the recogniser matches; rung 3 got here by
+  // discarding path segments, so it may be the parent of the page, not the page.
+  if (state.matchKind === "path_trimmed") {
+    box.append(
+      line(doc, "nimbus-related__status", "Closest match — this page's exact URL isn't indexed."),
+    );
+  }
+}
+
 export function renderHeader(
   doc: Document,
   state: HeaderState,
@@ -390,31 +427,7 @@ export function renderHeader(
   }
 
   if (state.kind === "resolved") {
-    box.append(candidateLine(doc, state.item));
-    box.append(
-      line(
-        doc,
-        "nimbus-related__status",
-        // "Updated", NOT "Indexed". `modifiedAt` is the ITEM's last-modified time
-        // as the source system reports it — for a synced PR that is GitHub's own
-        // `updated_at`, which can be days old on a row written seconds ago. Saying
-        // "Indexed 3 days ago" about an item just fetched is a false claim, and it
-        // is the kind this header exists to avoid making.
-        //
-        // The mislabel survived unit tests and a manual pass because every fixture
-        // used a web CLIP, whose `modified_at` IS its clip time — so "Indexed" was
-        // accurate by coincidence until the first connector-sourced item appeared.
-        `Updated ${formatAge(state.item.modifiedAt, state.nowMs)}`,
-      ),
-    );
-    // Only rung 3 gets a hedge. Rungs 1 and 2 differ by query params, which carry
-    // no identity on any surface the recogniser matches; rung 3 got here by
-    // discarding path segments, so it may be the parent of the page, not the page.
-    if (state.matchKind === "path_trimmed") {
-      box.append(
-        line(doc, "nimbus-related__status", "Closest match — this page's exact URL isn't indexed."),
-      );
-    }
+    appendResolvedHeader(doc, box, state);
     return box;
   }
 
