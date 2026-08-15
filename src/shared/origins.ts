@@ -10,9 +10,6 @@ import type { ConfiguredOrigin, Product } from "./types.ts";
 
 const PRODUCTS: ReadonlySet<string> = new Set(["bitbucket", "github", "gitlab", "jenkins", "jira"]);
 
-/** `"/"`, for the trailing-slash scan in {@link splitOrigin}. */
-const SLASH = 47;
-
 export function isProduct(v: unknown): v is Product {
   return typeof v === "string" && PRODUCTS.has(v);
 }
@@ -64,7 +61,7 @@ export function splitOrigin(origin: string): { base: string; prefix: string } | 
   // touches each trailing slash exactly once.
   const pathname = url.pathname;
   let end = pathname.length;
-  while (end > 0 && pathname.charCodeAt(end - 1) === SLASH) end -= 1;
+  while (end > 0 && pathname[end - 1] === "/") end -= 1;
   return { base: url.origin, prefix: pathname.slice(0, end) };
 }
 
