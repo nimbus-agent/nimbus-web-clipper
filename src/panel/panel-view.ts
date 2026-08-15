@@ -373,6 +373,75 @@ function appendResolvedHeader(
   }
 }
 
+/**
+ * The `fetch-blocked` arm of {@link renderHeader} — three terminal reasons, each with its
+ * own wording. Extracted to bring `renderHeader` under the cognitive-complexity gate
+ * (Sonar `S3776`) WITHOUT collapsing its `if`-chain into a lookup table: that chain is what
+ * narrows `state` for the exhaustiveness backstop at the end, and a table would trade a
+ * compile-time guarantee for a lint number.
+ */
+function appendFetchBlocked(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<HeaderState, { kind: "fetch-blocked" }>,
+): void {
+  if (state.reason === "unfetchable") {
+    box.append(line(doc, "nimbus-related__status", "Nimbus can't fetch this page."));
+    return;
+  }
+  if (state.reason === "not-configured") {
+    // Terminal on purpose: retrying will never work, so this arm stays
+    // distinct rather than collapsing into generic guidance with a button.
+    box.append(
+      line(
+        doc,
+        "nimbus-related__status",
+        `No ${PRODUCT_NAMES[state.product]} connector is configured on your gateway.`,
+      ),
+    );
+    return;
+  }
+  // needs-fetch-scope. Names the `fetch` scope, not `resolve` — someone who
+  // granted `resolve` earlier still cannot fetch, and repeating the `resolve`
+  // advice would be a dead end. Same null-fallback convention as `needs-scope`:
+  // an unsafe label or scope name leaks neither the label nor `--set`.
+  appendScopeGuidance(doc, box, "This pairing can't fetch pages yet.", state.scopeGap);
+  return;
+}
+
+/**
+ * The `fetch-retry` arm of {@link renderHeader}. Same reason for existing as
+ * {@link appendFetchBlocked}.
+ */
+function appendFetchRetry(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<HeaderState, { kind: "fetch-retry" }>,
+  onFetch?: (action: "fetch" | "resolve") => void,
+): void {
+  if (state.reason === "rate-limited") {
+    // rate_limited is returned before any outbound call happens, so retrying
+    // is safe to send as a fresh fetch.
+    box.append(line(doc, "nimbus-related__status", "Rate limited — try again shortly."));
+    box.append(actionButton(doc, "nimbus-related__action", "Try again", () => onFetch?.("fetch")));
+    return;
+  }
+  // still-working: our timeout fired, not a failure — the gateway may still be
+  // completing the fetch. The retry must re-check via resolve, never fire a
+  // second outbound provider request for work that may already be done.
+  box.append(
+    line(
+      doc,
+      "nimbus-related__status",
+      "Still working — your gateway may not have finished. Nothing was lost.",
+    ),
+  );
+  box.append(
+    actionButton(doc, "nimbus-related__action", "Check again", () => onFetch?.("resolve")),
+  );
+  return;
+}
+
 export function renderHeader(
   doc: Document,
   state: HeaderState,
@@ -467,53 +536,12 @@ export function renderHeader(
   }
 
   if (state.kind === "fetch-blocked") {
-    if (state.reason === "unfetchable") {
-      box.append(line(doc, "nimbus-related__status", "Nimbus can't fetch this page."));
-      return box;
-    }
-    if (state.reason === "not-configured") {
-      // Terminal on purpose: retrying will never work, so this arm stays
-      // distinct rather than collapsing into generic guidance with a button.
-      box.append(
-        line(
-          doc,
-          "nimbus-related__status",
-          `No ${PRODUCT_NAMES[state.product]} connector is configured on your gateway.`,
-        ),
-      );
-      return box;
-    }
-    // needs-fetch-scope. Names the `fetch` scope, not `resolve` — someone who
-    // granted `resolve` earlier still cannot fetch, and repeating the `resolve`
-    // advice would be a dead end. Same null-fallback convention as `needs-scope`:
-    // an unsafe label or scope name leaks neither the label nor `--set`.
-    appendScopeGuidance(doc, box, "This pairing can't fetch pages yet.", state.scopeGap);
+    appendFetchBlocked(doc, box, state);
     return box;
   }
 
   if (state.kind === "fetch-retry") {
-    if (state.reason === "rate-limited") {
-      // rate_limited is returned before any outbound call happens, so retrying
-      // is safe to send as a fresh fetch.
-      box.append(line(doc, "nimbus-related__status", "Rate limited — try again shortly."));
-      box.append(
-        actionButton(doc, "nimbus-related__action", "Try again", () => onFetch?.("fetch")),
-      );
-      return box;
-    }
-    // still-working: our timeout fired, not a failure — the gateway may still be
-    // completing the fetch. The retry must re-check via resolve, never fire a
-    // second outbound provider request for work that may already be done.
-    box.append(
-      line(
-        doc,
-        "nimbus-related__status",
-        "Still working — your gateway may not have finished. Nothing was lost.",
-      ),
-    );
-    box.append(
-      actionButton(doc, "nimbus-related__action", "Check again", () => onFetch?.("resolve")),
-    );
+    appendFetchRetry(doc, box, state, onFetch);
     return box;
   }
 
