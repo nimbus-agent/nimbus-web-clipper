@@ -553,6 +553,46 @@ export async function invokeAgent(
   return { ok: false, reason: "server_error" };
 }
 
+/** The terminal answer a 200 body can carry, or a `server_error` when it is malformed. */
+type AgentRunBody =
+  | { ok: true; status: "running" }
+  | { ok: true; status: "done"; brief: string }
+  | { ok: true; status: "failed"; failureReason?: string }
+  | { ok: false; reason: AgentError };
+
+/**
+ * Interpret the body of a 200 from `GET /v1/agents/runs/{id}`.
+ *
+ * Split out of {@link getAgentRun} so that function stays under the
+ * cognitive-complexity gate (Sonar `S3776`): every branch here is about the SHAPE of a
+ * successful response, while its caller is about HTTP status. Behaviour is unchanged.
+ */
+function parseAgentRunBody(data: unknown): AgentRunBody {
+  if (!isObject(data)) {
+    return { ok: false, reason: "server_error" };
+  }
+  if (data["status"] === "running") {
+    return { ok: true, status: "running" };
+  }
+  // A `done` run with no brief is malformed — rendering an empty lane would
+  // violate the phase's "never a silent empty lane" rule.
+  if (data["status"] === "done") {
+    return typeof data["brief"] === "string"
+      ? { ok: true, status: "done", brief: data["brief"] }
+      : { ok: false, reason: "server_error" };
+  }
+  if (data["status"] === "failed") {
+    if (data["failureReason"] === undefined) {
+      return { ok: true, status: "failed" };
+    }
+    return typeof data["failureReason"] === "string"
+      ? { ok: true, status: "failed", failureReason: data["failureReason"] }
+      : { ok: false, reason: "server_error" };
+  }
+  // Unknown status: never treated as a terminal answer.
+  return { ok: false, reason: "server_error" };
+}
+
 /**
  * `GET /v1/agents/runs/{id}` — poll a run. 404 (unknown) and 410 (expired) both
  * collapse to `stale`: upstream distinguishes unknown-or-lost-to-restart from
@@ -587,30 +627,7 @@ export async function getAgentRun(
     return { ok: false, reason: "unreachable" };
   }
   if (res.status === 200) {
-    const data = await readJson(res);
-    if (!isObject(data)) {
-      return { ok: false, reason: "server_error" };
-    }
-    if (data["status"] === "running") {
-      return { ok: true, status: "running" };
-    }
-    // A `done` run with no brief is malformed — rendering an empty lane would
-    // violate the phase's "never a silent empty lane" rule.
-    if (data["status"] === "done") {
-      return typeof data["brief"] === "string"
-        ? { ok: true, status: "done", brief: data["brief"] }
-        : { ok: false, reason: "server_error" };
-    }
-    if (data["status"] === "failed") {
-      if (data["failureReason"] === undefined) {
-        return { ok: true, status: "failed" };
-      }
-      return typeof data["failureReason"] === "string"
-        ? { ok: true, status: "failed", failureReason: data["failureReason"] }
-        : { ok: false, reason: "server_error" };
-    }
-    // Unknown status: never treated as a terminal answer.
-    return { ok: false, reason: "server_error" };
+    return parseAgentRunBody(await readJson(res));
   }
   if (res.status === 401) {
     return { ok: false, reason: "unauthorized" };

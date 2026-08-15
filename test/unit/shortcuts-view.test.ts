@@ -68,13 +68,13 @@ describe("renderShortcuts", () => {
 
   test("renders one row per command", () => {
     const frag = renderShortcuts(document, rows);
-    expect(frag.querySelectorAll(".shortcut").length).toBe(2);
+    expect(frag.querySelectorAll(".shortcut")).toHaveLength(2);
   });
 
   test("an unbound row is marked so a reader can spot it without comparing text", () => {
     const frag = renderShortcuts(document, rows);
     const marked = frag.querySelectorAll('.shortcut[data-bound="false"]');
-    expect(marked.length).toBe(1);
+    expect(marked).toHaveLength(1);
     expect(marked[0]?.textContent).toContain("Clip the current page to Nimbus");
   });
 

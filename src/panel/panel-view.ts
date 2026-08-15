@@ -336,6 +336,43 @@ function chooser(
   return list;
 }
 
+/**
+ * The `resolved` arm of {@link renderHeader}, which carries more lines than any other
+ * and is the reason that function was over the cognitive-complexity gate (Sonar
+ * `S3776`). Extracted verbatim; rendering is unchanged.
+ */
+function appendResolvedHeader(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<HeaderState, { kind: "resolved" }>,
+): void {
+  box.append(candidateLine(doc, state.item));
+  box.append(
+    line(
+      doc,
+      "nimbus-related__status",
+      // "Updated", NOT "Indexed". `modifiedAt` is the ITEM's last-modified time
+      // as the source system reports it — for a synced PR that is GitHub's own
+      // `updated_at`, which can be days old on a row written seconds ago. Saying
+      // "Indexed 3 days ago" about an item just fetched is a false claim, and it
+      // is the kind this header exists to avoid making.
+      //
+      // The mislabel survived unit tests and a manual pass because every fixture
+      // used a web CLIP, whose `modified_at` IS its clip time — so "Indexed" was
+      // accurate by coincidence until the first connector-sourced item appeared.
+      `Updated ${formatAge(state.item.modifiedAt, state.nowMs)}`,
+    ),
+  );
+  // Only rung 3 gets a hedge. Rungs 1 and 2 differ by query params, which carry
+  // no identity on any surface the recogniser matches; rung 3 got here by
+  // discarding path segments, so it may be the parent of the page, not the page.
+  if (state.matchKind === "path_trimmed") {
+    box.append(
+      line(doc, "nimbus-related__status", "Closest match — this page's exact URL isn't indexed."),
+    );
+  }
+}
+
 export function renderHeader(
   doc: Document,
   state: HeaderState,
@@ -390,31 +427,7 @@ export function renderHeader(
   }
 
   if (state.kind === "resolved") {
-    box.append(candidateLine(doc, state.item));
-    box.append(
-      line(
-        doc,
-        "nimbus-related__status",
-        // "Updated", NOT "Indexed". `modifiedAt` is the ITEM's last-modified time
-        // as the source system reports it — for a synced PR that is GitHub's own
-        // `updated_at`, which can be days old on a row written seconds ago. Saying
-        // "Indexed 3 days ago" about an item just fetched is a false claim, and it
-        // is the kind this header exists to avoid making.
-        //
-        // The mislabel survived unit tests and a manual pass because every fixture
-        // used a web CLIP, whose `modified_at` IS its clip time — so "Indexed" was
-        // accurate by coincidence until the first connector-sourced item appeared.
-        `Updated ${formatAge(state.item.modifiedAt, state.nowMs)}`,
-      ),
-    );
-    // Only rung 3 gets a hedge. Rungs 1 and 2 differ by query params, which carry
-    // no identity on any surface the recogniser matches; rung 3 got here by
-    // discarding path segments, so it may be the parent of the page, not the page.
-    if (state.matchKind === "path_trimmed") {
-      box.append(
-        line(doc, "nimbus-related__status", "Closest match — this page's exact URL isn't indexed."),
-      );
-    }
+    appendResolvedHeader(doc, box, state);
     return box;
   }
 
@@ -755,11 +768,13 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
   // if that guard ever grew a hole, returning the never-typed value directly
   // (as the sibling backstop in `renderHeader` above does) would put a raw
   // reason CODE on screen as the lane body instead of failing loudly. The
-  // `_never` assignment below still does its compile-time job — a future
-  // unhandled `AgentError` member fails to typecheck here exactly as before.
+  // `satisfies never` below still does its compile-time job — a future unhandled
+  // `AgentError` member fails to typecheck here exactly as before.
   if (state.reason !== "agent_failed") {
-    const _never: never = state.reason;
-    void _never;
+    // `satisfies never` rather than an unused `const _never: never` plus `void` to
+    // silence it: identical exhaustiveness check, no throwaway binding, and nothing
+    // for a reader to mistake for a discarded call.
+    state.reason satisfies never;
     return box;
   }
   // The run reached the agent and it could not answer — the CALL succeeded, so

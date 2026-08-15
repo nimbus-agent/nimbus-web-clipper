@@ -93,9 +93,11 @@ function matchGitlab(s: readonly string[]): Match | null {
   const dash = s.indexOf("-");
   // At least group/project before the "-" separator.
   if (dash < 2 || s[dash + 1] !== "merge_requests") {
-    return s.length === 0 || (s.length === 1 && s[0] === "dashboard")
-      ? homeMatch(s.length === 0 ? "/" : "/dashboard")
-      : null;
+    // Not an MR path: the only other GitLab pages recognised are the two spellings
+    // of the instance home, "" and "dashboard".
+    if (s.length === 0) return homeMatch("/");
+    if (s.length === 1 && s[0] === "dashboard") return homeMatch("/dashboard");
+    return null;
   }
   const num = s[dash + 2];
   if (num === undefined || !NUMBER.test(num)) {
@@ -166,7 +168,8 @@ function matchJenkins(s: readonly string[]): Match | null {
   if (num === undefined || !NUMBER.test(num)) {
     return null;
   }
-  const path = `/${names.map((n) => `job/${n}`).join("/")}/${num}`;
+  const jobSegments = names.map((n) => `job/${n}`).join("/");
+  const path = `/${jobSegments}/${num}`;
   return { kind: "build", ref: `${names.join("/")} #${num}`, path, matchedPath: path };
 }
 

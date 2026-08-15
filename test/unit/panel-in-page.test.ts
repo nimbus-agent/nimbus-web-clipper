@@ -1360,7 +1360,7 @@ describe("panel-in-page agent lanes", () => {
       await advanceTimers(5_000);
       // Settled: the panel must stop asking. A poll that never stops is a battery bug
       // and keeps the worker alive for no reason.
-      expect(sent.filter((k) => k === "agent-state").length).toBe(before);
+      expect(sent.filter((k) => k === "agent-state")).toHaveLength(before);
     });
 
     // This is an END-TO-END regression test for a USER-VISIBLE property, NOT

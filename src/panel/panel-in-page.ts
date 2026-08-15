@@ -1076,6 +1076,15 @@ function createPanel(body: HTMLElement): {
     // acme/web #482"), not the typed kind.
     const surfaceKind = pinnedRecognition?.ok === true ? pinnedRecognition.kind : null;
     const laneCtx = laneContext();
+    // Hoisted out of the `render` arrow below rather than written inline inside it.
+    // Inline it was a fourth nested function — map callback -> render -> run callback —
+    // which tripped Sonar's nesting-depth rule (`S2004`) and, more to the point, buried
+    // "what happens when the user hits run" three indents inside a list literal.
+    const runLane =
+      (lane: AgentLane): (() => void) =>
+      () => {
+        sendAgentRun(lane).catch(() => undefined);
+      };
     const agentLanes: Lane[] = lanesFor(laneCtx).map((lane) => ({
       id: lane,
       title: laneTitle(lane),
@@ -1085,9 +1094,7 @@ function createPanel(body: HTMLElement): {
         // nothing — the only lane in this panel that is shown precisely so it can
         // say why it will not ask.
         laneCanRun(lane, laneCtx)
-          ? renderLaneBody(doc, laneState[lane], () => {
-              sendAgentRun(lane).catch(() => undefined);
-            })
+          ? renderLaneBody(doc, laneState[lane], runLane(lane))
           : renderError(doc, termRefusal()),
     }));
     // No related lane on a dashboard: `/v1/clips/related` keyed on a dashboard's
