@@ -48,6 +48,14 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **Save a copy when Nimbus can't reach a page itself.** On a site Nimbus has no
+  connector for — an internal wiki, a vendor console — the panel now offers to
+  save a copy of the page so your agents have something to work with. It appears
+  only where nothing better is available: if Nimbus can fetch the page properly,
+  it still offers that instead.
+- **A saved copy says it is one.** A page you captured is labelled as your own
+  copy rather than connector data, whether you saved it a minute ago or a month
+  ago, and can be refreshed with **Update this copy**.
 - **Related is about the item, not the tab title.** On a page Nimbus has resolved,
   Related now asks about that indexed item rather than searching for whatever the
   browser tab happens to be called — so a Jenkins page stops searching for

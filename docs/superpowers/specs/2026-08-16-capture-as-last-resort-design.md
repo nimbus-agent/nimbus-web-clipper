@@ -136,9 +136,17 @@ because a page captured last week resolves like anything else and would then pre
 connector data. That is the same dishonesty, delayed by a week.
 
 So the discriminator is the **item**: a resolved item with `service: "nimbus"` and
-`type: "web_clip"` renders as a captured copy, whichever way the panel arrived at it —
-capturing it just now, or opening the panel on it a month later. One state, one wording,
-no expiry.
+`type: "web_clip"` renders as a captured copy, whichever way the panel arrived at it.
+That durability holds on a **recognised** page: capturing it just now, or opening the
+panel on it a month later, both resolve to the same `web_clip` item and render the same
+header, no expiry. On an **unrecognised** page it does not — `handleResolve`
+(`src/background/handlers.ts:225-234`) short-circuits before any gateway call whenever
+the page itself does not recognise, so a captured wiki page can never resolve to a found
+item and the durable header is unreachable there. That gate is deliberate: it is the
+C1.4 page-access privacy boundary, and loosening it to ask the gateway about arbitrary
+un-configured URLs was considered and rejected. What makes the unrecognised path honest
+instead is a terminal confirmation — the panel renders *"Saved a copy of …"* once, right
+after a successful save — rather than a header the gateway is never asked to reproduce.
 
 Those two values are `CLIP_SERVICE` and `CLIP_TYPE` in
 `packages/gateway/src/clips/clip-ingest.ts:7-8`. Hardcoding them couples the client to
