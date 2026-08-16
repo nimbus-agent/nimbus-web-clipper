@@ -212,6 +212,24 @@ export interface ResolvedItem extends ResolveCandidate {
 }
 
 /**
+ * What the gateway writes for a clip it ingested, from
+ * `packages/gateway/src/clips/clip-ingest.ts:7-8` (upstream repo `Nimbus`).
+ *
+ * Duplicated here rather than imported: the gateway is a SEPARATE repository, and
+ * this extension ships with no `node_modules` ("bundled, no runtime deps"), so
+ * there is nothing to import from and a vendored package would drift the same way
+ * a literal does. Roadmap Phase 8 (the Nimbus SDK) is where a genuinely shared
+ * constant can live. If upstream renames either value, the captured-copy header
+ * silently degrades to the ordinary resolved arm — it does not break, it stops
+ * being honest. That is the failure mode to know about.
+ */
+export const CLIP_SERVICE = "nimbus";
+export const CLIP_TYPE = "web_clip";
+
+/** Why a capture could not be produced. Each maps to its own panel line. */
+export type CaptureError = "restricted" | "url-changed" | "injection-failed" | "empty";
+
+/**
  * A successful call to the resolve route. All four arms are HTTP 200 — a miss is
  * an answer, not a failure.
  *
