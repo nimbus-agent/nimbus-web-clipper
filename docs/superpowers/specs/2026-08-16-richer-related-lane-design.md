@@ -41,7 +41,7 @@ So "source type" and "date" are an upstream projection change, and
 open-in-Nimbus is **dropped from the brief** — see the corrections section. What
 the hit already has is a `url` to the source, which the lane already links.
 
-## The five decisions
+## The six decisions
 
 ### 1. The snippet is a snippet of the title, and always has been
 
@@ -63,6 +63,27 @@ The fix is the character `0` → `1`, plus a token budget that suits a preview
 rather than a phrase: **`snippet(item_fts, 1, '', '', '…', 24)`**. The empty
 start/end markers stay — the client renders every gateway string through
 `textContent`, so highlight markup would be printed literally, not rendered.
+
+**The index cannot be a column name, and the magic value is not the answer
+either.** FTS5's `snippet()` takes an integer, not an identifier; there is no
+by-name form to make this self-documenting. A negative index *is* legal — it
+tells FTS5 to auto-select the best-matching column — and it is tempting as a
+"can't go stale" fix, but it reintroduces the bug in a subtler form: a query that
+matches the title, which is exactly what an `itemId` title query does
+(decision 2), auto-selects the title and echoes it again. Empirically confirmed
+against SQLite on this Bun version:
+
+| second argument | snippet returned |
+| --- | --- |
+| `0` | the title |
+| `1` | the body |
+| `-1` | the best-matching column — the title, for a title-matching query |
+
+So the index stays explicitly `1`, and the drift risk the reviewer names is real
+and handled by a **behavioural test, not a comment**: insert an item whose title
+and body share no tokens, run the route, assert the snippet contains the body's
+words and none of the title's. That test fails if a future migration reorders
+`item_fts`, which a hardcoded assertion on the literal `1` would not.
 
 `item.body` is nullable, and title-only items (Notion pages never fetched,
 Confluence stubs) will now produce an **empty** snippet where they previously
@@ -95,6 +116,15 @@ wrong turn here.
 user just asked out loud and must keep beating everything, or 4.2's
 *What's related to this?* silently stops working on exactly the pages that resolve.
 
+**Precedence governs the query text only. Self-exclusion is keyed on `itemId`
+being present, not on it having won.** When a selection drives the query on a
+resolved page, `itemId` is still sent and the item is still dropped from its own
+results — the page you are standing on is the one answer that cannot tell you
+anything new, whatever prompted the question. The two rules are deliberately
+independent, and conflating them is the easy bug here: an implementation that
+skips the exclusion whenever `selection` wins would put PR #482 at the top of
+"what's related to this phrase I selected on PR #482".
+
 **An unknown `itemId` is ignored, not an error.** The only ids the client sends are
 ids the gateway itself returned from resolve moments earlier, so a miss means the
 row was deleted in between. Falling through to the existing `title` path answers
@@ -112,6 +142,15 @@ The wire names mirror `GET /v1/items/resolve` exactly: **`type`** plain, and
 (`packages/gateway/src/index/resolve-by-url.ts:24`) and this client already renames
 it to `modifiedAt` at its HTTP boundary. One convention with a known wart beats a
 second convention and a second parser.
+
+**`modified_at` is epoch milliseconds, and needs no conversion.** Worth stating
+because SQLite columns holding Unix time are seconds as often as not, and a
+silent ×1000 error would render every item as 1970. Verified at the write side:
+GitHub's sync computes it through `modifiedMsFromGithubTimestamps`
+(`github-sync.ts:319`) and, on the review path, straight from `Date.parse()`
+(`github-sync.ts:374`) — both milliseconds. That matches what this client's
+`ResolvedItem.modifiedAt` already assumes for the resolve route, so `formatAge`
+consumes it directly.
 
 Both fields are **additive**. A client that has not taken this slice ignores them.
 
@@ -154,6 +193,47 @@ age line — rather than being rejected or rendering `Invalid Date`.
 
 **An empty snippet omits the line.** Required by decision 1, and it also covers an
 old gateway sending a title-echo snippet: that still renders, unchanged.
+
+### 6. Group order follows rank; the chip vocabulary is open, so it is not a table
+
+Two rendering rules that the client cannot leave implicit.
+
+**Group order follows the gateway's rank, and so does order within a group.** The
+adapter returns hits `ORDER BY rank` (`http-server.ts:568`) and the client has no
+score of its own — the wire carries no relevance number, only a position. So a
+service's rank *is* the position of its best hit: groups appear in order of first
+appearance in the ranked list, and hits keep their ranked order inside each group.
+That is the reviewer's "sort by the highest-scoring item per service", computed
+from the only ranking signal that actually crosses the wire, and it means grouping
+never reorders relevance — it only inserts headings into a list that was already
+correct.
+
+**The chip renders `type` mechanically, because the vocabulary is open-ended.**
+`item.type` is not a closed union: the connectors write at least 23 distinct
+values as string literals — `pr`, `issue`, `ci_run`, `review`, `git_commit`,
+`incident`, `email`, `page`, `message`, `dashboard`, `code_symbol`,
+`api_endpoint`, `lambda_function`, `obsidian_note` and more — and every new
+connector is free to add another. A closed `type → label` map is stale the day
+someone lands a connector, and would silently fall back to "Document" for real,
+nameable kinds.
+
+So the chip is a **mechanical humanisation** — underscores to spaces,
+sentence case (`ci_run` → *CI run* once `ci` is overridden; `code_symbol` →
+*Code symbol*) — over a **small override table** for the handful the mechanical
+rule gets wrong: `pr` → *Pull request*, `ci_run` → *CI run*, `api_endpoint` →
+*API endpoint*. An unknown type still renders, humanised, rather than being
+flattened to a generic word. Absent or empty `type` renders **no chip at all**,
+which is also the old-gateway path from decision 5.
+
+Note for the plan: the reviewer's example mapping used `"pull_request"`. That
+value does not exist — GitHub's connector writes `"pr"`
+(`packages/gateway/src/connectors/github-sync.ts`), which is also what
+`LANE_RULES` already gates the `impact` and `expert` lanes on. Anything keying off
+a guessed type string would match nothing.
+
+**No icons.** The panel ships no icon assets and injects plain DOM with a small
+inline stylesheet; adding an icon set is a different slice with a different
+bundle-size argument.
 
 ## Shape
 
@@ -209,7 +289,8 @@ lookup follows the house pattern — an inline
   rename `modified_at` → `modifiedAt`; `buildRelatedQuery` learns `itemId` and the
   rule that `canonicalUrl` is withheld when an id is present.
 - A new pure `src/panel/related-groups.ts` — hits → ordered service groups with
-  counts. New, not grown inside `panel-view.ts` (884 lines) or `panel-in-page.ts`
+  counts (decision 6's rank rule), plus the `type` humaniser and its override
+  table. New, not grown inside `panel-view.ts` (884 lines) or `panel-in-page.ts`
   (1,513 lines), following the precedent `lane-input.ts` set in the C2.5 slice.
 - `src/panel/panel-view.ts` — `renderHit` / `renderHits` gain the chip, the age
   line and the group heading. `formatAge` is reused, and the copy is **"Updated
@@ -221,16 +302,24 @@ lookup follows the house pattern — an inline
 
 ## Testing
 
-**Gateway** (`clip-related.test.ts`, `clip-e2e.test.ts`): the snippet column
-index; `itemId` resolving to a title query; `itemId` excluding itself from its own
-hits; an unknown `itemId` falling through to `title`; `selection` still beating
-`itemId`; the two new fields present on the wire.
+**Gateway** (`clip-related.test.ts`, `clip-e2e.test.ts`): the snippet comes from
+the **body** — asserted behaviourally, per decision 1, with a title and body that
+share no tokens, so a future `item_fts` reordering fails the test; `itemId`
+resolving to a title query; `itemId` excluding itself from its own hits; an
+unknown `itemId` falling through to `title`; `selection` still beating `itemId`
+**for the query text while the exclusion still fires**; a selection with no
+`itemId` searching normally and excluding nothing; the two new fields present on
+the wire with `modified_at` in milliseconds.
 
 **Client**: `isRelatedHit` against both wire shapes and against a hit with a
 non-numeric `modified_at`; the group builder for one service, several services,
-and zero hits; `buildRelatedQuery` withholding `canonicalUrl` exactly when an id
-is present and never dropping `title`; jsdom render tests for the chip, the age
-line, the omitted-when-empty snippet, and a hit that predates the new fields.
+zero hits, and — per decision 6 — a rank order that interleaves services, proving
+groups follow first appearance and hits keep their order inside a group; the chip
+humaniser over an override (`pr`), a mechanical case (`code_symbol`), an unknown
+type, and an absent one; `buildRelatedQuery` withholding `canonicalUrl` exactly
+when an id is present and never dropping `title`; jsdom render tests for the chip,
+the age line, the omitted-when-empty snippet, and a hit that predates the new
+fields.
 
 Both suites green before either PR. The gateway PR merges first.
 
@@ -247,6 +336,26 @@ Both suites green before either PR. The gateway PR merges first.
   untrue. A comment-only correction, no behaviour.)
 - **Related on an unresolved page** keeps today's behaviour exactly, host filter
   included.
+
+- **Per-service quotas to stop one service starving the others.** Raised in
+  review, and declined for this slice rather than deferred to a later one. Two
+  reasons. The mechanics don't fit: the suggestion was to request 30–50 hits and
+  keep the top 3 per service, but `MAX_LIMIT` is **25**
+  (`clip-related.ts:22`), so anything above that is silently clamped and the
+  design would be built on a number the server never honours. And the intent
+  works against the lane: once decision 2 lands, hits are ranked against *the item
+  you are looking at*, so dropping the 4th-best GitHub hit to make room for a
+  weaker Jira one trades relevance for variety — the opposite of what a reader
+  wants from "related to this PR", and the kind of endless tuning the roadmap's
+  own bar warns against ("a lane nobody expands is removed, not tuned forever").
+  `RELATED_LIMIT` stays **10**.
+
+  The honest mitigation is legibility, not quotas: group headings carry counts, so
+  a result set that is entirely GitHub *reads* as entirely GitHub instead of
+  looking like a truncation. **This is also the review checkpoint for grouping
+  itself** — if 10 relevance-ranked hits routinely produce four groups of one row,
+  the headings are noise and grouping should be dropped from the lane rather than
+  tuned. Decide that on the manual pass, from real data, not now.
 
 ## Corrections to the roadmap
 
