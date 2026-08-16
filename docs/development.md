@@ -520,18 +520,23 @@ automatable but has no suite covering it yet, and the reason names what would.
 Prereq: paired, gateway running, a resolved GitHub pull request available.
 
 1. <!-- e2e:related-lane-1 --> On a resolved GitHub pull request, open the
-   panel: Related must show items *from github.com* (the host filter is what
-   used to hide them).
+   panel: every hit the gateway returns is rendered as a row — none dropped
+   client-side.
 2. <!-- e2e:related-lane-2 --> Each row has a kind chip.
 3. <!-- e2e:related-lane-3 --> Each row has an "Updated …" line.
 4. <!-- e2e:related-lane-4 --> Rows group under a service heading with a count.
 5. <!-- e2e:related-lane-5 --> The preview line is prose from the item, not its
    title repeated.
-6. **(not yet automated — needs the selection-hook driving that the
+6. **(human — host filtering is gateway-side business logic: the mock's
+   `/v1/clips/related` route is deliberately unconditional on the query, so
+   this repo's e2e harness has nothing to assert the filter against without
+   reimplementing the real gateway's exclusion rule).** Related shows items
+   *from github.com* — the host filter that used to hide them is working.
+7. **(not yet automated — needs the selection-hook driving that the
    input-lanes suite establishes).** Select a phrase and run *What's related to
    this?* — the results must change, and the PR you are on must not appear
    among them.
-7. **(human — a design judgement, not an assertion).** Note whether the groups
+8. **(human — a design judgement, not an assertion).** Note whether the groups
    are mostly one row each: if they are, the headings are noise and grouping
    should be dropped from the lane (see the spec's "Not in this slice").
 
