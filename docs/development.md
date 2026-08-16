@@ -549,9 +549,14 @@ same as the popup/options DOM and the SW glue.
    than filing the new page's content under the old address.
 7. In Options stage 4, switch the 1.3 preview off, then repeat step 1. →
    The offer button is replaced by status lines (*Capturing this page…*, then
-   *Saving to Nimbus…*) that still appear, and the captured header still
-   settles at the end — the in-flight feedback does not depend on the preview
-   being on.
+   *Saving to Nimbus…*), and the run ends on the terminal *"Saved a copy of …"*
+   line — the same end state as step 2, because this is step 1's unrecognised
+   page and it never reaches resolve. What this step proves is that the
+   in-flight feedback does not depend on the preview being on: with the confirm
+   step gone, those two lines are the only evidence anything is happening.
+
+   Repeat once on step 3's **recognised** page to see the other ending: there
+   the captured header settles at the end, superseding the terminal line.
 
 ## Security check
 
