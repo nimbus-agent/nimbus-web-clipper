@@ -5,6 +5,8 @@ import type {
   AgentRunRequest,
   AgentStateRequest,
   AgentStateResponse,
+  CaptureRequest,
+  CaptureResponse,
   ClipRequest,
   ClipResponse,
   ConnectionResponse,
@@ -23,6 +25,7 @@ import type {
   ResolveRequest,
   ResolveResponse,
 } from "../shared/messages.ts";
+import { buildClipPreview } from "../shared/preview.ts";
 import { enqueue, type QueuedClip, removeFromQueue, toView } from "../shared/queue.ts";
 import { recognise } from "../shared/recognise.ts";
 import { buildRelatedQuery, type RelatedQuery } from "../shared/related.ts";
@@ -47,6 +50,36 @@ import {
   type ScopeGap,
 } from "../shared/types.ts";
 import type { RunSubject, StoredRun } from "./agent-run-store.ts";
+import type { CaptureOutcome } from "./capture-tab.ts";
+
+export interface CaptureDeps {
+  readonly captureTab: (tabId: number, expectedUrl: string) => Promise<CaptureOutcome>;
+  readonly previewEnabled: () => Promise<boolean>;
+  readonly now: () => number;
+}
+
+/**
+ * Capture the panel's pinned page and, if the user still wants the 1.3 confirm,
+ * build the preview for it. Ingest is NOT done here: the panel sends the existing
+ * `clip` request on Send, so there stays exactly one path that turns a
+ * CaptureResult into an outbound clip.
+ */
+export async function handleCapture(
+  deps: CaptureDeps,
+  req: CaptureRequest,
+  tabId: number,
+): Promise<CaptureResponse> {
+  const out = await deps.captureTab(tabId, req.pageUrl);
+  if (!out.ok) {
+    return { kind: "capture", ok: false, reason: out.reason };
+  }
+  const enabled = await deps.previewEnabled();
+  if (!enabled) {
+    return { kind: "capture", ok: true, capture: out.capture, preview: null };
+  }
+  const preview = buildClipPreview(buildClipPayload(out.capture, [], deps.now()));
+  return { kind: "capture", ok: true, capture: out.capture, preview };
+}
 
 export interface PairDeps {
   readonly confirmPair: (

@@ -2,6 +2,7 @@ import { describe, expect, it, test, vi } from "vitest";
 import {
   handleAgentRun,
   handleAgentState,
+  handleCapture,
   handleClip,
   handleConnectionStatus,
   handleDiscover,
@@ -31,6 +32,81 @@ const capture = {
   body: "b",
   readableFound: true,
 };
+
+describe("handleCapture", () => {
+  const PAGE = "https://wiki.example.com/runbook";
+  const capture = {
+    url: PAGE,
+    title: "Runbook",
+    mode: "article" as const,
+    body: "the body text",
+    readableFound: true,
+  };
+
+  test("preview on → returns the capture and a built preview", async () => {
+    const res = await handleCapture(
+      {
+        captureTab: async () => ({ ok: true, capture }),
+        previewEnabled: async () => true,
+        now: () => 1_700_000_000_000,
+      },
+      { kind: "capture", pageUrl: PAGE },
+      7,
+    );
+    expect(res.kind).toBe("capture");
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.capture).toEqual(capture);
+      expect(res.preview).not.toBeNull();
+      // The token invariant: a preview names its fields explicitly and can never
+      // carry a secret. Assert the shape rather than trusting the builder.
+      expect(res.preview?.fields.some((f) => /token/i.test(f.label))).toBe(false);
+    }
+  });
+
+  test("preview off → preview is null so the panel sends immediately", async () => {
+    const res = await handleCapture(
+      {
+        captureTab: async () => ({ ok: true, capture }),
+        previewEnabled: async () => false,
+        now: () => 1,
+      },
+      { kind: "capture", pageUrl: PAGE },
+      7,
+    );
+    expect(res.ok && res.preview).toBeNull();
+  });
+
+  test("a refusal from captureTab is passed through with its reason", async () => {
+    const res = await handleCapture(
+      {
+        captureTab: async () => ({ ok: false, reason: "url-changed" }),
+        previewEnabled: async () => true,
+        now: () => 1,
+      },
+      { kind: "capture", pageUrl: PAGE },
+      7,
+    );
+    expect(res).toEqual({ kind: "capture", ok: false, reason: "url-changed" });
+  });
+
+  test("the pinned url is passed to captureTab as the expected url", async () => {
+    let seen: string | null = null;
+    await handleCapture(
+      {
+        captureTab: async (_tabId, expected) => {
+          seen = expected;
+          return { ok: true, capture };
+        },
+        previewEnabled: async () => false,
+        now: () => 1,
+      },
+      { kind: "capture", pageUrl: PAGE },
+      7,
+    );
+    expect(seen).toBe(PAGE);
+  });
+});
 
 describe("handlePair", () => {
   test("rejects a non-loopback origin without calling the gateway", async () => {

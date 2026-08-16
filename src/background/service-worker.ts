@@ -26,6 +26,7 @@ import {
 import {
   isAgentRunRequest,
   isAgentStateRequest,
+  isCaptureRequest,
   isClipRequest,
   isConnectionStatusRequest,
   isCueOpenRequest,
@@ -52,6 +53,7 @@ import {
 } from "./agent-run-store.ts";
 import { type AmbientDeps, decideAmbient } from "./ambient.ts";
 import { getAmbientHosts } from "./ambient-prefs.ts";
+import { captureTab } from "./capture-tab.ts";
 import { getQueue, updateQueue } from "./clip-queue-store.ts";
 import {
   clearConnection,
@@ -74,6 +76,7 @@ import {
 import {
   handleAgentRun,
   handleAgentState,
+  handleCapture,
   handleClip,
   handleConnectionStatus,
   handleDiscover,
@@ -89,6 +92,7 @@ import {
 } from "./handlers.ts";
 import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
+import { isPreviewEnabled } from "./preview-pref.ts";
 import { type FlushDeps, flushQueue } from "./queue-flush.ts";
 import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
 import { clearPause, getPauseUntil, setPauseUntil } from "./rate-limit-pause.ts";
@@ -633,6 +637,29 @@ addMessageListener((message, rawRespond, sender) => {
     }
     rawRespond(res);
   };
+  if (isCaptureRequest(message)) {
+    const tabId = sender.tabId;
+    if (tabId === undefined) {
+      // No tab means no page to capture. Fail closed with the same vocabulary the
+      // panel already renders rather than inventing a branch for "impossible".
+      respond({ kind: "capture", ok: false, reason: "injection-failed" });
+      return true;
+    }
+    handleCapture(
+      {
+        captureTab: (id, expected) => captureTab({ tabUrl, runCapture }, id, "article", expected),
+        previewEnabled: isPreviewEnabled,
+        now: () => Date.now(),
+      },
+      message,
+      tabId,
+    )
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "capture", ok: false, reason: "injection-failed" });
+      });
+    return true;
+  }
   if (isPairRequest(message)) {
     handlePair(
       {
