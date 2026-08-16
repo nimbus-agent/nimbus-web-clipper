@@ -38,17 +38,19 @@ export async function launchExtension(opts?: {
   timezoneId?: string;
   locale?: string;
   pairedAt?: number;
+  port?: number;
 }): Promise<Harness> {
   const viewport = opts?.viewport ?? { width: 1280, height: 800 };
   const timezoneId = opts?.timezoneId ?? "UTC";
   const locale = opts?.locale ?? "en-US";
   const pairedAt = opts?.pairedAt ?? PAIRED_AT;
 
-  // Port 0 asks the OS for a free port — a fixed port collides under
-  // Playwright's parallel workers and between concurrent CI jobs. Wait for
-  // "listening" before reading it back: listen() is async, and address()
-  // returns null until the underlying handle is bound.
-  const server = startMockGateway(opts?.scenario ?? {}, 0);
+  // Port 0 (the default) asks the OS for a free port — a fixed port collides
+  // under Playwright's parallel workers and between concurrent CI jobs. The
+  // screenshot script overrides this with a fixed port instead: see the call
+  // site for why. Wait for "listening" before reading the bound port back:
+  // listen() is async, and address() returns null until the handle is bound.
+  const server = startMockGateway(opts?.scenario ?? {}, opts?.port ?? 0);
   await new Promise<void>((done) => server.once("listening", done));
   const port = (server.address() as AddressInfo).port;
   const origin = `http://127.0.0.1:${port}`;

@@ -12,6 +12,7 @@ import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { launchExtension } from "../e2e/launch.ts";
+import { DEFAULT_PORT } from "./mock-gateway.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const OUT_CHROME = resolve(ROOT, "store/screenshots/chrome");
@@ -23,7 +24,14 @@ async function main(): Promise<void> {
   mkdirSync(OUT_CHROME, { recursive: true });
   mkdirSync(OUT_FIREFOX, { recursive: true });
 
-  const { context, sw, extId, origin, close } = await launchExtension({ viewport: VIEWPORT });
+  // Opt out of launchExtension's default ephemeral port: the options page
+  // renders the seeded origin (including the port) as visible text, so a
+  // random port would make this screenshot differ on every run. This script
+  // is a single process with no parallelism, so a fixed port is safe here.
+  const { context, sw, extId, origin, close } = await launchExtension({
+    viewport: VIEWPORT,
+    port: DEFAULT_PORT,
+  });
 
   try {
     // Popup — composited centered on a padded canvas (the popup is ~360px wide).
