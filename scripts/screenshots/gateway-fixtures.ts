@@ -1,8 +1,6 @@
 // Canned, deterministic responses for the loopback mock gateway used to drive
-// deterministic store screenshots. Not shipped in dist/. The RelatedHit typing
-// keeps these in lockstep with the locked /v1/clips/related contract; a unit test
-// re-asserts the shape at runtime.
-import type { RelatedHit } from "../../src/shared/types.ts";
+// deterministic store screenshots. Not shipped in dist/. A unit test re-asserts
+// the shape at runtime against the locked /v1/clips/related contract.
 
 export interface PairConfirmResponse {
   readonly token: string;
@@ -14,8 +12,29 @@ export interface ClipIngestResponse {
   readonly status: "created" | "updated";
 }
 
+/**
+ * The WIRE shape of a related hit — deliberately NOT `RelatedHit` from
+ * `src/shared/types.ts`. That is the CLIENT type, which carries `modifiedAt`
+ * (camelCase) because `gateway-client.ts` renames it at the HTTP boundary.
+ * The mock stands in for the gateway, so it must speak `modified_at`.
+ *
+ * Typing this against the client shape was a real defect: both new fields are
+ * optional there, so the fixture omitted them and the panel correctly rendered
+ * no kind chip and no freshness line — leaving an e2e for those rows asserting
+ * nothing at all.
+ */
+export interface RelatedHitWire {
+  readonly id: string;
+  readonly title: string;
+  readonly service: string;
+  readonly type: string;
+  readonly snippet: string;
+  readonly url: string | null;
+  readonly modified_at: number;
+}
+
 export interface RelatedResponse {
-  readonly items: readonly RelatedHit[];
+  readonly items: readonly RelatedHitWire[];
 }
 
 /** A clearly-fake token — never a real secret. */
@@ -92,28 +111,78 @@ export const AGENT_RUN_DONE: AgentRunDoneResponse = {
     "into it. Low blast radius — safe to land once tests are green.",
 };
 
+// Fixed epoch-ms literals, never Date.now(): same reasoning as RESOLVE_FIXTURE
+// above — a live value would make this pinned fixture drift between runs.
+const ONE_DAY_MS = 86_400_000;
+const ONE_WEEK_MS = 7 * ONE_DAY_MS;
+
 export const RELATED: RelatedResponse = {
   items: [
     {
       id: "n_001",
       title: "Designing local-first software",
       service: "web",
+      type: "page",
       snippet: "Seven ideas for software that keeps your data on your own machine…",
       url: "https://www.inkandswitch.com/local-first/",
+      modified_at: 1_700_000_000_000,
     },
     {
       id: "n_002",
       title: "Note — hybrid retrieval tradeoffs",
       service: "note",
+      type: "note",
       snippet: "When re-ranking dense + keyword results beats either alone…",
       url: null,
+      modified_at: 1_700_000_000_000 - ONE_DAY_MS,
     },
     {
       id: "n_003",
       title: "Readability.js internals",
       service: "web",
+      type: "page",
       snippet: "How the article extractor scores DOM nodes to find the main content…",
       url: "https://github.com/mozilla/readability",
+      modified_at: 1_700_000_000_000 - ONE_WEEK_MS,
     },
   ],
 };
+
+/**
+ * Per-test overrides for the mock. Every field is optional and falls back to the
+ * canned fixture, so the screenshot script needs no scenario at all.
+ *
+ * A plain object passed at construction — NOT a control endpoint mutating a
+ * running server. A control endpoint would make each test's meaning depend on
+ * what ran before it, which is the standard way a browser suite becomes flaky.
+ */
+export interface Scenario {
+  /** Keyed by the exact `url` query param `GET /v1/items/resolve` receives. */
+  readonly resolve?: Readonly<Record<string, unknown>>;
+  /** Answer for any url absent from `resolve`. Defaults to RESOLVE_FIXTURE. */
+  readonly resolveDefault?: unknown;
+  readonly related?: unknown;
+  readonly ingest?: unknown;
+  readonly itemsFetch?: unknown;
+  readonly agentRun?: unknown;
+  /** Path → HTTP status, applied before the body is chosen. */
+  readonly status?: Readonly<Record<string, number>>;
+}
+
+const NOT_INDEXED = {
+  found: false,
+  reason: "not_indexed",
+  service: null,
+  fetchable: false,
+} as const;
+
+export const SCENARIOS = {
+  happyPath: {},
+  /** Every url misses, and the gateway says it cannot fetch them either. */
+  resolveMiss: { resolveDefault: NOT_INDEXED },
+  fetchNotConfigured: {
+    resolveDefault: NOT_INDEXED,
+    itemsFetch: { status: "not_configured" },
+  },
+  rateLimited: { status: { "/v1/clips": 429 } },
+} as const satisfies Record<string, Scenario>;

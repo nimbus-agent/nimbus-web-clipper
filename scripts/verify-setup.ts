@@ -145,7 +145,7 @@ async function main(): Promise<void> {
     }
 
     // ---- Step 3: gateway started -> the URL fills in -------------------------
-    server = startMockGateway(DISCOVERY_PORT);
+    server = startMockGateway({}, DISCOVERY_PORT);
     {
       const page = await openOptions(context, extId);
       await page.click("#discover");

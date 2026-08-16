@@ -1,5 +1,12 @@
 import { describe, expect, it, test } from "vitest";
-import { CLIP_INGEST, PAIR_CONFIRM, RELATED } from "../../scripts/screenshots/gateway-fixtures.ts";
+import {
+  CLIP_INGEST,
+  PAIR_CONFIRM,
+  RELATED,
+  RESOLVE_FIXTURE,
+  SCENARIOS,
+  type Scenario,
+} from "../../scripts/screenshots/gateway-fixtures.ts";
 import { handleRequest } from "../../scripts/screenshots/mock-gateway.ts";
 
 describe("mock gateway fixtures — locked contract shape", () => {
@@ -74,5 +81,76 @@ describe("mock gateway fixtures — locked contract shape", () => {
     );
     expect(poll.status).toBe(200);
     expect(await poll.json()).toMatchObject({ status: "done" });
+  });
+});
+
+describe("scenarios", () => {
+  test("no scenario returns today's fixtures (the screenshot path)", async () => {
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips/related", { method: "POST" }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(RELATED);
+  });
+
+  test("a related override replaces the fixture", async () => {
+    const related = { items: [] };
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips/related", { method: "POST" }),
+      { related },
+    );
+    expect(await res.json()).toEqual(related);
+  });
+
+  test("resolve is keyed off the url query param", async () => {
+    const scenario: Scenario = {
+      resolve: { "https://github.com/acme/web/pull/482": RESOLVE_FIXTURE },
+      resolveDefault: { found: false, reason: "not_indexed", service: null, fetchable: false },
+    };
+    const hit = await handleRequest(
+      new Request(
+        "http://127.0.0.1:8765/v1/items/resolve?url=https%3A%2F%2Fgithub.com%2Facme%2Fweb%2Fpull%2F482",
+      ),
+      scenario,
+    );
+    expect(await hit.json()).toEqual(RESOLVE_FIXTURE);
+
+    const miss = await handleRequest(
+      new Request(
+        "http://127.0.0.1:8765/v1/items/resolve?url=https%3A%2F%2Fwiki.internal%2Frunbook",
+      ),
+      scenario,
+    );
+    expect((await miss.json()).found).toBe(false);
+  });
+
+  test("a status override wins over the body (rate limiting)", async () => {
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips", { method: "POST" }),
+      { status: { "/v1/clips": 429 } },
+    );
+    expect(res.status).toBe(429);
+  });
+
+  test("the related fixture carries the wire's type and modified_at", () => {
+    // Guards the defect this task fixes: typed against the CLIENT shape, the
+    // fixture silently omitted both fields and no e2e could assert the chip
+    // or the freshness line.
+    for (const item of RELATED.items) {
+      expect(typeof item.type).toBe("string");
+      expect(typeof item.modified_at).toBe("number");
+    }
+  });
+
+  test("SCENARIOS carries the named scenarios later tasks build lanes against", () => {
+    expect(SCENARIOS.happyPath).toEqual({});
+    expect(SCENARIOS.resolveMiss.resolveDefault).toEqual({
+      found: false,
+      reason: "not_indexed",
+      service: null,
+      fetchable: false,
+    });
+    expect(SCENARIOS.fetchNotConfigured.itemsFetch).toEqual({ status: "not_configured" });
+    expect(SCENARIOS.rateLimited.status).toEqual({ "/v1/clips": 429 });
   });
 });

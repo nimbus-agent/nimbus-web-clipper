@@ -13,6 +13,7 @@ import {
   PAIR_CONFIRM,
   RELATED,
   RESOLVE_FIXTURE,
+  type Scenario,
 } from "./gateway-fixtures.ts";
 
 export const DEFAULT_PORT = 8765;
@@ -47,8 +48,12 @@ function jsonResponse(body: unknown): Response {
  * so it is unit-testable without a real socket. `startMockGateway` is the
  * only caller that adapts this to a Node `http.Server`.
  */
-export async function handleRequest(req: Request): Promise<Response> {
+export async function handleRequest(req: Request, scenario: Scenario = {}): Promise<Response> {
   const url = new URL(req.url);
+  const override = scenario.status?.[url.pathname];
+  if (override !== undefined && override !== 200) {
+    return new Response(null, { status: override });
+  }
   if (req.method === "GET" && url.pathname === "/sample") {
     return new Response(SAMPLE_PAGE, {
       status: 200,
@@ -63,13 +68,15 @@ export async function handleRequest(req: Request): Promise<Response> {
     return jsonResponse({ status: "ok", gateway: "read_only_http" });
   }
   if (req.method === "GET" && url.pathname === GATEWAY_PATHS.resolve) {
-    return jsonResponse(RESOLVE_FIXTURE);
+    const target = url.searchParams.get("url") ?? "";
+    const keyed = scenario.resolve?.[target];
+    return jsonResponse(keyed ?? scenario.resolveDefault ?? RESOLVE_FIXTURE);
   }
   // `GET /v1/agents/runs/{id}` — the poll route. Checked ahead of the
   // POST-only gate below because it is the one GET route under `/v1/agents`;
   // every run reports `done` immediately (see AGENT_RUN_DONE's doc comment).
   if (req.method === "GET" && url.pathname.startsWith(`${GATEWAY_PATHS.agentRuns}/`)) {
-    return jsonResponse(AGENT_RUN_DONE);
+    return jsonResponse(scenario.agentRun ?? AGENT_RUN_DONE);
   }
   if (req.method !== "POST") {
     return new Response(null, { status: 405 });
@@ -92,11 +99,11 @@ export async function handleRequest(req: Request): Promise<Response> {
     case GATEWAY_PATHS.pairConfirm:
       return jsonResponse(PAIR_CONFIRM);
     case GATEWAY_PATHS.ingest:
-      return jsonResponse(CLIP_INGEST);
+      return jsonResponse(scenario.ingest ?? CLIP_INGEST);
     case GATEWAY_PATHS.related:
-      return jsonResponse(RELATED);
+      return jsonResponse(scenario.related ?? RELATED);
     case GATEWAY_PATHS.itemsFetch:
-      return jsonResponse(FETCH_FIXTURE);
+      return jsonResponse(scenario.itemsFetch ?? FETCH_FIXTURE);
     default:
       return new Response(null, { status: 404 });
   }
@@ -114,19 +121,24 @@ function toFetchHeaders(incoming: IncomingMessage["headers"]): Headers {
   return headers;
 }
 
-async function serve(req: IncomingMessage, res: ServerResponse, port: number): Promise<void> {
+async function serve(
+  req: IncomingMessage,
+  res: ServerResponse,
+  port: number,
+  scenario: Scenario,
+): Promise<void> {
   const request = new Request(`http://127.0.0.1:${port}${req.url ?? "/"}`, {
     method: req.method ?? "GET",
     headers: toFetchHeaders(req.headers),
   });
-  const response = await handleRequest(request);
+  const response = await handleRequest(request, scenario);
   res.writeHead(response.status, Object.fromEntries(response.headers));
   res.end(response.body === null ? undefined : await response.text());
 }
 
-export function startMockGateway(port: number = DEFAULT_PORT): Server {
+export function startMockGateway(scenario: Scenario = {}, port: number = DEFAULT_PORT): Server {
   const server = createServer((req, res) => {
-    serve(req, res, port).catch(() => {
+    serve(req, res, port, scenario).catch(() => {
       res.writeHead(500).end();
     });
   });
