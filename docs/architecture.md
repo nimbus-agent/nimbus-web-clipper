@@ -481,6 +481,27 @@ no token read** — the panel cannot classify a URL itself, because the configur
 origins live in the worker, and shipping that list into a content script would
 expose the user's internal hostnames to save a message that costs no network.
 
+#### What the related lane asks about
+
+The lane sends `itemId` whenever the panel's header names an item — `resolved`,
+or the candidate the user picked on an `ambiguous` page — read from the same
+header state the panel renders, so the lane cannot describe a different item than
+the header above it. The gateway then queries on that item's own title and drops
+it from its own results.
+
+Two rules are deliberately independent. **Precedence for the query text** is
+`selection` → `itemId` → `title`, so *What's related to this?* keeps working on a
+resolved page. **Self-exclusion** is keyed on the id being *present*, not on it
+having won — otherwise selecting a phrase on a pull request would return that
+pull request as its own top hit.
+
+`title` is sent even alongside `itemId`: a gateway predating the `itemId` query
+ignores the id and falls back to the title, and dropping it would leave that
+gateway with an empty query, which it answers with zero hits. `canonicalUrl` is
+the one field withheld once an id exists — the gateway uses it to exclude the
+whole *host*, which on a working surface throws away exactly the items worth
+showing.
+
 ## The targeted-fetch path
 
 A resolve miss (`not-indexed`) can mean the gateway has a connector for this

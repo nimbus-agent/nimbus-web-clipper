@@ -509,6 +509,18 @@ more than one indexed item (the panel shows a chooser when it does).
    the selection belonged to the page the panel has stopped describing.
 10. Repeat 1, 2, 6 and 8 in Firefox.
 
+## Manual verification — Related lane (richer rows)
+
+- **Related lane (richer rows).** On a resolved GitHub pull request, open the
+  panel: Related must show items *from github.com* (the host filter is what used
+  to hide them), each with a kind chip and an "Updated …" line, grouped under a
+  service heading with a count. Check the preview line is prose from the item,
+  not its title repeated. Then select a phrase and run *What's related to this?* —
+  the results must change, and the PR you are on must not appear among them.
+  Finally, note whether the groups are mostly one row each: if they are, the
+  headings are noise and grouping should be dropped from the lane (see the spec's
+  "Not in this slice").
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any
