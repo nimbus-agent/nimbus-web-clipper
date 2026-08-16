@@ -97,6 +97,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["test/e2e/**/*.e2e.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExportsInTest": "off"
+          }
+        }
+      }
     }
   ]
 }

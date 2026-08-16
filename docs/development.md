@@ -511,15 +511,19 @@ more than one indexed item (the panel shows a chooser when it does).
 
 ## Manual verification — Related lane (richer rows)
 
-- **Related lane (richer rows).** On a resolved GitHub pull request, open the
-  panel: Related must show items *from github.com* (the host filter is what used
-  to hide them), each with a kind chip and an "Updated …" line, grouped under a
-  service heading with a count. Check the preview line is prose from the item,
-  not its title repeated. Then select a phrase and run *What's related to this?* —
-  the results must change, and the PR you are on must not appear among them.
-  Finally, note whether the groups are mostly one row each: if they are, the
-  headings are noise and grouping should be dropped from the lane (see the spec's
-  "Not in this slice").
+Prereq: paired, gateway running, a resolved GitHub pull request available.
+
+1. On a resolved GitHub pull request, open the panel: Related must show items
+   *from github.com* (the host filter is what used to hide them).
+2. Each row has a kind chip.
+3. Each row has an "Updated …" line.
+4. Rows group under a service heading with a count.
+5. The preview line is prose from the item, not its title repeated.
+6. **(human — a design judgement, not an assertion).** Then select a phrase and
+   run *What's related to this?* — the results must change, and the PR you are
+   on must not appear among them. Finally, note whether the groups are mostly
+   one row each: if they are, the headings are noise and grouping should be
+   dropped from the lane (see the spec's "Not in this slice").
 
 ## Manual verification — Capture as the last resort (C3.2)
 
