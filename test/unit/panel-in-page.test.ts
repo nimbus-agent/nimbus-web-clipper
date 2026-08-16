@@ -578,7 +578,11 @@ describe("panel-in-page recognition header", () => {
     await vi.waitFor(() => {
       expect(headerText()).toContain("Not indexed");
     });
-    expect(shadow()?.querySelector(".nimbus-related__header-state button")).toBeNull();
+    // No fetch button — nothing left to fetch. This is exactly the miss
+    // offersCapture() covers, so a capture offer renders in its place; wiring
+    // its click is a later task, but the render itself is this one's.
+    expect(shadow()?.querySelector(".nimbus-related__fetch")).toBeNull();
+    expect(shadow()?.querySelector(".nimbus-related__capture")).not.toBeNull();
   });
 
   test("an unsupported gateway is a first-class state, not an error", async () => {

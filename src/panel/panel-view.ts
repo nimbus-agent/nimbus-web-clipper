@@ -2,6 +2,7 @@
 // Pure DOM builders for the related-items panel. Every gateway-provided string is
 // written via textContent (never innerHTML) — the indexed content is
 // attacker-influenceable, so plain-text rendering is the XSS backstop.
+import { offersCapture } from "../shared/capture-offer.ts";
 import { formatAge } from "../shared/freshness.ts";
 import { buildFetchPreview } from "../shared/preview.ts";
 import { renderPreview } from "../shared/preview-view.ts";
@@ -145,6 +146,21 @@ export function renderHits(doc: Document, items: RelatedHit[], nowMs: number): H
 export type HeaderState =
   | { readonly kind: "loading" }
   | { readonly kind: "unrecognised" }
+  | {
+      /**
+       * A copy the user captured, not connector data. Reached by capturing just
+       * now OR by opening the panel on a page captured weeks ago — the panel
+       * cannot tell the two apart and must not try, because presenting an old
+       * copy as connector data is the dishonesty this arm exists to prevent.
+       *
+       * NO surface line: an unrecognised page has no recognition to source one
+       * from, and its absence is part of the honesty.
+       */
+      readonly kind: "captured";
+      readonly item: ResolvedItem;
+      /** Frozen at the moment the header was built, like `resolved`'s own age. */
+      readonly ageNowMs: number;
+    }
   /**
    * A recognised page with NO indexed item, and that is correct rather than a
    * failure: a product's own dashboard. Deliberately not `not-indexed`, which
@@ -474,17 +490,79 @@ function appendFetchRetry(
   return;
 }
 
+/**
+ * The `captured` arm of {@link renderHeader}: a copy the user saved, not
+ * connector data. Renders NO surface line — an unrecognised page has no
+ * recognition to source one from, and that absence is part of the honesty
+ * this arm exists to tell. Reuses the exact `Updated <age>` wording the
+ * `resolved` arm uses, so two freshness claims in one panel can never word
+ * the same fact differently.
+ */
+function appendCapturedHeader(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<HeaderState, { kind: "captured" }>,
+  onRecapture: (() => void) | undefined,
+): void {
+  box.append(candidateLine(doc, state.item));
+  box.append(
+    line(
+      doc,
+      "nimbus-related__status",
+      `Updated ${formatAge(state.item.modifiedAt, state.ageNowMs)}`,
+    ),
+  );
+  box.append(
+    line(doc, "nimbus-related__status", "This is a copy you saved, not data from a connector."),
+  );
+  box.append(
+    actionButton(doc, "nimbus-related__recapture", "Update this copy", () => onRecapture?.()),
+  );
+}
+
+/**
+ * Appends the "Save a copy to Nimbus" offer whenever `offersCapture(state)`
+ * says the gateway has nothing left to try. Always appended AFTER the
+ * caller's own content for that state — never substituted for it — so, in
+ * particular, the `unrecognised` arm's "add this site" hint stays above it: a
+ * real connector still beats a scrape.
+ */
+function appendCaptureOffer(
+  doc: Document,
+  box: HTMLElement,
+  state: HeaderState,
+  onCapture: (() => void) | undefined,
+): void {
+  if (!offersCapture(state)) {
+    return;
+  }
+  box.append(
+    actionButton(
+      doc,
+      "nimbus-related__action nimbus-related__capture",
+      "Save a copy to Nimbus",
+      () => onCapture?.(),
+    ),
+  );
+}
+
 export function renderHeader(
   doc: Document,
   state: HeaderState,
   onChoose?: (c: ResolveCandidate) => void,
   onFetch?: (action: "fetch" | "resolve") => void,
+  onCapture?: () => void,
+  onRecapture?: () => void,
 ): HTMLElement {
   const box = doc.createElement("div");
   box.className = "nimbus-related__header-state";
 
   if (state.kind === "loading") {
     box.append(line(doc, "nimbus-related__status", "Checking Nimbus…"));
+    return box;
+  }
+  if (state.kind === "captured") {
+    appendCapturedHeader(doc, box, state, onRecapture);
     return box;
   }
   if (state.kind === "unrecognised") {
@@ -496,6 +574,7 @@ export function renderHeader(
         "Add this site under Recognised surfaces in Options to recognise it.",
       ),
     );
+    appendCaptureOffer(doc, box, state, onCapture);
     return box;
   }
   // Handled whole rather than folded into the shared tail below: `surface` is
@@ -569,6 +648,7 @@ export function renderHeader(
 
   if (state.kind === "fetch-blocked") {
     appendFetchBlocked(doc, box, state);
+    appendCaptureOffer(doc, box, state, onCapture);
     return box;
   }
 
@@ -604,6 +684,7 @@ export function renderHeader(
       ),
     );
   }
+  appendCaptureOffer(doc, box, state, onCapture);
   return box;
 }
 

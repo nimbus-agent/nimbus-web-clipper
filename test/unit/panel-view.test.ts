@@ -470,7 +470,10 @@ describe("renderHeader — fetch affordance", () => {
       product: "github",
       fetchable: false,
     });
-    expect(no.querySelector("button")).toBeNull();
+    // No fetch button — nothing left to fetch — but this is exactly the miss
+    // `offersCapture` covers, so the capture offer takes its place.
+    expect(no.querySelector(".nimbus-related__fetch")).toBeNull();
+    expect(no.querySelector(".nimbus-related__capture")).not.toBeNull();
     expect(no.textContent).toContain("Not indexed.");
   });
 
@@ -503,8 +506,11 @@ describe("renderHeader — fetch outcomes", () => {
       scopeGap: null,
     });
     expect(el.textContent).toContain("No GitHub connector is configured");
-    // Terminal: retrying will never work, which is why this arm is not collapsed.
-    expect(el.querySelectorAll("button")).toHaveLength(0);
+    // Terminal: retrying will never work, which is why this arm is not
+    // collapsed — the one button here is the capture offer, not a retry.
+    const buttons = el.querySelectorAll("button");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.className).toContain("nimbus-related__capture");
   });
 
   it("says plainly that it cannot fetch, with no action", () => {
@@ -516,7 +522,10 @@ describe("renderHeader — fetch outcomes", () => {
       scopeGap: null,
     });
     expect(el.textContent).toContain("can't fetch this page");
-    expect(el.querySelectorAll("button")).toHaveLength(0);
+    // No retry — the one button here is the capture offer.
+    const buttons = el.querySelectorAll("button");
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.className).toContain("nimbus-related__capture");
   });
 
   it("names the fetch scope — not resolve — and builds the command", () => {
@@ -986,5 +995,81 @@ describe("the service header", () => {
       "Jenkins dashboard",
       "Nimbus can answer across all indexed Jenkins builds.",
     ]);
+  });
+});
+
+describe("the captured-copy header", () => {
+  const NOW = 1_700_000_000_000;
+  const item = {
+    id: "nimbus:clip:1",
+    service: "nimbus",
+    type: "web_clip",
+    title: "Runbook",
+    url: "https://wiki.example.com/runbook",
+    modifiedAt: NOW - 3 * 24 * 60 * 60 * 1000,
+  };
+
+  test("names the item and says it is a copy you saved", () => {
+    const el = renderHeader(document, { kind: "captured", item, ageNowMs: NOW });
+    expect(el.textContent).toContain("Runbook");
+    expect(el.textContent).toContain("Updated 3 days ago");
+    expect(el.textContent?.toLowerCase()).toContain("copy");
+  });
+
+  test("renders NO surface line — an unrecognised page has no surface", () => {
+    const el = renderHeader(document, { kind: "captured", item, ageNowMs: NOW });
+    expect(el.querySelector(".nimbus-related__surface")).toBeNull();
+  });
+
+  test("offers Update this copy", () => {
+    let called = false;
+    const el = renderHeader(
+      document,
+      { kind: "captured", item, ageNowMs: NOW },
+      undefined,
+      undefined,
+      undefined,
+      () => {
+        called = true;
+      },
+    );
+    const btn = el.querySelector(".nimbus-related__recapture") as HTMLButtonElement | null;
+    expect(btn).not.toBeNull();
+    btn?.click();
+    expect(called).toBe(true);
+  });
+
+  test("a captured title is never treated as markup", () => {
+    const el = renderHeader(document, {
+      kind: "captured",
+      item: { ...item, title: "<img src=x onerror=alert(1)>" },
+      ageNowMs: NOW,
+    });
+    expect(el.querySelector("img")).toBeNull();
+  });
+});
+
+describe("the capture offer", () => {
+  test("an unrecognised page offers capture and keeps the Options hint", () => {
+    let called = false;
+    const el = renderHeader(document, { kind: "unrecognised" }, undefined, undefined, () => {
+      called = true;
+    });
+    expect(el.textContent).toContain("Options");
+    const btn = el.querySelector(".nimbus-related__capture") as HTMLButtonElement | null;
+    expect(btn).not.toBeNull();
+    btn?.click();
+    expect(called).toBe(true);
+  });
+
+  test("a fetchable miss shows the fetch button and NO capture button", () => {
+    const el = renderHeader(document, {
+      kind: "not-indexed",
+      surface: "GitHub pull request",
+      product: "github",
+      fetchable: true,
+    });
+    expect(el.querySelector(".nimbus-related__fetch")).not.toBeNull();
+    expect(el.querySelector(".nimbus-related__capture")).toBeNull();
   });
 });

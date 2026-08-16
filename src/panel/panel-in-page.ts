@@ -261,6 +261,7 @@ const STYLES = `
   color: var(--nimbus-accent); font: inherit; text-align: left;
 }
 .nimbus-related__action:hover { text-decoration: underline; }
+.nimbus-related__recapture { margin-top: 6px; font-size: 11px; opacity: .75; }
 /* :host { all: initial } gives <pre> no useful defaults (browser UA styles for
    <pre> don't survive it), so the brief's wrapping/font/spacing is set explicitly
    here rather than relied on. */
