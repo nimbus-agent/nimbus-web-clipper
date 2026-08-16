@@ -2,6 +2,7 @@
 // background service worker via chrome.runtime messaging. External data crossing
 // the messaging boundary is `unknown` until narrowed by a guard here — never `any`.
 
+import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
 import { isNormalisedTerm } from "./term.ts";
@@ -10,6 +11,7 @@ import {
   AGENT_LANES,
   type AgentError,
   type AgentLane,
+  type CaptureError,
   type CaptureResult,
   type ClipError,
   type FetchError,
@@ -43,6 +45,29 @@ export function isPingMessage(value: unknown): value is PingMessage {
     typeof value === "object" && value !== null && (value as { kind?: unknown }).kind === "ping"
   );
 }
+
+export interface CaptureRequest {
+  readonly kind: "capture";
+  /** The panel's PINNED page. Untrusted — it arrives from a content script — so
+   *  it is guarded here and re-checked against the live tab in capture-tab.ts. */
+  readonly pageUrl: string;
+}
+
+/**
+ * `preview: null` means the user switched the 1.3 preview off, so the panel
+ * sends the clip without a confirm step. The WORKER decides this, because the
+ * pref lives in `chrome.storage` (background/preview-pref.ts) and the panel is a
+ * content script — and because keeping preview construction in one place is what
+ * stops a second code path from building a payload preview differently.
+ */
+export type CaptureResponse =
+  | {
+      readonly kind: "capture";
+      readonly ok: true;
+      readonly capture: CaptureResult;
+      readonly preview: ClipPreview | null;
+    }
+  | { readonly kind: "capture"; readonly ok: false; readonly reason: CaptureError };
 
 export interface PairRequest {
   readonly kind: "pair";
@@ -169,6 +194,7 @@ export interface DiscoverRequest {
 }
 
 export type ExtensionRequest =
+  | CaptureRequest
   | PairRequest
   | ClipRequest
   | RelatedRequest
@@ -282,6 +308,7 @@ export type DiscoverResponse = {
 };
 
 export type ExtensionResponse =
+  | CaptureResponse
   | PairResponse
   | ClipResponse
   | RelatedResponse
@@ -295,6 +322,35 @@ export type ExtensionResponse =
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
+}
+
+function isPreviewField(v: unknown): v is { readonly label: string; readonly value: string } {
+  return isObject(v) && typeof v["label"] === "string" && typeof v["value"] === "string";
+}
+
+function isClipPreview(v: unknown): v is ClipPreview {
+  return (
+    isObject(v) &&
+    Array.isArray(v["fields"]) &&
+    v["fields"].every(isPreviewField) &&
+    typeof v["excerpt"] === "string" &&
+    typeof v["bodyLength"] === "number" &&
+    typeof v["truncated"] === "boolean"
+  );
+}
+
+export function isCaptureRequest(v: unknown): v is CaptureRequest {
+  return isObject(v) && v["kind"] === "capture" && typeof v["pageUrl"] === "string";
+}
+
+export function isCaptureResponse(v: unknown): v is CaptureResponse {
+  if (!isObject(v) || v["kind"] !== "capture") {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return isCaptureResult(v["capture"]) && (v["preview"] === null || isClipPreview(v["preview"]));
+  }
+  return v["ok"] === false && typeof v["reason"] === "string";
 }
 
 export function isPairRequest(v: unknown): v is PairRequest {

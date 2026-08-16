@@ -106,12 +106,14 @@ Two things constrain any rename:
   is therefore a `name` change plus store-listing copy, and nothing deeper: the
   Chrome item id is derived from the publisher's public key, not from `name`, so
   it survives a rename untouched.
-- **Sequencing: Nimbus#1006 resolves first.** A rename fixes positioning, not
-  adoption — it will not by itself move `average_daily_users` off zero. And
-  relaunching under a new name while **Nimbus#1006** is live (the store listings
-  claim clips stay local while `web_clip` routes to OpenAI embeddings when a key
-  is set) *increases* exposure: a fresh listing invites fresh scrutiny of a
-  privacy claim we currently cannot back.
+- **Sequencing, re-opened: Nimbus#1006 closed 2026-08-11.** This bullet's
+  premise was that relaunching under a new name while **Nimbus#1006** was live
+  (the store listings claim clips stay local while `web_clip` routed to OpenAI
+  embeddings when a key was set) would *increase* exposure: a fresh listing
+  invites fresh scrutiny of a privacy claim we could not back. That premise no
+  longer holds — #1006 is closed. Whether the sequencing argument still stands
+  on some other ground, or the rename is now unblocked, needs its own re-read.
+  **Not decided here:** the rename is not this slice's call to make.
 
 ### Why this is credible, not aspirational
 
@@ -217,13 +219,14 @@ hard cases (SPAs, infinite scroll), captured the way you read — full-page or
 readable, region or highlight-stitched — with faithful author/date/canonical
 metadata and preserved figures.
 
-Two open defects gate this pillar and should be cleared before it grows:
-**Nimbus#1005** (clip bodies truncated to 512 characters while `wordCount`
-reports the full length) and **Nimbus#1006** (`web_clip` routes to OpenAI
-embeddings when a key is set, contradicting the store listings' local-only
-claim). **#1006 must be resolved before or with #1005** — widening capture on
-top of a body that is silently truncated, or an embedding path that leaves the
-machine, makes both problems bigger.
+Two defects gated this pillar: **Nimbus#1005** (clip bodies truncated to 512
+characters while `wordCount` reports the full length) and **Nimbus#1006**
+(`web_clip` routes to OpenAI embeddings when a key is set, contradicting the
+store listings' local-only claim). Both closed upstream on **2026-08-11**. The
+gate held for a real reason — widening capture on top of a body that was
+silently truncated, or an embedding path that left the machine, would have made
+both problems bigger — and that reason is now cleared, not argued away:
+**C3.2** shipped once both were closed.
 
 ### 3. Frictionless UX — no context switch
 
@@ -724,18 +727,36 @@ answer is to ask the gateway to go and get it, not to shred the DOM.*
 > it answers against exactly the item this slice already knows how to fetch and
 > resolve — no further work needed in this slice for that to happen.
 
-### C3.2 Capture as the last resort · 🟢 · M
+### C3.2 Capture as the last resort · 🟢 · M — ✅ shipped
 > **What** For a surface with no connector at all — an internal wiki, a vendor
 > console — capture the page and ingest it so the agents have *something*.
 > **Why it wows** The reframe doesn't abandon the long tail; it just stops
 > pretending capture is the main road.
 > **Touches** `src/capture/`, `src/shared/clip.ts`, `src/panel/` (offer capture
 > only after resolution and sync have both missed).
-> **Depends** **Nimbus#1005** and **Nimbus#1006** (see pillar 2) — a truncated
-> body or a non-local embedding path makes this worse, not better.
+> **Depends** **Nimbus#1005** and **Nimbus#1006** — both closed upstream on
+> 2026-08-11 (see pillar 2).
 > **Done when** An unconnectored page can be turned into an indexed item in one
 > gesture, and the panel is honest that this is a captured copy, not connector
 > data.
+> **Status** Shipped: the offer is gated on the gateway having nothing left to
+> try — a resolve miss with a fetch that is unfetchable, not configured, needs a
+> re-grant, or was never a fetch candidate at all — never instead of a better
+> answer that's still available. Re-capture ships in this slice too, as a
+> low-prominence **Update this copy** control running the identical capture →
+> preview → send flow; because ingest is an upsert, the result is one refreshed
+> item, never a duplicate. The honesty is keyed on the item, not the moment —
+> `service: "nimbus"` / `type: "web_clip"` renders the captured header whether
+> the panel just captured the page or is opening on it a month later, so a copy
+> never quietly ages into looking like connector data. Two known limitations,
+> recorded rather than left to be discovered: the durable header holds only on a
+> **recognised** page — an unrecognised page never reaches resolve at all, so
+> the confirmation is a terminal "Saved a copy of …" line, not a durable header —
+> and the offer does not appear while a fetch is merely rate-limited or still
+> working — retrying beats scraping. See
+> [`docs/architecture.md`](./docs/architecture.md#capture-as-the-last-resort-phase-c32).
+> Full reasoning:
+> `docs/superpowers/specs/2026-08-16-capture-as-last-resort-design.md`.
 
 ## Phase C4 — Trust for a client that fetches 🟢/🟡
 

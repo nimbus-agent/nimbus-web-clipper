@@ -4,6 +4,8 @@ import {
   isAgentRunRequest,
   isAgentStateRequest,
   isAgentStateResponse,
+  isCaptureRequest,
+  isCaptureResponse,
   isClipRequest,
   isConnectionResponse,
   isConnectionStatusRequest,
@@ -34,6 +36,41 @@ describe("isPingMessage", () => {
     expect(isPingMessage(null)).toBe(false);
     expect(isPingMessage("ping")).toBe(false);
     expect(isPingMessage(undefined)).toBe(false);
+  });
+});
+
+describe("isCaptureRequest", () => {
+  test("isCaptureRequest accepts a pageUrl and rejects a missing or non-string one", () => {
+    expect(isCaptureRequest({ kind: "capture", pageUrl: "https://x.test/a" })).toBe(true);
+    expect(isCaptureRequest({ kind: "capture" })).toBe(false);
+    expect(isCaptureRequest({ kind: "capture", pageUrl: 7 })).toBe(false);
+    expect(isCaptureRequest({ kind: "clip", pageUrl: "https://x.test/a" })).toBe(false);
+  });
+});
+
+describe("isCaptureResponse", () => {
+  test("isCaptureResponse accepts both arms and a null preview", () => {
+    const capture = {
+      url: "https://x.test/a",
+      title: "T",
+      mode: "article",
+      body: "b",
+      readableFound: true,
+    };
+    expect(isCaptureResponse({ kind: "capture", ok: true, capture, preview: null })).toBe(true);
+    expect(
+      isCaptureResponse({
+        kind: "capture",
+        ok: true,
+        capture,
+        preview: { fields: [], excerpt: "b", bodyLength: 1, truncated: false },
+      }),
+    ).toBe(true);
+    expect(isCaptureResponse({ kind: "capture", ok: false, reason: "url-changed" })).toBe(true);
+  });
+
+  test("isCaptureResponse rejects a success arm with no capture", () => {
+    expect(isCaptureResponse({ kind: "capture", ok: true, preview: null })).toBe(false);
   });
 });
 

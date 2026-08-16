@@ -521,6 +521,38 @@ more than one indexed item (the panel shows a chooser when it does).
   headings are noise and grouping should be dropped from the lane (see the spec's
   "Not in this slice").
 
+## Manual verification — Capture as the last resort (C3.2)
+
+Prereq: paired, gateway running. `capture-in-page.ts` is not unit-testable, the
+same as the popup/options DOM and the SW glue.
+
+1. On a real page Nimbus does not recognise (an internal wiki, a vendor
+   console), open the panel. It offers to capture the page. Click it.
+2. Confirm the copy is labelled as yours: the terminal *"Saved a copy of …"*
+   line. This page never reaches resolve (see step 4), so this line — not a
+   captured header — is the honest signal here.
+3. On a **recognised** page (a self-hosted instance the gateway cannot fetch,
+   e.g. a `not-configured` connector) run the same capture, then close and
+   reopen the panel. → It still shows the captured header — the durability is
+   real, because a recognised page's resolve reaches the gateway again on
+   reopen and gets the same `web_clip` item back.
+4. Repeat on the **unrecognised** page from step 1: close and reopen the panel.
+   → No durable header — the page never reaches resolve at all, so reopening
+   shows the ordinary `unrecognised` state. The one honest signal that the copy
+   was saved is the terminal *"Saved a copy of …"* line shown right after step
+   2's save; confirm it appeared then, not that it persists across a reopen.
+5. Run **Update this copy** on a captured header. → The gateway reports
+   `updated`, and `nimbus search` (or the Nimbus app) shows one item for that
+   page, not two.
+6. Navigate an SPA mid-capture (start a capture, then trigger a client-side
+   route change before it resolves) → the panel reports `url-changed` rather
+   than filing the new page's content under the old address.
+7. In Options stage 4, switch the 1.3 preview off, then repeat step 1. →
+   The offer button is replaced by status lines (*Capturing this page…*, then
+   *Saving to Nimbus…*) that still appear, and the captured header still
+   settles at the end — the in-flight feedback does not depend on the preview
+   being on.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any

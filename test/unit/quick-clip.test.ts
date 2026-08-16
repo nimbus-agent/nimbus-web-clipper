@@ -1,10 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
-import {
-  isRestrictedUrl,
-  type QuickClipDeps,
-  quickClip,
-  toToastState,
-} from "../../src/background/quick-clip.ts";
+import { isRestrictedUrl } from "../../src/background/capture-tab.ts";
+import { type QuickClipDeps, quickClip, toToastState } from "../../src/background/quick-clip.ts";
 import type { ClipResponse } from "../../src/shared/messages.ts";
 import type { CaptureResult } from "../../src/shared/types.ts";
 

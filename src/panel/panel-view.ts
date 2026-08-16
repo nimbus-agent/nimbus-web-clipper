@@ -2,8 +2,9 @@
 // Pure DOM builders for the related-items panel. Every gateway-provided string is
 // written via textContent (never innerHTML) — the indexed content is
 // attacker-influenceable, so plain-text rendering is the XSS backstop.
+import { offersCapture } from "../shared/capture-offer.ts";
 import { formatAge } from "../shared/freshness.ts";
-import { buildFetchPreview } from "../shared/preview.ts";
+import { buildFetchPreview, type ClipPreview, type FetchPreview } from "../shared/preview.ts";
 import { renderPreview } from "../shared/preview-view.ts";
 import { scopeCommand } from "../shared/scope-command.ts";
 import type {
@@ -145,6 +146,21 @@ export function renderHits(doc: Document, items: RelatedHit[], nowMs: number): H
 export type HeaderState =
   | { readonly kind: "loading" }
   | { readonly kind: "unrecognised" }
+  | {
+      /**
+       * A copy the user captured, not connector data. Reached by capturing just
+       * now OR by opening the panel on a page captured weeks ago — the panel
+       * cannot tell the two apart and must not try, because presenting an old
+       * copy as connector data is the dishonesty this arm exists to prevent.
+       *
+       * NO surface line: an unrecognised page has no recognition to source one
+       * from, and its absence is part of the honesty.
+       */
+      readonly kind: "captured";
+      readonly item: ResolvedItem;
+      /** Frozen at the moment the header was built, like `resolved`'s own age. */
+      readonly ageNowMs: number;
+    }
   /**
    * A recognised page with NO indexed item, and that is correct rather than a
    * failure: a product's own dashboard. Deliberately not `not-indexed`, which
@@ -272,6 +288,32 @@ export interface PanelState {
     readonly onSend: () => void;
     readonly onCancel: () => void;
   };
+  /**
+   * The pending "about to save a copy" confirm target — set once `capture`
+   * has answered with a preview to show (the 1.3 pref, read in the worker),
+   * cleared on Send or Cancel. Rendered INSTEAD of `header`, in the same box
+   * `renderHeader` itself would occupy — the identical precedence
+   * `fetchPreview` already has above, and for the same reason: a captured
+   * clip is an outbound write (`POST /v1/clips`), so what it contains must be
+   * named and agreed to before it goes out, not after.
+   */
+  readonly capturePreview?: {
+    readonly preview: ClipPreview;
+    readonly onSend: () => void;
+    readonly onCancel: () => void;
+  };
+  /**
+   * A capture refusal — the panel could not read the page, the tab moved on,
+   * the page yielded nothing capturable, or the save itself failed. Rendered
+   * as its own line BENEATH the header (see `renderShell`), never in place of
+   * it: unlike `header`'s own `error` arm, which replaces everything, a
+   * refusal must leave the header — and, on every state that can reach this
+   * flow, its still-live "Save a copy to Nimbus" offer — on screen so the
+   * user has something to retry. See `captureRefusal` in panel-in-page.ts for
+   * the full reasoning and the one outcome (a queued clip) that is
+   * deliberately NOT routed here.
+   */
+  readonly captureRefusal?: string;
 }
 
 function line(doc: Document, className: string, text: string): HTMLElement {
@@ -474,17 +516,79 @@ function appendFetchRetry(
   return;
 }
 
+/**
+ * The `captured` arm of {@link renderHeader}: a copy the user saved, not
+ * connector data. Renders NO surface line — an unrecognised page has no
+ * recognition to source one from, and that absence is part of the honesty
+ * this arm exists to tell. Reuses the exact `Updated <age>` wording the
+ * `resolved` arm uses, so two freshness claims in one panel can never word
+ * the same fact differently.
+ */
+function appendCapturedHeader(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<HeaderState, { kind: "captured" }>,
+  onRecapture: (() => void) | undefined,
+): void {
+  box.append(candidateLine(doc, state.item));
+  box.append(
+    line(
+      doc,
+      "nimbus-related__status",
+      `Updated ${formatAge(state.item.modifiedAt, state.ageNowMs)}`,
+    ),
+  );
+  box.append(
+    line(doc, "nimbus-related__status", "This is a copy you saved, not data from a connector."),
+  );
+  box.append(
+    actionButton(doc, "nimbus-related__recapture", "Update this copy", () => onRecapture?.()),
+  );
+}
+
+/**
+ * Appends the "Save a copy to Nimbus" offer whenever `offersCapture(state)`
+ * says the gateway has nothing left to try. Always appended AFTER the
+ * caller's own content for that state — never substituted for it — so, in
+ * particular, the `unrecognised` arm's "add this site" hint stays above it: a
+ * real connector still beats a scrape.
+ */
+function appendCaptureOffer(
+  doc: Document,
+  box: HTMLElement,
+  state: HeaderState,
+  onCapture: (() => void) | undefined,
+): void {
+  if (!offersCapture(state)) {
+    return;
+  }
+  box.append(
+    actionButton(
+      doc,
+      "nimbus-related__action nimbus-related__capture",
+      "Save a copy to Nimbus",
+      () => onCapture?.(),
+    ),
+  );
+}
+
 export function renderHeader(
   doc: Document,
   state: HeaderState,
   onChoose?: (c: ResolveCandidate) => void,
   onFetch?: (action: "fetch" | "resolve") => void,
+  onCapture?: () => void,
+  onRecapture?: () => void,
 ): HTMLElement {
   const box = doc.createElement("div");
   box.className = "nimbus-related__header-state";
 
   if (state.kind === "loading") {
     box.append(line(doc, "nimbus-related__status", "Checking Nimbus…"));
+    return box;
+  }
+  if (state.kind === "captured") {
+    appendCapturedHeader(doc, box, state, onRecapture);
     return box;
   }
   if (state.kind === "unrecognised") {
@@ -496,6 +600,7 @@ export function renderHeader(
         "Add this site under Recognised surfaces in Options to recognise it.",
       ),
     );
+    appendCaptureOffer(doc, box, state, onCapture);
     return box;
   }
   // Handled whole rather than folded into the shared tail below: `surface` is
@@ -569,6 +674,7 @@ export function renderHeader(
 
   if (state.kind === "fetch-blocked") {
     appendFetchBlocked(doc, box, state);
+    appendCaptureOffer(doc, box, state, onCapture);
     return box;
   }
 
@@ -604,19 +710,16 @@ export function renderHeader(
       ),
     );
   }
+  appendCaptureOffer(doc, box, state, onCapture);
   return box;
 }
 
 /**
- * The "about to fetch" confirm step — names the target rather than asking a
- * bare "Fetch this item?", because a targeted fetch is an I13 WRITE: the
- * gateway reaches out to a configured provider under the user's own stored
- * credential, and the user is authorising THAT, not merely answering yes/no.
- *
- * Built from `buildFetchPreview`/`renderPreview` (`shared/preview.ts` /
- * `shared/preview-view.ts`) — the same preview machinery the popup's clip
- * confirm uses, so the two previews can never describe an outbound request
- * differently from each other or from the request actually sent.
+ * The shared shape of BOTH confirm steps below — an already-built preview
+ * (whatever `renderPreview` accepts) plus Send/Cancel. Extracted because
+ * {@link renderFetchPreview} and {@link renderCapturePreview} were the same
+ * eleven lines around a different preview builder; this is the eleven lines,
+ * once.
  *
  * Rendered into a `nimbus-related__header-state` box — the SAME class
  * `renderHeader` itself uses for its box — so every existing selector scoped
@@ -626,8 +729,13 @@ export function renderHeader(
  * Send and Cancel are built with `actionButton`, exactly like every other
  * panel control (`type="button"`, `textContent`, `addEventListener` — never
  * hand-rolled), and given their OWN stable classes
- * (`nimbus-related__fetch-send` / `nimbus-related__fetch-cancel`), distinct
- * from `nimbus-related__fetch` above and from the generic
+ * (`nimbus-related__fetch-send` / `nimbus-related__fetch-cancel`), shared by
+ * BOTH callers deliberately rather than a parallel pair per caller: both
+ * previews confirm one outbound write before it leaves the browser, and a
+ * control that means "yes, send this" should not need its own selector per
+ * caller — `panel-in-page.ts`'s `clickPreviewSend`/`clickPreviewCancel` test
+ * helpers find either one unmodified. Distinct from `nimbus-related__fetch`
+ * (the button that opens a fetch preview) and from the generic
  * `nimbus-related__action` — a test (or a future control) that means "the
  * Send button" must never be able to land on the Fetch button or on Cancel by
  * picking "the first button" instead. Stacked full-width via
@@ -637,15 +745,15 @@ export function renderHeader(
  * buttons, and a confirm step's own controls are the last ones that should
  * end up truncated or cramped.
  */
-export function renderFetchPreview(
+function renderConfirmBox(
   doc: Document,
-  target: FetchTarget,
+  preview: ClipPreview | FetchPreview,
   onSend: () => void,
   onCancel: () => void,
 ): HTMLElement {
   const box = doc.createElement("div");
   box.className = "nimbus-related__header-state";
-  box.append(renderPreview(doc, buildFetchPreview(target)));
+  box.append(renderPreview(doc, preview));
   const actions = doc.createElement("div");
   actions.className = "nimbus-related__fetch-actions";
   actions.append(
@@ -654,6 +762,44 @@ export function renderFetchPreview(
   );
   box.append(actions);
   return box;
+}
+
+/**
+ * The "about to fetch" confirm step — names the target rather than asking a
+ * bare "Fetch this item?", because a targeted fetch is an I13 WRITE: the
+ * gateway reaches out to a configured provider under the user's own stored
+ * credential, and the user is authorising THAT, not merely answering yes/no.
+ *
+ * Built from `buildFetchPreview` (`shared/preview.ts`) — the same preview
+ * machinery the popup's clip confirm uses, so the two previews can never
+ * describe an outbound request differently from each other or from the
+ * request actually sent.
+ */
+export function renderFetchPreview(
+  doc: Document,
+  target: FetchTarget,
+  onSend: () => void,
+  onCancel: () => void,
+): HTMLElement {
+  return renderConfirmBox(doc, buildFetchPreview(target), onSend, onCancel);
+}
+
+/**
+ * The "about to save a copy" confirm step — the last-resort twin of
+ * {@link renderFetchPreview} above, over `renderConfirmBox` the same way.
+ *
+ * `renderPreview` (shared/preview-view.ts) already renders a `ClipPreview`
+ * whole — fields, excerpt, and the truncation note — so this needs no field
+ * list of its own; it is the same box the popup's own clip confirm renders,
+ * built from the same `buildClipPreview`.
+ */
+export function renderCapturePreview(
+  doc: Document,
+  preview: ClipPreview,
+  onSend: () => void,
+  onCancel: () => void,
+): HTMLElement {
+  return renderConfirmBox(doc, preview, onSend, onCancel);
 }
 
 /**
@@ -888,11 +1034,31 @@ function renderNavAway(
   return box;
 }
 
+/**
+ * A capture refusal. Coexists with every `HeaderState` arm, exactly like
+ * `renderNavAway` below — rendered by `renderShell` as a sibling of the
+ * header, never as a branch inside `renderHeader`, so the header (and its
+ * capture offer) is never the thing a refusal replaces.
+ *
+ * No button of its own, unlike `renderNavAway`: the retry already lives in
+ * the header above it — clicking "Save a copy to Nimbus" (or "Update this
+ * copy") again is the retry, so this needs nothing but the message.
+ */
+function renderCaptureRefusal(doc: Document, message: string): HTMLElement {
+  const box = doc.createElement("div");
+  box.className = "nimbus-related__capture-refusal";
+  box.setAttribute("role", "status");
+  box.append(line(doc, "nimbus-related__status", message));
+  return box;
+}
+
 export function renderShell(
   doc: Document,
   state: PanelState,
   onChoose?: (c: ResolveCandidate) => void,
   onFetch?: (action: "fetch" | "resolve") => void,
+  onCapture?: () => void,
+  onRecapture?: () => void,
 ): HTMLElement {
   const shell = doc.createElement("div");
   shell.className = "nimbus-related__shell";
@@ -904,8 +1070,18 @@ export function renderShell(
           state.fetchPreview.onSend,
           state.fetchPreview.onCancel,
         )
-      : renderHeader(doc, state.header, onChoose, onFetch),
+      : state.capturePreview !== undefined
+        ? renderCapturePreview(
+            doc,
+            state.capturePreview.preview,
+            state.capturePreview.onSend,
+            state.capturePreview.onCancel,
+          )
+        : renderHeader(doc, state.header, onChoose, onFetch, onCapture, onRecapture),
   );
+  if (state.captureRefusal !== undefined) {
+    shell.append(renderCaptureRefusal(doc, state.captureRefusal));
+  }
   if (state.navAway !== undefined) {
     shell.append(renderNavAway(doc, state.navAway));
   }

@@ -104,7 +104,12 @@ async function mountPanelWithResolve(resolveResponse: unknown): Promise<ShadowRo
  */
 async function mountPanelWithScript(
   sent: string[],
-  script: { readonly resolve?: unknown[]; readonly fetch?: unknown[] },
+  script: {
+    readonly resolve?: unknown[];
+    readonly fetch?: unknown[];
+    readonly capture?: unknown[];
+    readonly clip?: unknown[];
+  },
 ): Promise<HTMLElement> {
   const counters: Record<string, number> = {};
   harness.sendMessage.mockImplementation(async (message: unknown) => {
@@ -112,7 +117,7 @@ async function mountPanelWithScript(
     if (kind === "related") {
       return { kind: "related", ok: true, items: [] };
     }
-    if (kind !== "resolve" && kind !== "fetch") {
+    if (kind !== "resolve" && kind !== "fetch" && kind !== "capture" && kind !== "clip") {
       throw new Error(`mountPanelWithScript: unscripted message kind ${String(kind)}`);
     }
     sent.push(kind);
@@ -155,6 +160,19 @@ function clickPreviewSend(root: ParentNode): void {
  *  as `clickFetch` above. */
 function clickPreviewCancel(root: ParentNode): void {
   root.querySelector<HTMLButtonElement>("button.nimbus-related__fetch-cancel")?.click();
+}
+
+/** Selects the capture offer — by CLASS, for the same reason as `clickFetch`:
+ *  once a confirm preview can be open, "the first button in the panel" is
+ *  ambiguous. */
+function clickCapture(root: ParentNode): void {
+  root.querySelector<HTMLButtonElement>("button.nimbus-related__capture")?.click();
+}
+
+/** Selects the captured header's "Update this copy" control — by class, same
+ *  reason as `clickFetch` above. */
+function clickRecapture(root: ParentNode): void {
+  root.querySelector<HTMLButtonElement>("button.nimbus-related__recapture")?.click();
 }
 
 const hit: RelatedHit = {
@@ -578,7 +596,11 @@ describe("panel-in-page recognition header", () => {
     await vi.waitFor(() => {
       expect(headerText()).toContain("Not indexed");
     });
-    expect(shadow()?.querySelector(".nimbus-related__header-state button")).toBeNull();
+    // No fetch button — nothing left to fetch. This is exactly the miss
+    // offersCapture() covers, so a capture offer renders in its place; wiring
+    // its click is a later task, but the render itself is this one's.
+    expect(shadow()?.querySelector(".nimbus-related__fetch")).toBeNull();
+    expect(shadow()?.querySelector(".nimbus-related__capture")).not.toBeNull();
   });
 
   test("an unsupported gateway is a first-class state, not an error", async () => {
@@ -686,6 +708,47 @@ describe("panel-in-page resolve outcomes", () => {
 
     expect(panel.textContent).toContain("Two");
     expect(panel.querySelectorAll("button.nimbus-related__candidate")).toHaveLength(0);
+  });
+
+  // The gap `headerFrom` closes: nothing else makes a COLD panel open (no
+  // capture performed in this session) show the captured-copy header.
+  // Without this branch, a page captured last week would present as ordinary
+  // connector data the moment the panel is reopened — exactly the dishonesty
+  // the `captured` header arm exists to prevent.
+  it("a cold panel open on a captured item renders the captured header, not resolved", async () => {
+    const panel = await mountPanelWithResolve({
+      kind: "resolve",
+      ok: true,
+      recognition: {
+        ok: true,
+        product: "github",
+        kind: "pr",
+        label: "GitHub PR",
+        ref: "acme/web #9",
+        resolveUrl: "https://github.com/acme/web/pull/9",
+      },
+      outcome: {
+        kind: "found",
+        matchKind: "exact",
+        item: {
+          id: "nimbus:clip:1",
+          service: "nimbus",
+          type: "web_clip",
+          title: "Runbook copy",
+          url: "https://github.com/acme/web/pull/9",
+          modifiedAt: 1_700_000_000_000,
+        },
+      },
+    });
+
+    expect(panel.textContent).toContain("Runbook copy");
+    expect(panel.textContent).toContain("copy you saved");
+    expect(panel.querySelector(".nimbus-related__recapture")).not.toBeNull();
+    // The `resolved` arm WOULD render a surface line ("GitHub PR ·
+    // acme/web #9") for this same recognised page — `captured` renders none,
+    // which is the one observable difference proving `headerFrom` took the
+    // `captured` branch rather than the `resolved` one it used to fall into.
+    expect(panel.querySelector(".nimbus-related__surface")).toBeNull();
   });
 });
 
@@ -987,6 +1050,382 @@ describe("panel-in-page fetch state machine", () => {
     expect(panel.textContent).toContain("GitHub PR · acme/web #1");
     expect(panel.textContent).toContain("Nimbus had an error fetching this page.");
     expect(panel.textContent).not.toContain("Not a recognised Nimbus surface");
+  });
+});
+
+describe("panel-in-page capture state machine", () => {
+  const CAPTURE = {
+    url: "https://wiki.example.com/runbook",
+    title: "Runbook",
+    mode: "article" as const,
+    body: "Some readable body text.",
+    readableFound: true,
+  };
+
+  const PREVIEW = {
+    fields: [
+      { label: "Title", value: "Runbook" },
+      { label: "URL", value: "https://wiki.example.com/runbook" },
+      { label: "Mode", value: "article" },
+      { label: "Tags", value: "none" },
+    ],
+    excerpt: "Some readable body text.",
+    bodyLength: 24,
+    truncated: false,
+  };
+
+  // A recognised-but-unfetchable page — offers capture the same as an
+  // unrecognised one (`offersCapture`), but keeps a surface line, which is
+  // what the second resolve entry below relies on to reach the `found`/
+  // `captured` branch of `headerFrom` (an unrecognised `recognition` never
+  // gets that far — see the `headerFrom` gap test above).
+  const UNFETCHABLE_MISS = {
+    kind: "resolve",
+    ok: true,
+    recognition: {
+      ok: true,
+      product: "github",
+      kind: "pr",
+      label: "GitHub PR",
+      ref: "acme/web #1",
+      resolveUrl: "https://github.com/acme/web/pull/1",
+    },
+    outcome: { kind: "not-indexed", fetchable: false },
+  };
+
+  const CAPTURED_RESOLVE = {
+    kind: "resolve",
+    ok: true,
+    recognition: UNFETCHABLE_MISS.recognition,
+    outcome: {
+      kind: "found",
+      matchKind: "exact",
+      item: {
+        id: "nimbus:clip:1",
+        service: "nimbus",
+        type: "web_clip",
+        title: "Runbook",
+        url: "https://wiki.example.com/runbook",
+        modifiedAt: 1_700_000_000_000,
+      },
+    },
+  };
+
+  // A genuinely unrecognised page — `handleResolve` never calls the gateway
+  // for one (its own `!recognition.ok` short-circuit), so a re-resolve of
+  // this exact response is what a real re-resolve after capturing here would
+  // actually return: the SAME miss, forever. See FIX 2 below.
+  const UNRECOGNISED_RESOLVE = {
+    kind: "resolve",
+    ok: true,
+    recognition: { ok: false, reason: "unknown-host" },
+    outcome: { kind: "not-indexed", fetchable: false },
+  };
+
+  it("preview OFF sends the clip and then re-resolves", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS, CAPTURED_RESOLVE],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "clip", ok: true, status: "created", bookmarked: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    expect(sent).toContain("capture");
+    expect(sent).toContain("clip");
+    // The re-resolve is what turns the header into the captured arm.
+    expect(sent.filter((k) => k === "resolve").length).toBeGreaterThan(1);
+    expect(panel.querySelector(".nimbus-related__recapture")).not.toBeNull();
+  });
+
+  it("preview ON does NOT clip until Send is clicked", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS, CAPTURED_RESOLVE],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: PREVIEW }],
+      clip: [{ kind: "clip", ok: true, status: "created", bookmarked: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+    expect(sent).not.toContain("clip");
+
+    clickPreviewSend(panel);
+    await flush();
+    expect(sent).toContain("clip");
+  });
+
+  it("a url-changed refusal says so and does not clip", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: false, reason: "url-changed" }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    expect(sent).not.toContain("clip");
+    expect(panel.textContent).toMatch(/moved|changed/i);
+  });
+
+  // FINDING 1 (branch review): `captureState` used to win unconditionally in
+  // `shownHeader()` and nothing ever cleared a REFUSAL's entry there — a
+  // refused capture stranded the panel with no header, no offer, nothing to
+  // retry but closing and reopening the panel. The refusal now lives in its
+  // own field, rendered BENEATH the header instead of replacing it, so the
+  // header — and the very offer that produced the refusal — stays fully live.
+  it("a refusal leaves the header and its capture offer live, not stranded", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [
+        { kind: "capture", ok: false, reason: "empty" },
+        { kind: "capture", ok: true, capture: CAPTURE, preview: null },
+      ],
+      clip: [{ kind: "clip", ok: true, status: "created", bookmarked: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    // The refusal is visible...
+    expect(panel.textContent).toContain("There's nothing readable on this page to save.");
+    // ...but the underlying header — surface line and all — never left.
+    expect(headerText()).toContain("GitHub PR");
+    expect(headerText()).toContain("acme/web #1");
+
+    // And the offer is a genuinely live control, not a dead one left on
+    // screen: clicking it again sends a fresh capture, which this time
+    // succeeds all the way through to a clip.
+    clickCapture(panel);
+    await flush();
+
+    expect(sent.filter((k) => k === "capture")).toHaveLength(2);
+    expect(sent).toContain("clip");
+  });
+
+  // FINDING 1 (branch review): `loadHeader`'s clearing rule for the sticky
+  // capture-success line covered only `captured` — so a post-save re-resolve
+  // landing on `ambiguous` left "Saved a copy of …" permanently covering a
+  // candidate chooser the user could never again reach. The rule now clears
+  // on every settle the user can act on, `ambiguous` included.
+  it("a success followed by an ambiguous settle does not cover the chooser", async () => {
+    const sent: string[] = [];
+    const AMBIGUOUS_RESOLVE = {
+      kind: "resolve",
+      ok: true,
+      recognition: UNFETCHABLE_MISS.recognition,
+      outcome: {
+        kind: "ambiguous",
+        fetchable: false,
+        truncated: false,
+        candidates: [
+          { id: "a", service: "jira", type: "issue", title: "One", url: null },
+          { id: "b", service: "jira", type: "issue", title: "Two", url: null },
+        ],
+      },
+    };
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS, AMBIGUOUS_RESOLVE],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "clip", ok: true, status: "created", bookmarked: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    // The re-resolve settled on an ambiguous answer — the chooser must be
+    // reachable, not buried under the sticky "Saved a copy" line.
+    expect(headerText()).not.toContain("Saved a copy");
+    expect(panel.querySelectorAll("button.nimbus-related__candidate")).toHaveLength(2);
+  });
+
+  it("a second click while one is in flight sends only one capture", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: PREVIEW }],
+    });
+
+    clickCapture(panel);
+    clickCapture(panel);
+    await flush();
+
+    expect(sent.filter((k) => k === "capture")).toHaveLength(1);
+  });
+
+  // FIX 1 (review round 1): `fetch-blocked` exists ONLY as a `fetchState`
+  // value — `headerFrom` never produces it — so every earlier test above
+  // reaches the capture offer through `header` (`unrecognised`/`not-indexed`),
+  // where `fetchState` is null. This test reaches the offer via `sendFetch`
+  // -> `not-configured` instead, so `fetchState` is genuinely non-null when
+  // capture starts. `captureRefusal` (FINDING 1, branch review) is rendered
+  // as its own line regardless of which header/fetchState combination the
+  // offer came from, so this exercises that independence.
+  it("a capture refusal renders even when the offer came from a fetch-blocked (not-configured) header", async () => {
+    const sent: string[] = [];
+    const recognition = {
+      ok: true,
+      product: "github",
+      kind: "pr",
+      label: "GitHub PR",
+      ref: "acme/web #1",
+      resolveUrl: "https://github.com/acme/web/pull/1",
+    } as const;
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [
+        {
+          kind: "resolve",
+          ok: true,
+          recognition,
+          outcome: { kind: "not-indexed", fetchable: true },
+        },
+      ],
+      fetch: [{ kind: "fetch", ok: true, recognition, outcome: { kind: "not-configured" } }],
+      capture: [{ kind: "capture", ok: false, reason: "restricted" }],
+    });
+
+    clickFetch(panel);
+    await flush();
+    clickPreviewSend(panel);
+    await flush();
+    expect(panel.textContent).toContain("No GitHub connector is configured");
+
+    // The offer is sourced from `fetchState` here, not from `headerFrom`.
+    expect(panel.querySelector(".nimbus-related__capture")).not.toBeNull();
+
+    clickCapture(panel);
+    await flush();
+
+    // The fetch-blocked box (still `fetchState`) and the refusal (its own
+    // `captureRefusal` line) both render — neither replaces the other.
+    expect(panel.textContent).toContain("No GitHub connector is configured");
+    expect(panel.textContent).toContain("Nimbus can't capture browser system pages.");
+  });
+
+  // FIX 2 (review round 1): on the primary target for this feature — a page
+  // with no configured connector at all — `handleResolve`'s recognise gate
+  // means the post-clip re-resolve can NEVER produce the richer `captured`
+  // header (it never even calls the gateway for a page it cannot
+  // recognise). Without a save producing its own confirmation, a successful
+  // capture on this path would repaint to the exact pre-click "Save a copy"
+  // offer — looking exactly like nothing happened.
+  it("a successful save on an unrecognised page shows its own confirmation, even though the re-resolve stays a miss", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      // The SAME miss both before and after the clip — mirrors
+      // `handleResolve`'s real short-circuit for a page it cannot recognise.
+      resolve: [UNRECOGNISED_RESOLVE, UNRECOGNISED_RESOLVE],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "clip", ok: true, status: "created", bookmarked: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    expect(sent).toContain("clip");
+    expect(headerText()).toContain("Saved a copy");
+    expect(headerText()).toContain("Runbook");
+    // Never claims connector/indexed status it does not have on this path.
+    expect(panel.querySelector(".nimbus-related__capture")).toBeNull();
+  });
+
+  // FIX 3 (review round 1): `ClipResponse`'s `queued` rides on the `ok:
+  // false` arm — a queued clip (offline, or rate-limit-paused) was NOT
+  // dropped, and reporting it as a plain failure is false. Mirrors
+  // popup.ts's own wording for the identical response shape.
+  it("a queued clip (offline/rate-limited) is reported as queued, not as a failure", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "clip", ok: false, reason: "unreachable", queued: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    expect(headerText()).not.toContain("Couldn't save this copy to Nimbus.");
+    expect(headerText()).toContain("Saved offline — will sync when Nimbus is back.");
+  });
+
+  it("a rate-limited clip says busy, distinctly from the generic queued wording", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "clip", ok: false, reason: "rate_limited", queued: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    expect(headerText()).toContain("Nimbus is busy — queued, will retry shortly.");
+  });
+
+  // Update this copy runs the IDENTICAL flow — not a second one. Ingest
+  // upserts on the canonicalised URL, so a re-capture refreshes the one item.
+  it("Update this copy on the captured header runs the identical capture flow", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [CAPTURED_RESOLVE, CAPTURED_RESOLVE],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "clip", ok: true, status: "updated", bookmarked: true }],
+    });
+
+    clickRecapture(panel);
+    await flush();
+
+    expect(sent).toContain("capture");
+    expect(sent).toContain("clip");
+    expect(sent.filter((k) => k === "resolve").length).toBeGreaterThan(1);
+  });
+
+  // Every in-flight state renders: with preview OFF there is no confirm
+  // step, so the status lines are the only sign that an injection, a POST
+  // and a re-resolve are happening — a click that produces no visible change
+  // reads as broken. Held open deliberately so the "Capturing…" status can be
+  // observed before it resolves.
+  it("shows a status line while capturing, before the capture response lands", async () => {
+    let resolveCapture: (value: unknown) => void = () => {};
+    harness.sendMessage.mockImplementation((message: unknown) => {
+      const kind = (message as { kind?: string }).kind;
+      if (kind === "resolve") {
+        return Promise.resolve(UNFETCHABLE_MISS);
+      }
+      if (kind === "related") {
+        return Promise.resolve({ kind: "related", ok: true, items: [] });
+      }
+      if (kind === "capture") {
+        return new Promise((resolve) => {
+          resolveCapture = resolve;
+        });
+      }
+      throw new Error(`unscripted message kind ${String(kind)}`);
+    });
+
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    const panel = shadow()?.querySelector<HTMLElement>(".nimbus-related__body");
+    if (panel === null || panel === undefined) {
+      throw new Error("panel body not found");
+    }
+
+    clickCapture(panel);
+    await flush();
+
+    expect(headerText()).toContain("Capturing this page");
+
+    // Settle the held request so it doesn't leak into a later test — a plain
+    // refusal, so this test stays about the ONE status line under test rather
+    // than exercising the clip step too.
+    resolveCapture({ kind: "capture", ok: false, reason: "empty" });
+    await flush();
   });
 });
 

@@ -3,18 +3,24 @@
 // panel. Mounts a Shadow-DOM overlay (inlined styles — no web_accessible_resources),
 // reads the page context, asks the SW for related items, and renders them.
 import { sendMessage } from "../browser/runtime.ts";
+import { isCapturedCopy } from "../shared/capture-offer.ts";
 import {
+  type ClipResponse,
   isAgentStateResponse,
+  isCaptureResponse,
   isFetchResponse,
   isRecognitionResponse,
   isRelatedResponse,
   isResolveResponse,
 } from "../shared/messages.ts";
 import { PANEL_HOST_ID, type PanelSelection } from "../shared/panel-host.ts";
+import type { ClipPreview } from "../shared/preview.ts";
 import { sameItem, surfaceLine } from "../shared/recognise.ts";
 import {
   AGENT_LANES,
   type AgentLane,
+  type CaptureError,
+  type CaptureResult,
   type FetchTarget,
   type LaneState,
   type Product,
@@ -54,6 +60,31 @@ const TERM_MESSAGES: Record<"empty" | "too_long", string> = {
   too_long: "That's a passage, not a term — select a word or phrase.",
   empty: "Select a word or phrase first — this lane needs one.",
 };
+
+/**
+ * The four ways `capture` can refuse, each answered honestly rather than with
+ * one generic failure — same pattern as `RESOLVE_MESSAGES`/`FETCH_MESSAGES`
+ * below, but total over `CaptureError`'s four members rather than falling
+ * back for an open-ended reason set: there is nowhere else for a fifth
+ * capture reason to come from.
+ */
+const CAPTURE_MESSAGES: Record<CaptureError, string> = {
+  restricted: "Nimbus can't capture browser system pages.",
+  "url-changed": "You've moved on — this panel is still about the page you opened it on.",
+  "injection-failed": "Couldn't read this page.",
+  empty: "There's nothing readable on this page to save.",
+};
+
+/**
+ * Narrows the worker's `clip` response for the capture flow, without
+ * importing popup.ts's own private copy of the same check (that module keeps
+ * its own for the same reason: neither owns the other). A kind check alone is
+ * enough here — this file only ever reads `.ok`/`.reason` off the result,
+ * never a field `messages.ts`'s exported guards would need to validate.
+ */
+function isClipResponse(v: unknown): v is ClipResponse {
+  return typeof v === "object" && v !== null && (v as { kind?: unknown }).kind === "clip";
+}
 
 const RELATED_MESSAGES: Record<string, string> = {
   not_paired: "Pair a browser first (Options).",
@@ -244,6 +275,11 @@ const STYLES = `
 .nimbus-related__header-state .nimbus-related__status { padding: 4px 0 0; }
 .nimbus-related__navaway { padding: 10px 16px 12px; border-bottom: 1px solid var(--nimbus-border); }
 .nimbus-related__navaway .nimbus-related__status { padding: 2px 0 4px; }
+/* A capture refusal, appended BENEATH the header rather than replacing it —
+   see captureRefusal, above in this file. No border of its own: it reads as
+   a continuation of the header/offer above it, not a separate section. */
+.nimbus-related__capture-refusal { padding: 0 16px 10px; }
+.nimbus-related__capture-refusal .nimbus-related__status { padding: 0; }
 .nimbus-related__navaway-lead { margin: 0; font-weight: 600; }
 .nimbus-related__surface { margin: 0; font-weight: 600; }
 .nimbus-related__header-item { margin: 4px 0 0; }
@@ -261,6 +297,7 @@ const STYLES = `
   color: var(--nimbus-accent); font: inherit; text-align: left;
 }
 .nimbus-related__action:hover { text-decoration: underline; }
+.nimbus-related__recapture { margin-top: 6px; font-size: 11px; opacity: .75; }
 /* :host { all: initial } gives <pre> no useful defaults (browser UA styles for
    <pre> don't survive it), so the brief's wrapping/font/spacing is set explicitly
    here rather than relied on. */
@@ -359,6 +396,15 @@ function headerFrom(res: unknown, nowMs: number, fetchSent: boolean): HeaderStat
   }
   const outcome = res.outcome;
   if (outcome.kind === "found") {
+    // A captured copy is keyed on the ITEM, never on "we just captured it" —
+    // see `isCapturedCopy`'s own doc comment. Without this branch, a COLD
+    // panel open on a page captured last week would present the copy as
+    // ordinary connector data, which is exactly the dishonesty the `captured`
+    // header arm exists to prevent — capturing IN this session is not the
+    // only way to reach it.
+    if (isCapturedCopy(outcome.item)) {
+      return { kind: "captured", item: outcome.item, ageNowMs: nowMs };
+    }
     return { kind: "resolved", surface, item: outcome.item, matchKind: outcome.matchKind, nowMs };
   }
   if (outcome.kind === "ambiguous") {
@@ -581,6 +627,70 @@ function createPanel(body: HTMLElement): {
    * usable as before it was ever clicked.
    */
   let fetchPreview: FetchTarget | null = null;
+  /**
+   * Mirrors `fetchState`: an override that wins in `shownHeader()` while a
+   * capture is reading the page, saving the clip, or — the ONE terminal
+   * outcome this also covers — once it has SUCCEEDED. A REFUSAL is
+   * deliberately NOT one of the things this holds; see `captureRefusal`
+   * below for why and where those go instead.
+   *
+   * The success line is sticky on purpose: on the primary target for this
+   * feature — a page with no configured connector at all — a post-save
+   * re-resolve can never produce anything richer (`handleResolve`'s own
+   * recognise gate means it never even calls the gateway for a page it
+   * cannot recognise), so this line is the only confirmation that path can
+   * ever show. `loadHeader` clears it once the settled header is something
+   * richer the user can act on instead — see its own doc comment for the
+   * exact list.
+   *
+   * NOT set while merely awaiting the user's own confirmation — that is
+   * `capturePreview` below, the same split `fetchState`/`fetchPreview` already
+   * draw: confirming an outbound write is not yet attempting it, so there is
+   * no network activity for a status line to describe.
+   */
+  let captureState: HeaderState | null = null;
+  /**
+   * A capture REFUSAL — `url-changed`, `empty`, `restricted`,
+   * `injection-failed`, a connect failure, an unreadable response, or a
+   * non-queued clip failure — kept SEPARATE from `captureState` above.
+   *
+   * Unlike `captureState`'s in-flight lines and its terminal success line,
+   * a refusal must NOT override the header: `shownHeader()` never reads
+   * this. It is instead rendered as its own line BENEATH the header (see
+   * `paint()`'s `captureRefusal` and `renderShell`'s own arm for it) so the
+   * header — and, critically, its still-live capture offer — stays on
+   * screen for the user to retry. Before this field existed, a refusal rode
+   * on `captureState` exactly like the in-flight/success lines and replaced
+   * the header outright; nothing ever cleared it, and a refusal on a
+   * fetchable-only page (e.g. an SPA route change mid-capture) stranded the
+   * panel with no control left to click.
+   *
+   * A queued clip outcome (offline, or rate-limit-paused) is NOT a refusal —
+   * the clip was not dropped — and stays on `captureState`; see
+   * `sendCapturedClip`'s own comment on that branch.
+   *
+   * Cleared the moment a fresh capture attempt starts (`sendCapture`) and on
+   * `reread()` — the same lifetime as every other per-attempt capture field.
+   */
+  let captureRefusal: string | null = null;
+  /** The captured page, held between the preview and Send — and the exact
+   *  payload `sendCapturedClip` POSTs. */
+  let pendingCapture: CaptureResult | null = null;
+  /** The 1.3 confirm preview for `pendingCapture`, shown INSTEAD of the header
+   *  — same precedence as `fetchPreview` — for as long as it is non-null. */
+  let capturePreview: ClipPreview | null = null;
+  /**
+   * One capture at a time — the same rule, and the same reason, as
+   * `fetchSent`: a stray extra click must not fire a second outbound clip
+   * while one might still be running.
+   *
+   * Unlike `fetchSent`, this is NOT latched for the panel's whole life: it
+   * clears on refusal, on Cancel, and once a save settles, so "Update this
+   * copy" stays usable on the `captured` header after a successful save —
+   * ingest upserts on the canonicalised URL, so a re-capture is meant to be
+   * repeatable, not a one-shot-per-panel action like a targeted fetch.
+   */
+  let capturing = false;
   // Resolve and related land at different times and each triggers a full repaint,
   // so a lane the user collapsed in between would spring back open. Read the live
   // <details> state before replacing it and carry it into the next render.
@@ -665,12 +775,44 @@ function createPanel(body: HTMLElement): {
    * derive it differently.
    */
   function shownHeader(): HeaderState {
+    // `captureState` wins over `fetchState` — NOT the other way round. Capture
+    // is only ever reachable once a fetch has already settled terminally
+    // (`offersCapture` is true only for `unrecognised`, `fetch-blocked`, and
+    // an unfetchable `not-indexed` miss), so the two are never in flight at
+    // once — this is a precedence choice with no live conflict to arbitrate.
+    // But `fetch-blocked` EXISTS ONLY as a `fetchState` value (`headerFrom`
+    // never produces it), so checking `fetchState` first would make every
+    // capture state invisible on that whole arm: no "Capturing this page…",
+    // no "Saving to Nimbus…", and no refusal sentence from `CAPTURE_MESSAGES`
+    // — the offer's own click would repaint straight back to the unchanged
+    // `fetch-blocked` box, reading as a dead control.
+    if (captureState !== null) {
+      return captureState;
+    }
     if (fetchState !== null) {
       return fetchState;
     }
     return chosen !== null && header.kind === "ambiguous"
       ? { kind: "chosen", surface: header.surface, candidate: chosen }
       : header;
+  }
+
+  /**
+   * The surface line to carry on a `captureState` status/error box. Reads
+   * `header`, the RAW resolve-derived state — deliberately not
+   * `shownHeader()`, which folds `fetchState` in and, once a capture state is
+   * set, returns that instead: `captureSurface` is called precisely to BUILD
+   * a fresh `captureState`, so reading `shownHeader()` here would read the
+   * very state this function exists to produce.
+   *
+   * `header` itself can never hold `fetch-blocked` — that kind lives only in
+   * `fetchState` (see `fetchOutcomeHeader`; `headerFrom` never produces it) —
+   * so `not-indexed` is the only header kind with a `surface` to read here.
+   * `unrecognised` and the `captured` re-capture path have none, matching
+   * `error`'s own nullable `surface` field.
+   */
+  function captureSurface(): string | null {
+    return header.kind === "not-indexed" ? header.surface : null;
   }
 
   /** Everything `lanesFor`/`laneRequestInput`/`laneCanRun` need, from one place —
@@ -909,6 +1051,16 @@ function createPanel(body: HTMLElement): {
     fetchState = null;
     fetchSent = false;
     fetchPreview = null;
+    // A capture in flight (or awaiting confirmation) belonged to the OLD
+    // page, exactly like `fetchState`/`fetchSent`/`fetchPreview` just above —
+    // its own `generation` guard already stops it from storing or painting,
+    // this just drops the now-stale UI state instead of leaving it stuck on
+    // screen under a header describing a different page.
+    captureState = null;
+    captureRefusal = null;
+    pendingCapture = null;
+    capturePreview = null;
+    capturing = false;
     // The selection belonged to the page this panel has stopped describing.
     // Keeping it would leave a glossary lane on the new page titled with a term
     // lifted from the old one.
@@ -1122,6 +1274,10 @@ function createPanel(body: HTMLElement): {
       fetchPreview === null
         ? undefined
         : { target: fetchPreview, onSend: confirmFetch, onCancel: cancelFetchPreview };
+    const capturePreviewState =
+      capturePreview === null || pendingCapture === null
+        ? undefined
+        : { preview: capturePreview, onSend: confirmCapture, onCancel: cancelCapturePreview };
     body.replaceChildren(
       renderShell(
         document,
@@ -1130,6 +1286,8 @@ function createPanel(body: HTMLElement): {
           lanes,
           ...(navAwayState === undefined ? {} : { navAway: navAwayState }),
           ...(fetchPreviewState === undefined ? {} : { fetchPreview: fetchPreviewState }),
+          ...(capturePreviewState === undefined ? {} : { capturePreview: capturePreviewState }),
+          ...(captureRefusal === null ? {} : { captureRefusal }),
         },
         (c) => {
           chosen = c;
@@ -1144,6 +1302,10 @@ function createPanel(body: HTMLElement): {
         (action) => {
           handleFetchAction(action).catch(() => undefined);
         },
+        // The SAME function for both controls — a re-capture is the identical
+        // flow (see `sendCapture`'s own doc comment), not a second one.
+        runCapture,
+        runCapture,
       ),
     );
     // `renderShell`/`renderLane` build a fresh <details> every repaint — attach
@@ -1207,6 +1369,30 @@ function createPanel(body: HTMLElement): {
     // in place; see its doc comment for why.
     if (header.kind !== "not-indexed") {
       fetchState = null;
+    }
+    // A capture success message (set by `sendCapturedClip`) stays on screen
+    // through an ORDINARY re-resolve — on the unrecognised-page path that
+    // message is the flow's only confirmation (see `sendCapturedClip`'s own
+    // doc comment: `handleResolve`'s recognise gate means that re-resolve can
+    // never produce anything richer), so clearing it on every settle would
+    // erase the one confirmation that path can ever show. It clears only once
+    // the settled header is something RICHER the user can act on instead:
+    // `captured` (item, freshness, "Update this copy"), `resolved` (an
+    // ordinary indexed item), `chosen` (a candidate already picked — see
+    // `shownHeader`; `headerFrom` itself never produces this kind, but the
+    // list stays total over every acted-on state on principle), `ambiguous`
+    // (a chooser to pick from) or `needs-scope` (the pairing needs a grant).
+    // Without `ambiguous` here, a post-save re-resolve landing on a candidate
+    // chooser would leave the sticky "Saved a copy of …" line permanently
+    // covering it — a chooser the user could then never reach.
+    if (
+      header.kind === "captured" ||
+      header.kind === "resolved" ||
+      header.kind === "chosen" ||
+      header.kind === "ambiguous" ||
+      header.kind === "needs-scope"
+    ) {
+      captureState = null;
     }
     paint();
   }
@@ -1318,6 +1504,208 @@ function createPanel(body: HTMLElement): {
     }
     fetchPreview = { product: header.product, surface: surfaceKind, url: pinnedUrl };
     paint();
+  }
+
+  /**
+   * Sends a capture for this panel's pinned page — the last resort offered
+   * once `offersCapture` says the gateway has nothing better to try — and,
+   * once it has one, hands the result to `sendCapturedClip`. Mirrors
+   * `sendFetch` exactly: one latch (`capturing`), a `captureState` override
+   * that wins in `shownHeader()`, a `generation` re-check after every
+   * `await`, and one `paint()` per transition — so every in-flight step has a
+   * visible status line, which matters most with the 1.3 preview switched
+   * OFF, where there is no confirm step in between.
+   *
+   * The ONLY sender of `capture` — reached from BOTH the initial "Save a copy
+   * to Nimbus" offer and the captured header's "Update this copy" button
+   * (`runCapture` below passes this same function to both). Ingest upserts on
+   * the canonicalised URL (`POST /v1/clips`), so a re-capture through this
+   * one function refreshes the one item rather than creating a second — there
+   * is no second flow for "Update this copy" to run.
+   */
+  async function sendCapture(): Promise<void> {
+    if (capturing) {
+      return;
+    }
+    const gen = generation;
+    const surface = captureSurface();
+    capturing = true;
+    // A fresh attempt retires whatever refusal the LAST one left on screen —
+    // see `captureRefusal`'s own doc comment for why nothing else clears it.
+    captureRefusal = null;
+    captureState = { kind: "error", surface, message: "Capturing this page…" };
+    paint();
+    let res: unknown;
+    try {
+      res = await sendMessage({ kind: "capture", pageUrl: pinnedUrl });
+    } catch {
+      if (gen !== generation) {
+        // A re-read moved this panel on while the capture was in flight —
+        // this page's capture is no longer what the panel describes.
+        return;
+      }
+      captureState = null;
+      captureRefusal = "Couldn't connect to Nimbus.";
+      capturing = false;
+      paint();
+      return;
+    }
+    if (gen !== generation) {
+      return;
+    }
+    if (!isCaptureResponse(res)) {
+      captureState = null;
+      captureRefusal = "Couldn't read Nimbus's answer.";
+      capturing = false;
+      paint();
+      return;
+    }
+    if (!res.ok) {
+      captureState = null;
+      captureRefusal = CAPTURE_MESSAGES[res.reason];
+      capturing = false;
+      paint();
+      return;
+    }
+    pendingCapture = res.capture;
+    if (res.preview === null) {
+      // The user switched the 1.3 confirm off — send the clip immediately,
+      // with no confirm step in between.
+      captureState = null;
+      await sendCapturedClip();
+      return;
+    }
+    // Awaiting the user's own Send/Cancel — not yet an attempt, so
+    // `captureState` clears back to null exactly like `fetchState` staying
+    // null while `fetchPreview` is up: the status lines above describe
+    // genuine network activity, and there is none while this box is on
+    // screen.
+    captureState = null;
+    capturePreview = res.preview;
+    paint();
+  }
+
+  /**
+   * Sends the clip for `pendingCapture` — reached either directly from
+   * `sendCapture` (preview off) or from the confirm preview's Send control
+   * (preview on, via `confirmCapture` below). On success, clears every
+   * capture field and re-resolves: the RE-RESOLVE, not this response, is what
+   * turns the header into the `captured` arm (`headerFrom` reads
+   * `isCapturedCopy` off a resolve outcome, and a clip response carries no
+   * item at all to build one from).
+   */
+  async function sendCapturedClip(): Promise<void> {
+    if (pendingCapture === null) {
+      return;
+    }
+    const gen = generation;
+    const surface = captureSurface();
+    const capture = pendingCapture;
+    captureState = { kind: "error", surface, message: "Saving to Nimbus…" };
+    paint();
+    let res: unknown;
+    try {
+      res = await sendMessage({ kind: "clip", capture, tags: [] });
+    } catch {
+      if (gen !== generation) {
+        return;
+      }
+      captureState = null;
+      captureRefusal = "Couldn't connect to Nimbus.";
+      capturing = false;
+      paint();
+      return;
+    }
+    if (gen !== generation) {
+      return;
+    }
+    if (!isClipResponse(res)) {
+      captureState = null;
+      captureRefusal = "Couldn't read Nimbus's answer.";
+      capturing = false;
+      paint();
+      return;
+    }
+    if (!res.ok) {
+      // Mirrors popup.ts's own wording for the identical `ClipResponse` shape
+      // (see its `send()`): `rate_limited` is checked BEFORE the generic
+      // `queued` case so it never reads as "Nimbus is down", and `queued`
+      // itself must not read as a failure — the clip was NOT dropped, it is
+      // sitting in the offline queue and will be retried.
+      //
+      // A queued outcome stays on `captureState`, same as the terminal
+      // success line below — the clip was not dropped, so there is nothing to
+      // retry and no reason to hide the header behind it. Only a genuine,
+      // NON-queued failure is the refusal Finding 1 is about: it goes to
+      // `captureRefusal` instead, so the header — and its capture offer —
+      // stays reachable for a retry rather than stranding the panel.
+      const queued = res.reason === "rate_limited" || res.queued === true;
+      const message = queued
+        ? res.reason === "rate_limited"
+          ? "Nimbus is busy — queued, will retry shortly."
+          : "Saved offline — will sync when Nimbus is back."
+        : "Couldn't save this copy to Nimbus.";
+      if (queued) {
+        captureState = { kind: "error", surface, message };
+      } else {
+        captureState = null;
+        captureRefusal = message;
+      }
+      capturing = false;
+      paint();
+      return;
+    }
+    // A save produces its own visible confirmation, independent of the
+    // re-resolve below. On the primary target for this feature — a page with
+    // no configured connector at all — `handleResolve` never calls the
+    // gateway for a URL it cannot recognise (its own `!recognition.ok`
+    // short-circuit), so the richer `captured` header this panel would
+    // otherwise wait for is UNREACHABLE there: without this line, the
+    // `await loadHeader()` below would settle back to the exact pre-click
+    // "Save a copy" offer, and a successful save would look like nothing
+    // happened. This says only that a copy was saved — never that it is
+    // indexed or connector-backed, which on this path it is not.
+    captureState = {
+      kind: "error",
+      surface,
+      message: `Saved a copy of “${capture.title}” to Nimbus.`,
+    };
+    pendingCapture = null;
+    capturePreview = null;
+    capturing = false;
+    paint();
+    await loadHeader();
+  }
+
+  /**
+   * The capture confirm preview's Send control. Clears `capturePreview`, then
+   * runs the ordinary `sendCapturedClip` — UNCHANGED — the one and only path
+   * that actually posts the clip; opening the preview never does. Mirrors
+   * `confirmFetch` exactly.
+   */
+  function confirmCapture(): void {
+    capturePreview = null;
+    sendCapturedClip().catch(() => undefined);
+  }
+
+  /**
+   * The capture confirm preview's Cancel control. Mirrors `cancelFetchPreview`:
+   * declining must leave the offer exactly as usable as before it was ever
+   * clicked, so this clears every capture field — INCLUDING `capturing` —
+   * rather than latching "no thanks" into "never again" for this panel.
+   */
+  function cancelCapturePreview(): void {
+    pendingCapture = null;
+    capturePreview = null;
+    capturing = false;
+    paint();
+  }
+
+  /** `renderShell`'s `onCapture`/`onRecapture` callback — the SAME function
+   *  passed for both controls (see `sendCapture`'s own doc comment for why a
+   *  re-capture is not a second flow). */
+  function runCapture(): void {
+    sendCapture().catch(() => undefined);
   }
 
   /**

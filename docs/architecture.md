@@ -995,6 +995,77 @@ silently, which is the worst way for this to fail. A panel also snapshots any
 live selection when it mounts, so the lane appears — collapsed — without a menu
 entry at all; that is the convenience path, and the menu is the contract.
 
+#### Capture as the last resort (Phase C3.2)
+
+Capture is the fallback for a page nothing else can help with, not a second way
+to get a page nothing else *tried*. Which header states offer it follows
+directly: `unrecognised`, a `not-indexed` miss that is `fetchable: false`, and
+every terminal `fetch-blocked` arm (`unfetchable`, `not-configured`,
+`needs-fetch-scope`) all offer capture, because in each of them the gateway has
+nothing left to try. A `not-indexed` miss that **is** fetchable does not — C3.1's
+fetch button is the better answer and it is right there, and a scrape would be a
+lower-fidelity copy of data the connector already models properly. A *transient*
+fetch failure (`rate_limited`) is deliberately not an offer either: a retry beats
+a scrape, so the panel renders "Try again," not a capture button, while the
+gateway is only busy rather than permanently unable.
+
+**Capture refuses on a pinned-URL mismatch, because the DOM cannot be pinned.**
+The panel pins the URL it opened on, but on an SPA the live page can navigate
+while a capture is in flight — and capturing that live DOM under the pinned
+URL would file the new page's content against the old page's address, a
+corrupt index entry that is worse than either capturing the wrong page or
+refusing outright. So the check is an equality test against the pinned URL,
+run twice: once before injecting `capture.js` (closing the window before
+injection starts), and once against `CaptureResult.url` — `location.href` read
+*inside* the page at capture time — on the result that comes back (closing the
+window opened by the injection round-trip itself, which an SPA can navigate
+inside of). Either mismatch yields `url-changed`, never a captured item filed
+under the wrong address.
+
+**The scheme guard lives in the worker, not the panel, because the caller is a
+content script.** The panel's offer only ever renders on an injectable page, so
+a well-behaved panel could never send a `capture` message for `chrome://` or
+similar. But the panel is untrusted input the same as every other cross-boundary
+sender in this repo — a hostile or compromised page script can send whatever
+`capture` message it likes — so `capture-tab.ts` re-checks `isRestrictedUrl`
+itself before injecting, rather than trusting that the rendering rule holds.
+The guard's correctness does not depend on the offer never being rendered
+somewhere it shouldn't be.
+
+**The captured-copy header keys off `service`/`type`, not recency.** A resolved
+item with `service: "nimbus"` and `type: "web_clip"` renders as a captured
+copy, whichever way the panel arrived at it — capturing it just now, or
+opening the panel on it a month later. Flagging the state right after
+capturing instead would be wrong: a page captured last week resolves like
+anything else on a later visit and would then quietly present as connector
+data, the same dishonesty the header exists to prevent, just delayed. Those two
+values are `CLIP_SERVICE` and `CLIP_TYPE`, named once in `src/shared/types.ts`
+rather than left as a literal buried in a predicate — each with the upstream
+`file:line` (`packages/gateway/src/clips/clip-ingest.ts:7-8`) in its comment.
+This is a real coupling to a constant this repo does not own, across two
+separate repositories with nothing to import from: if the gateway ever renames
+either value, the header silently degrades to the ordinary resolved arm rather
+than breaking outright — the failure mode worth knowing, not solved locally by
+vendoring a shared-constants package the "bundled, no runtime deps" rule
+forbids. It is the same class of duplication the proposed Nimbus SDK (see "The
+SDK seam" below) exists to absorb.
+
+**The durability that header promises holds only on a recognised page.** A
+resolve request is only ever sent for a page the pure recogniser accepts —
+`handleResolve` (`src/background/handlers.ts`) short-circuits to
+`not-indexed` on an unrecognised URL, before any gateway call, and that gate is
+deliberate: it is the C1.4 page-access privacy boundary, and loosening it to
+ask the gateway about arbitrary un-configured URLs was considered and
+rejected. So a wiki page captured today can never come back as a resolved
+`web_clip` item on a later visit — it stays `unrecognised` every time, gateway
+untouched. The panel's answer there is not the durable header; it is a
+terminal *"Saved a copy of …"* confirmation rendered once, right after a
+successful save, which is what makes the unrecognised path honest without
+needing the gateway to ever be asked about that URL again.
+
+Full reasoning:
+[`docs/superpowers/specs/2026-08-16-capture-as-last-resort-design.md`](./superpowers/specs/2026-08-16-capture-as-last-resort-design.md).
+
 ### Item lanes vs. service lanes (Phase C2.3)
 
 `impact` and `expert` answer about *this pull request* — a resolved item, keyed
