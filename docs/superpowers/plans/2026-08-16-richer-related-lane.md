@@ -64,6 +64,8 @@
 - Consumes: nothing.
 - Produces: no signature change. `RelatedHit.snippet` is still `string`, but is now an extract of `item.body` and is never `null`.
 
+**Everything the new tests reference already exists — verified, not assumed.** `Database` is imported from `bun:sqlite` at `clip-e2e.test.ts:20`, and `dbPath` is a module-level `let` at `:52`. `beforeAll` runs the real migrations and then **closes** its own handle (`:62`), so the only handle open during a test is the server's read-only one; a second writable connection is safe and is already the file's own pattern for reads (`:138`, `:201`). The direct `INSERT` in Step 1 supplies every non-defaulted `NOT NULL` column on `item` — `id, service, type, external_id, title, modified_at, synced_at`; `body_complete` and `pinned` carry defaults, and `resolve_key` is **nullable with no default** by V52's design (`index/resolve-key-v52-sql.ts`). Add no imports.
+
 **Context you need.** Migration V48 re-pointed `item_fts` from `(title, body_preview)` to `(title, body)` (`packages/gateway/src/index/body-store-v48-sql.ts:44`). FTS5's `snippet()` takes an **integer column index**, so index `0` is `title` — which is what the route asks for today, meaning every snippet ever returned has been an extract of the title, printed by the client directly beneath that same title. Index `1` is `body`. A negative index auto-selects the best-matching column and is **not** the fix — for a title-matching query it re-selects the title. A `NULL` body makes `snippet()` return SQL `NULL`, which would serialise as `"snippet": null` and be rejected by the client's guard, silently dropping the hit.
 
 - [ ] **Step 1: Write the failing test**
@@ -1272,7 +1274,9 @@ In `src/panel/panel-in-page.ts`, find the `STYLES` template literal and add thes
 .nimbus-related__age { margin: 2px 0 0; font-size: 11px; opacity: .55; }
 ```
 
-The old `.nimbus-related__badge` rule is now unused — delete it.
+The old `.nimbus-related__badge` rule is now unused — delete it (`src/panel/panel-in-page.ts:237`).
+
+**The badge has exactly two references in the whole repo, and this task removes both.** They are its creation in `renderHit` (`src/panel/panel-view.ts:80-88`, replaced wholesale in Step 3) and that CSS rule. Verified by `grep -rn "badge" src/ test/`: every other hit is the unrelated *toolbar* badge (`chrome.action`, the queue count) in `src/background/` and `src/browser/action.ts` — **do not touch those**. No test asserts on `.nimbus-related__badge`, and `RelatedHit` has no `badge` property, so nothing is left dangling. The service name is not lost: it moves to the group heading, rendered once per group instead of once per row.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -1463,6 +1467,8 @@ In `src/panel/panel-in-page.ts`, inside `loadRelated`, replace the `sendMessage`
 ```
 
 `shownHeader()` is the existing accessor (`src/panel/panel-in-page.ts:669`) — the same one `laneContext()` already derives `pickedItemId` from. **Do not add a second source of truth.** Note it returns `fetchState` first when a fetch is in flight; that state's `kind` is neither `resolved` nor `chosen`, so the branch above correctly yields `undefined` and the lane falls back to the title query while a fetch is pending.
+
+**Do NOT write `shown?.kind`.** `shownHeader()` returns `HeaderState`, which is a non-nullable union: `header` is initialised to `{ kind: "loading" }` at declaration, `fetchState` is null-checked inside the accessor, and every arm returns an object. Optional chaining here would assert a nullability the type does not have — it cannot fire, it reads as though `loadRelated` has a known initialisation hazard, and it would suppress the compiler error that is the actual protection if someone later widens the return type to include `null`.
 
 Then update the `renderHits` call in the same function to pass the clock:
 
