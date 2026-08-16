@@ -576,11 +576,18 @@ same as the popup/options DOM and the SW glue.
    *"Saved a copy of …"* line — the same end state as step 2, because this is
    step 1's unrecognised page and it never reaches resolve. What this step
    proves is that the in-flight feedback does not depend on the preview being
-   on: with the confirm step gone, those two lines are the only evidence
-   anything is happening.
+   on: with the confirm step gone, *Saving to Nimbus…* is on-screen evidence
+   that something is happening, before the terminal line supersedes it.
 
    Repeat once on step 3's **recognised** page to see the other ending: there
    the captured header settles at the end, superseding the terminal line.
+8. Confirm the *Capturing this page…* line appears too — immediately after
+   clicking the offer, and before *Saving to Nimbus…*. **(not yet automated —
+   this phase makes no request to the gateway at all: it is
+   `chrome.scripting.executeScript` plus a local DOM read inside the tab, so
+   nothing the mock gateway can hold open makes it observable; it would need
+   a deliberate delay hook inside `capture-in-page.ts`/`capture-tab.ts`
+   itself, not the mock)**
 
 ## Security check
 

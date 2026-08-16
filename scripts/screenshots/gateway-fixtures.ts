@@ -167,6 +167,22 @@ export interface Scenario {
   readonly agentRun?: unknown;
   /** Path → HTTP status, applied before the body is chosen. */
   readonly status?: Readonly<Record<string, number>>;
+  /**
+   * Path → milliseconds to hold the response open before it is written.
+   * Optional and defaulted OFF (no existing caller, including the screenshot
+   * script, is affected by omitting it).
+   *
+   * Exists because a loopback round trip can settle in well under a
+   * millisecond — too fast for an e2e suite to ever observe a genuinely
+   * in-flight UI state (a "Saving to Nimbus…" status line, say) without
+   * either an arbitrary sleep in the TEST or a real reason the response is
+   * slow. This gives the second one: the mock deliberately takes its time on
+   * one route, and the suite asserts the in-flight state with an ordinary
+   * auto-retrying `expect(locator)` — no sleep in the test itself. Reused by
+   * later phases that need a slow (rate-limit pause) or hanging (offline
+   * queue) gateway, not just this one.
+   */
+  readonly delayMs?: Readonly<Record<string, number>>;
 }
 
 const NOT_INDEXED = {

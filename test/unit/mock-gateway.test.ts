@@ -142,6 +142,37 @@ describe("scenarios", () => {
     }
   });
 
+  test("a delayMs route takes measurably longer than one without", async () => {
+    // Not a tight timing assertion — a real timer on a shared CI runner can
+    // overshoot by a lot. The claim this guards is just "delayMs held the
+    // response open at all", so the bar is generous and one-sided.
+    const scenario: Scenario = { delayMs: { "/v1/clips": 200 } };
+
+    const undelayedStart = performance.now();
+    await handleRequest(new Request("http://127.0.0.1:8765/v1/clips", { method: "POST" }));
+    const undelayedMs = performance.now() - undelayedStart;
+
+    const delayedStart = performance.now();
+    await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips", { method: "POST" }),
+      scenario,
+    );
+    const delayedMs = performance.now() - delayedStart;
+
+    expect(delayedMs).toBeGreaterThanOrEqual(150);
+    expect(delayedMs).toBeGreaterThan(undelayedMs);
+  });
+
+  test("delayMs is keyed by path — a route absent from the map is unaffected", async () => {
+    const scenario: Scenario = { delayMs: { "/v1/clips": 200 } };
+    const start = performance.now();
+    await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips/related", { method: "POST" }),
+      scenario,
+    );
+    expect(performance.now() - start).toBeLessThan(150);
+  });
+
   test("SCENARIOS carries the named scenarios later tasks build lanes against", () => {
     expect(SCENARIOS.happyPath).toEqual({});
     expect(SCENARIOS.resolveMiss.resolveDefault).toEqual({

@@ -8,11 +8,21 @@
  * this harness's mock gateway holds no index at all, just canned per-request
  * answers keyed by url, so it cannot honestly stand in for "one item, not
  * two". A mock that tried would just be asserting its own bookkeeping.
+ *
+ * Step 7 was split in two. What is left under "7" here — the offer replaced
+ * by in-flight feedback, "Saving to Nimbus…" genuinely observed (via the
+ * mock's `delayMs`, not a sleep in this file), and the run ending on the
+ * terminal line with no confirm box ever shown — is covered. The other half,
+ * "Capturing this page…", is now its own step 8 and stays "not yet
+ * automated": that phase makes no request to the mock gateway at all (it is
+ * `chrome.scripting.executeScript` plus a local DOM read in the tab), so
+ * `delayMs` has nothing to hold open for it.
  */
 import { expect, test } from "@playwright/test";
 import type { Harness } from "../../scripts/e2e/launch.ts";
 import { launchExtension } from "../../scripts/e2e/launch.ts";
 import type { Scenario } from "../../scripts/screenshots/gateway-fixtures.ts";
+import { GATEWAY_PATHS } from "../../src/shared/gateway.ts";
 import { PANEL_HOST_ID } from "../../src/shared/panel-host.ts";
 
 export const COVERS = [
@@ -181,7 +191,14 @@ test("an SPA navigation before the capture lands refuses with url-changed", asyn
 });
 
 test("with the confirm preview off, one click runs capture through to the terminal line", async () => {
-  const h = await launchExtension();
+  // The mock deliberately holds the clip POST open — not a sleep in this
+  // test, a real reason the response is slow (see `delayMs` on `Scenario`) —
+  // long enough that "Saving to Nimbus…" is genuinely, observably in flight
+  // rather than a state that only sometimes survives to be caught. On
+  // loopback the ingest response would otherwise settle in well under a
+  // millisecond, too fast for even an auto-retrying assertion to reliably see.
+  const scenario: Scenario = { delayMs: { [GATEWAY_PATHS.ingest]: 300 } };
+  const h = await launchExtension({ scenario });
   try {
     // The 1.3 preview pref, seeded directly through the worker rather than
     // driven through the Options UI — see preview-pref.ts: it carries no
@@ -197,15 +214,26 @@ test("with the confirm preview off, one click runs capture through to the termin
     await togglePanel(h.sw, url);
 
     // capture-7: with no confirm step in between, a SINGLE click on the offer
-    // — no Send button ever clicked — reaches the same terminal line as
-    // capture-2's ordinary (preview-on) run. Asserting on the two in-flight
-    // status lines themselves is deliberately not done here: they are
-    // genuinely transient (a network round trip on loopback can settle in
-    // under a millisecond), and this suite does not use arbitrary sleeps to
-    // try to catch them. The end-to-end claim this step makes — no confirm
-    // gate stood in the way — is exactly what "one click, no Send click,
-    // terminal line" proves.
+    // — no Send button ever clicked — runs straight through to the terminal
+    // line.
     await page.locator(".nimbus-related__capture").click();
+
+    // "Saving to Nimbus…" IS the claim this step makes: that the in-flight
+    // feedback does not depend on the preview being on. The delayed ingest
+    // response is what makes this an ordinary, auto-retrying assertion
+    // instead of a race against a sub-millisecond round trip.
+    //
+    // NOT asserted here: "Capturing this page…", the line shown while
+    // capture.js is read out of the page. That phase makes no request to the
+    // mock gateway at all — it is `chrome.scripting.executeScript` plus a
+    // local DOM read — so `delayMs` has nothing to hold open for it.
+    // docs/development.md's own step 8 (split out of what used to be a
+    // second half of step 7) is left "not yet automated" for exactly this
+    // reason.
+    await expect(
+      page.locator(".nimbus-related__status", { hasText: "Saving to Nimbus" }),
+    ).toBeVisible();
+
     await expect(
       page.locator(".nimbus-related__status", { hasText: "Saved a copy of" }),
     ).toBeVisible();

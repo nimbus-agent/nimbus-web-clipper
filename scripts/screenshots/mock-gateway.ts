@@ -48,8 +48,19 @@ function jsonResponse(body: unknown): Response {
  * so it is unit-testable without a real socket. `startMockGateway` is the
  * only caller that adapts this to a Node `http.Server`.
  */
+/** Resolves after `ms` — the one legitimate use of a timer in this file: a
+ *  scenario-requested, deliberate delay, never an arbitrary wait a caller
+ *  didn't ask for. */
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function handleRequest(req: Request, scenario: Scenario = {}): Promise<Response> {
   const url = new URL(req.url);
+  const delayMs = scenario.delayMs?.[url.pathname];
+  if (delayMs !== undefined && delayMs > 0) {
+    await wait(delayMs);
+  }
   const override = scenario.status?.[url.pathname];
   if (override !== undefined && override !== 200) {
     return new Response(null, { status: override });
