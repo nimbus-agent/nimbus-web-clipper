@@ -68,6 +68,27 @@ A scenario is a plain object with per-route overrides and a default; anything it
 does not name falls back to today's fixture, so existing behaviour is the
 zero-config case and the screenshot script needs no scenario at all.
 
+**Ports are ephemeral, and the extension is told which one at launch.** "Its own
+port" means `listen(0)` — the OS assigns a free one, which the harness reads back
+off the server. A fixed per-test port would collide under Playwright's parallel
+workers and between concurrent CI jobs, which is the same flake this decision
+exists to prevent.
+
+Two facts make that work, and both are already true:
+
+- **The extension accepts any loopback port.** `host_permissions` is
+  `["http://127.0.0.1/*", "http://localhost/*"]` (`manifest.ts:92`) — no port
+  component, so every port is covered — and `isLoopbackOrigin`
+  (`shared/gateway.ts:59`) validates the **host** only, deliberately: "the port is
+  configurable because the owner can run the gateway on a non-default port".
+- **The seeding mechanism exists and is proven.** `capture.ts` already writes the
+  paired connection through the service worker:
+  `sw.evaluate(conn => chrome.storage.local.set({ connection: conn }))`, with
+  `origin` in the payload. The ephemeral port simply rides in on that `origin`.
+  No config file to rewrite, no manifest change, no discovery probe involved —
+  a seeded connection bypasses `discovery.ts` entirely, which is why the mock
+  does not need to occupy the real gateway's 7474.
+
 ### 2. One launcher, shared with the screenshot script
 
 The knowledge in `capture.ts` is the most expensive thing in this repo to
@@ -87,6 +108,17 @@ That moves into a shared launcher fixture consumed by both the screenshot script
 and the e2e suite. Two copies would drift, and drift in *this* code does not
 present as an obvious break — it presents as flake, which is the thing we are
 least able to afford.
+
+**Per-test profile isolation is already free — do not build machinery for it.**
+`launchPersistentContext("")` (`capture.ts:39`) passes an **empty** user-data
+directory, which is Playwright's documented way of asking for a fresh temporary
+profile it owns and disposes of. Each context therefore starts with empty
+`chrome.storage`, no cookies and no leaked pairing from a previous test. A
+reviewer suggested minting unique directories and adding `afterEach` cleanup
+hooks; that would duplicate what the empty string already does and leave the repo
+maintaining temp-directory bookkeeping it does not need. Noted here explicitly
+because the empty string reads like an oversight to anyone who has not looked it
+up.
 
 ### 3. `@playwright/test` as the e2e runner
 
@@ -131,6 +163,12 @@ Chromium, run, upload traces on failure. Separate rather than appended so a
 browser failure is distinguishable at a glance from a typecheck failure, and so
 the existing job's runtime is untouched.
 
+**The Chromium download is cached**, keyed on the resolved Playwright version, at
+`~/.cache/ms-playwright`. Roughly 150 MB fetched on every run otherwise — pure
+waste on a gate that should be cheap enough that nobody resents it. Correctness
+does not depend on the cache: a miss just downloads, so a stale or evicted key
+degrades to today's behaviour rather than failing.
+
 ### 6. The honesty rule, and the flake rule
 
 Two rules that are the point of the exercise rather than decoration.
@@ -140,6 +178,22 @@ its header, the checklist steps it covers **and** the steps in its section it
 deliberately cannot. `development.md` gains a per-step marker. Without this the
 suite and the document drift into disagreeing about what has been verified —
 which is precisely the confusion that produced this debt.
+
+**And the markers are enforced by a test, not by discipline.** A convention
+nobody checks is a convention that rots — this whole slice exists because a
+checklist nobody ran rotted. So the markers are machine-readable
+(`<!-- e2e:capture-3 -->` against the step they cover) and a Vitest unit test
+asserts the two directions that matter:
+
+- every marker in `development.md` names an id that some `test/e2e/*.e2e.ts`
+  actually declares — so a step cannot claim coverage that was deleted;
+- every id declared in an e2e file appears in `development.md` — so a test
+  cannot cover a step the document still presents as manual.
+
+This is the **exact** pattern `test/unit/doc-references.test.ts` already
+establishes for pruned-spec references, and its own comment states the reasoning:
+*"the cheap version: no new script, no new CI wiring — it rides the existing
+suite."* Same shape, same file neighbourhood, same reason.
 
 Some steps are **permanently human**, and the harness must not pretend otherwise:
 
@@ -174,8 +228,12 @@ deleted rather than retried into submission.
 - `scripts/screenshots/capture.ts` — consumes the launcher; otherwise unchanged.
 - `test/e2e/*.e2e.ts` — the four suites.
 - `playwright.config.ts` — **new**: runner config, retries, trace on failure.
-- `.github/workflows/ci.yml` — the `e2e` job.
-- `docs/development.md` — per-step coverage markers.
+- `test/unit/e2e-coverage.test.ts` — **new**: the marker drift guard. A Vitest
+  unit test, not an e2e one, so it runs on every `bun run test` without a browser
+  — the same reasoning that put `doc-references.test.ts` in the unit suite.
+- `.github/workflows/ci.yml` — the `e2e` job, with the Playwright browser cache.
+- `docs/development.md` — per-step coverage markers, and numbered steps for the
+  related-lane section.
 
 ## Testing the harness itself
 
@@ -184,6 +242,11 @@ alongside the existing ones — a scenario override returns the override, an unn
 route falls back to the default fixture, and resolve keys off the URL. The
 launcher is exercised by the suites themselves; a broken launcher fails every e2e
 file at once, loudly, which is the correct behaviour for it.
+
+The marker drift guard gets unit tests of its own, and they must be able to fail:
+a marker naming an id no e2e file declares, and an e2e file declaring an id absent
+from `development.md`, each caught in its own direction. A guard that cannot fail
+is the failure mode this whole slice is about.
 
 ## Not in this phase
 
