@@ -20,3 +20,11 @@ body { margin: 0; font-family: system-ui, sans-serif; }
 .queue__item-actions { display: flex; gap: 8px; margin-top: 4px; }
 .queue__item-actions button { font-size: 12px; padding: 2px 8px; cursor: pointer; }
 .queue__retry-all { width: 100%; margin-top: 8px; padding: 6px; cursor: pointer; }
+.preview { margin-top: 0.75em; border-top: 1px solid rgba(128, 128, 128, 0.35); padding-top: 0.6em; }
+.preview__heading { font-size: 0.95rem; margin: 0 0 0.4em; }
+.preview__row { display: flex; gap: 0.6em; padding: 0.1em 0; }
+.preview__label { flex: 0 0 7.5em; opacity: 0.75; }
+.preview__value { word-break: break-all; }
+.preview__body { margin-top: 0.5em; max-height: 8em; overflow-y: auto; white-space: pre-wrap; opacity: 0.9; }
+.preview__note { font-size: 0.85rem; opacity: 0.75; }
+.preview__actions { display: flex; gap: 0.5em; margin-top: 0.6em; }

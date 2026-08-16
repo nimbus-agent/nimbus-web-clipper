@@ -15,6 +15,14 @@
         <button id="clip-page" type="button">Clip page</button>
         <button id="clip-selection" type="button">Clip selection</button>
       </div>
+      <section id="preview" class="preview" hidden>
+        <h2 class="preview__heading">This is what gets sent</h2>
+        <div id="preview-body"></div>
+        <div class="preview__actions">
+          <button id="preview-confirm" type="button">Send to Nimbus</button>
+          <button id="preview-cancel" type="button">Cancel</button>
+        </div>
+      </section>
       <button id="show-related" type="button" class="popup__related">Show related</button>
       <section id="queue" class="queue" hidden>
         <h2 class="queue__heading">Waiting to sync (<span id="queue-count">0</span>)</h2>

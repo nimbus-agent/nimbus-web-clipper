@@ -1,9 +1,14 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
 import {
   confirmPair,
+  fetchItem,
+  getAgentRun,
+  invokeAgent,
   parseRetryAfterMs,
   postClip,
   postRelated,
+  probeHealth,
+  resolveItem,
 } from "../../src/background/gateway-client.ts";
 import type { ClipPayload } from "../../src/shared/clip.ts";
 import type { RelatedQuery } from "../../src/shared/related.ts";
@@ -302,5 +307,602 @@ describe("postRelated", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("resolveItem", () => {
+  test("GETs /v1/items/resolve with the url as a query param and a bearer header", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const doFetch = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonRes(200, { found: false, reason: "not_indexed", service: null, fetchable: false });
+    };
+    await resolveItem("http://127.0.0.1:8765", "tok", "https://github.com/a/b/pull/1?w=1", doFetch);
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call?.init?.method).toBe("GET");
+    // The URL is a query PARAM, so it must be percent-encoded, not concatenated raw.
+    expect(call?.url).toBe(
+      "http://127.0.0.1:8765/v1/items/resolve?url=" +
+        encodeURIComponent("https://github.com/a/b/pull/1?w=1"),
+    );
+    expect((call?.init?.headers as Record<string, string> | undefined)?.["authorization"]).toBe(
+      "Bearer tok",
+    );
+    // A GET carries no body and must not advertise one.
+    expect(call?.init?.body).toBeUndefined();
+  });
+
+  test("maps a hit, renaming modified_at to modifiedAt", async () => {
+    const doFetch = async () =>
+      jsonRes(200, {
+        found: true,
+        matchKind: "exact",
+        item: {
+          id: "i1",
+          service: "github",
+          type: "pr",
+          title: "Fix it",
+          url: "https://github.com/a/b/pull/1",
+          modified_at: 1_700_000_000_000,
+        },
+      });
+    const r = await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch);
+
+    expect(r).toEqual({
+      ok: true,
+      outcome: {
+        kind: "found",
+        matchKind: "exact",
+        item: {
+          id: "i1",
+          service: "github",
+          type: "pr",
+          title: "Fix it",
+          url: "https://github.com/a/b/pull/1",
+          modifiedAt: 1_700_000_000_000,
+        },
+      },
+    });
+  });
+
+  test("accepts every matchKind the ladder can return", async () => {
+    for (const kind of ["exact", "query_stripped", "path_trimmed"] as const) {
+      const doFetch = async () =>
+        jsonRes(200, {
+          found: true,
+          matchKind: kind,
+          item: { id: "i", service: "s", type: "t", title: "T", url: null, modified_at: 1 },
+        });
+      const r = await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch);
+      expect(r.ok && r.outcome.kind === "found" && r.outcome.matchKind).toBe(kind);
+    }
+  });
+
+  test("rejects an unknown matchKind rather than widening the union", async () => {
+    const doFetch = async () =>
+      jsonRes(200, {
+        found: true,
+        matchKind: "vibes",
+        item: { id: "i", service: "s", type: "t", title: "T", url: null, modified_at: 1 },
+      });
+    expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
+  test("maps not_indexed and carries fetchable through for C3.1", async () => {
+    const doFetch = async () =>
+      jsonRes(200, { found: false, reason: "not_indexed", service: null, fetchable: true });
+    expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: true,
+      outcome: { kind: "not-indexed", fetchable: true },
+    });
+  });
+
+  test("maps unresolvable_url", async () => {
+    const doFetch = async () =>
+      jsonRes(200, { found: false, reason: "unresolvable_url", service: null, fetchable: false });
+    expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: true,
+      outcome: { kind: "unresolvable", fetchable: false },
+    });
+  });
+
+  test("maps ambiguous with its candidates", async () => {
+    const doFetch = async () =>
+      jsonRes(200, {
+        found: false,
+        reason: "ambiguous",
+        service: "jira",
+        fetchable: false,
+        truncated: false,
+        candidates: [
+          { id: "a", service: "jira", type: "issue", title: "One", url: "https://j.test/a" },
+          { id: "b", service: "jira", type: "issue", title: "Two", url: null },
+        ],
+      });
+    const r = await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch);
+    expect(r).toEqual({
+      ok: true,
+      outcome: {
+        kind: "ambiguous",
+        fetchable: false,
+        truncated: false,
+        candidates: [
+          { id: "a", service: "jira", type: "issue", title: "One", url: "https://j.test/a" },
+          { id: "b", service: "jira", type: "issue", title: "Two", url: null },
+        ],
+      },
+    });
+  });
+
+  test("keeps a truncated ambiguous list EMPTY — upstream sends no list, and a sliced one would lie", async () => {
+    const doFetch = async () =>
+      jsonRes(200, {
+        found: false,
+        reason: "ambiguous",
+        service: "jira",
+        fetchable: false,
+        truncated: true,
+        candidates: [],
+      });
+    const r = await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch);
+    expect(r.ok && r.outcome.kind === "ambiguous" && r.outcome.truncated).toBe(true);
+    expect(r.ok && r.outcome.kind === "ambiguous" && r.outcome.candidates).toEqual([]);
+  });
+
+  test("ignores a service field on the ambiguous arm — it is no longer modelled", async () => {
+    const doFetch = async () =>
+      jsonRes(200, {
+        found: false,
+        reason: "ambiguous",
+        service: "jira",
+        fetchable: false,
+        truncated: true,
+        candidates: [],
+      });
+    const r = await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch);
+    expect(r.ok && r.outcome.kind === "ambiguous").toBe(true);
+    expect(r.ok && r.outcome).not.toHaveProperty("service");
+  });
+
+  test("maps 403 to insufficient_scope, NOT server_error — it is the every-existing-pairing case", async () => {
+    const doFetch = async () =>
+      jsonRes(403, {
+        error: "insufficient_scope",
+        required: "resolve",
+        granted: ["clip", "briefs"],
+      });
+    expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: { required: "resolve", granted: ["clip", "briefs"] },
+    });
+  });
+
+  test("403 with no parseable scope detail carries no scopeGap", async () => {
+    for (const body of [{}, { required: "resolve" }, { granted: ["clip"] }, null]) {
+      const doFetch = async () => jsonRes(403, body);
+      expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+        ok: false,
+        reason: "insufficient_scope",
+      });
+    }
+  });
+
+  test("maps 401 / 404 / 500 / transport failure", async () => {
+    const cases: Array<[() => Promise<Response>, string]> = [
+      [async () => jsonRes(401, { error: "unauthorized" }), "unauthorized"],
+      [async () => jsonRes(404, { error: "resolve_disabled" }), "unsupported"],
+      [async () => jsonRes(400, { error: "missing_url" }), "server_error"],
+      [async () => jsonRes(500, {}), "server_error"],
+    ];
+    for (const [doFetch, reason] of cases) {
+      expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+        ok: false,
+        reason,
+      });
+    }
+    const boom = async () => {
+      throw new Error("offline");
+    };
+    expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", boom)).toEqual({
+      ok: false,
+      reason: "unreachable",
+    });
+  });
+
+  test("treats a malformed 200 as a server error rather than a silent miss", async () => {
+    for (const body of [null, {}, { found: true }, { found: false, reason: "nope" }]) {
+      const doFetch = async () => jsonRes(200, body);
+      expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+        ok: false,
+        reason: "server_error",
+      });
+    }
+  });
+});
+
+describe("fetchItem", () => {
+  function jsonRes(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  it("POSTs the url with a bearer header and no url in the query string", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const doFetch = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonRes({ status: "indexed", itemId: "i1" });
+    };
+    await fetchItem("http://127.0.0.1:8765", "tok", "https://github.com/a/b/pull/1", doFetch);
+
+    const call = calls[0];
+    expect(call?.url).toBe("http://127.0.0.1:8765/v1/items/fetch");
+    expect(call?.init?.method).toBe("POST");
+    expect(JSON.parse(String(call?.init?.body))).toEqual({ url: "https://github.com/a/b/pull/1" });
+    expect((call?.init?.headers as Record<string, string> | undefined)?.["authorization"]).toBe(
+      "Bearer tok",
+    );
+    // The token belongs in the header and nowhere else.
+    expect(call?.url).not.toContain("tok");
+    expect(String(call?.init?.body)).not.toContain("tok");
+  });
+
+  it("maps indexed with its itemId", async () => {
+    const doFetch = async () => jsonRes({ status: "indexed", itemId: "gh-482" });
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: true,
+      outcome: { kind: "indexed", itemId: "gh-482" },
+    });
+  });
+
+  it("collapses the three no-action arms into unfetchable", async () => {
+    for (const status of ["not_found", "unsupported_url", "no_targeted_fetch"]) {
+      const doFetch = async () => jsonRes({ status, service: "github" });
+      const r = await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch);
+      expect(r).toEqual({ ok: true, outcome: { kind: "unfetchable" } });
+    }
+  });
+
+  it("keeps not_configured distinct — the user can act on it", async () => {
+    const doFetch = async () => jsonRes({ status: "not_configured" });
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: true,
+      outcome: { kind: "not-configured" },
+    });
+  });
+
+  it("maps rate_limited", async () => {
+    const doFetch = async () => jsonRes({ status: "rate_limited" });
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: true,
+      outcome: { kind: "rate-limited" },
+    });
+  });
+
+  it("rejects indexed without an itemId rather than inventing one", async () => {
+    const doFetch = async () => jsonRes({ status: "indexed" });
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
+  it("treats an unknown status as server_error, never as a miss", async () => {
+    for (const body of [null, {}, { status: "vibes" }]) {
+      const doFetch = async () => jsonRes(body);
+      expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+        ok: false,
+        reason: "server_error",
+      });
+    }
+  });
+
+  it("maps 403 to insufficient_scope and keeps the scope detail", async () => {
+    const doFetch = async () =>
+      jsonRes(
+        { error: "insufficient_scope", required: "fetch", granted: ["clip", "resolve"] },
+        403,
+      );
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: { required: "fetch", granted: ["clip", "resolve"] },
+    });
+  });
+
+  it("maps 401 / 404 / 400 / 500", async () => {
+    const cases: Array<[unknown, number, string]> = [
+      [{ error: "unauthorized" }, 401, "unauthorized"],
+      [{ error: "fetch_disabled" }, 404, "unsupported"],
+      [{ error: "missing_url" }, 400, "server_error"],
+      [{}, 500, "server_error"],
+    ];
+    for (const [body, status, reason] of cases) {
+      const doFetch = async () => jsonRes(body, status);
+      expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+        ok: false,
+        reason,
+      });
+    }
+  });
+
+  // THE test for this task. These two must not collapse: one means the gateway may
+  // still be working, the other means nothing was sent.
+  it("maps our own timeout to `timeout`, NOT to `unreachable`", async () => {
+    const abort = async () => {
+      throw Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+    };
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", abort)).toEqual({
+      ok: false,
+      reason: "timeout",
+    });
+  });
+
+  it("maps a transport failure to `unreachable`, NOT to `timeout`", async () => {
+    const refused = async () => {
+      throw new TypeError("Failed to fetch");
+    };
+    expect(await fetchItem("http://127.0.0.1:8765", "t", "https://x.test/", refused)).toEqual({
+      ok: false,
+      reason: "unreachable",
+    });
+  });
+
+  // FIX 5: the test above fabricates an `AbortError`-named Error directly, so it
+  // proves `isAbortError`'s predicate matches its own fixture — not that a REAL
+  // AbortController timeout produces the same shape. This test honours
+  // `init.signal` the way a real `fetch` would (rejecting with the signal's own
+  // DOMException reason on abort) and drives the actual postJson timeout path.
+  it("maps a genuine AbortController timeout (not a fabricated error) to `timeout`", async () => {
+    vi.useFakeTimers();
+    try {
+      const p = fetchItem(
+        "http://127.0.0.1:8765",
+        "t",
+        "https://x.test/",
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+          }),
+      );
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(await p).toEqual({ ok: false, reason: "timeout" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("invokeAgent", () => {
+  function jsonRes(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json", ...headers },
+    });
+  }
+
+  it("POSTs to /v1/agents/<agent> with the params verbatim and a bearer header", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const doFetch = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return jsonRes({ runId: "r1" }, 202);
+    };
+    await invokeAgent(
+      "http://127.0.0.1:8765",
+      "tok",
+      "impact",
+      { fileOrPrUrl: "https://github.com/a/b/pull/1" },
+      doFetch,
+    );
+
+    const call = calls[0];
+    expect(call?.url).toBe("http://127.0.0.1:8765/v1/agents/impact");
+    expect(call?.init?.method).toBe("POST");
+    // Verbatim: the gateway owns validation, so we must not reshape the body.
+    expect(JSON.parse(String(call?.init?.body))).toEqual({
+      fileOrPrUrl: "https://github.com/a/b/pull/1",
+    });
+    expect((call?.init?.headers as Record<string, string> | undefined)?.["authorization"]).toBe(
+      "Bearer tok",
+    );
+    expect(call?.url).not.toContain("tok");
+    expect(String(call?.init?.body)).not.toContain("tok");
+  });
+
+  it("maps 202 to the run id", async () => {
+    const doFetch = async () => jsonRes({ runId: "run-42" }, 202);
+    expect(await invokeAgent("http://127.0.0.1:8765", "t", "expert", {}, doFetch)).toEqual({
+      ok: true,
+      runId: "run-42",
+    });
+  });
+
+  it("rejects a 202 with no runId rather than inventing one", async () => {
+    const doFetch = async () => jsonRes({}, 202);
+    expect(await invokeAgent("http://127.0.0.1:8765", "t", "expert", {}, doFetch)).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
+  it("maps 429 to busy and parses Retry-After", async () => {
+    const doFetch = async () => jsonRes({ error: "busy" }, 429, { "retry-after": "1" });
+    expect(await invokeAgent("http://127.0.0.1:8765", "t", "impact", {}, doFetch)).toEqual({
+      ok: false,
+      reason: "busy",
+      retryAfterMs: 1000,
+    });
+  });
+
+  it("maps 404 / 401 / 403 / 500", async () => {
+    const cases: Array<[unknown, number, string]> = [
+      [{ error: "unknown_agent" }, 404, "unsupported"],
+      [{ error: "unauthorized" }, 401, "unauthorized"],
+      [{}, 500, "server_error"],
+    ];
+    for (const [body, status, reason] of cases) {
+      const doFetch = async () => jsonRes(body, status);
+      expect(await invokeAgent("http://127.0.0.1:8765", "t", "impact", {}, doFetch)).toMatchObject({
+        ok: false,
+        reason,
+      });
+    }
+    const scoped = async () =>
+      jsonRes({ error: "insufficient_scope", required: "agents", granted: ["clip"] }, 403);
+    expect(await invokeAgent("http://127.0.0.1:8765", "t", "impact", {}, scoped)).toEqual({
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: { required: "agents", granted: ["clip"] },
+    });
+  });
+});
+
+describe("getAgentRun", () => {
+  function jsonRes(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  it("GETs /v1/agents/runs/<id>", async () => {
+    const calls: string[] = [];
+    const doFetch = async (url: string) => {
+      calls.push(url);
+      return jsonRes({ status: "running" });
+    };
+    await getAgentRun("http://127.0.0.1:8765", "t", "run-42", doFetch);
+    expect(calls[0]).toBe("http://127.0.0.1:8765/v1/agents/runs/run-42");
+  });
+
+  it("maps running, done and failed", async () => {
+    const running = async () => jsonRes({ status: "running", brief: null });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", running)).toEqual({
+      ok: true,
+      status: "running",
+    });
+
+    const done = async () => jsonRes({ status: "done", brief: "## Impact\n\nthings" });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", done)).toEqual({
+      ok: true,
+      status: "done",
+      brief: "## Impact\n\nthings",
+    });
+
+    const failed = async () => jsonRes({ status: "failed", failureReason: "no index" });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", failed)).toEqual({
+      ok: true,
+      status: "failed",
+      failureReason: "no index",
+    });
+  });
+
+  // Closes a documented gap: upstream builds the body as
+  // `...(run.error === null ? {} : { failureReason: run.error })`, so an ABSENT
+  // failureReason is well-formed ("failed, no explanation given"), while a
+  // PRESENT-but-non-string one is malformed and still falls through to
+  // server_error — the two must not be conflated.
+  it("maps failed with no failureReason at all (well-formed, not malformed)", async () => {
+    const doFetch = async () => jsonRes({ status: "failed" });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual({
+      ok: true,
+      status: "failed",
+    });
+  });
+
+  it("rejects failed with a non-string failureReason", async () => {
+    const doFetch = async () => jsonRes({ status: "failed", failureReason: 42 });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
+  it("rejects done with no brief — a done run without one is malformed", async () => {
+    const doFetch = async () => jsonRes({ status: "done", brief: null });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
+  // THE collapse for this task: upstream distinguishes these two, and says the
+  // client's answer to both is to re-issue. One state, one affordance.
+  it("collapses poll 404 and 410 into `stale`", async () => {
+    for (const [body, status] of [
+      [{ error: "not_found" }, 404],
+      [{ error: "expired" }, 410],
+    ] as Array<[unknown, number]>) {
+      const doFetch = async () => jsonRes(body, status);
+      expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual({
+        ok: false,
+        reason: "stale",
+      });
+    }
+  });
+
+  it("treats an unknown status as server_error, never as a terminal answer", async () => {
+    for (const body of [null, {}, { status: "vibes" }]) {
+      const doFetch = async () => jsonRes(body);
+      expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual({
+        ok: false,
+        reason: "server_error",
+      });
+    }
+  });
+});
+
+describe("probeHealth", () => {
+  test("200 with status ok → reachable", async () => {
+    const doFetch = async (): Promise<Response> =>
+      new Response(JSON.stringify({ status: "ok", gateway: "read_only_http" }), {
+        status: 200,
+      });
+    expect(await probeHealth("http://127.0.0.1:7474", doFetch)).toBe(true);
+  });
+
+  test("a non-200 is not reachable", async () => {
+    const doFetch = async (): Promise<Response> => new Response("nope", { status: 404 });
+    expect(await probeHealth("http://127.0.0.1:7474", doFetch)).toBe(false);
+  });
+
+  test("a 200 that is not this gateway's health shape is not reachable", async () => {
+    const doFetch = async (): Promise<Response> =>
+      new Response(JSON.stringify({ hello: "world" }), { status: 200 });
+    expect(await probeHealth("http://127.0.0.1:7474", doFetch)).toBe(false);
+  });
+
+  test("a thrown fetch (connection refused, abort) is not reachable", async () => {
+    const doFetch = async (): Promise<Response> => {
+      throw new Error("ECONNREFUSED");
+    };
+    expect(await probeHealth("http://127.0.0.1:7474", doFetch)).toBe(false);
+  });
+
+  test("a non-loopback origin is refused WITHOUT a request (I6)", async () => {
+    let called = false;
+    const doFetch = async (): Promise<Response> => {
+      called = true;
+      return new Response("{}", { status: 200 });
+    };
+    expect(await probeHealth("https://evil.example", doFetch)).toBe(false);
+    expect(called).toBe(false);
+  });
+
+  test("a loopback lookalike host is refused without a request", async () => {
+    let called = false;
+    const doFetch = async (): Promise<Response> => {
+      called = true;
+      return new Response("{}", { status: 200 });
+    };
+    expect(await probeHealth("http://127.0.0.1.attacker.com", doFetch)).toBe(false);
+    expect(called).toBe(false);
   });
 });

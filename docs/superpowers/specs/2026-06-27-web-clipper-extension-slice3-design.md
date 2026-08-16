@@ -341,7 +341,7 @@ coherent slice.
 
 ## Design review resolutions (2026-06-27)
 
-From [the Slice 3 design review](./2026-06-27-web-clipper-extension-slice3-design-review.md):
+From the Slice 3 design review (pruned once the feature shipped; see git history):
 
 1. **Async read-modify-write race (fixed).** The "single writer" claim conflated
    single-threaded with atomic; concurrent `async` mutations interleave at `await`s

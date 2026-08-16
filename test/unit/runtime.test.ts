@@ -1,7 +1,6 @@
 // test/unit/runtime.test.ts
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
-  addCommandListener,
   addInstalledListener,
   addMessageListener,
   sendMessage,
@@ -41,15 +40,39 @@ describe("browser/runtime seam", () => {
     expect(response).toEqual({ echo: { kind: "ping" } });
   });
 
-  test("addCommandListener forwards keyboard commands", () => {
-    let received = "";
-    addCommandListener((command) => {
-      received = command;
+  // The `cue-open` route reads its tab from the BROWSER's sender, never the
+  // message payload — see CueOpenRequest's doc comment. That is only safe
+  // because THIS seam forwards the sender's own tab id, not anything forgeable
+  // by the page. Both halves of that contract need a case: a message that came
+  // from a tab, and one that (like the popup or options page) did not.
+  test("addMessageListener forwards { tabId: 7 } when the message came from tab 7", async () => {
+    let received: { readonly tabId?: number } | undefined;
+    addMessageListener((message, respond, sender) => {
+      received = sender;
+      respond({ echo: message });
+      return true;
     });
 
-    harness.emitCommand("clip-page");
+    await harness.emitMessageFromTab({ kind: "cue-open" }, 7);
 
-    expect(received).toBe("clip-page");
+    expect(received).toEqual({ tabId: 7 });
+  });
+
+  test("addMessageListener forwards { tabId: undefined } for a popup/options message (no sender.tab)", async () => {
+    let received: { readonly tabId?: number } | undefined;
+    addMessageListener((message, respond, sender) => {
+      received = sender;
+      respond({ echo: message });
+      return true;
+    });
+
+    await harness.emitMessage({ kind: "ping" });
+
+    // toStrictEqual, not toEqual: the conditional-spread in addMessageListener
+    // must produce `{}` (the key ABSENT) here, not `{ tabId: undefined }` (the
+    // key present with an explicit undefined) — toEqual treats those as equal
+    // and would not catch a regression to the latter.
+    expect(received).toStrictEqual({});
   });
 
   test("addInstalledListener is invoked on runtime.onInstalled", () => {

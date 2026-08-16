@@ -1,8 +1,12 @@
+import { isPreviewEnabled } from "../background/preview-pref.ts";
 import { sendMessage } from "../browser/runtime.ts";
 import { injectPanel, runCapture } from "../browser/scripting.ts";
 import { activeTab } from "../browser/tabs.ts";
-import { parseTags } from "../shared/clip.ts";
+import { buildClipPayload, parseTags } from "../shared/clip.ts";
 import { type ClipResponse, isQueueResponse } from "../shared/messages.ts";
+import { buildClipPreview } from "../shared/preview.ts";
+import { renderPreview } from "../shared/preview-view.ts";
+import type { CaptureResult } from "../shared/types.ts";
 import { renderQueueList } from "./queue-view.ts";
 
 const RATE_LIMITED_MESSAGE = "Nimbus is busy — queued, will retry shortly.";
@@ -27,22 +31,60 @@ function setStatus(text: string): void {
   }
 }
 
-async function clip(mode: "article" | "selection"): Promise<void> {
-  setStatus("Clipping…");
-  const tagsInput = document.getElementById("tags");
-  const tags = tagsInput instanceof HTMLInputElement ? parseTags(tagsInput.value) : [];
-  let capture: Awaited<ReturnType<typeof runCapture>>;
-  try {
-    const tab = await activeTab();
-    capture = await runCapture(tab.id, mode);
-  } catch {
-    setStatus("Nimbus can't clip browser system or store pages.");
+/**
+ * What was captured and shown, waiting on the user's yes.
+ *
+ * Holds the CAPTURE AND TAGS, not just the built payload — `send` transmits
+ * `{ kind: "clip", capture, tags }`, so it must use exactly the values the
+ * preview was built from. Re-reading the tags input at send time would let a
+ * user edit tags after the preview and send something the preview never showed:
+ * the preview would be a lie about the one field the user most likely changed.
+ */
+let pending: { capture: CaptureResult; tags: string[] } | null = null;
+
+/** The controls that must not be reachable while a decision is pending. */
+function setComposerEnabled(on: boolean): void {
+  const actions = document.querySelector(".popup__actions");
+  const tags = document.getElementById("tags");
+  if (actions instanceof HTMLElement) {
+    actions.hidden = !on;
+  }
+  if (tags instanceof HTMLInputElement) {
+    // Disabled, not hidden: the tags stay READABLE so the user can check them
+    // against the preview, but cannot be edited into disagreeing with it.
+    tags.disabled = !on;
+  }
+}
+
+function hidePreview(): void {
+  const section = document.getElementById("preview");
+  if (section instanceof HTMLElement) {
+    section.hidden = true;
+  }
+  pending = null;
+  setComposerEnabled(true);
+}
+
+function showPreview(capture: CaptureResult, tags: string[]): void {
+  const section = document.getElementById("preview");
+  const body = document.getElementById("preview-body");
+  if (!(section instanceof HTMLElement) || body === null) {
+    // No preview UI in the DOM — send rather than silently dropping the clip.
+    void send(capture, tags);
     return;
   }
-  if (mode === "selection" && capture.body === "") {
-    setStatus("Select some text first.");
-    return;
-  }
+  pending = { capture, tags };
+  body.replaceChildren(
+    renderPreview(document, buildClipPreview(buildClipPayload(capture, tags, Date.now()))),
+  );
+  section.hidden = false;
+  setComposerEnabled(false);
+  // Clears any leftover "Cancelled — nothing was sent." from a previous round,
+  // so the status line never describes the last decision while asking for a new one.
+  setStatus("");
+}
+
+async function send(capture: CaptureResult, tags: string[]): Promise<void> {
   const res = await sendMessage({ kind: "clip", capture, tags });
   if (!isClipResponse(res)) {
     setStatus("Unexpected response.");
@@ -71,6 +113,29 @@ async function clip(mode: "article" | "selection"): Promise<void> {
     }
     setStatus(message);
     await refreshQueue();
+  }
+}
+
+async function clip(mode: "article" | "selection"): Promise<void> {
+  setStatus("Clipping…");
+  const tagsInput = document.getElementById("tags");
+  const tags = tagsInput instanceof HTMLInputElement ? parseTags(tagsInput.value) : [];
+  let capture: Awaited<ReturnType<typeof runCapture>>;
+  try {
+    const tab = await activeTab();
+    capture = await runCapture(tab.id, mode);
+  } catch {
+    setStatus("Nimbus can't clip browser system or store pages.");
+    return;
+  }
+  if (mode === "selection" && capture.body === "") {
+    setStatus("Select some text first.");
+    return;
+  }
+  if (await isPreviewEnabled()) {
+    showPreview(capture, tags);
+  } else {
+    await send(capture, tags);
   }
 }
 
@@ -126,6 +191,17 @@ document.addEventListener("DOMContentLoaded", () => {
     .getElementById("clip-selection")
     ?.addEventListener("click", () => void clip("selection"));
   document.getElementById("show-related")?.addEventListener("click", () => void showRelated());
+  document.getElementById("preview-confirm")?.addEventListener("click", () => {
+    const p = pending;
+    hidePreview();
+    if (p !== null) {
+      void send(p.capture, p.tags);
+    }
+  });
+  document.getElementById("preview-cancel")?.addEventListener("click", () => {
+    hidePreview();
+    setStatus("Cancelled — nothing was sent.");
+  });
   document.getElementById("queue-list")?.addEventListener("click", (event) => {
     if (event instanceof MouseEvent) {
       void onQueueClick(event);

@@ -14,6 +14,15 @@ describe("composeManifest", () => {
     }
   });
 
+  test("optional_host_permissions is declared for both targets and is page-access only", () => {
+    for (const target of BROWSER_TARGETS) {
+      const m = composeManifest(target, "1.0.0");
+      expect(m.optional_host_permissions).toEqual(["http://*/*", "https://*/*"]);
+      // The NETWORK destination is unchanged: loopback only, and never optional.
+      expect(m.host_permissions).toEqual(["http://127.0.0.1/*", "http://localhost/*"]);
+    }
+  });
+
   test("chrome uses a service worker and no gecko settings", () => {
     const m = composeManifest("chrome", "0.0.1");
     expect(m.background).toEqual({ service_worker: "background.js" });
@@ -72,4 +81,11 @@ describe("composeManifest — alarms permission", () => {
       expect(composeManifest(target, "1.2.3").permissions).toContain("alarms");
     });
   }
+});
+
+test("ambient surfacing adds no permission — it rides the existing optional grants", () => {
+  const m = composeManifest("chrome", "1.0.0");
+  expect(m.permissions).toEqual(["activeTab", "scripting", "storage", "alarms", "contextMenus"]);
+  expect(m.optional_host_permissions).toEqual(["http://*/*", "https://*/*"]);
+  expect(m.host_permissions).toEqual(["http://127.0.0.1/*", "http://localhost/*"]);
 });

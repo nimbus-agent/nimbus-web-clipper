@@ -7,3 +7,38 @@ body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
 .options__status { display: block; margin-top: 12px; font-size: 13px; min-height: 1.2em; }
 code { font-family: ui-monospace, monospace; padding: 1px 4px; border-radius: 4px; background: rgba(127,127,127,0.18); }
 #unpair-cancel { margin-left: 8px; }
+.options select { width: 100%; box-sizing: border-box; padding: 8px; }
+.surfaces__list { list-style: none; margin: 0; padding: 0; }
+.surfaces__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(127, 127, 127, 0.24);
+}
+.surfaces__origin { flex: 1; font-family: ui-monospace, monospace; font-size: 13px; }
+.surfaces__product { font-size: 12px; opacity: 0.75; }
+.surfaces__row button { margin-top: 0; }
+.surfaces__ambient {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.surfaces__ambient input:disabled + span {
+  opacity: 0.55;
+}
+/* The preview off switch. Its label wraps the checkbox, so the box and its
+   words share one hit target — the same arrangement .surfaces__ambient uses. */
+.options__toggle label { display: inline-flex; align-items: baseline; gap: 6px; }
+.stage[data-state="locked"] { opacity: 0.45; }
+.stage[data-state="locked"] button,
+.stage[data-state="locked"] input,
+.stage[data-state="locked"] select { pointer-events: none; }
+.stage[data-state="needs-attention"] .stage__num { color: #b23; }
+.stage__num { font-variant-numeric: tabular-nums; opacity: 0.6; margin-right: 0.4em; }
+.stage__sub { font-size: 0.95rem; margin: 1.2em 0 0.4em; }
+.shortcut { display: flex; justify-content: space-between; gap: 1em; padding: 0.25em 0; }
+.shortcut__key { font-family: ui-monospace, monospace; opacity: 0.8; }
+/* The unbound row is the whole point of this block — mark it, don't just word it. */
+.shortcut[data-bound="false"] .shortcut__key { color: #b23; font-style: italic; }

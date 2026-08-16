@@ -1,16 +1,26 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
+import type { CueOpenRequest } from "../../src/shared/messages.ts";
 import {
+  isAgentRunRequest,
+  isAgentStateRequest,
+  isAgentStateResponse,
   isClipRequest,
   isConnectionResponse,
   isConnectionStatusRequest,
+  isCueOpenRequest,
+  isFetchResponse,
   isPairRequest,
   isPingMessage,
   isQueueListRequest,
   isQueueRemoveRequest,
   isQueueResponse,
   isQueueRetryRequest,
+  isRecogniseRequest,
+  isRecognitionResponse,
   isRelatedRequest,
   isRelatedResponse,
+  isResolveRequest,
+  isResolveResponse,
   isUnpairRequest,
 } from "../../src/shared/messages.ts";
 
@@ -138,6 +148,9 @@ describe("isConnectionResponse", () => {
         label: "chrome",
         origin: "http://127.0.0.1:8765",
         pairedAt: 1,
+        queueDepth: 0,
+        reachable: true,
+        stale: false,
       }),
     ).toBe(true);
   });
@@ -145,5 +158,466 @@ describe("isConnectionResponse", () => {
     expect(isConnectionResponse({ kind: "connection", paired: true, label: "c" })).toBe(false);
     expect(isConnectionResponse({ kind: "clip", paired: false })).toBe(false);
     expect(isConnectionResponse({ kind: "connection" })).toBe(false);
+  });
+});
+
+describe("recognise message guards", () => {
+  it("accepts a well-formed request and rejects a malformed one", () => {
+    expect(isRecogniseRequest({ kind: "recognise", pageUrl: "https://x.test/" })).toBe(true);
+    expect(isRecogniseRequest({ kind: "recognise" })).toBe(false);
+    expect(isRecogniseRequest({ kind: "recognise", pageUrl: 42 })).toBe(false);
+    expect(isRecogniseRequest({ kind: "resolve", pageUrl: "https://x.test/" })).toBe(false);
+  });
+
+  it("accepts an ok:true response carrying either arm of the recognition", () => {
+    expect(
+      isRecognitionResponse({
+        kind: "recognition",
+        ok: true,
+        recognition: {
+          ok: true,
+          product: "github",
+          kind: "pr",
+          label: "GitHub PR",
+          ref: "acme/web #482",
+          resolveUrl: "https://github.com/acme/web/pull/482",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isRecognitionResponse({
+        kind: "recognition",
+        ok: true,
+        recognition: { ok: false, reason: "unknown-host" },
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts the ok:false storage-failure arm", () => {
+    expect(isRecognitionResponse({ kind: "recognition", ok: false, reason: "server_error" })).toBe(
+      true,
+    );
+  });
+
+  it("rejects a malformed response on either arm", () => {
+    expect(isRecognitionResponse({ kind: "recognition" })).toBe(false);
+    // ok:true with a malformed (or missing) recognition.
+    expect(
+      isRecognitionResponse({ kind: "recognition", ok: true, recognition: { ok: true } }),
+    ).toBe(false);
+    expect(isRecognitionResponse({ kind: "recognition", ok: true })).toBe(false);
+    // ok:false with no reason.
+    expect(isRecognitionResponse({ kind: "recognition", ok: false })).toBe(false);
+    expect(
+      isRecognitionResponse({
+        kind: "resolve",
+        ok: true,
+        recognition: { ok: false, reason: "x" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("resolve guards", () => {
+  test("isResolveRequest accepts a well-formed request", () => {
+    expect(isResolveRequest({ kind: "resolve", pageUrl: "https://x/y" })).toBe(true);
+  });
+  test("isResolveRequest rejects a missing pageUrl", () => {
+    expect(isResolveRequest({ kind: "resolve" })).toBe(false);
+  });
+});
+
+describe("isResolveResponse", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "a/b #1",
+    resolveUrl: "https://github.com/a/b/pull/1",
+  };
+
+  it("accepts a found outcome", () => {
+    expect(
+      isResolveResponse({
+        kind: "resolve",
+        ok: true,
+        recognition,
+        outcome: {
+          kind: "found",
+          matchKind: "path_trimmed",
+          item: { id: "i", service: "s", type: "t", title: "T", url: null, modifiedAt: 5 },
+        },
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts every non-found outcome", () => {
+    const outcomes = [
+      { kind: "not-indexed", fetchable: true },
+      { kind: "unresolvable", fetchable: false },
+      {
+        kind: "ambiguous",
+        fetchable: false,
+        truncated: false,
+        candidates: [{ id: "a", service: "jira", type: "issue", title: "One", url: null }],
+      },
+    ];
+    for (const outcome of outcomes) {
+      expect(isResolveResponse({ kind: "resolve", ok: true, recognition, outcome })).toBe(true);
+    }
+  });
+
+  it("accepts a failure arm and keeps the recognition", () => {
+    expect(
+      isResolveResponse({
+        kind: "resolve",
+        ok: false,
+        recognition,
+        reason: "insufficient_scope",
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts a failure arm carrying a well-formed scopeGap", () => {
+    expect(
+      isResolveResponse({
+        kind: "resolve",
+        ok: false,
+        recognition,
+        reason: "insufficient_scope",
+        scopeGap: { label: "chrome", required: "resolve", granted: ["clip", "briefs"] },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a failure arm carrying a malformed scopeGap", () => {
+    for (const scopeGap of [
+      { label: "chrome", required: "resolve" }, // missing granted
+      { label: "chrome", required: "resolve", granted: [1, 2] }, // non-string granted
+      { required: "resolve", granted: [] }, // missing label
+      "chrome",
+    ]) {
+      expect(
+        isResolveResponse({
+          kind: "resolve",
+          ok: false,
+          recognition,
+          reason: "insufficient_scope",
+          scopeGap,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("rejects an item missing modifiedAt, an unknown outcome kind, and a bad candidate", () => {
+    for (const outcome of [
+      {
+        kind: "found",
+        matchKind: "exact",
+        item: { id: "i", service: "s", type: "t", title: "T", url: null },
+      },
+      {
+        kind: "found",
+        matchKind: "guessed",
+        item: { id: "i", service: "s", type: "t", title: "T", url: null, modifiedAt: 5 },
+      },
+      { kind: "elsewhere", fetchable: true },
+      {
+        kind: "ambiguous",
+        fetchable: false,
+        truncated: false,
+        candidates: [{ id: "a" }],
+      },
+    ]) {
+      expect(isResolveResponse({ kind: "resolve", ok: true, recognition, outcome })).toBe(false);
+    }
+  });
+});
+
+describe("isFetchResponse", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "a/b #1",
+    resolveUrl: "https://github.com/a/b/pull/1",
+  };
+
+  it("accepts each outcome", () => {
+    for (const outcome of [
+      { kind: "indexed", itemId: "i1" },
+      { kind: "unfetchable" },
+      { kind: "not-configured" },
+      { kind: "rate-limited" },
+    ]) {
+      expect(isFetchResponse({ kind: "fetch", ok: true, recognition, outcome })).toBe(true);
+    }
+  });
+
+  it("rejects indexed without an itemId and an unknown kind", () => {
+    for (const outcome of [{ kind: "indexed" }, { kind: "elsewhere" }]) {
+      expect(isFetchResponse({ kind: "fetch", ok: true, recognition, outcome })).toBe(false);
+    }
+  });
+
+  it("accepts a failure arm with a scope gap", () => {
+    expect(
+      isFetchResponse({
+        kind: "fetch",
+        ok: false,
+        recognition,
+        reason: "insufficient_scope",
+        scopeGap: { label: "chrome", required: "fetch", granted: ["clip"] },
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("agent-lane guards", () => {
+  test("isAgentRunRequest accepts a well-formed request", () => {
+    expect(isAgentRunRequest({ kind: "agent-run", lane: "impact", pageUrl: "https://x/y" })).toBe(
+      true,
+    );
+  });
+  test("isAgentRunRequest rejects an unknown lane", () => {
+    expect(isAgentRunRequest({ kind: "agent-run", lane: "why", pageUrl: "https://x/y" })).toBe(
+      false,
+    );
+  });
+  test("isAgentRunRequest rejects a missing pageUrl", () => {
+    expect(isAgentRunRequest({ kind: "agent-run", lane: "expert" })).toBe(false);
+  });
+
+  test("isAgentStateRequest accepts a well-formed request", () => {
+    expect(
+      isAgentStateRequest({ kind: "agent-state", lane: "expert", pageUrl: "https://x/y" }),
+    ).toBe(true);
+  });
+  test("isAgentStateRequest rejects an unknown lane", () => {
+    expect(isAgentStateRequest({ kind: "agent-state", lane: "why", pageUrl: "https://x/y" })).toBe(
+      false,
+    );
+  });
+
+  describe("the optional lane inputs", () => {
+    const base = { kind: "agent-run", lane: "impact", pageUrl: "https://x/y" };
+
+    test("accepts a picked item id", () => {
+      expect(isAgentRunRequest({ ...base, itemId: "github:42" })).toBe(true);
+    });
+
+    // An empty id can only be a bug: it would key a cache entry under nothing.
+    test("rejects an empty or non-string item id", () => {
+      expect(isAgentRunRequest({ ...base, itemId: "" })).toBe(false);
+      expect(isAgentRunRequest({ ...base, itemId: 42 })).toBe(false);
+      expect(isAgentRunRequest({ ...base, itemId: null })).toBe(false);
+    });
+
+    test("accepts a normalised term", () => {
+      expect(isAgentRunRequest({ ...base, lane: "glossary", term: "blast radius" })).toBe(true);
+      expect(
+        isAgentStateRequest({ kind: "agent-state", lane: "glossary", pageUrl: "u", term: "x" }),
+      ).toBe(true);
+    });
+
+    // The boundary validates; it must not quietly repair. A guard that accepted
+    // a ragged term would be claiming the sender sent something it did not.
+    test("rejects a term that is not already in normal form", () => {
+      expect(isAgentRunRequest({ ...base, term: "  padded  " })).toBe(false);
+      expect(isAgentRunRequest({ ...base, term: "two\nlines" })).toBe(false);
+      expect(isAgentRunRequest({ ...base, term: "" })).toBe(false);
+    });
+
+    // Refused, not truncated — see shared/term.ts.
+    test("rejects a passage", () => {
+      expect(isAgentRunRequest({ ...base, term: "x".repeat(129) })).toBe(false);
+      expect(isAgentRunRequest({ ...base, term: "x".repeat(128) })).toBe(true);
+    });
+
+    // The run and the poll key ONE cache entry, so the poll's guard has to hold
+    // the request to exactly the same standard the run's does.
+    test("holds agent-state to the same rules as agent-run", () => {
+      const poll = { kind: "agent-state", lane: "glossary", pageUrl: "https://x/y" };
+      expect(isAgentStateRequest({ ...poll, term: "  padded  " })).toBe(false);
+      expect(isAgentStateRequest({ ...poll, itemId: "" })).toBe(false);
+    });
+  });
+
+  describe("isAgentStateResponse", () => {
+    it("accepts every LaneState arm", () => {
+      const states = [
+        { kind: "collapsed" },
+        { kind: "running", runId: "r1" },
+        { kind: "done", brief: "b" },
+        { kind: "failed", reason: "stale" },
+      ];
+      for (const state of states) {
+        expect(isAgentStateResponse({ kind: "agent-state", lane: "impact", state })).toBe(true);
+      }
+    });
+
+    it("rejects a running/done state missing its required field", () => {
+      for (const state of [{ kind: "running" }, { kind: "done" }]) {
+        expect(isAgentStateResponse({ kind: "agent-state", lane: "impact", state })).toBe(false);
+      }
+    });
+
+    it("rejects an unknown lane or an unknown state kind", () => {
+      expect(
+        isAgentStateResponse({ kind: "agent-state", lane: "why", state: { kind: "collapsed" } }),
+      ).toBe(false);
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "elsewhere" },
+        }),
+      ).toBe(false);
+    });
+
+    it("accepts a failed state carrying a well-formed scopeGap", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: {
+            kind: "failed",
+            reason: "insufficient_scope",
+            scopeGap: { label: "chrome", required: "agents", granted: ["clip", "resolve"] },
+          },
+        }),
+      ).toBe(true);
+    });
+
+    it("rejects a failed state carrying a malformed scopeGap", () => {
+      for (const scopeGap of [
+        { label: "chrome", required: "agents" }, // missing granted
+        { label: "chrome", required: "agents", granted: [1, 2] }, // non-string granted
+        { required: "agents", granted: [] }, // missing label
+        "chrome",
+      ]) {
+        expect(
+          isAgentStateResponse({
+            kind: "agent-state",
+            lane: "impact",
+            state: { kind: "failed", reason: "insufficient_scope", scopeGap },
+          }),
+        ).toBe(false);
+      }
+    });
+
+    it("accepts an agent_failed state carrying a string detail, and one with no detail at all", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "agent_failed", detail: "no LLM configured" },
+        }),
+      ).toBe(true);
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "agent_failed" },
+        }),
+      ).toBe(true);
+    });
+
+    it("rejects a failed state carrying a non-string detail", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "agent_failed", detail: 42 },
+        }),
+      ).toBe(false);
+    });
+
+    // Review finding (round 1, IMPORTANT): this guard used to accept ANY
+    // string as `reason`, not just a member of `AGENT_ERRORS` — so a reason
+    // outside the union could pass validation, fall through every branch of
+    // `renderLaneBody`'s `AgentError` if-chain, and hit its exhaustiveness
+    // backstop, which returned the raw string where an `HTMLElement` was
+    // promised. `isAgentError` (also used by `agent-run-store.ts`'s own
+    // storage guard, so there is exactly one copy of this check) closes that.
+    it("rejects a failed state whose reason is not a known AgentError", () => {
+      expect(
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "impact",
+          state: { kind: "failed", reason: "not_a_real_reason" },
+        }),
+      ).toBe(false);
+    });
+  });
+});
+
+describe("isCueOpenRequest", () => {
+  test("accepts the envelope the cue sends", () => {
+    expect(isCueOpenRequest({ kind: "cue-open" })).toBe(true);
+  });
+
+  test("rejects other kinds, non-objects and null", () => {
+    expect(isCueOpenRequest({ kind: "resolve", pageUrl: "https://x/" })).toBe(false);
+    expect(isCueOpenRequest("cue-open")).toBe(false);
+    expect(isCueOpenRequest(null)).toBe(false);
+    expect(isCueOpenRequest(undefined)).toBe(false);
+  });
+
+  test("carries no page-supplied payload — there is nothing for a hostile page to forge", () => {
+    expect(Object.keys({ kind: "cue-open" } satisfies CueOpenRequest)).toEqual(["kind"]);
+  });
+});
+
+describe("ConnectionResponse health fields", () => {
+  test("a full paired response is accepted", () => {
+    expect(
+      isConnectionResponse({
+        kind: "connection",
+        paired: true,
+        label: "chrome",
+        origin: "http://127.0.0.1:7474",
+        pairedAt: 1,
+        lastClipAt: 2,
+        queueDepth: 3,
+        reachable: true,
+        stale: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("lastClipAt is optional — a fresh pairing has never clipped", () => {
+    expect(
+      isConnectionResponse({
+        kind: "connection",
+        paired: true,
+        label: "chrome",
+        origin: "http://127.0.0.1:7474",
+        pairedAt: 1,
+        queueDepth: 0,
+        reachable: true,
+        stale: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("a paired response missing queueDepth is rejected", () => {
+    expect(
+      isConnectionResponse({
+        kind: "connection",
+        paired: true,
+        label: "chrome",
+        origin: "http://127.0.0.1:7474",
+        pairedAt: 1,
+        reachable: true,
+        stale: false,
+      }),
+    ).toBe(false);
+  });
+
+  test("the unpaired arm is unchanged", () => {
+    expect(isConnectionResponse({ kind: "connection", paired: false })).toBe(true);
   });
 });

@@ -1,25 +1,35 @@
-import { describe, expect, test } from "vitest";
-import { CLIP_PATHS, endpointUrl, isLoopbackOrigin } from "../../src/shared/gateway.ts";
+import { describe, expect, it, test } from "vitest";
+import { endpointUrl, GATEWAY_PATHS, isLoopbackOrigin } from "../../src/shared/gateway.ts";
 
-describe("gateway endpoints", () => {
-  test("the locked contract paths are exactly the three shipped routes (PR #718)", () => {
-    expect(CLIP_PATHS).toEqual({
+describe("GATEWAY_PATHS", () => {
+  it("is the eight contracted gateway paths", () => {
+    expect(GATEWAY_PATHS).toEqual({
       ingest: "/v1/clips",
       pairConfirm: "/v1/clips/pair/confirm",
       related: "/v1/clips/related",
+      resolve: "/v1/items/resolve",
+      itemsFetch: "/v1/items/fetch",
+      health: "/v1/health",
+      agents: "/v1/agents",
+      agentRuns: "/v1/agents/runs",
     });
   });
 
-  test("endpointUrl joins origin + path", () => {
-    expect(endpointUrl("http://127.0.0.1:8765", "ingest")).toBe("http://127.0.0.1:8765/v1/clips");
-    expect(endpointUrl("http://127.0.0.1:8765", "related")).toBe(
-      "http://127.0.0.1:8765/v1/clips/related",
+  test("builds a resolve URL under a trailing-slash origin", () => {
+    expect(endpointUrl("http://127.0.0.1:8765/", "resolve")).toBe(
+      "http://127.0.0.1:8765/v1/items/resolve",
     );
   });
 
-  test("endpointUrl tolerates a trailing slash on the origin", () => {
-    expect(endpointUrl("http://127.0.0.1:8765/", "pairConfirm")).toBe(
-      "http://127.0.0.1:8765/v1/clips/pair/confirm",
+  it("builds an agent invoke URL from the base plus the agent name", () => {
+    expect(`${endpointUrl("http://127.0.0.1:8765/", "agents")}/impact`).toBe(
+      "http://127.0.0.1:8765/v1/agents/impact",
+    );
+  });
+
+  it("builds a run-poll URL from the base plus the run id", () => {
+    expect(`${endpointUrl("http://127.0.0.1:8765", "agentRuns")}/abc123`).toBe(
+      "http://127.0.0.1:8765/v1/agents/runs/abc123",
     );
   });
 });
@@ -46,5 +56,11 @@ describe("isLoopbackOrigin", () => {
     ]) {
       expect(isLoopbackOrigin(o)).toBe(false);
     }
+  });
+});
+
+describe("health endpoint", () => {
+  test("health is a contracted path", () => {
+    expect(endpointUrl("http://127.0.0.1:7474", "health")).toBe("http://127.0.0.1:7474/v1/health");
   });
 });

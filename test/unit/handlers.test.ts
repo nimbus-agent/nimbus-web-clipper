@@ -1,16 +1,22 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import {
+  handleAgentRun,
+  handleAgentState,
   handleClip,
   handleConnectionStatus,
+  handleDiscover,
+  handleFetch,
   handlePair,
   handleQueueList,
   handleQueueRemove,
   handleQueueRetry,
+  handleRecognise,
   handleRelated,
+  handleResolve,
   handleUnpair,
 } from "../../src/background/handlers.ts";
 import type { QueuedClip } from "../../src/shared/queue.ts";
-import type { Connection } from "../../src/shared/types.ts";
+import { type Connection, PRODUCT_SERVICE_ID } from "../../src/shared/types.ts";
 
 const conn: Connection = {
   origin: "http://127.0.0.1:8765",
@@ -36,6 +42,7 @@ describe("handlePair", () => {
           return { ok: true, token: "t", label: "l" };
         },
         setConnection: async () => undefined,
+        clearRuns: async () => undefined,
         nowMs: () => 1,
       },
       { kind: "pair", origin: "http://evil.com", code: "1" },
@@ -51,6 +58,7 @@ describe("handlePair", () => {
         setConnection: async (c) => {
           stored = c;
         },
+        clearRuns: async () => undefined,
         nowMs: () => 100,
       },
       { kind: "pair", origin: "http://127.0.0.1:8765", code: "429173" },
@@ -69,11 +77,54 @@ describe("handlePair", () => {
       {
         confirmPair: async () => ({ ok: false, reason: "pairing_failed" }),
         setConnection: async () => undefined,
+        clearRuns: async () => undefined,
         nowMs: () => 1,
       },
       { kind: "pair", origin: "http://127.0.0.1:8765", code: "000000" },
     );
     expect(res).toEqual({ kind: "pair", ok: false, reason: "pairing_failed" });
+  });
+
+  test("a successful pair clears cached agent runs after storing the connection", async () => {
+    let setConnectionCalls = 0;
+    let clearRunsCalls = 0;
+    const res = await handlePair(
+      {
+        confirmPair: async () => ({ ok: true, token: "tok-xyz", label: "chrome" }),
+        setConnection: async () => {
+          setConnectionCalls += 1;
+        },
+        clearRuns: async () => {
+          clearRunsCalls += 1;
+        },
+        nowMs: () => 100,
+      },
+      { kind: "pair", origin: "http://127.0.0.1:8765", code: "429173" },
+    );
+    expect(res).toEqual({ kind: "pair", ok: true, label: "chrome" });
+    expect(setConnectionCalls).toBe(1);
+    expect(clearRunsCalls).toBe(1);
+  });
+
+  test("a failed pair does not clear cached agent runs", async () => {
+    let setConnectionCalls = 0;
+    let clearRunsCalls = 0;
+    const res = await handlePair(
+      {
+        confirmPair: async () => ({ ok: false, reason: "pairing_failed" }),
+        setConnection: async () => {
+          setConnectionCalls += 1;
+        },
+        clearRuns: async () => {
+          clearRunsCalls += 1;
+        },
+        nowMs: () => 1,
+      },
+      { kind: "pair", origin: "http://127.0.0.1:8765", code: "000000" },
+    );
+    expect(res).toEqual({ kind: "pair", ok: false, reason: "pairing_failed" });
+    expect(setConnectionCalls).toBe(0);
+    expect(clearRunsCalls).toBe(0);
   });
 });
 
@@ -312,25 +363,6 @@ describe("handleQueue* handlers", () => {
   });
 });
 
-describe("handleConnectionStatus", () => {
-  test("not paired → { paired: false }", async () => {
-    const res = await handleConnectionStatus({ getConnection: async () => null });
-    expect(res).toEqual({ kind: "connection", paired: false });
-  });
-  test("paired → token-free projection (label/origin/pairedAt; NO token)", async () => {
-    // `conn` (defined at the top of this file) carries a token; the response must not.
-    const res = await handleConnectionStatus({ getConnection: async () => conn });
-    expect(res).toEqual({
-      kind: "connection",
-      paired: true,
-      label: "chrome",
-      origin: "http://127.0.0.1:8765",
-      pairedAt: 100,
-    });
-    expect("token" in res).toBe(false);
-  });
-});
-
 describe("handleUnpair", () => {
   test("clears the connection and returns { paired: false }", async () => {
     let cleared = false;
@@ -338,8 +370,1354 @@ describe("handleUnpair", () => {
       clearConnection: async () => {
         cleared = true;
       },
+      clearRuns: async () => undefined,
     });
     expect(cleared).toBe(true);
     expect(res).toEqual({ kind: "connection", paired: false });
+  });
+
+  it("forgets cached agent runs on unpair", async () => {
+    let cleared = 0;
+    const res = await handleUnpair({
+      clearConnection: async () => undefined,
+      clearRuns: async () => {
+        cleared += 1;
+      },
+    });
+    expect(cleared).toBe(1);
+    expect(res).toEqual({ kind: "connection", paired: false });
+  });
+});
+
+describe("handleRecognise", () => {
+  it("classifies a built-in origin", async () => {
+    const res = await handleRecognise(
+      { getOrigins: async () => [] },
+      { kind: "recognise", pageUrl: "https://github.com/acme/web/pull/482" },
+    );
+    expect(res).toEqual({
+      kind: "recognition",
+      ok: true,
+      recognition: {
+        ok: true,
+        product: "github",
+        kind: "pr",
+        label: "GitHub PR",
+        ref: "acme/web #482",
+        resolveUrl: "https://github.com/acme/web/pull/482",
+      },
+    });
+  });
+
+  it("classifies a configured self-hosted origin", async () => {
+    const res = await handleRecognise(
+      { getOrigins: async () => [{ origin: "https://corp.example/jira", product: "jira" }] },
+      { kind: "recognise", pageUrl: "https://corp.example/jira/browse/abc-12" },
+    );
+    expect(res).toMatchObject({
+      ok: true,
+      recognition: { ok: true, product: "jira", ref: "ABC-12" },
+    });
+  });
+
+  it("reports an unrecognised page as a miss, not an error", async () => {
+    const res = await handleRecognise(
+      { getOrigins: async () => [] },
+      { kind: "recognise", pageUrl: "https://example.com/whatever" },
+    );
+    expect(res).toEqual({
+      kind: "recognition",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+    });
+  });
+
+  // This route exists so the panel can ask "same item?" on every navigation. If it
+  // ever touched the gateway or the token it would be a per-navigation network
+  // call under a client whose whole story is that nothing leaves without asking.
+  it("never reads a connection and never calls the gateway", async () => {
+    const getConnection = vi.fn();
+    const resolveItem = vi.fn();
+    await handleRecognise(
+      { getOrigins: async () => [], ...({ getConnection, resolveItem } as object) },
+      { kind: "recognise", pageUrl: "https://github.com/acme/web/pull/482" },
+    );
+    expect(getConnection).not.toHaveBeenCalled();
+    expect(resolveItem).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleResolve", () => {
+  const conn = {
+    origin: "http://127.0.0.1:7474",
+    token: "tok",
+    label: "MacBook",
+    pairedAt: 0,
+  };
+  const PR = "https://github.com/acme/web/pull/1/files";
+
+  it("passes the recogniser's resolveUrl to the gateway and returns the outcome", async () => {
+    const seen: string[] = [];
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "MacBook",
+        }),
+        resolveItem: async (_o, _t, url) => {
+          seen.push(url);
+          return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
+        },
+      },
+      // Note: recognise() preserves the query string deliberately — the gateway
+      // owns canonicalisation, so the recogniser's resolveUrl (asserted below)
+      // matches the raw pageUrl verbatim.
+      { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1?files=1" },
+    );
+
+    expect(seen).toEqual(["https://github.com/a/b/pull/1?files=1"]);
+    expect(res).toEqual({
+      kind: "resolve",
+      ok: true,
+      recognition: expect.objectContaining({ ok: true, label: "GitHub PR" }),
+      outcome: { kind: "not-indexed", fetchable: true },
+    });
+  });
+
+  it("keeps the recognition on an insufficient_scope failure", async () => {
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "MacBook",
+        }),
+        resolveItem: async () => ({ ok: false, reason: "insufficient_scope" }),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(res).toEqual({
+      kind: "resolve",
+      ok: false,
+      recognition: expect.objectContaining({ ok: true, ref: "a/b #1" }),
+      reason: "insufficient_scope",
+    });
+  });
+
+  it("attaches the connection's own label to the scope gap from the 403", async () => {
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "chrome",
+        }),
+        resolveItem: async () => ({
+          ok: false,
+          reason: "insufficient_scope",
+          scopeGap: { required: "resolve", granted: ["clip", "briefs"] },
+        }),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(res).toEqual({
+      kind: "resolve",
+      ok: false,
+      recognition: expect.objectContaining({ ok: true, ref: "a/b #1" }),
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "resolve", granted: ["clip", "briefs"] },
+    });
+  });
+
+  it("makes no gateway call for an unrecognised page", async () => {
+    let called = false;
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "MacBook",
+        }),
+        resolveItem: async () => {
+          called = true;
+          return { ok: false, reason: "server_error" };
+        },
+      },
+      { kind: "resolve", pageUrl: "https://example.com/whatever" },
+    );
+
+    expect(called).toBe(false);
+    expect(res).toEqual({
+      kind: "resolve",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+      outcome: { kind: "not-indexed", fetchable: false },
+    });
+  });
+
+  test("not paired short-circuits before the gateway call", async () => {
+    let called = false;
+    const res = await handleResolve(
+      {
+        getConnection: async () => null,
+        getOrigins: async () => [],
+        resolveItem: async () => {
+          called = true;
+          return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
+        },
+      },
+      { kind: "resolve", pageUrl: PR },
+    );
+    expect(called).toBe(false);
+    expect(res).toMatchObject({ ok: false, reason: "not_paired" });
+  });
+
+  test("a configured self-hosted origin is used for recognition", async () => {
+    let sent: string | null = null;
+    await handleResolve(
+      {
+        getConnection: async () => conn,
+        getOrigins: async () => [{ origin: "https://corp.example/jira", product: "jira" as const }],
+        resolveItem: async (_o, _t, url) => {
+          sent = url;
+          return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
+        },
+      },
+      { kind: "resolve", pageUrl: "https://corp.example/jira/browse/plat-9?x=1" },
+    );
+    expect(sent).toBe("https://corp.example/jira/browse/PLAT-9?x=1");
+  });
+
+  it("answers a home page without calling the gateway", async () => {
+    let resolveCalls = 0;
+    const deps = {
+      getOrigins: async () => [],
+      getConnection: async () => ({ origin: "http://127.0.0.1:7777", token: "t", label: "dev" }),
+      resolveItem: async () => {
+        resolveCalls += 1;
+        return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
+      },
+    };
+
+    const res = await handleResolve(deps, {
+      kind: "resolve",
+      pageUrl: "https://github.com/",
+      title: "GitHub",
+    });
+
+    expect(resolveCalls).toBe(0);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.recognition.ok).toBe(true);
+    if (!res.recognition.ok) return;
+    expect(res.recognition.kind).toBe("home");
+  });
+
+  it("reports not_paired on a dashboard when unpaired, without calling resolve", async () => {
+    let resolveCalls = 0;
+    const deps = {
+      getOrigins: async () => [],
+      getConnection: async () => null,
+      resolveItem: async () => {
+        resolveCalls += 1;
+        return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
+      },
+    };
+
+    const res = await handleResolve(deps, {
+      kind: "resolve",
+      pageUrl: "https://github.com/",
+      title: "GitHub",
+    });
+
+    expect(resolveCalls).toBe(0);
+    expect(res).toMatchObject({ ok: false, reason: "not_paired" });
+  });
+});
+
+describe("handleFetch", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+
+  it("makes NO gateway call for an unrecognised page", async () => {
+    let called = false;
+    const res = await handleFetch(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        fetchItem: async () => {
+          called = true;
+          return { ok: false as const, reason: "server_error" as const };
+        },
+      },
+      { kind: "fetch", pageUrl: "https://example.com/whatever" },
+    );
+
+    // This is the security boundary: a fetch is an OUTBOUND request under the
+    // user's stored credential, so an unrecognised URL must never reach it.
+    expect(called).toBe(false);
+    // A settled "can't fetch this", not a gateway error — mirrors
+    // handleResolve's equivalent branch (recognition rides on the `ok: true` arm).
+    expect(res).toEqual({
+      kind: "fetch",
+      ok: true,
+      recognition: { ok: false, reason: "unknown-host" },
+      outcome: { kind: "unfetchable" },
+    });
+  });
+
+  it("passes the recogniser's resolveUrl and carries the outcome", async () => {
+    const seen: string[] = [];
+    const res = await handleFetch(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        fetchItem: async (_o, _t, url) => {
+          seen.push(url);
+          return { ok: true as const, outcome: { kind: "indexed" as const, itemId: "i1" } };
+        },
+      },
+      { kind: "fetch", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(seen).toEqual(["https://github.com/a/b/pull/1"]);
+    expect(res).toEqual({
+      kind: "fetch",
+      ok: true,
+      recognition: expect.objectContaining({ ok: true, label: "GitHub PR" }),
+      outcome: { kind: "indexed", itemId: "i1" },
+    });
+  });
+
+  it("attaches the device label to a scope gap", async () => {
+    const res = await handleFetch(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        fetchItem: async () => ({
+          ok: false as const,
+          reason: "insufficient_scope" as const,
+          scopeGap: { required: "fetch", granted: ["clip", "briefs"] },
+        }),
+      },
+      { kind: "fetch", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(res).toMatchObject({
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "fetch", granted: ["clip", "briefs"] },
+    });
+  });
+
+  it("short-circuits when not paired", async () => {
+    const res = await handleFetch(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => null,
+        fetchItem: async () => {
+          throw new Error("must not be called");
+        },
+      },
+      { kind: "fetch", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res).toMatchObject({ ok: false, reason: "not_paired" });
+  });
+});
+
+describe("handleAgentRun", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+  const item = {
+    id: "gh-1",
+    service: "github",
+    type: "pr",
+    title: "Cache it",
+    url: "https://github.com/a/b/pull/1",
+    modifiedAt: 1,
+  };
+
+  it("makes NO gateway call for an unrecognised page", async () => {
+    let called = false;
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          called = true;
+          return { ok: false as const, reason: "server_error" as const };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://example.com/x" },
+    );
+    expect(called).toBe(false);
+    expect(res).toMatchObject({ kind: "agent-state", lane: "impact" });
+    // `not_resolved`, never `unsupported`: a page condition, not a gateway one —
+    // a weaker `toMatchObject({kind:"failed"})` alone would pass either way.
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+
+  it("sends impact the page URL and expert the item title", async () => {
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    // The brief's parameter is unused inside the factory itself — each caller
+    // below passes the matching `req.lane`, so it's kept for readability at the
+    // call sites and prefixed to satisfy noUnusedFunctionParameters.
+    const deps = (_lane: "impact" | "expert") => ({
+      getOrigins: async () => [],
+      getConnection: async () => conn,
+      resolveItem: async () => ({
+        ok: true as const,
+        outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+      }),
+      invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+        seen.push({ agent, params });
+        return { ok: true as const, runId: "r1" };
+      },
+      getRun: async () => null,
+      putRun: async () => undefined,
+    });
+    await handleAgentRun(deps("impact"), {
+      kind: "agent-run",
+      lane: "impact",
+      pageUrl: "https://github.com/a/b/pull/1",
+    });
+    await handleAgentRun(deps("expert"), {
+      kind: "agent-run",
+      lane: "expert",
+      pageUrl: "https://github.com/a/b/pull/1",
+    });
+
+    expect(seen[0]).toEqual({
+      agent: "impact",
+      params: { fileOrPrUrl: "https://github.com/a/b/pull/1" },
+    });
+    expect(seen[1]).toEqual({ agent: "expert", params: { topicOrFile: "Cache it" } });
+  });
+
+  it("does not re-invoke when a cached done run exists", async () => {
+    let called = false;
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          called = true;
+          return { ok: true as const, runId: "r2" };
+        },
+        getRun: async () => ({
+          subject: { kind: "item" as const, id: "gh-1" },
+          lane: "impact" as const,
+          runId: "r1",
+          state: { kind: "done" as const, brief: "b" },
+          expiresAtMs: 9e15,
+        }),
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(called).toBe(false);
+    expect(res.state).toEqual({ kind: "done", brief: "b" });
+  });
+
+  // A cached `failed` must NOT short-circuit — unlike `done`/`running` above —
+  // or the Re-run button `AgentError`'s doc comment promises ("one state, one
+  // Re-run") would be inert until the 10-minute TTL expires.
+  it("DOES re-invoke when a cached failed run exists (Re-run must stay live)", async () => {
+    let called = false;
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          called = true;
+          return { ok: true as const, runId: "r-rerun" };
+        },
+        getRun: async () => ({
+          subject: { kind: "item" as const, id: "gh-1" },
+          lane: "impact" as const,
+          runId: "r1",
+          state: { kind: "failed" as const, reason: "stale" as const },
+          expiresAtMs: 9e15,
+        }),
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(called).toBe(true);
+    expect(res.state).toEqual({ kind: "running", runId: "r-rerun" });
+  });
+
+  it("refuses when the page resolves to a miss — there is no item to ask about", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "not-indexed" as const, fetchable: true },
+        }),
+        invokeAgent: async () => {
+          throw new Error("must not be called");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toMatchObject({ kind: "failed" });
+    // A resolve miss is a page condition, not a gateway one — `not_resolved`.
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+
+  it("short-circuits before resolving when not paired", async () => {
+    let resolveCalled = false;
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => null,
+        resolveItem: async () => {
+          resolveCalled = true;
+          return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: true } };
+        },
+        invokeAgent: async () => {
+          throw new Error("must not be called");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(resolveCalled).toBe(false);
+    expect(res.state).toEqual({ kind: "failed", reason: "not_paired" });
+  });
+
+  it("persists a running state under the resolved item's id and lane", async () => {
+    const puts: unknown[] = [];
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => ({ ok: true as const, runId: "r9" }),
+        getRun: async () => null,
+        putRun: async (run) => {
+          puts.push(run);
+        },
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(puts).toEqual([
+      {
+        subject: { kind: "item", id: "gh-1" },
+        lane: "impact",
+        runId: "r9",
+        state: { kind: "running", runId: "r9" },
+      },
+    ]);
+    expect(res.state).toEqual({ kind: "running", runId: "r9" });
+  });
+
+  // Behaviour 4: on `busy` the handler waits the given `retryAfterMs` and retries
+  // exactly once. Fake timers stand in for the real wait so the test stays fast.
+  //
+  // A DIFFERENT, sharper reason to reach for `vi.useFakeTimers()` lives in
+  // test/unit/service-worker.test.ts, not here: this file drives `handleAgentRun`
+  // directly against injected stub `deps`, so nothing here ever schedules a real
+  // timer. But driving the SAME `agent-run` message through the real service
+  // worker (service-worker.test.ts) makes a successful invoke persist a `running`
+  // state, and agentRunDeps.putRun's side effect there starts the in-worker poll
+  // loop with a genuine `setTimeout`. `vi.resetModules()` between tests does not
+  // cancel that pending real timer — leave it unguarded and it can fire during a
+  // LATER, unrelated test, hitting whatever `chrome`/`fetch` mock happens to be
+  // active then and non-deterministically breaking a `not.toHaveBeenCalled()`
+  // assertion there. Any new test in service-worker.test.ts that drives a
+  // successful `agent-run` must wrap it in `vi.useFakeTimers()` / `vi.useRealTimers()`
+  // for that reason — see the existing agent-run tests there for the pattern.
+  it("on busy, waits retryAfterMs and retries once, then succeeds if the retry does", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const promise = handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          calls++;
+          return calls === 1
+            ? { ok: false as const, reason: "busy" as const, retryAfterMs: 1000 }
+            : { ok: true as const, runId: "r-retry" };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    const res = await promise;
+    vi.useRealTimers();
+
+    expect(calls).toBe(2);
+    expect(res.state).toEqual({ kind: "running", runId: "r-retry" });
+  });
+
+  // A second 429 within the retry window means genuine contention, not something
+  // a longer wait would fix — report server_error rather than backing off again.
+  it("on a second busy, reports server_error rather than retrying again", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const promise = handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          calls++;
+          return { ok: false as const, reason: "busy" as const, retryAfterMs: 1000 };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    const res = await promise;
+    vi.useRealTimers();
+
+    expect(calls).toBe(2);
+    expect(res.state).toEqual({ kind: "failed", reason: "server_error" });
+  });
+
+  // Only a SECOND `busy` collapses to `server_error` — any other retry failure is
+  // the real answer and must be reported as itself, scope gap included. Collapsing
+  // a 403 here would strip the guidance that actually fixes it.
+  it("on a first busy then a 403 with a scope gap, reports the 403 (not server_error)", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const promise = handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          calls++;
+          return calls === 1
+            ? { ok: false as const, reason: "busy" as const, retryAfterMs: 1000 }
+            : {
+                ok: false as const,
+                reason: "insufficient_scope" as const,
+                scopeGap: { required: "agents", granted: ["clip", "resolve"] },
+              };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    const res = await promise;
+    vi.useRealTimers();
+
+    expect(calls).toBe(2);
+    expect(res.state).toEqual({
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "agents", granted: ["clip", "resolve"] },
+    });
+  });
+
+  // Same shape, a transport failure instead of a scope failure — e.g. the gateway
+  // restarted between the two attempts. Also must not collapse to server_error.
+  it("on a first busy then unreachable, reports unreachable (not server_error)", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    const promise = handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => {
+          calls++;
+          return calls === 1
+            ? { ok: false as const, reason: "busy" as const, retryAfterMs: 1000 }
+            : { ok: false as const, reason: "unreachable" as const };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    await vi.advanceTimersByTimeAsync(1000);
+    const res = await promise;
+    vi.useRealTimers();
+
+    expect(calls).toBe(2);
+    expect(res.state).toEqual({ kind: "failed", reason: "unreachable" });
+  });
+
+  it("attaches the device label to a 403's scope gap from invokeAgent", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => ({
+          ok: false as const,
+          reason: "insufficient_scope" as const,
+          scopeGap: { required: "agents", granted: ["clip", "resolve"] },
+        }),
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toEqual({
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "agents", granted: ["clip", "resolve"] },
+    });
+  });
+
+  it("a 403 with no scope detail produces a failed state with no scopeGap, never a fabricated one", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async () => ({ ok: false as const, reason: "insufficient_scope" as const }),
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toEqual({ kind: "failed", reason: "insufficient_scope" });
+    expect("scopeGap" in res.state).toBe(false);
+  });
+
+  it("attaches the device label to a 403's scope gap from resolveItem too", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: false as const,
+          reason: "insufficient_scope" as const,
+          scopeGap: { required: "resolve", granted: ["clip"] },
+        }),
+        invokeAgent: async () => {
+          throw new Error("must not be called");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toEqual({
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "resolve", granted: ["clip"] },
+    });
+  });
+});
+
+describe("handleAgentRun — a candidate the user picked (C2.5)", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+  const candidates = [
+    { id: "gh-1", service: "github", type: "pr", title: "One", url: null },
+    { id: "gh-2", service: "github", type: "pr", title: "Two", url: null },
+  ];
+  const ambiguous = {
+    ok: true as const,
+    outcome: { kind: "ambiguous" as const, candidates, fetchable: false, truncated: false },
+  };
+
+  function deps(seen: Array<{ params: unknown }>, subjects: Array<unknown> = []) {
+    return {
+      getOrigins: async () => [],
+      getConnection: async () => conn,
+      resolveItem: async () => ambiguous,
+      invokeAgent: async (_o: string, _t: string, _agent: string, params: unknown) => {
+        seen.push({ params });
+        return { ok: true as const, runId: "r1" };
+      },
+      getRun: async () => null,
+      putRun: async (run: { subject: unknown }) => {
+        subjects.push(run.subject);
+      },
+    };
+  }
+
+  it("answers about the picked candidate instead of refusing the ambiguity", async () => {
+    const seen: Array<{ params: unknown }> = [];
+    const subjects: unknown[] = [];
+    const res = await handleAgentRun(deps(seen, subjects), {
+      kind: "agent-run",
+      lane: "expert",
+      pageUrl: "https://github.com/a/b/pull/1",
+      itemId: "gh-2",
+    });
+    expect(res.state).toEqual({ kind: "running", runId: "r1" });
+    // The PICKED candidate's title, not the first one's — the whole point.
+    expect(seen[0]?.params).toEqual({ topicOrFile: "Two" });
+    // And it caches under that item, so the answer cannot leak to its sibling.
+    expect(subjects[0]).toEqual({ kind: "item", id: "gh-2" });
+  });
+
+  // The id comes from a content script. An id the gateway never offered is
+  // refused exactly like any other unverified cross-boundary value.
+  it("refuses an id that is not among the candidates this resolve produced", async () => {
+    const seen: Array<{ params: unknown }> = [];
+    const res = await handleAgentRun(deps(seen), {
+      kind: "agent-run",
+      lane: "expert",
+      pageUrl: "https://github.com/a/b/pull/1",
+      itemId: "gh-999",
+    });
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+    expect(seen).toEqual([]);
+  });
+
+  it("still refuses an ambiguous page when no candidate was picked", async () => {
+    const seen: Array<{ params: unknown }> = [];
+    const res = await handleAgentRun(deps(seen), {
+      kind: "agent-run",
+      lane: "expert",
+      pageUrl: "https://github.com/a/b/pull/1",
+    });
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+    expect(seen).toEqual([]);
+  });
+});
+
+describe("handleAgentRun — the glossary lane takes a term", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+
+  function deps(seen: Array<{ agent: string; params: unknown }>, subjects: unknown[] = []) {
+    return {
+      getOrigins: async () => {
+        throw new Error("a term lane must not consult the recogniser's origins");
+      },
+      getConnection: async () => conn,
+      resolveItem: async () => {
+        throw new Error("a term lane must not resolve the page");
+      },
+      invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+        seen.push({ agent, params });
+        return { ok: true as const, runId: "r1" };
+      },
+      getRun: async () => null,
+      putRun: async (run: { subject: unknown }) => {
+        subjects.push(run.subject);
+      },
+    };
+  }
+
+  // The decision this lane turns on: `POST /v1/agents/glossary` takes `{term}`
+  // and no URL, so the recogniser gate — which exists to decide which page URLs
+  // may reach the gateway — has nothing to gate. Both throwing deps above are
+  // the assertion; reaching either would fail the test.
+  it("answers on a page the recogniser would reject, with no resolve call", async () => {
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    const subjects: unknown[] = [];
+    const res = await handleAgentRun(deps(seen, subjects), {
+      kind: "agent-run",
+      lane: "glossary",
+      pageUrl: "https://wiki.internal.example/runbooks/deploy",
+      term: "blast radius",
+    });
+    expect(res.state).toEqual({ kind: "running", runId: "r1" });
+    expect(seen[0]).toEqual({ agent: "glossary", params: { term: "blast radius" } });
+    expect(subjects[0]).toEqual({ kind: "term", term: "blast radius" });
+  });
+
+  it("still needs a pairing", async () => {
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    const res = await handleAgentRun(
+      { ...deps(seen), getConnection: async () => null },
+      { kind: "agent-run", lane: "glossary", pageUrl: "https://example.com", term: "canary" },
+    );
+    expect(res.state).toEqual({ kind: "failed", reason: "not_paired" });
+    expect(seen).toEqual([]);
+  });
+
+  // Unreachable from the shipped UI — the panel materialises the lane only once
+  // a term exists — so this is the answer to a forged message. `no_term` and not
+  // `not_resolved`: the page is not what is missing.
+  it("reports no_term when a forged message omits the term", async () => {
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    const res = await handleAgentRun(deps(seen), {
+      kind: "agent-run",
+      lane: "glossary",
+      pageUrl: "https://example.com",
+    });
+    expect(res.state).toEqual({ kind: "failed", reason: "no_term" });
+    expect(seen).toEqual([]);
+  });
+
+  it("keeps two terms apart in the cache", async () => {
+    const subjects: unknown[] = [];
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    await handleAgentRun(deps(seen, subjects), {
+      kind: "agent-run",
+      lane: "glossary",
+      pageUrl: "https://example.com",
+      term: "canary",
+    });
+    await handleAgentRun(deps(seen, subjects), {
+      kind: "agent-run",
+      lane: "glossary",
+      pageUrl: "https://example.com",
+      term: "blast radius",
+    });
+    expect(subjects).toEqual([
+      { kind: "term", term: "canary" },
+      { kind: "term", term: "blast radius" },
+    ]);
+  });
+});
+
+describe("handleAgentState", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+  const item = {
+    id: "gh-1",
+    service: "github",
+    type: "pr",
+    title: "Cache it",
+    url: "https://github.com/a/b/pull/1",
+    modifiedAt: 1,
+  };
+
+  it("is read-only: never calls invokeAgent-shaped behaviour, just reads the cache", async () => {
+    const res = await handleAgentState(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        getRun: async () => ({
+          subject: { kind: "item" as const, id: "gh-1" },
+          lane: "impact" as const,
+          runId: "r1",
+          state: { kind: "running" as const, runId: "r1" },
+          expiresAtMs: 9e15,
+        }),
+      },
+      { kind: "agent-state", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res).toEqual({
+      kind: "agent-state",
+      lane: "impact",
+      state: { kind: "running", runId: "r1" },
+    });
+  });
+
+  it("reports collapsed when no run has ever started", async () => {
+    const res = await handleAgentState(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        getRun: async () => null,
+      },
+      { kind: "agent-state", lane: "expert", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res).toEqual({ kind: "agent-state", lane: "expert", state: { kind: "collapsed" } });
+  });
+
+  it("makes NO gateway call for an unrecognised page", async () => {
+    let getRunCalled = false;
+    const res = await handleAgentState(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => {
+          throw new Error("must not be called");
+        },
+        getRun: async () => {
+          getRunCalled = true;
+          return null;
+        },
+      },
+      { kind: "agent-state", lane: "impact", pageUrl: "https://example.com/x" },
+    );
+    expect(getRunCalled).toBe(false);
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+
+  it("attaches the device label to a resolve 403's scope gap", async () => {
+    const res = await handleAgentState(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: false as const,
+          reason: "insufficient_scope" as const,
+          scopeGap: { required: "resolve", granted: [] },
+        }),
+        getRun: async () => null,
+      },
+      { kind: "agent-state", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toEqual({
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "resolve", granted: [] },
+    });
+  });
+});
+
+describe("service lanes on a home page", () => {
+  it("invokes with the service and never calls resolve", async () => {
+    let resolveCalls = 0;
+    const invoked: Array<{ agent: string; params: unknown }> = [];
+    const deps = {
+      getOrigins: async () => [
+        { origin: "https://jenkins.corp.example", product: "jenkins" as const },
+      ],
+      getConnection: async () => ({ origin: "http://127.0.0.1:7777", token: "t", label: "dev" }),
+      resolveItem: async () => {
+        resolveCalls += 1;
+        throw new Error("resolve must not be called on a home page");
+      },
+      invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+        invoked.push({ agent, params });
+        return { ok: true as const, runId: "run_1" };
+      },
+      getRun: async () => null,
+      putRun: async () => undefined,
+    };
+
+    const res = await handleAgentRun(deps, {
+      kind: "agent-run",
+      lane: "catchup",
+      pageUrl: "https://jenkins.corp.example/",
+    });
+
+    expect(resolveCalls).toBe(0);
+    expect(invoked).toEqual([{ agent: "catchup", params: { service: "jenkins" } }]);
+    expect(res.state).toEqual({ kind: "running", runId: "run_1" });
+  });
+
+  it("caches a service run under the service, not a page", async () => {
+    const puts: unknown[] = [];
+    const deps = {
+      getOrigins: async () => [],
+      getConnection: async () => ({ origin: "http://127.0.0.1:7777", token: "t", label: "dev" }),
+      resolveItem: async () => {
+        throw new Error("unused");
+      },
+      invokeAgent: async () => ({ ok: true as const, runId: "run_2" }),
+      getRun: async () => null,
+      putRun: async (r: unknown) => {
+        puts.push(r);
+      },
+    };
+
+    await handleAgentRun(deps, {
+      kind: "agent-run",
+      lane: "decisions",
+      pageUrl: "https://github.com/",
+    });
+
+    expect(puts).toEqual([
+      {
+        subject: { kind: "service", service: "github" },
+        lane: "decisions",
+        runId: "run_2",
+        state: { kind: "running", runId: "run_2" },
+      },
+    ]);
+  });
+
+  it("replays a cached service answer without a second invoke", async () => {
+    let invokes = 0;
+    const deps = {
+      getOrigins: async () => [],
+      getConnection: async () => ({ origin: "http://127.0.0.1:7777", token: "t", label: "dev" }),
+      resolveItem: async () => {
+        throw new Error("unused");
+      },
+      invokeAgent: async () => {
+        invokes += 1;
+        return { ok: true as const, runId: "run_3" };
+      },
+      getRun: async () => ({
+        subject: { kind: "service" as const, service: "github" },
+        lane: "catchup" as const,
+        runId: "run_old",
+        state: { kind: "done" as const, brief: "Yesterday: 3 merges." },
+        expiresAtMs: Number.MAX_SAFE_INTEGER,
+      }),
+      putRun: async () => undefined,
+    };
+
+    const res = await handleAgentRun(deps, {
+      kind: "agent-run",
+      lane: "catchup",
+      pageUrl: "https://github.com/",
+    });
+
+    expect(invokes).toBe(0);
+    expect(res.state).toEqual({ kind: "done", brief: "Yesterday: 3 merges." });
+  });
+
+  it("maps every product to a distinct service id", () => {
+    // The one mistake in this map a compiler cannot see: a copy-paste typo
+    // like `github: "gitlab"` typechecks fine and silently asks the wrong
+    // connector. An upstream RENAME is still undetectable here — see the map's
+    // own doc comment — so this asserts distinctness, not correctness.
+    const ids = Object.values(PRODUCT_SERVICE_ID);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("refuses a service lane when the page is not recognised", async () => {
+    const deps = {
+      getOrigins: async () => [],
+      getConnection: async () => ({ origin: "http://127.0.0.1:7777", token: "t", label: "dev" }),
+      resolveItem: async () => {
+        throw new Error("unused");
+      },
+      invokeAgent: async () => {
+        throw new Error("must not invoke");
+      },
+      getRun: async () => null,
+      putRun: async () => undefined,
+    };
+
+    const res = await handleAgentRun(deps, {
+      kind: "agent-run",
+      lane: "catchup",
+      pageUrl: "https://example.com/whatever",
+    });
+
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+});
+
+describe("lane/surface pairing enforcement", () => {
+  // `LANE_SURFACES` gates which lanes the panel ever renders per surface — the
+  // panel would never send this pair. But `agent-run` arrives from a content
+  // script, and `isAgentRunRequest` validates only that `lane` is an `AgentLane`
+  // and `pageUrl` a string, never the pairing between them — so the handler must
+  // enforce it itself. `invokeAgent` (and `getConnection`/`resolveItem`) throw
+  // below so a leak past the gate cannot pass silently.
+
+  it("refuses impact requested on a dashboard, never invoking", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => {
+          throw new Error("must not read the connection");
+        },
+        resolveItem: async () => {
+          throw new Error("must not resolve");
+        },
+        invokeAgent: async () => {
+          throw new Error("must not invoke");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "impact", pageUrl: "https://github.com/" },
+    );
+
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+
+  it("refuses catchup requested on a resolved pull-request URL, never invoking", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => {
+          throw new Error("must not read the connection");
+        },
+        resolveItem: async () => {
+          throw new Error("must not resolve");
+        },
+        invokeAgent: async () => {
+          throw new Error("must not invoke");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "catchup", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+});
+
+describe("handleConnectionStatus", () => {
+  const conn = {
+    origin: "http://127.0.0.1:7474",
+    token: "tok",
+    label: "chrome",
+    pairedAt: 10,
+    lastClipAt: 20,
+  };
+
+  test("unpaired needs no probe and no queue read", async () => {
+    let probed = false;
+    const res = await handleConnectionStatus({
+      getConnection: async () => null,
+      getQueueDepth: async () => 5,
+      probeReachable: async () => {
+        probed = true;
+        return true;
+      },
+    });
+    expect(res).toEqual({ kind: "connection", paired: false });
+    expect(probed).toBe(false);
+  });
+
+  test("paired reports depth, reachability and the last clip", async () => {
+    const res = await handleConnectionStatus({
+      getConnection: async () => conn,
+      getQueueDepth: async () => 3,
+      probeReachable: async () => true,
+    });
+    expect(res).toEqual({
+      kind: "connection",
+      paired: true,
+      label: "chrome",
+      origin: "http://127.0.0.1:7474",
+      pairedAt: 10,
+      lastClipAt: 20,
+      queueDepth: 3,
+      reachable: true,
+      stale: false,
+    });
+  });
+
+  test("the token never crosses the boundary", async () => {
+    const res = await handleConnectionStatus({
+      getConnection: async () => conn,
+      getQueueDepth: async () => 0,
+      probeReachable: async () => true,
+    });
+    expect(JSON.stringify(res)).not.toContain("tok");
+  });
+
+  test("a stored stale flag is reported as stale", async () => {
+    const res = await handleConnectionStatus({
+      getConnection: async () => ({ ...conn, stale: true }),
+      getQueueDepth: async () => 0,
+      probeReachable: async () => true,
+    });
+    expect(res).toMatchObject({ paired: true, stale: true });
+  });
+
+  test("an unreachable gateway is reported, not thrown", async () => {
+    const res = await handleConnectionStatus({
+      getConnection: async () => conn,
+      getQueueDepth: async () => 0,
+      probeReachable: async () => false,
+    });
+    expect(res).toMatchObject({ paired: true, reachable: false });
+  });
+});
+
+describe("handleDiscover", () => {
+  test("returns the first candidate that answers", async () => {
+    const res = await handleDiscover({
+      probeReachable: async (origin) => origin === "http://127.0.0.1:7474",
+    });
+    expect(res).toEqual({ kind: "discover", origin: "http://127.0.0.1:7474" });
+  });
+
+  test("probes sequentially and stops at the first hit", async () => {
+    const seen: string[] = [];
+    await handleDiscover({
+      probeReachable: async (origin) => {
+        seen.push(origin);
+        return true;
+      },
+    });
+    expect(seen).toEqual(["http://127.0.0.1:7474"]);
+  });
+
+  test("falls through to the second candidate", async () => {
+    const seen: string[] = [];
+    const res = await handleDiscover({
+      probeReachable: async (origin) => {
+        seen.push(origin);
+        return origin === "http://localhost:7474";
+      },
+    });
+    expect(seen).toEqual(["http://127.0.0.1:7474", "http://localhost:7474"]);
+    expect(res).toEqual({ kind: "discover", origin: "http://localhost:7474" });
+  });
+
+  test("nothing answers → null, so Options keeps the manual field", async () => {
+    const res = await handleDiscover({ probeReachable: async () => false });
+    expect(res).toEqual({ kind: "discover", origin: null });
+  });
+
+  test("a throwing probe does not cost the next candidate its turn", async () => {
+    const seen: string[] = [];
+    const res = await handleDiscover({
+      probeReachable: async (origin) => {
+        seen.push(origin);
+        if (origin === "http://127.0.0.1:7474") {
+          throw new Error("boom");
+        }
+        return true;
+      },
+    });
+    expect(seen).toEqual(["http://127.0.0.1:7474", "http://localhost:7474"]);
+    expect(res).toEqual({ kind: "discover", origin: "http://localhost:7474" });
+  });
+
+  test("every probe throwing is a miss, not a rejection", async () => {
+    const res = await handleDiscover({
+      probeReachable: async () => {
+        throw new Error("boom");
+      },
+    });
+    expect(res).toEqual({ kind: "discover", origin: null });
   });
 });

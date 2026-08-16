@@ -3,19 +3,50 @@
 // to loopback. The port is configurable because the owner can run the gateway on
 // a non-default port — the pairing step is where the chosen origin is confirmed.
 
-/** Locked endpoint paths — do not redesign (see PR #718). */
-export const CLIP_PATHS = {
+/**
+ * Every path this extension calls, all of them contracted and shipped upstream.
+ *
+ * `ingest` / `pairConfirm` / `related` shipped in the Nimbus monorepo PR #718.
+ * `resolve` shipped later, under its own `resolve` token scope — see
+ * packages/gateway/src/ipc/http-server.ts#handleItemsResolve. It was briefly
+ * modelled here as PROPOSED while this client was built against a guessed shape;
+ * that split is gone because the guess is gone.
+ *
+ * `itemsFetch` is the targeted-fetch route under the `fetch` token scope — an
+ * explicit I13 WRITE, not a read with side effects, because it causes an
+ * outbound request to a configured provider under the user's stored credential.
+ */
+export const GATEWAY_PATHS = {
   ingest: "/v1/clips",
   pairConfirm: "/v1/clips/pair/confirm",
   related: "/v1/clips/related",
+  resolve: "/v1/items/resolve",
+  itemsFetch: "/v1/items/fetch",
+  /**
+   * Unauthenticated liveness — the ONLY route this client calls without a bearer
+   * token. Served by the same server as the clip routes
+   * (packages/gateway/src/ipc/http-server.ts, dispatchReadOnlyDataGet), so an
+   * answer here means the gateway that ingests clips is up, not merely that
+   * something is listening on the port.
+   */
+  health: "/v1/health",
+  /**
+   * BASES, not complete paths: both agent routes carry a path parameter
+   * (`/v1/agents/{agent}`, `/v1/agents/runs/{id}`) which this static map cannot
+   * express. Callers append the segment. Kept here anyway so every contracted
+   * path still has exactly one home — a second map is what Task 1 of the resolve
+   * slice existed to delete.
+   */
+  agents: "/v1/agents",
+  agentRuns: "/v1/agents/runs",
 } as const;
 
-export type ClipEndpoint = keyof typeof CLIP_PATHS;
+export type GatewayEndpoint = keyof typeof GATEWAY_PATHS;
 
-/** Join a gateway origin with a locked endpoint path, tolerating a trailing slash. */
-export function endpointUrl(origin: string, endpoint: ClipEndpoint): string {
+/** Join a gateway origin with an endpoint path, tolerating a trailing slash. */
+export function endpointUrl(origin: string, endpoint: GatewayEndpoint): string {
   const trimmed = origin.endsWith("/") ? origin.slice(0, -1) : origin;
-  return `${trimmed}${CLIP_PATHS[endpoint]}`;
+  return `${trimmed}${GATEWAY_PATHS[endpoint]}`;
 }
 
 const LOOPBACK_V4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;

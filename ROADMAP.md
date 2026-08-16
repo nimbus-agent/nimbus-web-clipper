@@ -76,9 +76,9 @@ The clipper is a decent clipper. It is also in a fight it cannot win:
   connectors and an MCP server. Execution and the local-first guarantee are the
   difference, not the idea.
 
-What is *not* commodity is what sits behind the gateway: eleven working agents
-over an index that already spans your pull requests, builds, issues and docs.
-No clipper has that. Reaching it from the page you are already on is the
+What is *not* commodity is what sits behind the gateway: thirteen working
+agents over an index that already spans your pull requests, builds, issues and
+docs. No clipper has that. Reaching it from the page you are already on is the
 product.
 
 ### The name — proposed, not decided
@@ -115,12 +115,19 @@ Two things constrain any rename:
 
 ### Why this is credible, not aspirational
 
-Most of this is wiring existing capability to a new surface. Verified in the
-[Nimbus gateway repo](https://github.com/nimbus-agent/Nimbus):
+Most of this was wiring existing capability to a new surface — and by now most
+of that wiring has actually landed. Re-verified against merged upstream in the
+[Nimbus gateway repo](https://github.com/nimbus-agent/Nimbus) (`main` at
+commit `34601b24`, past the `v1.27.0` release), not against this roadmap's own
+earlier account of it:
 
-- **Eleven agents ship today** — catchup, conflicts, expert, ghost, glossary,
-  huddle, impact, janitor, preflight, why and why-peek, in
-  `packages/gateway/src/agents/`.
+- **Thirteen agents ship today**, not the eleven this section originally
+  counted — catchup, conflicts, decisions, expert, ghost, glossary, huddle,
+  impact, janitor, ownership, preflight, why and why-peek, in
+  `packages/gateway/src/agents/`. `ownership` and `decisions` are the two
+  added since: `agents.ownership` (reads the ownership graph derived from
+  already-indexed blame data, v1.24.0) and `agents.decisions` (the implicit
+  ADR extractor).
 - **An `agents.*` IPC namespace is already dispatched** — `agents.why`,
   `agents.impact`, `agents.expert`, `agents.whyPeek` and the rest, in
   `packages/gateway/src/ipc/agents-rpc.ts`.
@@ -131,18 +138,34 @@ Most of this is wiring existing capability to a new surface. Verified in the
   "ci_run"`, and `canonical_url` is a real column on `item`
   (`packages/gateway/src/index/unified-item-v3-sql.ts`).
 
-And what is honestly **not** built: nothing in the browser can reach `agents.*`
-today — the gateway's HTTP surface has no agents route — and there is no
-resolve-by-URL read (`GET /v1/items` filters by service/type/time only, and
-`/v1/items/<id>` matches `id` or `external_id`, never `canonical_url`, which
-also carries no SQL index, so the read brings a migration with it). Those are
-new gateway surfaces, owned upstream; every item that needs one is tagged 🟡
-below and names it. "Mostly wiring" is true of the *answers*, not of the two
-routes that let a browser ask for them.
+**Both gaps this section used to name as "honestly not built" are closed, and
+this client is what closed them:**
 
-The design spec for this client is planned in the gateway repo at
-`docs/superpowers/specs/2026-08-01-browser-gateway-client-design.md`; it is not
-written yet, so the briefs below are the current authority.
+- **The browser can reach `agents.*`.** `POST /v1/agents/{agent}` (202 +
+  `runId`) and `GET /v1/agents/runs/{id}` shipped on the gateway's HTTP API,
+  bearer-authed and recorded in the egress ledger (v1.23.0, "invoke read-only
+  agents over the HTTP API"). This client calls both — see **C2.1**, shipped.
+- **A resolve-by-URL read exists.** `GET /v1/items/resolve` shipped (v1.25.0),
+  and the prediction this section made about *how* was specific and correct:
+  it does bring a migration with it, but not an index on `canonical_url`
+  directly. `canonical_url` itself is still un-indexed today — the read
+  instead matches on a new **derived, indexed** `resolve_key` column (the
+  "V52" migration), computed server-side from `canonicalUrl ?? url` through
+  the same normalisation the client cannot run itself
+  (`packages/gateway/src/index/resolve-key-v52-sql.ts`,
+  `item-store.ts`). This client calls it — see **C1.1**, shipped.
+
+What is genuinely still open is downstream of both routes existing, not a
+missing route: the remaining items below (**C2.3**, **C2.4**, **C2.5**) are
+about which agent goes on which page, in what shape, and against which item —
+not about whether the browser can reach the gateway's agents at all.
+
+The design spec for this client
+(`docs/superpowers/specs/2026-08-01-browser-gateway-client-design.md`) was
+written and merged in the gateway repo — then pruned from that repo once the
+feature it specified shipped (it lives on in that repo's git history, the same
+convention this repo's own `CLAUDE.md` documents for its own specs). The
+briefs below, not that now-pruned document, are the current authority.
 
 ### The local-first bet is unchanged
 
@@ -169,14 +192,14 @@ scope.
 
 ### 1. AI-native retrieval — the moat
 
-The Nimbus index is a semantic engine, not a bookmark list — and eleven agents
-already run on top of it. The client's job is to make that power feel like magic
-*where you already are*: recognise the page, resolve it to the indexed item, and
-put the agent lanes (why · impact · expert) one glance away. Related-items,
-never-save-twice detection, asking questions of your own reading, and
-auto-understanding every clip on arrival are the shallow end of the same
-capability. This is the axis no cloud tool can match privately, and no private
-tool can match on context.
+The Nimbus index is a semantic engine, not a bookmark list — and thirteen
+agents already run on top of it. The client's job is to make that power feel
+like magic *where you already are*: recognise the page, resolve it to the
+indexed item, and put the agent lanes (why · impact · expert) one glance away.
+Related-items, never-save-twice detection, asking questions of your own
+reading, and auto-understanding every clip on arrival are the shallow end of
+the same capability. This is the axis no cloud tool can match privately, and
+no private tool can match on context.
 
 ### 2. Capture quality & coverage — reach what the connectors can't
 
@@ -282,6 +305,12 @@ end-to-end core works in both Chrome and Firefox:
 - **Resilience** — 429 rate-limit pausing (persisted across SW eviction) and 413
   payload-too-large as a terminal reason.
 - **Connection management** — pairing status + unpair.
+- **Page recognition (Phase C1)** — pure surface recognisers for Bitbucket /
+  GitHub / GitLab PRs, Jenkins builds and Jira issues (SaaS hosts are built in;
+  self-hosted instances are configured per origin, with optional path prefixes);
+  a lane-based panel shell that leads with the recognised surface and the
+  resolved item; opt-in page access, granted per host. The resolve read is
+  shipped against the gateway's real contract — see C1.1.
 - **Release** — tag-driven build/package + Chrome Web Store / Firefox AMO publish
   automation.
 
@@ -296,25 +325,35 @@ the load-bearing decisions and the two state machines are documented there.
 a Bitbucket PR in repo X, and here is the indexed item for it". Everything in C2
 is worthless without this — and half of C1 is buildable today.*
 
-### C1.1 Page → indexed item resolution · 🟡 · M
-> **What** Resolve the current page's canonical URL to a single indexed item
-> (service, type, id) — or an honest miss.
+### C1.1 Page → indexed item resolution · 🟢 · M — ✅ shipped
+> **What** Resolve the current page's URL to a single indexed item (service,
+> type, id) — or an honest miss.
 > **Why it wows** The panel stops guessing. Naming the item it resolved to is
 > the whole difference between a search box and a client that knows the page.
-> **Touches** `src/shared/related.ts`, `src/background/gateway-client.ts`,
-> `src/shared/messages.ts` (a new request/response pair + guard).
-> **Approach** Send the canonical URL, get back at most one item or a miss —
-> resolution, not ranking. The client must not fall back to fuzzy hits and
-> pretend they are the page.
-> **Depends** **a resolve-by-URL read on the gateway.** Today's contract cannot
-> do it: `/v1/clips/related` uses `canonicalUrl` only to *exclude* the current
-> host from FTS hits (`clips/clip-related.ts`, `buildRelatedQuery`), and
-> `GET /v1/items/<id>` matches `id` or `external_id`, never `canonical_url`.
-> **Propose in the gateway repo first.**
-> **Done when** On an indexed PR/build/issue the client names the exact item it
-> resolved to; on a miss it says "not indexed" instead of showing loose hits.
+> **Touches** `src/shared/recognise.ts`, `src/background/gateway-client.ts`,
+> `src/shared/messages.ts`, `src/panel/panel-view.ts` (header states + the
+> ambiguous-candidate chooser).
+> **Approach** Send the page URL, get back at most one item, an honest miss, or
+> a short list to choose from — resolution, not ranking. The client must not
+> fall back to fuzzy hits and pretend they are the page.
+> **Status** Shipped end to end, against the gateway's real contract:
+> `GET /v1/items/resolve?url=`, its `resolve` token scope, and all four 200
+> outcomes (`found` / `not_indexed` / `unresolvable_url` / `ambiguous`) as a
+> closed union. The client does identity normalisation only (Jira issue-key
+> upper-casing); the gateway owns canonicalisation and match confidence
+> (`matchKind`) — see [`docs/architecture.md`](./docs/architecture.md#the-recognition-pipeline).
+> A pairing made before the gateway grew token scopes gets a named re-grant
+> path (`nimbus clip scopes`) instead of a generic error. `fetchable` — whether
+> the gateway could fetch this URL itself — is parsed and carried through the
+> message boundary on the `not-indexed` / `unresolvable` / `ambiguous` arms,
+> unrendered for now; it is **C3.1**'s targeted-sync trigger.
+> **This closes out the contract adaptation** tracked in
+> [`docs/superpowers/specs/2026-08-07-c1-upstream-reconciliation.md`](./docs/superpowers/specs/2026-08-07-c1-upstream-reconciliation.md):
+> the client was originally built against a guessed shape while the gateway
+> route was still proposed; both landed, and this phase closed the gap between
+> them.
 
-### C1.2 Surface recognisers · 🟢 · M
+### C1.2 Surface recognisers · 🟢 · M — ✅ shipped
 > **What** Pure modules that classify the current page — Bitbucket PR, Jenkins
 > build, Jira issue, GitHub/GitLab PR/MR — and extract the canonical URL for
 > C1.1.
@@ -329,7 +368,7 @@ is worthless without this — and half of C1 is buildable today.*
 > ambiguous pages classify as unknown, and adding a surface is one pure module
 > plus tests.
 
-### C1.3 The ambient panel shell · 🟢 · M
+### C1.3 The ambient panel shell · 🟢 · M — ✅ shipped (panel user-summoned; ambient cue shipped opt-in, per host)
 > **What** Grow the injected related-items panel into a lane-based shell: a
 > header naming the resolved item, then one collapsed lane per available action.
 > **Why it wows** It reads as *a client for this page*, not a results list that
@@ -339,8 +378,23 @@ is worthless without this — and half of C1 is buildable today.*
 > touching the shell. Related-items (4.1) becomes the first lane.
 > **Done when** Resolved / unresolved / loading / error states all render from
 > pure view code under unit tests, with no lane content yet.
+> **Status** Shipped with related-items as the first lane. The panel stays
+> **user-summoned** — opening it is still always a click or a hotkey, never
+> automatic.
+> Closed: the panel pins the page it was opened on, so its header and its lanes
+> can no longer describe different items, and it offers a deliberate re-read when
+> you navigate away — see
+> `docs/superpowers/specs/2026-08-11-panel-page-context-design.md`.
+> **The deferred ambient half has now landed too:** on a host the user has
+> granted page access to and separately switched a per-host "Surface
+> automatically" toggle on for, landing on a page that resolves to exactly one
+> indexed item mounts a small corner cue naming it — before any click. Clicking
+> it opens this same user-summoned panel; the panel itself is unchanged. Every
+> non-`found` resolve outcome is silence, not a cue that leads nowhere, and
+> nothing is invoked ambiently — no agent, no lane. See
+> `docs/superpowers/specs/2026-08-13-ambient-surfacing-design.md`.
 
-### C1.4 Per-origin, opt-in recognition · 🟢 · S
+### C1.4 Per-origin, opt-in recognition · 🟢 · S — ✅ shipped
 > **What** Recognition needs to see the URL of pages that are not the gateway —
 > a permission the clipper never held (capture rides an `activeTab` gesture).
 > Ask for it per origin, at runtime, only for the sites the user names.
@@ -354,61 +408,296 @@ is worthless without this — and half of C1 is buildable today.*
 > **Done when** A user grants recognition for exactly the hosts they choose,
 > revoking one silences the panel there, and the shipped manifest still requests
 > no broad host permission up front.
+> **Status** Shipped: `optional_host_permissions` is inert at install, and Options
+> grants/revokes **per host** from a user click. Recorded honestly — the panel
+> works on `activeTab` alone today, so the grant currently buys only gesture-free
+> recognition, which **C2** is the first to need. The store listing explains why
+> the optional pattern is broad (self-hosted hostnames are not enumerable).
+> **The grant now buys something concrete:** the ambient half of **C1.3**
+> (shipped) is the first thing that actually consumes gesture-free recognition —
+> it is what a granted, toggled-on host makes possible. That slice also closed a
+> real gap this phase had left open: the **Recognised surfaces** list built its
+> rows from the user's own stored, self-hosted origins only, so `github.com`,
+> `gitlab.com`, `bitbucket.org` and Jira Cloud — recognised with no configuration
+> — had no row at all. Since the Grant button lives on a row, there was until
+> then no way to grant page access to any of them. Built-in rows (with grant/
+> revoke and no Remove) now close that gap.
 
-## Phase C2 — Run the agents from the page 🟡
+### C1.5 A second way into the panel · 🟢 · S — ✅ shipped
+> **What** Add a panel entry point the browser cannot silently withhold — a
+> context-menu item, and Options surfacing whether the `show_related` shortcut is
+> actually bound.
+> **Correction (2026-08-11):** this brief claimed the panel had "exactly **one**
+> entry point". It did not. The popup's *Show related* button has existed since
+> Slice 2 (`src/popup/popup.html`, commit `e99749b`), which is also why the
+> `Alt+Shift+R` failure below was survivable rather than fatal. What remains is
+> the context-menu trigger and the shortcut's visibility — the keyboard-only risk
+> is real, the "unreachable" framing was not.
+> **Why it wows** It stops the feature from disappearing. `suggested_key` is a
+> *suggestion*: when something else already claims the combo, Chrome leaves the
+> command unbound, reports nothing, and the keystroke goes to the page instead.
+> The panel is then unreachable, with no error, no empty state, and nothing in
+> the UI hinting that a shortcut exists. A user in that state concludes the
+> feature is broken.
+> **Found by** The Phase C1 manual pass (2026-08-09), first time it was run.
+> `Alt+Shift+R` did not bind in Chrome; pressing it opened GitHub's own
+> "switch repository" menu. Every other entry point in the extension has a
+> click-driven fallback — clipping has the popup *and* the context menu — so
+> this is the only capability reachable by hotkey alone. This roadmap also
+> claimed C1.3 shipped with a "popup button"; it did not, which is part of why
+> the gap went unnoticed. That claim is corrected above.
+> **Touches** `src/background/quick-clip.ts` or a sibling for the context-menu
+> registration, `src/browser/context-menus.ts`, `src/popup/`,
+> `src/background/service-worker.ts` (route the new trigger into the same
+> `injectPanel` path the command already uses).
+> **Approach** One handler, several triggers — the command, the menu item and any
+> popup button must converge on the existing injection path so the panel cannot
+> drift between them. Keep the `activeTab` story intact: each trigger is a user
+> gesture, so no new permission is needed. Consider surfacing the bound shortcut
+> (or its absence) in Options, since the browser will not.
+> **Done when** The panel can be opened without touching the keyboard, on a
+> profile where the `show_related` shortcut is unbound, in both Chrome and
+> Firefox.
+> **Note (2026-08-14, Slice 1 — "Setup that works"):** that slice added a
+> staged Options flow whose stage 2 (Connection) is the natural home for
+> surfacing whether `show_related` is actually bound — but the readout itself
+> did **not** ship there. It remains this item's own scope, arriving with
+> Slice 2, not before.
+> **Status** Shipped both halves this brief named. A **Show related in
+> Nimbus** context-menu entry (`src/background/menus.ts`) opens the panel
+> through the same `openPanel` path the hotkey and the C1.3 ambient cue use —
+> right-clicking a page in a non-focused window opens the panel in the
+> clicked tab, not the focused one. Options stage 2 now lists all three
+> commands with the shortcut the browser actually bound
+> (`src/browser/commands.ts`), never the manifest's `suggested_key`; an
+> unbound command reads **Not set**, alongside a copyable per-target path
+> (`chrome://extensions/shortcuts` / `about:addons`) to fix it — Chrome
+> refuses to let an extension page link there directly. Closed along the way:
+> the previous context-menu routing treated every unrecognised id as "clip
+> the page," so adding this third entry without also fixing that would have
+> made a right-click on it silently clip instead of opening the panel. See
+> [`docs/architecture.md`](./docs/architecture.md#a-second-way-into-the-panel-phase-c15).
 
-*Theme: the payoff. Three questions on a code-review page, answered by agents
-that already exist, without leaving the tab.*
+## Phase C2 — Run the agents from the page 🟢/🟡
 
-### C2.1 The code-review lanes — why · impact · expert · 🟡 · L
-> **What** On a resolved pull request: *why does this change exist*
-> (`agents.why` / `agents.whyPeek`), *what breaks if it lands* (`agents.impact`),
-> *who should review it* (`agents.expert`).
+*Theme: the payoff. Two questions on a code-review page, answered by agents
+that already exist, without leaving the tab — a third ("why") turned out to
+need a browser-viable shape first; see C2.4.*
+
+### C2.1 The code-review lanes — impact · expert · 🟢 · L — ✅ shipped (two lanes, not three)
+> **What** On a resolved pull request: *what breaks if it lands*
+> (`agents.impact`), *who should review it* (`agents.expert`).
 > **Why it wows** This is the demo. The answers already exist behind the
 > gateway; today you must stop reviewing and open a terminal to get them.
 > **Touches** `src/panel/`, `src/background/gateway-client.ts` +
 > `handlers.ts`, `src/shared/messages.ts`.
-> **Depends** **a browser-reachable agent-invocation surface.** `agents.*` is
-> JSON-RPC over the local IPC socket; the extension can only speak the
-> bearer-authed HTTP surface, which has no agents route. Shape, scoping and
-> auth are the gateway's to design. **Propose there first.**
+> **Status** Shipped **two** lanes, not the three originally briefed here.
+> *Why does this change exist* is **not** one of them — the roadmap named
+> `agents.why` / `agents.whyPeek` for it, and neither fits this surface:
+> `agents.why` takes `{ ref, line? }`, where `ref` is a **local filesystem
+> path** resolved against configured `[[filesystem.roots]]` and answered by
+> **git blame on a local checkout** — it answers "why does this *line*
+> exist", not "why does this *change* exist", and a browser on a PR page has
+> neither the path nor necessarily the repo cloned at all. `agents.whyPeek` is
+> **excluded from the HTTP surface entirely** — it is the namespace's one
+> *synchronous* method (it returns its payload directly and never calls
+> `notify`), so it cannot be represented on the `{runId}` + poll contract this
+> client depends on; polling it would just wait out its own TTL into a 410.
+> See **C2.4** below for a browser-viable version of "why". This roadmap
+> previously named both as if they were reachable here; that was wrong, not a
+> simplification made for time — corrected as part of landing this phase. Full
+> reasoning: `docs/superpowers/specs/2026-08-10-c2-agent-lanes-design.md`.
 > **Done when** Each lane returns a cited brief for the resolved item, or a
-> plain "couldn't answer, and here's why" — never a silent empty lane.
+> plain "couldn't answer, and here's why" — never a silent empty lane. ✅ — see
+> `AGENT_ERRORS` (`src/shared/types.ts`) and `renderLaneBody`
+> (`src/panel/panel-view.ts`).
 
-### C2.2 Progress, abort and delivery under MV3 · 🟢/🟡 · M
+### C2.2 Progress and delivery under MV3 · 🟢 · M — ✅ shipped (abort deferred)
 > **What** Agent runs that outlive the service worker: start, poll, show
-> progress, abort.
+> progress.
 > **Why it wows** Invisible when it works; the whole feature feels broken when
 > it doesn't.
 > **Touches** `src/browser/alarms.ts`, `src/background/service-worker.ts`,
-> `src/background/single-flight.ts`, the persistence pattern in
-> `src/background/clip-queue-store.ts`.
-> **Approach** **Polling plus `chrome.alarms` — not SSE.** A decision, not a
-> preference: MV3 terminates idle service workers and a hanging stream dies with
-> them. A job id, persisted run state, a poll cadence, and an abort that is
-> honoured upstream rather than just hidden in the UI.
-> **Done when** A run started before a service-worker eviction still delivers
-> its result; abort actually cancels; nothing is lost by closing the panel.
+> `src/background/agent-run-store.ts`.
+> **Status** Shipped **polling plus `chrome.alarms`, not SSE** — MV3
+> terminates idle service workers and a hanging stream dies with them. A run
+> started before a service-worker eviction still delivers its result: every
+> state transition is persisted to `chrome.storage.local`
+> (`agent-run-store.ts`, TTL and eviction cap mirroring the gateway's own),
+> `chrome.alarms` exists purely as the **eviction net** (a real poll cadence
+> would need `chrome.alarms`' one-minute floor, which is far slower than an
+> agent run actually takes), and the panel closing never loses a result —
+> reopening it and re-expanding the lane replays the stored `done` brief
+> instead of invoking the agent a second time. A lane left `failed`
+> deliberately does re-invoke on that expand (a failure is not an answer, and
+> the expand is an explicit user action) — see
+> [`docs/architecture.md`](./docs/architecture.md#the-agent-lanes-phase-c21).
+> **Abort is deferred, not shipped** — this roadmap item originally claimed
+> it. There is no upstream cancellation to hook into: `agents.*` has no
+> `AbortController` and runs are not tracked in any registry a cancel could
+> target. A UI-only "abort" that merely stopped polling would claim to cancel
+> a run that is, in fact, still going — that would be lying to the user about
+> what happened, not a smaller version of abort. Deferred until upstream
+> offers real cancellation. See `docs/architecture.md`'s agent-lanes section
+> for the fuller reasoning.
 
-### C2.3 The remaining lanes, surface by surface · 🟡 · M
+### C2.3 The remaining lanes, surface by surface · 🟢 · M — ✅ shipped (three service-scoped lanes, on a new dashboard surface)
 > **What** Map the other agents onto the pages they belong on —
 > `agents.catchup` for a repo or board you have been away from,
 > `agents.conflicts` and `agents.ghost` where ownership is unclear,
 > `agents.preflight` on a deploy/build page, `agents.glossary` on an unfamiliar
 > term, plus `agents.huddle` and `agents.janitor`.
+> **Correction (2026-08-11), read from upstream source at `34601b24`+:** three of
+> the agents named above are not reachable from a browser.
+> `agents.preflight` is excluded from the HTTP surface deliberately — it is one of
+> the three members of `HTTP_EXCLUDED_AGENT_METHODS` in
+> `packages/gateway/src/ipc/agents-rpc.ts`, with `agents.premortem` and
+> `agents.whyPeek`, though each is excluded for its own reason: `preflight`'s and
+> `premortem`'s is side effects on the owner's machine an external caller should
+> not trigger unprompted, while `whyPeek`'s is the one C2.1 already records above
+> (it is the namespace's only synchronous method, so it cannot be represented on
+> the `{runId}` + poll contract). So the deploy/build lane above cannot be built
+> as briefed. `agents.ghost` and
+> `agents.conflicts` both take `{ file: string }` (`requireFileParam`), the same
+> local-checkout requirement that sent "why" to C2.4. What *is* browser-viable is
+> the service-scoped set — `agents.catchup`, `agents.decisions` and
+> `agents.ownership` all accept `{ service }`, which the recogniser already knows
+> — plus `agents.glossary` (`{ term }`), which a selection supplies. Same class of
+> error C2.1 had to correct for `agents.why`/`whyPeek`; recorded rather than
+> silently edited.
+> **The rule is now written down.** `LANE_SURFACES` (`src/shared/types.ts`) is
+> where a new lane declares the surfaces it belongs on; adding a lane without one
+> is a type error. This phase's done-when asked for that, and it shipped early
+> with the page-context slice.
+> **Correction (2026-08-13), read from upstream source at `ea37e0d0`:** three more
+> stale claims, found while designing the service-scoped set — recorded rather
+> than silently edited, same as the 2026-08-11 correction above.
+> The **exclusion count above is wrong**: `HTTP_EXCLUDED_AGENT_METHODS` has
+> **four** members, not three. `agents.negotiate` is the fourth, and it is
+> excluded for a reason distinct from the other three — it has no side effects
+> and its `{runId}` + poll shape fits the HTTP contract fine, but combined with
+> `--person` it would let any holder of the `agents` token assemble a
+> contribution dossier on any indexed person without the owner initiating it.
+> The **"thirteen agents" figure used elsewhere in this roadmap** (the north
+> star, pillar 1) is itself stale as of this same upstream read — there are more
+> than thirteen now, `agents.negotiate` among them. Not corrected globally here;
+> flagged where this slice's own research surfaced it.
+> And the **framing above undersold what `catchup`, `decisions` and `ownership`
+> needed**: "map the other agents onto the pages they belong on" implied an
+> existing surface would do. It would not — those three answer about the whole
+> connector, not a page's item, so dropping them onto an item page (a repo, a
+> board) would put the same connector-wide answer on every page of that host.
+> They needed a surface whose scope matches theirs, which did not exist. Full
+> reasoning: `docs/superpowers/specs/2026-08-13-c2-3-service-lanes-design.md`.
 > **Why it wows** Each surface grows its own reason to keep the panel open.
 > **Approach** One lane at a time, each earning its place on a real page. A lane
 > that fires everywhere is noise, and noise is how ambient UI dies.
 > **Depends** C2.1's invocation surface.
+> **Status** Shipped the service-scoped set only — `catchup`, `decisions` and
+> `ownership` — on a new recognised surface, `SurfaceKind: "home"`: a product's
+> own dashboard (GitHub root; GitLab root or `/dashboard`; Bitbucket
+> `/dashboard/*`; Jira Cloud `/jira/your-work` and Server
+> `/secure/Dashboard.jspa`; Jenkins instance root, past any configured path
+> prefix). The three lanes render there and nowhere else. A dashboard makes
+> **no resolve call** — `Recognition.product` is already the gateway's connector
+> id, so the lane needs only the `agents` token scope, not `resolve` — and two
+> self-hosted instances of one product share a single cached answer, because
+> `service` is a flat connector id and both instances are one scope. The C1.3
+> ambient cue stays silent on a dashboard: it gates on a `found` resolve, and a
+> dashboard resolves to none. `agents.glossary` is not in this slice — it needs
+> selection plumbing into the lane path that does not exist yet, its own slice.
+> `agents.huddle` and `agents.janitor` are also unaddressed.
+> **Update (2026-08-14): the glossary lane has now shipped**, in the slice that
+> also closed **C2.5** and **4.2**. It is the first lane whose input is not the
+> page, and it needed two things this brief did not anticipate. `LANE_SURFACES`
+> became **`LANE_RULES`**, a discriminated union — `{input:"page", surfaces}` vs
+> `{input:"term"}` — so a term lane cannot be given surfaces and a page lane
+> cannot omit them. And the term arm declares **no surfaces at all**: the lane
+> answers on any page the panel opens on, including one the recogniser rejects,
+> because `POST /v1/agents/glossary` takes `{ term }` and no URL, so the gate that
+> decides which page URLs may reach the gateway has nothing to gate here. The
+> lane materialises only once a term exists — no term, no lane, anywhere — and an
+> over-long selection is refused in the lane rather than truncated into a question
+> nobody asked. Its three upstream modes (`list`/`term`/`miss`) need no client
+> branch: the run route returns one `brief` string for every agent, so all three
+> arrive as text. `agents.huddle` and `agents.janitor` remain unaddressed.
 > **Done when** Every shipped lane appears only where it is useful, and the
-> rule that put it there is written down.
+> rule that put it there is written down. ✅ for the three lanes shipped here;
+> unit suite green. The plan's manual dev-load pass (`docs/development.md`) is
+> still outstanding — and now also covers the glossary lane's two menu entries.
+
+### C2.4 A browser-viable "why" · 🟡 · M
+> **What** Answer *why does this change exist* from the browser, without
+> `agents.why`'s local-checkout requirement. Two directions worth spiking
+> before committing to either: (a) a PR-shaped variant of `why` the gateway
+> exposes over HTTP — e.g. resolving `ref` from the PR's diff hunks against a
+> checkout the *gateway* already has, rather than one the browser needs; or
+> (b) recasting the question as "why was this PR opened" and answering it from
+> `agents.expert`'s own inputs (PR title/description/commits) instead of git
+> blame, accepting a different, shallower answer than `why` gives on a file.
+> **Why it wows** Closes the gap C2.1 opened: two of the three review
+> questions from the original demo pitch now have a lane; this is the third.
+> **Touches** Whichever surface the gateway spike lands on —
+> `src/background/gateway-client.ts` + `handlers.ts`, `src/shared/types.ts`
+> (`AGENT_LANES` grows a member), `src/panel/`.
+> **Depends** A gateway-side decision on which direction (a)/(b) above — or a
+> third — is worth building. **Propose there first**, same as C2.1 originally
+> needed an HTTP agents surface at all.
+> **Done when** A lane answers "why does this change exist" for a resolved
+> pull request, without requiring the browser to have a local checkout of
+> anything.
+
+### C2.5 The lanes on a candidate you picked · 🟢 · S — ✅ shipped
+> **Status** Shipped, together with the glossary lane C2.3 deferred and 4.2, as
+> the "lane path takes an input" slice — the three share one contract change.
+> `agent-run`/`agent-state` grew an optional `itemId`, guarded in `messages.ts`
+> like every other cross-boundary value, and `resolveForAgent` honours it **only
+> after confirming it appears in the candidate set that resolve produced** — an
+> id the gateway never offered is refused. No extra call: the resolve had to
+> happen anyway. The `item` the lane path carries is typed `ResolveCandidate`,
+> not `ResolvedItem`, so nothing downstream can read a `modifiedAt` a picked
+> candidate does not have. The panel's lane gate moved into a new pure
+> `src/panel/lane-input.ts` rather than growing inside the 1,256-line
+> `panel-in-page.ts`.
+> **What** Offer the two C2.1 lanes on an **ambiguous** page once the user has
+> picked which indexed item it is — today they appear only under a `resolved`
+> header, so an ambiguous page shows no lanes at all, before or after the pick.
+> **Why it wows** Ambiguity is the one case where the user has told the panel
+> something it could not work out on its own. Throwing that answer away one
+> control later is exactly the kind of small betrayal that trains people to
+> stop using a panel.
+> **Why it is deferred, not shipped with C2.1** The `agent-run` message carries
+> only `{lane, pageUrl}` (`src/shared/messages.ts`), so `handleAgentRun`
+> re-resolves the page for itself — and on an ambiguous page that second
+> resolve is ambiguous again, which `resolveForAgent` refuses with
+> `not_resolved`. Rendering the lanes on a `chosen` header would therefore put
+> *"Nimbus couldn't pin this page to one indexed item."* directly under a
+> header naming the item the user had just picked, and `not_resolved` withholds
+> Re-run, so it would be terminal: two dead controls, every time. Carrying the
+> picked id through the message is a contract change, not a render tweak, so it
+> is its own slice.
+> **Touches** `src/shared/messages.ts` (`agent-run` / `agent-state` grow an
+> optional item id, plus its guard), `src/background/handlers.ts`
+> (`resolveForAgent` honours a supplied id instead of re-resolving),
+> `src/panel/panel-in-page.ts` (send the chosen id; render the lanes under
+> `chosen`).
+> **Approach** The id arrives from a content script, so it is untrusted input
+> like every other cross-boundary value: guard it in `messages.ts`, and have
+> the handler use it as the cache key and the `expert` lane's title source only
+> after the resolve it came from is re-checked or the id is confirmed present
+> in the ambiguous candidate set. Note a `chosen` candidate carries no
+> `modifiedAt` — that is why it is a separate header state — so nothing in the
+> lane path may assume a freshness it does not have.
+> **Done when** Picking a candidate on an ambiguous page offers both lanes, and
+> each answers about *that* item — never a re-resolve, and never a refusal
+> contradicting the header above it.
 
 ## Phase C3 — On a miss, sync — don't scrape 🟡
 
 *Theme: what to do when the page is real but the index has never seen it. The
 answer is to ask the gateway to go and get it, not to shred the DOM.*
 
-### C3.1 Targeted sync of a single item · 🟡 · L
+### C3.1 Targeted sync of a single item · 🟢 · L — ✅ shipped (resolve-after-fetch)
 > **What** On a resolve miss, ask the gateway to fetch and index *that one item*
 > through the connector that owns it, then answer against it.
 > **Why it wows** The client is never stuck on "I don't know that page" for a
@@ -425,6 +714,15 @@ answer is to ask the gateway to go and get it, not to shred the DOM.*
 > **Done when** A PR the index has never seen resolves after a bounded sync and
 > the lanes answer; an unconfigured connector says so plainly instead of
 > retrying.
+> **Status** Shipped against the gateway's real `POST /v1/items/fetch` contract
+> (see [`docs/architecture.md`](./docs/architecture.md#the-targeted-fetch-path)):
+> an explicit-click button on a fetchable miss, the six wire outcomes collapsed
+> to four honestly-distinct client states, a client timeout that never reads as
+> a failure, and one fetch per panel. Honest gap: the done-when above bundles two
+> things — "a PR resolves after a fetch" **and** "the lanes answer". Only the
+> first is delivered here; the lanes are **C2**, which is unbuilt. Once C2 lands,
+> it answers against exactly the item this slice already knows how to fetch and
+> resolve — no further work needed in this slice for that to happen.
 
 ### C3.2 Capture as the last resort · 🟢 · M
 > **What** For a surface with no connector at all — an internal wiki, a vendor
@@ -459,7 +757,7 @@ grow a second half to match.*
 > **Done when** Every gateway-side fetch the panel triggered is listed with
 > time, target and outcome, and the list does not contradict the gateway's own.
 
-### C4.2 Preview before a fetch · 🟢 · S
+### C4.2 Preview before a fetch · 🟢 · S — ✅ shipped
 > **What** Extend the pre-send preview (1.3) to cover fetch requests: show
 > exactly which item you are asking the gateway to go and get, before it goes.
 > **Why it wows** Same promise as 1.3, applied to the new direction of travel.
@@ -467,6 +765,13 @@ grow a second half to match.*
 > into 1.3's preview component.
 > **Done when** No gateway-side fetch happens without the user having seen what
 > it will fetch, or having turned the confirmation off deliberately.
+> **Status** Shipped, folded into **1.3**'s preview exactly as briefed: one pure
+> builder in `src/shared/preview.ts` produces both previews and one renderer
+> draws both, so the fetch confirm and the clip confirm cannot drift from each
+> other or from the request actually sent. The panel's fetch button now names
+> the service, the type and the address and waits for Send. Unlike the clip
+> preview, this one has **no off switch** — a targeted fetch is an I13 write
+> under your own stored credential, so it is always confirmed.
 
 ---
 
@@ -492,7 +797,7 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > `canonicalUrl` to *exclude* the current host, not to match it. This is the
 > shallow case of **C1.1** and should be built on the resolve read, not before it.
 
-### 1.2 "Where does my data go?" trust panel · 🟢 · S
+### 1.2 "Where does my data go?" trust panel · 🟢 · S — ✅ shipped
 > **What** A plain, always-reachable panel stating: one destination
 > (`127.0.0.1`), no telemetry, no remote host, MIT + no runtime deps.
 > **Why it wows** The privacy pitch becomes something a user can *read and verify*,
@@ -502,8 +807,13 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > connection store; link to the source and the loopback check in `shared/gateway.ts`.
 > **Done when** A user can see, in one place, exactly where clips go and what the
 > extension can and cannot reach.
+> **Status** Shipped as stage 4 of the staged Options flow — always open
+> regardless of pairing state, because the answer has to be reachable before
+> you commit to pairing, not only after. Driven by the real configured origin,
+> the sites you have granted page access to, and the current settings, rather
+> than fixed copy. See [`docs/architecture.md`](./docs/architecture.md#discovery-connection-health-and-the-trust-panel).
 
-### 1.3 Show exactly what gets sent · 🟢 · M
+### 1.3 Show exactly what gets sent · 🟢 · M — ✅ shipped
 > **What** A pre-send preview of the clip payload — title, URL, mode, tags, and a
 > body excerpt — before it leaves the browser.
 > **Why it wows** "Nothing leaves without you seeing it" is a promise you can now
@@ -513,8 +823,18 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > preview; optional as a setting so power users can turn it off.
 > **Done when** The user can inspect the outgoing payload and confirm/cancel; the
 > bearer token is never shown (invariant).
+> **Status** Shipped for the **toolbar popup only** — the gesture that already
+> had a surface to confirm on. The hotkey and the right-click menu stay one
+> gesture and report in the toast afterwards; giving a one-gesture path a
+> confirm step would defeat the point of the gesture, and there is no popup DOM
+> to render into. Off switch in Options stage 4. The fields are named one by one
+> in a pure builder rather than iterated off the payload, so a field added to
+> `ClipPayload` later can never leak into the preview unnamed — the token
+> invariant holds by construction, not by review. The excerpt is cut, but the
+> reported length is of the **whole** body, so a cut excerpt can never
+> understate what leaves. Extended to fetch requests by **C4.2** above.
 
-### 1.4 Connection health at a glance · 🟢 · S
+### 1.4 Connection health at a glance · 🟢 · S — ✅ shipped
 > **What** A live indicator: paired/unpaired, the origin, last-successful-clip
 > time, and pending-queue depth.
 > **Why it wows** The tool feels *alive* and honest — you always know its state.
@@ -522,6 +842,13 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > `src/background/handlers.ts` (extend `handleConnectionStatus`).
 > **Done when** Connection state and queue depth are visible without guessing;
 > a dead token surfaces as "needs re-pairing," not a silent failure.
+> **Status** Shipped. `handleConnectionStatus` reports `{paired, origin, label,
+> pairedAt, lastClipAt, queueDepth, reachable, stale}`; Options renders it as
+> one honest line naming where you're connected, when the last clip landed,
+> and how many clips are waiting to sync — and a token the gateway has
+> rejected reads "Needs re-pairing" rather than leaving you to guess whether
+> Nimbus is even running. See
+> [`docs/architecture.md`](./docs/architecture.md#discovery-connection-health-and-the-trust-panel).
 
 ## Phase 2 — Capture anything, cleanly 🟢
 
@@ -644,7 +971,7 @@ organizing after.*
 > **Reframe** Lower priority — tagging is a filing behaviour, and filing is not
 > what the client is for. Connector-sourced items arrive with their own metadata.
 
-### 3.4 Proactive related-on-landing · 🟢 · M
+### 3.4 Proactive related-on-landing · 🟢 · M — superseded, shipped as C1.3's ambient half
 > **What** An unobtrusive ambient signal when you land on a page you have context
 > for ("3 related items in Nimbus"), expandable into the panel.
 > **Why it wows** Recall that finds *you* — the core magic, surfaced without a click.
@@ -657,8 +984,15 @@ organizing after.*
 > **Reframe** Superseded, not dropped — this is the ancestor of the ambient
 > panel. Build it as the related lane of **C1.3**, on **C1.4**'s per-origin
 > permission, rather than as a standalone cue with its own opt-in.
+> **Status** Shipped, exactly as the reframe directed: built on **C1.4**'s
+> per-origin permission (a per-host toggle, off by default), as part of the
+> **C1.3** panel's ambient half rather than a standalone feature with its own
+> opt-in. It resolves the page to a single indexed item and names it, rather
+> than counting related hits — a stronger, narrower claim than "3 related items
+> in Nimbus" that only fires when there is one real answer. See **C1.3** above
+> and `docs/superpowers/specs/2026-08-13-ambient-surfacing-design.md`.
 
-### 3.5 Zero-config gateway discovery · 🟢 · S
+### 3.5 Zero-config gateway discovery · 🟢 · S — ✅ shipped
 > **What** Find the local gateway automatically so pairing is the only setup step.
 > **Why it wows** Ten-second onboarding; the URL field disappears for most users.
 > **Touches** `src/shared/gateway.ts`, `src/options/options.ts`.
@@ -668,6 +1002,14 @@ organizing after.*
 > manual override remains available.
 > **Reframe** Higher priority. A client you have to configure before it can
 > recognise anything is a client nobody keeps installed.
+> **Status** Shipped as a sequential probe of exactly two loopback
+> candidates — `http://127.0.0.1:7474`, then `http://localhost:7474` — never a
+> port scan. `127.0.0.1` goes first because that is the literal address
+> invariant I6 binds the gateway to; `localhost` is the fallback for dual-stack
+> resolution quirks. The manual URL field stays exactly as briefed: no match is
+> not a failure state, it's "ask the user." See
+> [`src/shared/discovery.ts`](./src/shared/discovery.ts) and
+> [`docs/architecture.md`](./docs/architecture.md#discovery-connection-health-and-the-trust-panel).
 
 ## Phase 4 — Ambient intelligence 🟢/🟡
 
@@ -683,11 +1025,18 @@ engine to grow.*
 > **Reframe** Retained as the first lane of the **C1.3** shell — same content,
 > rendered inside the panel's lane contract instead of alongside it.
 
-### 4.2 Related-on-selection · 🟢 · S
+### 4.2 Related-on-selection · 🟢 · S — ✅ shipped
 > **What** Highlight text → see what's related to *that*, not just the page.
 > **Touches** `src/panel/`, `src/background/service-worker.ts` (selection payload
 > already supported by `RelatedRequest`).
 > **Done when** Selecting text updates the related panel to that selection.
+> **Status** Shipped with **C2.5** and the glossary lane. Half of it turned out
+> to exist already: `readContext()` has always sent the live selection with the
+> related request at panel-open. What was missing was re-running related with a
+> NEW selection while the panel is open — a **What's related to this?**
+> context-menu entry now does exactly that, and unlike *Define in Nimbus* it
+> spends no agent run: the glossary lane appears for the same selection, but
+> collapsed and unasked.
 
 ### 4.3 "You've read N things about this" · 🟡 · M
 > **What** A meaning-level ambient signal about a topic, not just page matches.
@@ -792,10 +1141,9 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 New here? These are small, self-contained, high-value, and need nothing from
 another repo — ideal first contributions:
 
-- **C1.2 Surface recognisers** — one pure module plus fixtures; the cleanest
-  entry point into the reframe.
-- **1.2 Trust panel** — static, honest copy driven by the real origin. Pure UI.
-- **1.4 Connection health at a glance** — extend an existing handler + view.
+- **Add a surface recogniser** — `src/shared/recognise.ts` is one table entry plus
+  fixtures per product; the cleanest entry point into the reframe now that C1.2
+  has shipped the scaffolding.
 - **2.4 Full-page vs. readable toggle** — one setting, one capture branch.
 - **3.2 One-press undo** — a toast affordance + a short window (mind the gateway
   note).

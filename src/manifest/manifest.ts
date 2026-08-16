@@ -62,6 +62,7 @@ export interface WebClipperManifest {
   readonly description: string;
   readonly permissions: readonly string[];
   readonly host_permissions: readonly string[];
+  readonly optional_host_permissions: readonly string[];
   readonly action: ManifestAction;
   readonly commands: ManifestCommands;
   readonly options_ui: { readonly page: string; readonly open_in_tab: boolean };
@@ -89,6 +90,25 @@ export function composeManifest(target: BrowserTarget, version: string): WebClip
     // The gateway is loopback-only (invariant I6). The extension never talks to any
     // other origin — no remote host permissions, by design.
     host_permissions: ["http://127.0.0.1/*", "http://localhost/*"],
+    // PAGE access, a different axis from the network destination above: it lets
+    // recognition read a tab's URL without a user gesture (Phase C2). Inert at
+    // install — nothing is granted until the user grants a specific origin in
+    // Options. Broad patterns are unavoidable because self-hosted Bitbucket /
+    // Jenkins / Jira hostnames cannot be enumerated in advance.
+    //
+    // The `http` pattern is deliberate, and the S5332 suppression below is not a
+    // rubber stamp. That rule targets clear-text TRANSMISSION; this is a
+    // page-access match pattern for sites the user's browser has already loaded
+    // over http, and it opens no channel of our own — the extension's only
+    // network destination remains the loopback gateway (I6, asserted in
+    // manifest.test.ts). Dropping `http` would exclude exactly the instances this
+    // feature exists for: self-hosted Jenkins/Jira/Bitbucket on internal networks
+    // are routinely served over plain http. Nothing is granted until the user
+    // picks a specific origin.
+    //
+    // The marker must stay a TRAILING comment on the reported line — Sonar anchors
+    // NOSONAR to the issue's own line (see #20, where a block comment was ignored).
+    optional_host_permissions: ["http://*/*", "https://*/*"], // NOSONAR
     action: {
       default_popup: "popup.html",
       default_title: "Clip to Nimbus",

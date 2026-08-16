@@ -1,6 +1,26 @@
-import { sendMessage } from "../browser/runtime.ts";
-import { isConnectionResponse, type PairResponse } from "../shared/messages.ts";
-import { formatPairedSince } from "./connection-view.ts";
+import { getAmbientHosts, setAmbientHost } from "../background/ambient-prefs.ts";
+import { getOrigins, setOrigins } from "../background/origin-store.ts";
+import { isPreviewEnabled, setPreviewEnabled } from "../background/preview-pref.ts";
+import { getAllCommands } from "../browser/commands.ts";
+import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.ts";
+import { isFirefoxRuntime, sendMessage } from "../browser/runtime.ts";
+import {
+  type DiscoverResponse,
+  isConnectionResponse,
+  type PairResponse,
+} from "../shared/messages.ts";
+import {
+  hostPermissionPattern,
+  isProduct,
+  parseConfiguredOrigin,
+  removeConfiguredOrigin,
+  upsertOrigin,
+} from "../shared/origins.ts";
+import { BUILT_IN_SURFACES } from "../shared/recognise.ts";
+import type { ConfiguredOrigin } from "../shared/types.ts";
+import { applyStages, healthLine, stagesFrom } from "./setup-view.ts";
+import { renderShortcuts, shortcutRows, shortcutsHint } from "./shortcuts-view.ts";
+import { renderSurfaceList, type SurfaceRow, sharedHostNote } from "./surfaces-view.ts";
 
 const PAIR_MESSAGES: Record<string, string> = {
   bad_origin: "Enter a 127.0.0.1 / localhost URL.",
@@ -35,29 +55,65 @@ function disarmUnpair(): void {
 }
 
 function renderConnection(res: unknown): void {
-  const pairing = document.getElementById("pairing-section");
-  const connection = document.getElementById("connection-section");
+  if (!isConnectionResponse(res)) {
+    return;
+  }
+  applyStages(document, stagesFrom(res));
+  const health = document.getElementById("health-line");
+  if (health !== null) {
+    health.textContent = healthLine(res, Date.now());
+  }
   const status = document.getElementById("connection-status");
-  if (
-    !(pairing instanceof HTMLElement) ||
-    !(connection instanceof HTMLElement) ||
-    status === null
-  ) {
-    return;
+  if (status !== null) {
+    // Stage 2's detail line stays as it was; healthLine above carries the state.
+    status.textContent = res.paired ? `Paired as "${res.label}".` : "";
   }
-  if (!isConnectionResponse(res) || !res.paired) {
-    connection.hidden = true;
-    pairing.hidden = false;
+  if (!res.paired) {
     disarmUnpair();
-    return;
   }
-  status.textContent = `Paired as "${res.label}" to ${res.origin}, since ${formatPairedSince(res.pairedAt)}.`;
-  pairing.hidden = true;
-  connection.hidden = false;
+  const trustOrigin = document.getElementById("trust-origin");
+  if (trustOrigin !== null) {
+    trustOrigin.textContent = res.paired ? res.origin : "your local gateway (not paired yet)";
+  }
 }
 
 async function refreshConnection(): Promise<void> {
-  renderConnection(await sendMessage({ kind: "connection-status" }));
+  try {
+    renderConnection(await sendMessage({ kind: "connection-status" }));
+  } catch {
+    // The message channel rejected (service worker asleep or erroring) —
+    // leave the shipped HTML defaults in place (stages 2 and 3 locked) rather
+    // than throwing away the render. Without this, a silent failure here
+    // would leave every stage rendering fully active — including Unpair and
+    // page-access controls — on a profile the extension never confirmed was
+    // paired.
+  }
+}
+
+async function refreshShortcuts(): Promise<void> {
+  const list = document.getElementById("shortcut-list");
+  const hint = document.getElementById("shortcut-hint");
+  if (list === null || hint === null) {
+    return;
+  }
+  // Read directly from the browser seam, not through the service worker: Options
+  // is an extension page with its own access to chrome.commands, so a message
+  // round-trip would add a failure mode without adding information.
+  //
+  // The try/catch is REQUIRED, not decoration. This is called as
+  // `void refreshShortcuts()`, which attaches no rejection handler — a rejecting
+  // `getAllCommands` would surface as an unhandled rejection and fail the Vitest
+  // run. Same rule `refreshConnection` above already follows.
+  try {
+    list.replaceChildren(renderShortcuts(document, shortcutRows(await getAllCommands())));
+  } catch {
+    // An empty list, not a half-rendered one. The hint below still renders, so a
+    // user who cannot see their bindings is at least told where to go and set them.
+    list.replaceChildren();
+  }
+  // Outside the try on purpose: isFirefoxRuntime has its own catch and cannot
+  // throw, and the hint is the more useful half when the binding read failed.
+  hint.textContent = shortcutsHint(isFirefoxRuntime());
 }
 
 async function pair(): Promise<void> {
@@ -89,6 +145,40 @@ async function pair(): Promise<void> {
   } catch {
     // The message channel rejected — recover the status rather than sticking on "Pairing…".
     setStatus("Couldn't reach the extension — please try again.");
+  }
+}
+
+function isDiscoverResponse(v: unknown): v is DiscoverResponse {
+  return typeof v === "object" && v !== null && (v as { kind?: unknown }).kind === "discover";
+}
+
+function setDiscoverStatus(text: string): void {
+  const el = document.getElementById("discover-status");
+  if (el !== null) {
+    el.textContent = text;
+  }
+}
+
+async function discover(): Promise<void> {
+  const originEl = document.getElementById("origin");
+  if (!(originEl instanceof HTMLInputElement)) {
+    return;
+  }
+  setDiscoverStatus("Looking…");
+  try {
+    const res = await sendMessage({ kind: "discover" });
+    if (!isDiscoverResponse(res)) {
+      setDiscoverStatus("Unexpected response.");
+      return;
+    }
+    if (res.origin === null) {
+      setDiscoverStatus("No gateway found. Start Nimbus, or enter its URL below.");
+      return;
+    }
+    originEl.value = res.origin;
+    setDiscoverStatus(`Found Nimbus at ${res.origin}.`);
+  } catch {
+    setDiscoverStatus("Couldn't reach the extension — please try again.");
   }
 }
 
@@ -133,9 +223,225 @@ async function onUnpairClick(): Promise<void> {
   }
 }
 
+function setSurfaceStatus(text: string): void {
+  const el = document.getElementById("surface-status");
+  if (el !== null) {
+    el.textContent = text;
+  }
+}
+
+/**
+ * Serialize read-modify-write cycles on the origin list.
+ *
+ * Every mutation below is `getOrigins()` → transform → `setOrigins()`, and the
+ * store only writes the whole list. Two handlers that interleave (a fast
+ * double-click, or Remove while Add is still awaiting storage) would both read
+ * the pre-change list and the second write would silently drop the first one's
+ * edit. Chaining them onto one promise makes each cycle see the previous one's
+ * result — the same lost-update guard clip-queue-store.ts applies to the queue.
+ */
+let originWrites: Promise<void> = Promise.resolve();
+
+function mutateOrigins(transform: (list: ConfiguredOrigin[]) => ConfiguredOrigin[]): Promise<void> {
+  originWrites = originWrites
+    .catch(() => undefined)
+    .then(async () => {
+      await setOrigins(transform(await getOrigins()));
+    });
+  return originWrites;
+}
+
+/** Serialise prefs writes for the same reason origin writes are serialised: two
+ *  toggles flipped in quick succession both read the pre-change list, and the
+ *  second write would silently drop the first one's edit. Both the toggle
+ *  handler and the revoke path fall through here — `setAmbientHost` does no
+ *  serialisation of its own, so a second call site bypassing this chain would
+ *  reopen the same lost-update window this chain exists to close. */
+let ambientWrites: Promise<void> = Promise.resolve();
+
+function mutateAmbient(pattern: string, on: boolean): Promise<void> {
+  ambientWrites = ambientWrites
+    .catch(() => undefined)
+    .then(async () => {
+      await setAmbientHost(pattern, on);
+    });
+  return ambientWrites;
+}
+
+/**
+ * Storage is the source of truth for the user's own entries; the browser is the
+ * source of truth for grants; the prefs store is for the ambient toggle.
+ *
+ * Built-ins come FIRST and are always present. Until this existed there was no
+ * row for github.com, gitlab.com, bitbucket.org or Jira Cloud — and since the
+ * Grant button lives on a row, there was no way to grant page access to them at
+ * all. See the design spec's "The prerequisite this slice discovered".
+ */
+async function surfaceRows(): Promise<SurfaceRow[]> {
+  const ambient = await getAmbientHosts();
+  const rows: SurfaceRow[] = [];
+  for (const surface of BUILT_IN_SURFACES) {
+    rows.push({
+      origin: surface.label,
+      product: surface.product,
+      granted: await hasOrigin(surface.pattern),
+      builtIn: true,
+      pattern: surface.pattern,
+      ambient: ambient.includes(surface.pattern),
+    });
+  }
+  for (const entry of await getOrigins()) {
+    const pattern = hostPermissionPattern(entry.origin);
+    rows.push({
+      origin: entry.origin,
+      product: entry.product,
+      granted: pattern !== null && (await hasOrigin(pattern)),
+      builtIn: false,
+      pattern,
+      ambient: pattern !== null && ambient.includes(pattern),
+    });
+  }
+  return rows;
+}
+
+async function refreshSurfaces(): Promise<void> {
+  const rows = await surfaceRows();
+  const list = document.getElementById("surface-list");
+  if (list !== null) {
+    list.replaceChildren(renderSurfaceList(document, rows));
+  }
+  const hosts = document.getElementById("trust-hosts");
+  if (hosts !== null) {
+    const granted = rows.filter((r) => r.granted).map((r) => r.origin);
+    // textContent, never innerHTML — these strings are user-supplied origins.
+    hosts.textContent = granted.length === 0 ? "no sites yet" : granted.join(", ");
+  }
+}
+
+async function addSurface(): Promise<void> {
+  const originEl = document.getElementById("surface-origin");
+  const productEl = document.getElementById("surface-product");
+  if (!(originEl instanceof HTMLInputElement) || !(productEl instanceof HTMLSelectElement)) {
+    return;
+  }
+  if (!isProduct(productEl.value)) {
+    setSurfaceStatus("Pick what this instance is running.");
+    return;
+  }
+  const entry = parseConfiguredOrigin(originEl.value, productEl.value);
+  if (entry === null) {
+    setSurfaceStatus("Enter the full URL, including https://");
+    return;
+  }
+  await mutateOrigins((list) => upsertOrigin(list, entry));
+  originEl.value = "";
+  setSurfaceStatus("");
+  await refreshSurfaces();
+}
+
+async function onSurfaceClick(event: Event): Promise<void> {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) {
+    return;
+  }
+  const action = target.dataset["action"];
+  const origin = target.dataset["origin"];
+  if (action === undefined || origin === undefined) {
+    return;
+  }
+  // A built-in row's `origin` is a display label, not a URL — its pattern comes
+  // from the table, not from parsing. Fall back to parsing for the user's own
+  // entries, which are always absolute origins.
+  const builtIn = BUILT_IN_SURFACES.find((s) => s.label === origin);
+  const pattern = builtIn?.pattern ?? hostPermissionPattern(origin);
+  if (action === "remove" && builtIn === undefined) {
+    await mutateOrigins((list) => removeConfiguredOrigin(list, origin));
+    setSurfaceStatus("");
+  } else if (action === "grant" && pattern !== null) {
+    // Must run inside this click handler — chrome.permissions.request needs the gesture.
+    const granted = await requestOrigin(pattern);
+    setSurfaceStatus(granted ? "" : "Page access was not granted.");
+  } else if (action === "revoke" && pattern !== null) {
+    // Only claim the sibling entries were affected if the revoke actually
+    // happened — otherwise the note would say access was withdrawn from a host
+    // that still has it.
+    if (await removeOrigin(pattern)) {
+      // Page access is what the cue runs on, so revoking it turns the cue off
+      // rather than leaving a stored "on" that cannot happen. Without this, a
+      // later re-grant would silently resurrect a preference the user last saw
+      // being withdrawn. Routed through mutateAmbient — same storage key the
+      // toggle handler writes, so it must go through the same chain.
+      await mutateAmbient(pattern, false);
+      setSurfaceStatus(sharedHostNote(await surfaceRows(), origin) ?? "");
+    } else {
+      setSurfaceStatus("Page access could not be revoked.");
+    }
+  }
+  await refreshSurfaces();
+}
+
+function previewToggle(): HTMLInputElement | null {
+  const el = document.getElementById("preview-toggle");
+  return el instanceof HTMLInputElement ? el : null;
+}
+
+/**
+ * Paints the switch from the stored preference.
+ *
+ * The try/catch is REQUIRED, not decoration — same rule as `refreshShortcuts`
+ * above: this is `void`-called from DOMContentLoaded, so a rejecting read would
+ * surface as an unhandled rejection and fail the Vitest run. On a failed read we
+ * leave the checkbox at its markup default (checked), which matches
+ * `isPreviewEnabled`'s own fail-safe: an unreadable preference means the preview
+ * SHOWS, because a preview the user switched off is a minor annoyance and a send
+ * without one is the outcome this whole surface exists to prevent.
+ */
+async function refreshPreviewToggle(): Promise<void> {
+  const toggle = previewToggle();
+  if (toggle === null) {
+    return;
+  }
+  try {
+    toggle.checked = await isPreviewEnabled();
+  } catch {
+    toggle.checked = true;
+  }
+}
+
+function onPreviewChange(): Promise<void> {
+  const toggle = previewToggle();
+  return toggle === null ? Promise.resolve() : setPreviewEnabled(toggle.checked);
+}
+
+function onAmbientChange(event: Event): Promise<void> {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) || target.dataset["action"] !== "ambient") {
+    return Promise.resolve();
+  }
+  const pattern = target.dataset["pattern"] ?? "";
+  if (pattern === "") {
+    return Promise.resolve();
+  }
+  return mutateAmbient(pattern, target.checked);
+}
+
 document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("discover")?.addEventListener("click", () => void discover());
   document.getElementById("pair")?.addEventListener("click", () => void pair());
   document.getElementById("unpair")?.addEventListener("click", () => void onUnpairClick());
   document.getElementById("unpair-cancel")?.addEventListener("click", () => disarmUnpair());
+  document.getElementById("surface-add")?.addEventListener("click", () => void addSurface());
+  document
+    .getElementById("surface-list")
+    ?.addEventListener("click", (event) => void onSurfaceClick(event));
+  document
+    .getElementById("surface-list")
+    ?.addEventListener("change", (event) => void onAmbientChange(event));
+  document.getElementById("preview-toggle")?.addEventListener("change", () => {
+    void onPreviewChange();
+  });
   void refreshConnection();
+  void refreshSurfaces();
+  void refreshShortcuts();
+  void refreshPreviewToggle();
 });

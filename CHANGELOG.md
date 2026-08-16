@@ -8,6 +8,148 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Fixed
+
+- **The built-in sites could not be granted page access at all.** Options listed
+  only the self-hosted instances you had added, and the Grant button lives on a
+  row — so `github.com`, `gitlab.com`, `bitbucket.org` and Jira Cloud, which
+  Nimbus recognises without any setup, had no row and no way to be granted. They
+  are now listed alongside your own entries, each with its own page-access
+  control (and no Remove — they are not yours to delete).
+- **The panel's freshness line said "Indexed" when it meant "Updated".** The time
+  shown is the item's own last-modified time as its source reports it — GitHub's
+  `updated_at` for a pull request — not when Nimbus indexed it. So a PR fetched
+  seconds ago could read "Indexed 3 days ago", which was simply untrue. The line
+  now reads "Updated 3 days ago". The value is unchanged and is the more useful
+  one: how stale the underlying item is, rather than when a row was written.
+- **The panel could describe one page and answer about another.** On sites that
+  navigate without reloading — GitHub, GitLab and Jira all do — moving to a
+  different pull request while the panel was open left the header naming the page
+  you started on, while expanding a lane answered about the page you had moved to.
+  The panel now sticks to the page you opened it on, says so when you navigate
+  away — *"You've moved on. This panel is still about acme/web #482."* — and
+  offers one button to re-read the page you are on now. Its lanes keep working on
+  the item the header names the whole time, and the notice disappears by itself if
+  you navigate back.
+- **Agent lanes appeared on pages they could not answer about.** A Jira issue or a
+  Jenkins build that Nimbus had indexed offered *What breaks if it lands* and *Who
+  should review it*, which are questions about a change under review. Both lanes
+  now appear on pull requests only.
+- Unpairing, and a confirmed re-pair, now both clear cached agent answers, so a
+  brief can no longer outlive the gateway that produced it.
+
+### Added
+
+- **See exactly what leaves, before it leaves.** Clipping from the toolbar now
+  shows you the whole payload first — title, URL, tags, and the body it will
+  send — and sends nothing until you say so. The hotkey and right-click stay one
+  gesture and tell you afterwards, as before. You can switch the preview off in
+  Options if you'd rather not be asked.
+- **Asking Nimbus to fetch an item tells you which item.** The panel's fetch
+  button now names the service, the type and the address before your gateway
+  reaches out for it.
+- **Ask Nimbus what a word means, on any page.** Select a term, right-click →
+  **Define in Nimbus**, and the panel answers from your own glossary. It works
+  wherever the panel opens — including pages Nimbus does not recognise, because
+  this question is about the word, not the page; the term is all that is sent, no
+  URL. Select a passage instead of a phrase and it says so rather than answering
+  about the first few words of it.
+- **See what's related to a phrase, not just to the page.** Select text →
+  **What's related to this?** and the Related lane re-runs against exactly that.
+  Both new entries reach an already-open panel without closing it.
+- **Picking which item a page is now gets you the answers.** When Nimbus cannot
+  tell which indexed item an ambiguous page is, it asks — and until now, choosing
+  one left you looking at a header with no lanes under it. The two pull-request
+  lanes now appear on the item you picked, and answer about that item.
+- **The related panel no longer depends on a keyboard shortcut that may not
+  exist.** Right-click any page → **Show related in Nimbus** opens the same
+  panel the hotkey does. And Options now lists each Nimbus shortcut with the
+  keys your browser *actually* bound — `Alt+Shift+R` is only a suggestion, and
+  when another extension already claims it your browser silently leaves it
+  unset. A shortcut that never bound now reads **Not set** instead of looking
+  like a broken feature.
+- **Nimbus can find itself.** Setting up no longer starts with typing a URL:
+  press **Find my gateway** and the extension checks the two places a local
+  Nimbus listens. It checks exactly those two — it does not scan your ports.
+  The URL field is still there for a gateway on a different port.
+- **Options tells you the truth about the connection.** One line now says where
+  you are connected, when the last clip landed, and how many are waiting to sync
+  — and when your gateway has rejected this browser, it says *"Needs
+  re-pairing"* instead of leaving you to guess whether Nimbus is even running.
+- **One page that answers "where does my data go?"** Options now states the one
+  destination Nimbus talks to, which sites you have granted page access to, what
+  gets sent and when, and what happens to your pairing token — driven by your
+  real settings, not by a fixed blurb.
+- The panel now recognises a product's own dashboard — GitHub, GitLab, Bitbucket,
+  Jira and Jenkins — and offers three lanes there: *What happened while I was
+  away*, *What got decided* and *Who owns what*. They answer across the whole
+  connector, which is what the header says, and they need no indexed item.
+- **Nimbus can now tell you it knows this page, before you ask.** On a site you
+  have granted page access to and switched **Surface automatically** on for,
+  landing on a pull request, build or issue that Nimbus has already indexed puts
+  a small cue in the corner naming it. Click it and the panel opens on that item;
+  dismiss it and it stays quiet for that item in that tab. Nothing runs until you
+  click — no agent, no lane. And the cue only appears when there is a real answer
+  behind it: a page Nimbus has not indexed, a page it cannot pin to one item, or
+  a gateway that is not running all produce silence rather than a cue that leads
+  nowhere.
+- **Ask an agent about the pull request you are looking at.** When the panel has
+  resolved a PR to a single indexed item, it now offers two lanes — *what breaks
+  if it lands*, and *who should review it*. Expanding one runs the agent behind
+  it; nothing runs until you ask. Answers survive closing the panel: reopening it
+  and expanding the lane shows the same brief again without running the agent a
+  second time. If a lane can't answer it says why, and offers a re-run wherever
+  retrying could actually help — where it can't, it names the thing to fix
+  instead, such as granting the `agents` scope. On a page that matches several indexed items the lanes
+  are not offered, even after you pick one — the run would resolve the page again
+  and hit the same ambiguity, so a lane there could only ever fail.
+- **On a resolve miss, fetch that one item.** On a page Nimbus recognises but has
+  not yet indexed, the panel now offers to fetch that item through the connector
+  that owns it — a GitHub PR, a Jira issue, a Jenkins build. Nothing is fetched
+  until you ask: the button names exactly what it will fetch and from where (e.g.
+  *"Fetch this from GitHub"*), and only ever fires once per panel. An unconfigured
+  connector says so plainly instead of inviting a retry that can't work, and if the
+  gateway is just slow to answer, the panel says it's still working rather than
+  reporting a failure.
+- **The panel knows what page you're on.** On a Bitbucket, GitHub or GitLab pull
+  request, a Jenkins build or a Jira issue, the related-items panel now leads with
+  what the page is — *"GitHub PR · acme/web #482"* — and, where the gateway
+  supports it, the exact indexed item it resolves to. Resolution is at most one
+  item: on a miss the panel says "Not indexed" rather than passing loose search
+  hits off as the page. Related items move into a collapsible lane below the
+  header, which is where the planned agent lanes will join them. The panel is
+  still opened by you (`Alt+Shift+R` or the popup button) — nothing appears on its
+  own, and the Related lane keeps working in every header state.
+- **Self-hosted instances are configurable.** Bitbucket Cloud, GitHub, GitLab and
+  Jira Cloud are recognised with no setup. Self-hosted Bitbucket, Jenkins and Jira
+  are added under **Recognised surfaces** in Options as a URL plus which product it
+  is — including instances behind a reverse proxy on a sub-path, e.g.
+  `https://corp.example/jira`, and several products on one host. The product is
+  never guessed from the URL shape, so the panel cannot be confidently wrong about
+  where you are.
+- **Opt-in page access, per host.** Options can grant Nimbus permission to
+  recognise pages on a site without you opening the panel first, and revoke it
+  again. Nothing is granted at install. This is page access only — it does not
+  change where Nimbus can send data, which remains your local gateway on
+  `127.0.0.1` and nothing else.
+
+### Changed
+
+- The panel now resolves pages against the gateway's shipped
+  `GET /v1/items/resolve` route instead of the guessed shape Phase C1 was built
+  against. It shows when the item was last updated, marks a closest-match result
+  as weaker than an exact one, and lets you pick when several indexed items match
+  the page. The not-paired, pairing-rejected and can't-reach-Nimbus messages for
+  resolve are reworded to match the new contract, and a malformed resolve
+  response now says "Couldn't read Nimbus's answer." instead of a generic error.
+- **Scope guidance is a command you can paste, and one that's safe to run.**
+  When a pairing predates a scope the panel needs (`resolve`, and now `fetch`),
+  the fix-it text names your actual device and the exact resulting set, built
+  from the gateway's own 403 response — not a guessed list. That matters
+  because `nimbus clip scopes … --set` *replaces* the device's scope set
+  rather than adding to it, so a guessed list could silently drop a scope you
+  already held (e.g. `agents`).
+
 ## [0.2.0] - 2026-07-28
 
 ### Added
