@@ -4,7 +4,6 @@ import {
   PAIR_CONFIRM,
   RELATED,
   RESOLVE_FIXTURE,
-  SCENARIOS,
   type Scenario,
 } from "../../scripts/screenshots/gateway-fixtures.ts";
 import { handleRequest } from "../../scripts/screenshots/mock-gateway.ts";
@@ -164,24 +163,31 @@ describe("scenarios", () => {
   });
 
   test("delayMs is keyed by path — a route absent from the map is unaffected", async () => {
+    // Not a wall-clock upper bound (the earlier version asserted
+    // `toBeLessThan(150)`, which a single GC stall under v8 coverage
+    // instrumentation can blow past, reddening the unit run that feeds
+    // SonarCloud's coverage gate for a route with no delay configured at
+    // all). The claim this guards is relative: a route absent from `delayMs`
+    // settles faster than one the SAME scenario deliberately holds open —
+    // see the companion test above for the symmetric lower-bound claim on
+    // the delayed route itself.
     const scenario: Scenario = { delayMs: { "/v1/clips": 200 } };
-    const start = performance.now();
-    await handleRequest(
+
+    const unaffectedStart = performance.now();
+    const res = await handleRequest(
       new Request("http://127.0.0.1:8765/v1/clips/related", { method: "POST" }),
       scenario,
     );
-    expect(performance.now() - start).toBeLessThan(150);
-  });
+    const unaffectedMs = performance.now() - unaffectedStart;
 
-  test("SCENARIOS carries the named scenarios later tasks build lanes against", () => {
-    expect(SCENARIOS.happyPath).toEqual({});
-    expect(SCENARIOS.resolveMiss.resolveDefault).toEqual({
-      found: false,
-      reason: "not_indexed",
-      service: null,
-      fetchable: false,
-    });
-    expect(SCENARIOS.fetchNotConfigured.itemsFetch).toEqual({ status: "not_configured" });
-    expect(SCENARIOS.rateLimited.status).toEqual({ "/v1/clips": 429 });
+    const delayedStart = performance.now();
+    await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips", { method: "POST" }),
+      scenario,
+    );
+    const delayedMs = performance.now() - delayedStart;
+
+    expect(unaffectedMs).toBeLessThan(delayedMs);
+    expect(await res.json()).toEqual(RELATED);
   });
 });

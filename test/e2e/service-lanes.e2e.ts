@@ -34,11 +34,11 @@
  * that, by construction (see gateway-fixtures.ts's own doc comment on it).
  */
 import { expect, test } from "@playwright/test";
-import type { Harness } from "../../scripts/e2e/launch.ts";
 import { launchExtension } from "../../scripts/e2e/launch.ts";
 import { AGENT_RUN_DONE, type Scenario } from "../../scripts/screenshots/gateway-fixtures.ts";
 import { GATEWAY_PATHS } from "../../src/shared/gateway.ts";
 import { PANEL_HOST_ID } from "../../src/shared/panel-host.ts";
+import { gotoRecognisedPage, togglePanel } from "./helpers.ts";
 
 export const COVERS = [
   "service-lanes-1",
@@ -46,24 +46,6 @@ export const COVERS = [
   "service-lanes-3",
   "service-lanes-4",
 ] as const;
-
-/**
- * Injects panel.js into the tab currently on `url`, queried by URL rather
- * than `lastFocusedWindow` — same reasoning as capture.e2e.ts's identical
- * helper: window focus is reliable on a desktop and occasionally is not on a
- * headless CI container, and this test just set `url`, so it cannot be
- * ambiguous. Self-toggling, like `panel.js` itself: a first call mounts it, a
- * second closes it.
- */
-async function togglePanel(sw: Harness["sw"], url: string): Promise<void> {
-  await sw.evaluate(async (target) => {
-    const [tab] = await chrome.tabs.query({ url: target });
-    if (tab?.id === undefined) {
-      throw new Error(`e2e: no tab matched ${target}`);
-    }
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["panel.js"] });
-  }, url);
-}
 
 test("a dashboard's service lanes name the scope, run to a brief, and replay from cache on reopen", async () => {
   // Counts POSTs to the catchup lane's invoke route — the value this test
@@ -86,7 +68,9 @@ test("a dashboard's service lanes name the scope, run to a brief, and replay fro
     // capture.e2e.ts's "Saving to Nimbus…" test. A reopened panel's re-expand
     // never reaches this route at all (handleAgentRun's cache short-circuit —
     // see service-lanes-3 below), so this delay cannot mask a second run.
-    delayMs: { [catchupInvoke]: 300 },
+    // 1500ms, not a smaller value — see capture.e2e.ts's identical delay for
+    // why: missing this window is a hard 30s timeout, not a smaller retry.
+    delayMs: { [catchupInvoke]: 1500 },
   };
   const h = await launchExtension({ scenario });
   try {
@@ -168,10 +152,7 @@ test("a resolved pull request shows the item lanes, never the service lanes", as
     // recognised-page test: `chrome.tabs.get` (and therefore recognise/resolve)
     // sees this exactly as it would a real SPA-driven route change.
     const page = await h.context.newPage();
-    await page.goto(`${h.origin}/sample`);
-    const url = `${h.origin}/acme/web/pull/482`;
-    await page.evaluate((path) => history.pushState({}, "", path), "/acme/web/pull/482");
-    await page.bringToFront();
+    const url = await gotoRecognisedPage(page, h.origin, "/acme/web/pull/482");
     await togglePanel(h.sw, url);
 
     // service-lanes-4: Related and the two page (item) lanes are present;

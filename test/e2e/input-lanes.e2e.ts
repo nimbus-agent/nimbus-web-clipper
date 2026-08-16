@@ -40,6 +40,7 @@ import { AGENT_RUN_DONE, type Scenario } from "../../scripts/screenshots/gateway
 import { GATEWAY_PATHS } from "../../src/shared/gateway.ts";
 import { PANEL_HOST_ID, PANEL_SELECTION_HOOK } from "../../src/shared/panel-host.ts";
 import { MAX_TERM_LENGTH } from "../../src/shared/term.ts";
+import { gotoRecognisedPage, togglePanel } from "./helpers.ts";
 
 export const COVERS = [
   "input-lanes-1",
@@ -52,22 +53,6 @@ export const COVERS = [
   "input-lanes-8",
   "input-lanes-9",
 ] as const;
-
-/**
- * Injects panel.js into the tab currently on `url`, queried by URL rather
- * than `lastFocusedWindow` — same reasoning as capture.e2e.ts's identical
- * helper. Self-toggling, like `panel.js` itself: a first call mounts it, a
- * second closes it.
- */
-async function togglePanel(sw: Harness["sw"], url: string): Promise<void> {
-  await sw.evaluate(async (target) => {
-    const [tab] = await chrome.tabs.query({ url: target });
-    if (tab?.id === undefined) {
-      throw new Error(`e2e: no tab matched ${target}`);
-    }
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["panel.js"] });
-  }, url);
-}
 
 /**
  * Calls an ALREADY-OPEN panel's selection hook — the same lookup
@@ -369,10 +354,7 @@ test("picking a candidate on an ambiguous page answers the item lanes about that
     }, h.origin);
 
     const page = await h.context.newPage();
-    await page.goto(`${h.origin}/sample`);
-    const url = `${h.origin}/acme/web/pull/482`;
-    await page.evaluate((path) => history.pushState({}, "", path), "/acme/web/pull/482");
-    await page.bringToFront();
+    const url = await gotoRecognisedPage(page, h.origin, "/acme/web/pull/482");
     await togglePanel(h.sw, url);
 
     await expect(page.locator(".nimbus-related__candidate")).toHaveCount(2);
@@ -408,10 +390,7 @@ test("an SPA navigation away, then re-read, drops the glossary lane for the old 
     }, h.origin);
 
     const page = await h.context.newPage();
-    await page.goto(`${h.origin}/sample`);
-    const firstUrl = `${h.origin}/job/widget/7`;
-    await page.evaluate((path) => history.pushState({}, "", path), "/job/widget/7");
-    await page.bringToFront();
+    const firstUrl = await gotoRecognisedPage(page, h.origin, "/job/widget/7");
     await togglePanel(h.sw, firstUrl);
 
     await deliverSelection(h.sw, firstUrl, "widget", "define");

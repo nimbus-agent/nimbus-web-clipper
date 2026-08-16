@@ -19,6 +19,16 @@ labels:
 fails if a checklist step claims `e2e:` coverage no suite declares, or if a
 suite declares coverage no checklist step names.
 
+A `e2e:` marker means a test asserts *something* about that step — not
+necessarily the step's whole claim. When the e2e narrows what it actually
+proves (only part of the step, a substituted mechanism, a different page than
+the step describes), that narrowing is stated as a bracketed note right after
+the step's own marker; a marker with no bracket covers the step's full claim.
+`test/unit/e2e-coverage.test.ts` only compares marker **ids** against
+declared `COVERS` ids — it has no way to check that a step's prose matches
+what its test actually asserts, so this convention is not machine-enforced.
+Read the bracket, not just the marker.
+
 ## Build & load
 
 ```bash
@@ -517,33 +527,46 @@ term in your Nimbus glossary; the ambiguity step needs a URL that resolves to
 more than one indexed item (the panel shows a chooser when it does).
 
 1. <!-- e2e:input-lanes-1 --> **(e2e covers the handler; the context-menu
-   gesture itself is human.)** On any page, select a word → right-click →
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly.)** On any page, select a word → right-click →
    **Define in Nimbus**. The panel opens, a lane titled with that term is
    **already expanded**, and it answers.
 2. <!-- e2e:input-lanes-2 --> **(e2e covers the handler; the context-menu
-   gesture itself is human.)** With the panel still open, select a *different*
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly.)** With the panel still open, select a *different*
    word → **Define in Nimbus**. The panel must **stay open** (this is the
    toggle hazard: the worker reaches the open panel through its hook, never by
    re-injecting `panel.js`), and the lane retitles and re-answers for the new
    term.
 3. <!-- e2e:input-lanes-3 --> **(e2e covers the handler; the context-menu
-   gesture itself is human.)** Select a whole paragraph → **Define in
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly.)** Select a whole paragraph → **Define in
    Nimbus**. The lane says *"That's a passage, not a term"*. Confirm in
    DevTools' network/SW logs that **no** `/v1/agents/glossary` call went out.
 4. <!-- e2e:input-lanes-4 --> **(e2e covers the handler; the context-menu
-   gesture itself is human.)** Repeat step 1 on a page Nimbus does **not**
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly.)** Repeat step 1 on a page Nimbus does **not**
    recognise — an internal wiki, a vendor console. The lane must still work;
    the page lanes must still be absent. This is the slice's central claim.
 5. <!-- e2e:input-lanes-5 --> **(e2e covers the handler; the context-menu
-   gesture itself is human — and specifically here, so is the browser's own
-   capture of `selectionText` from inside the field, which the e2e suite
-   cannot drive either: it hands the lane a term already read out of a
-   `<textarea>`'s own selection range, not one captured via a right-click.)**
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly. And
+   specifically here, so is the browser's own capture of `selectionText` from
+   inside the field, which the e2e suite cannot drive either: it hands the
+   lane a term already read out of a `<textarea>`'s own selection range, not
+   one captured via a right-click.)**
    Select text inside a `<textarea>` or `<input>` and define it — it must work
    (this is why the entry reads the browser's captured `selectionText` rather
    than the page's own selection).
 6. <!-- e2e:input-lanes-6 --> **(e2e covers the handler; the context-menu
-   gesture itself is human.)** Select text → **What's related to this?**. The
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly.)** Select text → **What's related to this?**. The
    Related lane re-runs against the selection, and the glossary lane appears
    **collapsed and unrun** — no agent run is spent on a question nobody asked.
 7. <!-- e2e:input-lanes-7 --> Open the panel with no selection anywhere: **no
@@ -567,9 +590,10 @@ automatable but has no suite covering it yet, and the reason names what would.
 
 Prereq: paired, gateway running, a resolved GitHub pull request available.
 
-1. <!-- e2e:related-lane-1 --> On a resolved GitHub pull request, open the
-   panel: every hit the gateway returns is rendered as a row — none dropped
-   client-side.
+1. <!-- e2e:related-lane-1 --> Open the panel on any page — Related renders
+   whether or not the page is recognised (see "Lanes that take an input" step
+   4 for why): every hit the gateway returns is rendered as a row — none
+   dropped client-side.
 2. <!-- e2e:related-lane-2 --> Each row has a kind chip.
 3. <!-- e2e:related-lane-3 --> Each row has an "Updated …" line.
 4. <!-- e2e:related-lane-4 --> Rows group under a service heading with a count.
@@ -606,6 +630,11 @@ same as the popup/options DOM and the SW glue.
    capture, then close and reopen the panel. → It still shows the captured
    header — the durability is real, because a recognised page's resolve
    reaches the gateway again on reopen and gets the same `web_clip` item back.
+   **[The e2e seeds `resolveDefault` with an already-captured item, so resolve
+   answers "captured" from the very first open — it proves only the header's
+   durability across a reopen, not that a real capture is what produced that
+   item. That a capture actually populates this state needs a real index —
+   see step 5.]**
 4. <!-- e2e:capture-4 --> Repeat on the **unrecognised** page from step 1:
    close and reopen the panel. → No durable header — the page never reaches
    resolve at all, so reopening shows the ordinary `unrecognised` state. The
@@ -616,21 +645,31 @@ same as the popup/options DOM and the SW glue.
    `updated`, and `nimbus search` (or the Nimbus app) shows one item for that
    page, not two. **(human — asserts against a real index; a mock cannot
    honestly stand in for "one item, not two")**
-6. <!-- e2e:capture-6 --> Navigate an SPA mid-capture (start a capture, then
-   trigger a client-side route change before it resolves) → the panel reports
-   `url-changed` rather than filing the new page's content under the old
-   address.
+6. <!-- e2e:capture-6 --> Navigate an SPA away from the panel's pinned page,
+   *then* click the capture offer → the panel refuses with `url-changed`
+   before ever injecting `capture.js`, rather than filing the new page's
+   content under the old address. **[This is the PRE-injection guard
+   (`captureTab`, `capture-tab.ts:74`) — the tab has already moved by the time
+   the click reaches the worker. The separate MID-capture guard
+   (`capture-tab.ts:93`, catching a route change *during* the injected
+   capture's own round trip) is not reachable this way; it is covered by
+   `test/unit/capture-tab.test.ts` instead.]**
 7. <!-- e2e:capture-7 --> In Options stage 4, switch the 1.3 preview off, then
-   repeat step 1. → The offer button is replaced by status lines (*Capturing
-   this page…*, then *Saving to Nimbus…*), and the run ends on the terminal
-   *"Saved a copy of …"* line — the same end state as step 2, because this is
-   step 1's unrecognised page and it never reaches resolve. What this step
-   proves is that the in-flight feedback does not depend on the preview being
-   on: with the confirm step gone, *Saving to Nimbus…* is on-screen evidence
-   that something is happening, before the terminal line supersedes it.
+   repeat step 1. → The offer button is replaced by a status line (*Saving to
+   Nimbus…*), and the run ends on the terminal *"Saved a copy of …"* line —
+   the same end state as step 2, because this is step 1's unrecognised page
+   and it never reaches resolve. What this step proves is that the in-flight
+   feedback does not depend on the preview being on: with the confirm step
+   gone, *Saving to Nimbus…* is on-screen evidence that something is
+   happening, before the terminal line supersedes it. (*Capturing this
+   page…*, the line shown before *Saving to Nimbus…*, is step 8's claim, not
+   this one's — see its own marker below.)
 
-   Repeat once on step 3's **recognised** page to see the other ending: there
-   the captured header settles at the end, superseding the terminal line.
+   **(not yet automated — repeating this on step 3's recognised page, where
+   the captured header settles at the end instead of the terminal line, needs
+   a second scenario/page combination this suite does not yet drive).** Repeat
+   once on step 3's **recognised** page to see the other ending: there the
+   captured header settles at the end, superseding the terminal line.
 8. Confirm the *Capturing this page…* line appears too — immediately after
    clicking the offer, and before *Saving to Nimbus…*. **(not yet automated —
    this phase makes no request to the gateway at all: it is

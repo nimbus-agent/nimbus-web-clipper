@@ -19,11 +19,11 @@
  * `delayMs` has nothing to hold open for it.
  */
 import { expect, test } from "@playwright/test";
-import type { Harness } from "../../scripts/e2e/launch.ts";
 import { launchExtension } from "../../scripts/e2e/launch.ts";
 import type { Scenario } from "../../scripts/screenshots/gateway-fixtures.ts";
 import { GATEWAY_PATHS } from "../../src/shared/gateway.ts";
 import { PANEL_HOST_ID } from "../../src/shared/panel-host.ts";
+import { gotoRecognisedPage, togglePanel } from "./helpers.ts";
 
 export const COVERS = [
   "capture-1",
@@ -33,27 +33,6 @@ export const COVERS = [
   "capture-6",
   "capture-7",
 ] as const;
-
-/**
- * Injects panel.js into the tab currently on `url`, queried by URL rather than
- * `lastFocusedWindow` — see related-lane.e2e.ts's identical helper-site
- * comment for why: window focus is reliable on a desktop and occasionally is
- * not on a headless CI container, and this test just set `url`, so it cannot
- * be ambiguous.
- *
- * panel.js is self-toggling: a first call mounts it, a second call closes it,
- * a third reopens it fresh — this is how every test below simulates "close
- * and reopen the panel".
- */
-async function togglePanel(sw: Harness["sw"], url: string): Promise<void> {
-  await sw.evaluate(async (target) => {
-    const [tab] = await chrome.tabs.query({ url: target });
-    if (tab?.id === undefined) {
-      throw new Error(`e2e: no tab matched ${target}`);
-    }
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["panel.js"] });
-  }, url);
-}
 
 test("an unrecognised page offers a capture, confirms the save, and forgets it on reopen", async () => {
   const h = await launchExtension();
@@ -136,10 +115,7 @@ test("a recognised page's captured header survives closing and reopening the pan
     // therefore recognise()/resolve, and the `chrome.tabs.query` below) sees
     // this exactly as it would a real SPA-driven route change.
     const page = await h.context.newPage();
-    await page.goto(`${h.origin}/sample`);
-    const url = `${h.origin}/job/widget/7`;
-    await page.evaluate((path) => history.pushState({}, "", path), "/job/widget/7");
-    await page.bringToFront();
+    const url = await gotoRecognisedPage(page, h.origin, "/job/widget/7");
     await togglePanel(h.sw, url);
 
     // capture-3: the captured header — "Update this copy" — on first open.
@@ -157,7 +133,7 @@ test("a recognised page's captured header survives closing and reopening the pan
   }
 });
 
-test("an SPA navigation before the capture lands refuses with url-changed", async () => {
+test("an SPA navigation before the offer is clicked refuses with url-changed, pre-injection", async () => {
   const h = await launchExtension();
   try {
     const page = await h.context.newPage();
@@ -172,11 +148,18 @@ test("an SPA navigation before the capture lands refuses with url-changed", asyn
     // once at mount and only ever re-read by the explicit "Re-read page"
     // action, never by the background navigation watcher). A same-document
     // navigation moves the TAB on without moving the panel's pin — exactly
-    // what an SPA route change looks like from the background's side. This is
-    // deterministic, not a race: `captureTab` (src/background/capture-tab.ts)
-    // reads the tab's LIVE url and compares it to the pinned one BEFORE it
-    // ever injects capture.js, so the mismatch is already there the instant
-    // the click's message reaches the worker.
+    // what an SPA route change looks like from the background's side. This
+    // pushState happens BEFORE `offer.click()`, so by the time the click's
+    // message reaches the worker the tab's LIVE url already differs from the
+    // pinned one — `captureTab`'s PRE-injection guard (capture-tab.ts:74)
+    // catches this before `capture.js` is ever injected. It is deterministic,
+    // not a race: the check runs first and `runCapture` is never called.
+    //
+    // This does NOT exercise the separate MID-capture guard (capture-tab.ts:
+    // 93) — the one that catches a navigation happening DURING the injected
+    // capture's own round trip, after `runCapture` has already been called.
+    // That branch is covered by test/unit/capture-tab.test.ts instead; see
+    // docs/development.md's capture-6 bracket for why.
     await page.evaluate(() => history.pushState({}, "", "/sample-moved"));
 
     await offer.click();
@@ -196,8 +179,13 @@ test("with the confirm preview off, one click runs capture through to the termin
   // long enough that "Saving to Nimbus…" is genuinely, observably in flight
   // rather than a state that only sometimes survives to be caught. On
   // loopback the ingest response would otherwise settle in well under a
-  // millisecond, too fast for even an auto-retrying assertion to reliably see.
-  const scenario: Scenario = { delayMs: { [GATEWAY_PATHS.ingest]: 300 } };
+  // millisecond, too fast for even an auto-retrying assertion to reliably
+  // see. 1500ms, not a smaller value: this assertion has to catch the
+  // transient inside whatever window Playwright's assertion polling actually
+  // samples on a loaded CI runner, and missing it is a hard 30s timeout (the
+  // status element is gone entirely once the run settles) — 1500ms is cheap
+  // insurance against that against a 30s per-test timeout.
+  const scenario: Scenario = { delayMs: { [GATEWAY_PATHS.ingest]: 1500 } };
   const h = await launchExtension({ scenario });
   try {
     // The 1.3 preview pref, seeded directly through the worker rather than

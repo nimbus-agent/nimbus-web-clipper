@@ -12,7 +12,7 @@ import type { AddressInfo } from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type BrowserContext, chromium, type Worker } from "playwright";
-import type { Scenario } from "../screenshots/gateway-fixtures.ts";
+import { PAIR_CONFIRM, type Scenario } from "../screenshots/gateway-fixtures.ts";
 import { startMockGateway } from "../screenshots/mock-gateway.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -85,14 +85,17 @@ export async function launchExtension(opts?: {
 
   // Seed a paired connection (storage key "connection") pointing at the mock.
   // The ephemeral port rides in on `origin`; nothing else needs to know it.
+  // token/label come from PAIR_CONFIRM — the same fixture `/pair/confirm`
+  // itself answers with — rather than a second, independently hand-typed
+  // literal that could silently drift from it.
   await sw.evaluate(
     async (conn) => {
       await chrome.storage.local.set({ connection: conn });
     },
     {
       origin,
-      token: "mock-bearer-token-not-a-real-secret",
-      label: "Mock Device",
+      token: PAIR_CONFIRM.token,
+      label: PAIR_CONFIRM.label,
       pairedAt,
     },
   );

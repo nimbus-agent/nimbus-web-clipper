@@ -13,6 +13,7 @@
  */
 import { expect, test } from "@playwright/test";
 import { launchExtension } from "../../scripts/e2e/launch.ts";
+import { togglePanel } from "./helpers.ts";
 
 export const COVERS = [
   "related-lane-1",
@@ -26,25 +27,21 @@ test("a resolved page's related rows carry kind, freshness and grouping", async 
   const h = await launchExtension();
   try {
     const page = await h.context.newPage();
-    await page.goto(`${h.origin}/sample`);
+    const url = `${h.origin}/sample`;
+    await page.goto(url);
     await page.bringToFront();
-    // Query by URL, not by `lastFocusedWindow`. capture.ts uses the latter and it
-    // works there, but window focus is exactly the sort of thing that is reliable
-    // on a developer's desktop and occasionally is not on a headless CI container
-    // — and a gate that flakes is a gate people route around. The URL is something
-    // this test just set, so it cannot be ambiguous.
-    await h.sw.evaluate(async (origin) => {
-      const [tab] = await chrome.tabs.query({ url: `${origin}/sample` });
-      if (tab?.id === undefined) {
-        throw new Error("e2e: no tab matched the sample page");
-      }
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["panel.js"] });
-    }, h.origin);
+    // Query by URL, not by `lastFocusedWindow`: window focus is reliable on a
+    // developer's desktop and occasionally is not on a headless CI container
+    // — and a gate that flakes is a gate people route around. The URL is
+    // something this test just set, so it cannot be ambiguous.
+    await togglePanel(h.sw, url);
 
     // related-lane-1: every hit the fixture hands the client is rendered —
     // nothing dropped client-side. (Host filtering itself is gateway-side; see
-    // the file doc comment above.)
-    const rows = page.locator(".nimbus-related__item");
+    // the file doc comment above.) Scoped to the related lane, not a bare
+    // `.nimbus-related__item` — the same class input-lanes.e2e.ts scopes the
+    // same way.
+    const rows = page.locator('[data-lane="related"] .nimbus-related__item');
     await expect(rows).toHaveCount(3);
 
     // related-lane-2: EVERY row names its kind, not just the first — a chip

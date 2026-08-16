@@ -197,21 +197,3 @@ export interface Scenario {
    */
   readonly onRequest?: (pathname: string) => void;
 }
-
-const NOT_INDEXED = {
-  found: false,
-  reason: "not_indexed",
-  service: null,
-  fetchable: false,
-} as const;
-
-export const SCENARIOS = {
-  happyPath: {},
-  /** Every url misses, and the gateway says it cannot fetch them either. */
-  resolveMiss: { resolveDefault: NOT_INDEXED },
-  fetchNotConfigured: {
-    resolveDefault: NOT_INDEXED,
-    itemsFetch: { status: "not_configured" },
-  },
-  rateLimited: { status: { "/v1/clips": 429 } },
-} as const satisfies Record<string, Scenario>;

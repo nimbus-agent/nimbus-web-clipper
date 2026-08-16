@@ -100,7 +100,15 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
 
       - name: Install Playwright browsers
-        run: bunx playwright install --with-deps chromium
+        # No --with-deps: it shells out to `apt-get update && apt-get
+        # install`, and this job's egress allowlist (Harden Runner, above) has
+        # no Ubuntu archive host and no port-80 entry at all, so that apt call
+        # cannot succeed under egress-policy: block. Don't widen the allowlist
+        # to fix this — the ubuntu-24.04 runner image already ships the shared
+        # libraries Chromium needs, so plain `install chromium` succeeds
+        # without it. Do not add --with-deps back without also solving the
+        # egress problem.
+        run: bunx playwright install chromium
 
       - name: Build
         run: bun run build
