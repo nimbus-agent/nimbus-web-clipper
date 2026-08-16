@@ -1,23 +1,8 @@
 import type { ClipRequest, ClipResponse } from "../shared/messages.ts";
 import type { CaptureResult, ToastState } from "../shared/types.ts";
+import { isRestrictedUrl } from "./capture-tab.ts";
 
-const RESTRICTED_SCHEMES = new Set([
-  "chrome:",
-  "chrome-extension:",
-  "moz-extension:",
-  "about:",
-  "edge:",
-  "view-source:",
-]);
-
-/** True for pages a content script can't be injected into (also un-capturable). */
-export function isRestrictedUrl(url: string): boolean {
-  try {
-    return RESTRICTED_SCHEMES.has(new URL(url).protocol);
-  } catch {
-    return true;
-  }
-}
+export { isRestrictedUrl };
 
 const RATE_LIMITED_TEXT = "Nimbus is busy — queued, will retry shortly.";
 
