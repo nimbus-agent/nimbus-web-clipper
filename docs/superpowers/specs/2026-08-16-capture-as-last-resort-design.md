@@ -88,9 +88,14 @@ whatever the user navigated to. Capturing that DOM under the pinned URL would fi
 page's content against the old page's address — a corrupt index entry, which is worse than
 either capturing the wrong page honestly or refusing.
 
-So the check is an equality test at the moment of capture: if `window.location.href` no
-longer matches the pinned URL, the worker returns a `url-changed` failure and the panel
-says so, offering the re-read it already offers elsewhere.
+So the check is an equality test against the pinned URL, and it runs **twice** — once
+before injecting, and once on the result that comes back. One check is not enough: the
+pre-check closes the window before injection, but `runCapture` injects and awaits a
+round-trip into the page, and an SPA can change route *inside* that window. The
+post-check compares `CaptureResult.url`, which `capture-in-page.ts:18` reads as
+`location.href` **inside the page at capture time** — so it describes what was actually
+captured rather than what was asked for. Either failing yields `url-changed`, and the
+panel says so, offering the re-read it already offers elsewhere.
 
 The panel's existing `checkNavigation` watcher (`panel-in-page.ts:788`) is **not**
 sufficient on its own. It polls at `NAV_CHECK_MS` (2 Hz) and early-returns while the tab is

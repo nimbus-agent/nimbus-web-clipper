@@ -356,6 +356,37 @@ describe("captureTab", () => {
     expect(out).toEqual({ ok: false, reason: "restricted" });
   });
 
+  test("refuses when the page navigated DURING the capture", async () => {
+    // The pre-check passes (the tab is still on PAGE when we look), but the
+    // capture comes back describing a different page — an SPA route change
+    // inside the injection round-trip. Filing that content under PAGE would be
+    // a corrupt index entry, so this must refuse.
+    const out = await captureTab(
+      {
+        tabUrl: async () => PAGE,
+        runCapture: async () => result("https://wiki.example.com/other"),
+      },
+      7,
+      "article",
+      PAGE,
+    );
+    expect(out).toEqual({ ok: false, reason: "url-changed" });
+  });
+
+  test("a mid-capture navigation is ignored when there is no expectedUrl", async () => {
+    // The hotkey path has no pinned page to be wrong about, so a differing
+    // capture.url is not an error there — it is just the page it captured.
+    const out = await captureTab(
+      {
+        tabUrl: async () => PAGE,
+        runCapture: async () => result("https://wiki.example.com/other"),
+      },
+      7,
+      "article",
+    );
+    expect(out.ok).toBe(true);
+  });
+
   test("a throwing injection becomes injection-failed", async () => {
     const out = await captureTab(
       {
@@ -459,6 +490,19 @@ export async function captureTab(
     capture = await deps.runCapture(tabId, mode);
   } catch {
     return { ok: false, reason: "injection-failed" };
+  }
+  // Checked AGAIN, after the capture. The pre-check above closes the window
+  // before injection; this one closes the window *during* it. `runCapture`
+  // injects and awaits a round-trip into the page, and an SPA can change route
+  // inside that window — so the pre-check alone would still let the new page's
+  // DOM be filed under the old address, which is the corrupt entry this whole
+  // rule exists to prevent.
+  //
+  // `capture.url` is authoritative for this: capture-in-page.ts:18 reads
+  // `location.href` INSIDE the page at capture time, so it describes what was
+  // actually captured rather than what we asked for.
+  if (expectedUrl !== undefined && capture.url !== expectedUrl) {
+    return { ok: false, reason: "url-changed" };
   }
   if (capture.body === "") {
     return { ok: false, reason: "empty" };
@@ -1103,6 +1147,8 @@ Mirror `sendFetch`'s structure:
 Cancel clears `pendingCapture`, `captureState` and `capturing`.
 
 Add the four `CaptureError` lines — `restricted` ("Nimbus can't capture browser system pages."), `url-changed` ("You've moved on — this panel is still about the page you opened it on."), `injection-failed` ("Couldn't read this page."), `empty` ("There's nothing readable on this page to save.") — as a `Record<CaptureError, string>` next to the existing message tables, so the four reasons stay four distinct answers rather than one generic failure.
+
+**Put it in `panel-in-page.ts`, beside `RELATED_MESSAGES` (`:58`) — not in `panel-view.ts`.** Copy does live in the view, but the distinction this repo already draws is by *what the string keys off*: `panel-view.ts` holds copy for states it renders, while `RELATED_MESSAGES` maps a **response reason code** to a sentence, which is the controller reacting to a message. `CAPTURE_MESSAGES` is exactly the same shape keyed off `CaptureError`, so it goes exactly where its twin already is. (`AGENT_ERRORS` in `src/shared/types.ts` is not a counter-example — that is a union of codes, not a copy table.)
 
 Wire `onRecapture` to the same `sendCapture()`. It is the identical flow: `POST /v1/clips` upserts on the canonicalised URL, so a re-capture updates the one item rather than creating a second.
 
