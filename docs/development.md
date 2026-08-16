@@ -511,7 +511,8 @@ more than one indexed item (the panel shows a chooser when it does).
    gesture itself is human.)** Select a whole paragraph → **Define in
    Nimbus**. The lane says *"That's a passage, not a term"*. Confirm in
    DevTools' network/SW logs that **no** `/v1/agents/glossary` call went out.
-4. <!-- e2e:input-lanes-4 --> Repeat step 1 on a page Nimbus does **not**
+4. <!-- e2e:input-lanes-4 --> **(e2e covers the handler; the context-menu
+   gesture itself is human.)** Repeat step 1 on a page Nimbus does **not**
    recognise — an internal wiki, a vendor console. The lane must still work;
    the page lanes must still be absent. This is the slice's central claim.
 5. <!-- e2e:input-lanes-5 --> **(e2e covers the handler; the context-menu
@@ -559,10 +560,13 @@ Prereq: paired, gateway running, a resolved GitHub pull request available.
    belongs to the gateway repo's own suite, not to a client harness whose mock
    stands in for that gateway).** Related shows items *from github.com* — the
    host filter that used to hide them is working.
-7. **(not yet automated — needs the selection-hook driving that the
-   input-lanes suite establishes).** Select a phrase and run *What's related to
-   this?* — the results must change, and the PR you are on must not appear
-   among them.
+7. **(not yet automated — the mock's `/v1/clips/related` route is
+   deliberately unconditional on the query (see step 6 above), so "the
+   results must change" has nothing to change against; input-lanes.e2e.ts's
+   selection hook can already drive the gesture, this just needs a
+   query-aware related route in the mock to answer differently).** Select a
+   phrase and run *What's related to this?* — the results must change, and
+   the PR you are on must not appear among them.
 8. **(human — a design judgement, not an assertion).** Note whether the groups
    are mostly one row each: if they are, the headings are noise and grouping
    should be dropped from the lane (see the spec's "Not in this slice").

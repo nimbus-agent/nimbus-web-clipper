@@ -39,6 +39,7 @@ import { launchExtension } from "../../scripts/e2e/launch.ts";
 import { AGENT_RUN_DONE, type Scenario } from "../../scripts/screenshots/gateway-fixtures.ts";
 import { GATEWAY_PATHS } from "../../src/shared/gateway.ts";
 import { PANEL_HOST_ID, PANEL_SELECTION_HOOK } from "../../src/shared/panel-host.ts";
+import { MAX_TERM_LENGTH } from "../../src/shared/term.ts";
 
 export const COVERS = [
   "input-lanes-1",
@@ -128,8 +129,10 @@ test("Define in Nimbus opens a closed panel with the glossary lane already answe
     await page.bringToFront();
 
     // Two visible steps, deliberately not one: the panel is not open yet, so
-    // this is `deliverSelection`'s mount-on-miss fallback, not its
-    // already-open hook call (see this suite's own header comment).
+    // this reproduces the SHAPE of `deliverSelection`'s mount-on-miss
+    // fallback (inject, then call the hook) — production's own
+    // `deliverSelection` is never entered here; see this suite's own header
+    // comment for why.
     await togglePanel(h.sw, url); // inject
     await deliverSelection(h.sw, url, "cache", "define"); // hand it the selection
 
@@ -201,12 +204,12 @@ test("a passage refuses locally, with no glossary invoke ever sent", async () =>
     await page.bringToFront();
     await togglePanel(h.sw, url);
 
-    // Well over MAX_TERM_LENGTH (128) — a paragraph, not a term.
+    // Well over MAX_TERM_LENGTH — a paragraph, not a term.
     const passage =
       "Local-first software keeps your data on your own machine while still " +
       "supporting collaboration and sync, and this sentence alone is already " +
       "long enough on its own to cross the term limit by a comfortable margin.";
-    expect(passage.length).toBeGreaterThan(128);
+    expect(passage.length).toBeGreaterThan(MAX_TERM_LENGTH);
     await deliverSelection(h.sw, url, passage, "define");
 
     // input-lanes-3: the lane still appears — the refusal is what the user
@@ -375,9 +378,9 @@ test("picking a candidate on an ambiguous page answers the item lanes about that
     await expect(page.locator(".nimbus-related__candidate")).toHaveCount(2);
     await page.locator(".nimbus-related__candidate").first().click();
 
-    // input-lanes-8: the two page lanes now appear UNDER the chosen header
-    // and answer about that item — never the "couldn't pin this page to one
-    // indexed item" refusal `not_resolved` renders.
+    // input-lanes-8: the TWO page lanes now appear UNDER the chosen header
+    // and both answer about that item — never the "couldn't pin this page to
+    // one indexed item" refusal `not_resolved` renders.
     await expect(page.locator(".nimbus-related__header-item")).toHaveText(
       "Cache the readability pass",
     );
@@ -386,6 +389,12 @@ test("picking a candidate on an ambiguous page answers the item lanes about that
     await impactLane.locator("summary").click();
     await expect(impactLane.locator(".nimbus-related__brief")).toHaveText(AGENT_RUN_DONE.brief);
     await expect(impactLane.locator(".nimbus-related__status")).toHaveCount(0);
+
+    const expertLane = page.locator('[data-lane="expert"]');
+    await expect(expertLane).toHaveCount(1);
+    await expertLane.locator("summary").click();
+    await expect(expertLane.locator(".nimbus-related__brief")).toHaveText(AGENT_RUN_DONE.brief);
+    await expect(expertLane.locator(".nimbus-related__status")).toHaveCount(0);
   } finally {
     await h.close();
   }

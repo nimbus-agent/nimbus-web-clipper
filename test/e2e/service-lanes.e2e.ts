@@ -70,12 +70,22 @@ test("a dashboard's service lanes name the scope, run to a brief, and replay fro
   // fast the second answer comes back. See `onRequest`'s own doc comment
   // (gateway-fixtures.ts) for why a value beats a race here.
   const invokeCalls: string[] = [];
+  const catchupInvoke = `${GATEWAY_PATHS.agents}/catchup`;
   const scenario: Scenario = {
     onRequest: (pathname) => {
-      if (pathname === `${GATEWAY_PATHS.agents}/catchup`) {
+      if (pathname === catchupInvoke) {
         invokeCalls.push(pathname);
       }
     },
+    // Holds the FIRST invoke open long enough for the optimistic "Working…"
+    // state (set synchronously, before this response lands — see
+    // `sendAgentRun`, panel-in-page.ts) to be genuinely observable rather than
+    // a race against a loopback round trip fast enough to settle before the
+    // next assertion poll — the same reasoning, and the same mechanism, as
+    // capture.e2e.ts's "Saving to Nimbus…" test. A reopened panel's re-expand
+    // never reaches this route at all (handleAgentRun's cache short-circuit —
+    // see service-lanes-3 below), so this delay cannot mask a second run.
+    delayMs: { [catchupInvoke]: 300 },
   };
   const h = await launchExtension({ scenario });
   try {
@@ -109,9 +119,15 @@ test("a dashboard's service lanes name the scope, run to a brief, and replay fro
     await expect(page.locator('[data-lane="decisions"]')).toHaveCount(1);
     await expect(page.locator('[data-lane="ownership"]')).toHaveCount(1);
 
-    // service-lanes-2: expand one lane. It settles on `done` with a brief —
-    // never an empty lane.
+    // service-lanes-2: expand one lane. It reaches `running` — the exact
+    // "Working…" line `renderLaneBody` (panel-view.ts) emits for that
+    // state, held open long enough to observe by this scenario's own
+    // `delayMs` above — then settles on `done` with a brief. Never an empty
+    // lane.
     await page.locator('[data-lane="catchup"] summary').click();
+    await expect(page.locator('[data-lane="catchup"] .nimbus-related__status')).toHaveText(
+      "Working…",
+    );
     const brief = page.locator('[data-lane="catchup"] .nimbus-related__brief');
     await expect(brief).toHaveText(AGENT_RUN_DONE.brief);
     expect(invokeCalls.length).toBe(1);
