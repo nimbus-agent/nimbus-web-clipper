@@ -16,6 +16,7 @@ import type {
   ResolveMatchKind,
   ScopeGap,
 } from "../shared/types.ts";
+import { groupHits, humaniseType } from "./related-groups.ts";
 
 /** One spelling of each product name — mirrors `options/surfaces-view.ts`. */
 const PRODUCT_NAMES: Record<Product, string> = {
@@ -56,7 +57,7 @@ export function renderError(doc: Document, message: string): HTMLElement {
   return p;
 }
 
-export function renderHit(doc: Document, hit: RelatedHit): HTMLElement {
+export function renderHit(doc: Document, hit: RelatedHit, nowMs: number): HTMLElement {
   const item = doc.createElement("li");
   item.className = "nimbus-related__item";
 
@@ -76,29 +77,60 @@ export function renderHit(doc: Document, hit: RelatedHit): HTMLElement {
     title = span;
   }
   title.classList.add("nimbus-related__title");
+  item.append(title);
 
-  const badge = doc.createElement("span");
-  badge.className = "nimbus-related__badge";
-  badge.textContent = hit.service;
+  // The kind chip and the age line are both OPTIONAL by design: a gateway older
+  // than the projection sends neither, and an absent chip is quieter than a chip
+  // that says nothing. The service badge is gone from the row — the group
+  // heading above already names it once, and repeating it per row was the
+  // clutter that made this list hard to scan.
+  const kind = humaniseType(hit.type);
+  if (kind !== null) {
+    const chip = doc.createElement("span");
+    chip.className = "nimbus-related__kind";
+    chip.textContent = kind;
+    item.append(chip);
+  }
 
-  const snippet = doc.createElement("p");
-  snippet.className = "nimbus-related__snippet";
-  snippet.textContent = hit.snippet;
+  if (hit.snippet !== "") {
+    const snippet = doc.createElement("p");
+    snippet.className = "nimbus-related__snippet";
+    snippet.textContent = hit.snippet;
+    item.append(snippet);
+  }
 
-  item.append(title, badge, snippet);
+  if (hit.modifiedAt !== undefined) {
+    const age = doc.createElement("p");
+    age.className = "nimbus-related__age";
+    // "Updated", never "Indexed" — this is the item's own last-modified time as
+    // its source reports it. Same word the header uses, deliberately.
+    age.textContent = `Updated ${formatAge(hit.modifiedAt, nowMs)}`;
+    item.append(age);
+  }
+
   return item;
 }
 
-export function renderHits(doc: Document, items: RelatedHit[]): HTMLElement {
+export function renderHits(doc: Document, items: RelatedHit[], nowMs: number): HTMLElement {
   if (items.length === 0) {
     return renderError(doc, "No related items found.");
   }
-  const list = doc.createElement("ul");
-  list.className = "nimbus-related__list";
-  for (const hit of items) {
-    list.append(renderHit(doc, hit));
+  const wrapper = doc.createElement("div");
+  wrapper.className = "nimbus-related__groups";
+  for (const group of groupHits(items)) {
+    const head = doc.createElement("p");
+    head.className = "nimbus-related__group-head";
+    // The count is what makes an all-one-service result read as a real answer
+    // rather than as a truncation.
+    head.textContent = `${group.service} · ${String(group.hits.length)}`;
+    const list = doc.createElement("ul");
+    list.className = "nimbus-related__list";
+    for (const hit of group.hits) {
+      list.append(renderHit(doc, hit, nowMs));
+    }
+    wrapper.append(head, list);
   }
-  return list;
+  return wrapper;
 }
 
 /**

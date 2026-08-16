@@ -24,9 +24,11 @@ const base: RelatedHit = {
   url: "https://ex.com/d",
 };
 
+const HIT_NOW = 1_700_000_000_000;
+
 describe("renderHit", () => {
   test("a url hit renders an anchor with safe target/rel and the title as text", () => {
-    const el = renderHit(document, base);
+    const el = renderHit(document, base, HIT_NOW);
     const a = el.querySelector("a");
     expect(a).not.toBeNull();
     expect(a?.getAttribute("href")).toBe("https://ex.com/d");
@@ -35,32 +37,40 @@ describe("renderHit", () => {
     expect(a?.textContent).toBe("Doc");
   });
   test("a url:null hit renders the title as plain text (no anchor)", () => {
-    const el = renderHit(document, { ...base, url: null });
+    const el = renderHit(document, { ...base, url: null }, HIT_NOW);
     expect(el.querySelector("a")).toBeNull();
     expect(el.textContent).toContain("Doc");
   });
   test("XSS backstop — markup in title/snippet is inert text, not parsed nodes", () => {
-    const el = renderHit(document, {
-      ...base,
-      url: null,
-      title: "<img src=x onerror=alert(1)>",
-      snippet: "<script>alert(2)</script>",
-    });
+    const el = renderHit(
+      document,
+      {
+        ...base,
+        url: null,
+        title: "<img src=x onerror=alert(1)>",
+        snippet: "<script>alert(2)</script>",
+      },
+      HIT_NOW,
+    );
     expect(el.querySelector("img")).toBeNull();
     expect(el.querySelector("script")).toBeNull();
     expect(el.textContent).toContain("<img src=x onerror=alert(1)>");
     expect(el.textContent).toContain("<script>alert(2)</script>");
   });
   test("javascript: URL — no anchor rendered, title appears as plain text", () => {
-    const el = renderHit(document, { ...base, url: "javascript:alert(1)" });
+    const el = renderHit(document, { ...base, url: "javascript:alert(1)" }, HIT_NOW);
     expect(el.querySelector("a")).toBeNull();
     expect(el.textContent).toContain("Doc");
   });
   test("data: URL — no anchor rendered, title appears as plain text", () => {
-    const el = renderHit(document, {
-      ...base,
-      url: "data:text/html,<script>alert(1)</script>",
-    });
+    const el = renderHit(
+      document,
+      {
+        ...base,
+        url: "data:text/html,<script>alert(1)</script>",
+      },
+      HIT_NOW,
+    );
     expect(el.querySelector("a")).toBeNull();
     expect(el.textContent).toContain("Doc");
   });
@@ -68,11 +78,70 @@ describe("renderHit", () => {
 
 describe("renderHits", () => {
   test("empty list → the empty-state message", () => {
-    expect(renderHits(document, []).textContent).toBe("No related items found.");
+    expect(renderHits(document, [], HIT_NOW).textContent).toBe("No related items found.");
   });
   test("renders one node per hit", () => {
-    const list = renderHits(document, [base, { ...base, id: "2" }]);
+    const list = renderHits(document, [base, { ...base, id: "2" }], HIT_NOW);
     expect(list.querySelectorAll(".nimbus-related__item")).toHaveLength(2);
+  });
+});
+
+describe("renderHits — the richer row", () => {
+  const NOW = 1_700_000_000_000;
+  function hit(over: Partial<RelatedHit> = {}): RelatedHit {
+    return { id: "gh:1", title: "T", service: "github", snippet: "body words", url: null, ...over };
+  }
+
+  test("a hit with a type renders a chip with the humanised label", () => {
+    const el = renderHits(document, [hit({ type: "pr" })], NOW);
+    expect(el.querySelector(".nimbus-related__kind")?.textContent).toBe("Pull request");
+  });
+
+  test("a hit without a type renders no chip at all", () => {
+    const el = renderHits(document, [hit()], NOW);
+    expect(el.querySelector(".nimbus-related__kind")).toBeNull();
+  });
+
+  test("modifiedAt renders as 'Updated …', the header's wording", () => {
+    const el = renderHits(document, [hit({ modifiedAt: NOW - 3 * 24 * 60 * 60 * 1000 })], NOW);
+    expect(el.querySelector(".nimbus-related__age")?.textContent).toBe("Updated 3 days ago");
+  });
+
+  test("no modifiedAt renders no age line", () => {
+    const el = renderHits(document, [hit()], NOW);
+    expect(el.querySelector(".nimbus-related__age")).toBeNull();
+  });
+
+  test("an empty snippet omits the paragraph rather than rendering it blank", () => {
+    const el = renderHits(document, [hit({ snippet: "" })], NOW);
+    expect(el.querySelector(".nimbus-related__snippet")).toBeNull();
+  });
+
+  test("a group heading names the service and counts its hits", () => {
+    const el = renderHits(document, [hit({ id: "a" }), hit({ id: "b" })], NOW);
+    const heads = [...el.querySelectorAll(".nimbus-related__group-head")].map((h) => h.textContent);
+    expect(heads).toEqual(["github · 2"]);
+  });
+
+  test("two services produce two headings in rank order", () => {
+    const el = renderHits(
+      document,
+      [hit({ id: "j", service: "jira" }), hit({ id: "g", service: "github" })],
+      NOW,
+    );
+    const heads = [...el.querySelectorAll(".nimbus-related__group-head")].map((h) => h.textContent);
+    expect(heads).toEqual(["jira · 1", "github · 1"]);
+  });
+
+  test("gateway strings are never treated as markup", () => {
+    const el = renderHits(document, [hit({ title: "<img src=x onerror=alert(1)>" })], NOW);
+    expect(el.querySelector("img")).toBeNull();
+    expect(el.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+
+  test("no hits still renders the empty state", () => {
+    const el = renderHits(document, [], NOW);
+    expect(el.textContent).toBe("No related items found.");
   });
 });
 

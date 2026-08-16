@@ -234,16 +234,10 @@ const STYLES = `
 .nimbus-related__list { list-style: none; margin: 0; padding: 0; }
 .nimbus-related__item { padding: 10px 16px; border-bottom: 1px solid var(--nimbus-border); }
 .nimbus-related__title { display: block; font-weight: 600; color: var(--nimbus-accent); text-decoration: none; }
-.nimbus-related__badge {
-  display: inline-block;
-  margin: 4px 0;
-  padding: 1px 6px;
-  font-size: 11px;
-  border-radius: 4px;
-  background: var(--nimbus-border);
-  color: var(--nimbus-muted);
-}
 .nimbus-related__snippet { margin: 4px 0 0; color: var(--nimbus-muted); }
+.nimbus-related__group-head { margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .6; }
+.nimbus-related__kind { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 3px; font-size: 10px; background: rgba(127,127,127,.18); }
+.nimbus-related__age { margin: 2px 0 0; font-size: 11px; opacity: .55; }
 .nimbus-related__status { padding: 16px; color: var(--nimbus-muted); overflow-wrap: anywhere; }
 .nimbus-related__shell { display: flex; flex-direction: column; }
 .nimbus-related__header-state { padding: 12px 16px; border-bottom: 1px solid var(--nimbus-border); }
@@ -1376,7 +1370,8 @@ function createPanel(body: HTMLElement): {
       relatedBody = (doc) => renderError(doc, "Unexpected response.");
     } else if (res.ok) {
       const items: RelatedHit[] = res.items;
-      relatedBody = (doc) => renderHits(doc, items);
+      const nowMs = Date.now();
+      relatedBody = (doc) => renderHits(doc, items, nowMs);
     } else {
       const message = RELATED_MESSAGES[res.reason] ?? "Couldn't fetch related items.";
       relatedBody = (doc) => renderError(doc, message);
