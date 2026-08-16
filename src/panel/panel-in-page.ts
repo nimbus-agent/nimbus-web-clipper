@@ -234,16 +234,10 @@ const STYLES = `
 .nimbus-related__list { list-style: none; margin: 0; padding: 0; }
 .nimbus-related__item { padding: 10px 16px; border-bottom: 1px solid var(--nimbus-border); }
 .nimbus-related__title { display: block; font-weight: 600; color: var(--nimbus-accent); text-decoration: none; }
-.nimbus-related__badge {
-  display: inline-block;
-  margin: 4px 0;
-  padding: 1px 6px;
-  font-size: 11px;
-  border-radius: 4px;
-  background: var(--nimbus-border);
-  color: var(--nimbus-muted);
-}
 .nimbus-related__snippet { margin: 4px 0 0; color: var(--nimbus-muted); }
+.nimbus-related__group-head { margin: 10px 0 4px; padding: 0 16px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; opacity: .6; }
+.nimbus-related__kind { display: inline-block; padding: 0 5px; border-radius: 3px; font-size: 10px; background: rgba(127,127,127,.18); }
+.nimbus-related__age { margin: 2px 0 0; font-size: 11px; opacity: .55; }
 .nimbus-related__status { padding: 16px; color: var(--nimbus-muted); overflow-wrap: anywhere; }
 .nimbus-related__shell { display: flex; flex-direction: column; }
 .nimbus-related__header-state { padding: 12px 16px; border-bottom: 1px solid var(--nimbus-border); }
@@ -465,9 +459,13 @@ function fetchOutcomeHeader(res: unknown, surface: string, product: Product): He
 }
 
 /**
- * One panel's state and the two loads that fill it. Resolve and related are
- * fetched in PARALLEL and land independently: a slow or failing resolve must
- * never keep the related lane from appearing.
+ * One panel's state and the two loads that fill it. Related now waits on
+ * Resolve (see `loadRelated`'s `shownHeader()` read and the mount-time
+ * `loadHeader().then(loadRelated)` chain): Related queries the item the
+ * header names, so a SLOW resolve delays Related by one loopback round-trip.
+ * A FAILING resolve does not, though — `loadHeader` never rejects, it catches
+ * its own send failure and paints an error header, so Related still runs
+ * (with no `itemId`, falling back to a title-only query).
  *
  * State lives in this closure rather than at module level. Each injection of
  * panel.js re-evaluates the bundle in a fresh scope, so module-level `let` would
@@ -928,7 +926,11 @@ function createPanel(body: HTMLElement): {
       laneInFlight.delete(lane);
     }
     paint();
-    await Promise.all([loadHeader(), loadRelated()]);
+    // Sequential, not `Promise.all`, for the same reason as the mount-time
+    // chain below: `loadRelated` reads the header synchronously and must not
+    // run until `loadHeader` has assigned it.
+    await loadHeader();
+    await loadRelated();
   }
 
   /**
@@ -1099,9 +1101,8 @@ function createPanel(body: HTMLElement): {
     }));
     // No related lane on a dashboard: `/v1/clips/related` keyed on a dashboard's
     // title and URL returns noise dressed as recall. The related REQUEST is still
-    // sent — it is fired in parallel with the resolve, before the recognition is
-    // known, and serialising the two would slow every item page to save one
-    // loopback call on a dashboard. Its answer is simply not rendered.
+    // sent — after the resolve, once the recognition is known — its answer is
+    // simply not rendered here.
     const lanes: Lane[] =
       surfaceKind === "home"
         ? agentLanes
@@ -1133,6 +1134,12 @@ function createPanel(body: HTMLElement): {
         (c) => {
           chosen = c;
           paint();
+          // The user just picked an item out of an ambiguous answer — Related
+          // was last run (if at all) with no item to query, or against a
+          // different candidate entirely. Re-run it now that `shownHeader()`
+          // names the chosen item, same detached/fail-closed style as the
+          // mount-time call above.
+          loadRelated().catch(() => undefined);
         },
         (action) => {
           handleFetchAction(action).catch(() => undefined);
@@ -1352,11 +1359,24 @@ function createPanel(body: HTMLElement): {
   async function loadRelated(selection?: string): Promise<void> {
     const gen = generation;
     let res: unknown;
+    // The item this panel's header names — `resolved`, or the candidate the
+    // user picked out of an ambiguous answer. Reusing `shownHeader()` means the
+    // lane can never be about a different item than the header above it. Hoisted
+    // above the `try` so the success branch below can filter it back out of the
+    // gateway's own results (see that branch's own comment for why).
+    const shown = shownHeader();
+    const itemId =
+      shown.kind === "resolved"
+        ? shown.item.id
+        : shown.kind === "chosen"
+          ? shown.candidate.id
+          : undefined;
     try {
       const context = readContext();
       res = await sendMessage({
         kind: "related",
         ...context,
+        ...(itemId === undefined ? {} : { itemId }),
         ...(selection === undefined ? {} : { selection }),
       });
     } catch {
@@ -1375,8 +1395,16 @@ function createPanel(body: HTMLElement): {
     if (!isRelatedResponse(res)) {
       relatedBody = (doc) => renderError(doc, "Unexpected response.");
     } else if (res.ok) {
-      const items: RelatedHit[] = res.items;
-      relatedBody = (doc) => renderHits(doc, items);
+      // Defends the old-gateway skew case: a gateway older than this feature
+      // ignores `itemId` entirely and applies no exclusion of its own, and the
+      // query is this item's own title — which matches this item best of all.
+      // Filtering here makes the gateway's own `excludeId` (clip-related.ts)
+      // belt-and-braces rather than the sole guard against the page listing
+      // itself as its own top related result.
+      const items: RelatedHit[] =
+        itemId === undefined ? res.items : res.items.filter((h) => h.id !== itemId);
+      const nowMs = Date.now();
+      relatedBody = (doc) => renderHits(doc, items, nowMs);
     } else {
       const message = RELATED_MESSAGES[res.reason] ?? "Couldn't fetch related items.";
       relatedBody = (doc) => renderError(doc, message);
@@ -1491,12 +1519,22 @@ function mount(): void {
 
   // Land keyboard/screen-reader users inside the panel (focus only — no trap).
   close.focus();
-  // Parallel on purpose — neither request gates the other. Fail closed like every
-  // other detached call in this codebase (see service-worker.ts): there is no
-  // console in src/ and nowhere to report an unexpected rejection, so swallowing
-  // it beats an unhandled rejection in the host page.
-  view.loadHeader().catch(() => undefined);
-  view.loadRelated().catch(() => undefined);
+  // Header now GATES Related: `loadRelated` reads `shownHeader()` — which is
+  // only meaningful once `header` has been assigned — SYNCHRONOUSLY, before its
+  // own first `await`, so firing the two in parallel sent every related request
+  // with no `itemId` at all (the header was still `{kind:"loading"}`). Chained
+  // instead of run side by side — one extra loopback round-trip before Related
+  // starts, in exchange for Related actually being about the item the header
+  // names. `loadHeader` never rejects (it catches its own send failure and
+  // paints an error header), so this `.then` is reached on every mount; the
+  // `.catch` below is fail-closed insurance, same as every other detached call
+  // in this codebase (see service-worker.ts): there is no console in src/ and
+  // nowhere to report an unexpected rejection, so swallowing it beats an
+  // unhandled rejection in the host page.
+  view
+    .loadHeader()
+    .then(() => view.loadRelated())
+    .catch(() => undefined);
 }
 
 // Self-toggle entry: an existing panel closes via its own teardown (aborting its

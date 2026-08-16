@@ -1017,13 +1017,31 @@ organizing after.*
 second memory. Mostly built on the existing `/related`; the deepest cuts need the
 engine to grow.*
 
-### 4.1 Richer related panel · 🟢 · M
+### 4.1 Richer related panel · 🟢/🟡 · M — ✅ shipped (open-in-Nimbus dropped)
 > **What** Grouped, previewable related items (source type, snippet, date) with
 > open-in-Nimbus.
 > **Touches** `src/panel/panel-view.ts`, `src/shared/related.ts`.
 > **Done when** Related items are scannable at a glance and openable in one click.
 > **Reframe** Retained as the first lane of the **C1.3** shell — same content,
 > rendered inside the panel's lane contract instead of alongside it.
+> **Status** Shipped, and two thirds of the brief turned out to be a correction
+> rather than an addition. The **snippet was an extract of the title** —
+> `snippet()`'s second argument is an FTS5 column index and V48 re-pointed
+> `item_fts` to `(title, body)`, so index `0` returned the title the client was
+> already printing above it. And the lane **excluded its own best results**: the
+> gateway drops every hit sharing the host of the `canonicalUrl` sent, which on a
+> GitHub pull request is every other github.com item. Both shipped as defects,
+> not as gaps awaiting polish.
+> `type` and `date` were **not buildable against the locked contract** — the wire
+> hit was five fields — so this item is retagged 🟢 → 🟢/🟡: the projection was
+> proposed and landed upstream, and the client consumes it.
+> **`open-in-Nimbus` is dropped, not deferred.** It presumes a way to address an
+> indexed item from outside the gateway and there is none: no route, and
+> `grep -rn "nimbus://" packages` returns zero matches. The link to the item's
+> source, which the lane already renders, is the only "open" that exists. If a
+> deep-link primitive is ever proposed upstream this becomes a one-line client
+> change.
+> Design: `docs/superpowers/specs/2026-08-16-richer-related-lane-design.md`.
 
 ### 4.2 Related-on-selection · 🟢 · S — ✅ shipped
 > **What** Highlight text → see what's related to *that*, not just the page.

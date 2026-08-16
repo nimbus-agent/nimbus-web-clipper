@@ -10,6 +10,14 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Fixed
 
+- **Related items showed you the title twice.** Every related result's preview
+  line was an extract of its own title, printed directly beneath that title, so
+  the lane repeated itself instead of telling you anything about the item. It now
+  previews the item's actual content.
+- **Related hid the results most likely to help.** On a page whose site Nimbus
+  recognised — a GitHub pull request, say — every other item from that same site
+  was filtered out of Related, which on a working surface is exactly where all
+  your context lives. Related now excludes only the page you are on.
 - **The built-in sites could not be granted page access at all.** Options listed
   only the self-hosted instances you had added, and the Grant button lives on a
   row — so `github.com`, `gitlab.com`, `bitbucket.org` and Jira Cloud, which
@@ -40,6 +48,13 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **Related is about the item, not the tab title.** On a page Nimbus has resolved,
+  Related now asks about that indexed item rather than searching for whatever the
+  browser tab happens to be called — so a Jenkins page stops searching for
+  "build #42 [Jenkins]".
+- **Related results say what they are and how fresh they are.** Each result now
+  carries its kind — pull request, issue, CI run — and when it was last updated,
+  and results are grouped under the service they came from with a count.
 - **See exactly what leaves, before it leaves.** Clipping from the toolbar now
   shows you the whole payload first — title, URL, tags, and the body it will
   send — and sends nothing until you say so. The hotkey and right-click stay one

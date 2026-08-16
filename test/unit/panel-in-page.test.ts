@@ -194,14 +194,18 @@ afterEach(() => {
 
 describe("panel-in-page mount()", () => {
   test("builds a shadow-root panel appended directly under <html>, with a loading placeholder before the query settles", async () => {
-    // Hold the response open so we can observe the synchronous "Loading…" state
-    // before resolving it — mockResolvedValue's promise settles too quickly
-    // (before control returns to the test body) to observe reliably.
-    let resolve: (value: unknown) => void = () => {};
+    // Hold each response open so we can observe the synchronous "Loading…"
+    // state before resolving it — mockResolvedValue's promise settles too
+    // quickly (before control returns to the test body) to observe reliably.
+    // Related now waits on the header (mount's `loadHeader().then(loadRelated)`
+    // chain), so "resolve" must settle before "related" is even sent — one
+    // resolver per message kind, not one shared variable.
+    const resolvers: Partial<Record<string, (value: unknown) => void>> = {};
     harness.sendMessage.mockImplementation(
-      () =>
+      (message: unknown) =>
         new Promise((r) => {
-          resolve = r;
+          const kind = (message as { kind?: string }).kind ?? "unknown";
+          resolvers[kind] = r;
         }),
     );
 
@@ -218,7 +222,16 @@ describe("panel-in-page mount()", () => {
     expect(root?.querySelector(".nimbus-related__close")).not.toBeNull();
     expect(status()).toBe("Loading…");
 
-    resolve({ kind: "related", ok: true, items: [] });
+    resolvers["resolve"]?.({
+      kind: "resolve",
+      ok: false,
+      reason: "unreachable",
+      recognition: { ok: false, reason: "unknown-host" },
+    });
+    await vi.waitFor(() => {
+      expect(resolvers["related"]).toBeDefined();
+    });
+    resolvers["related"]?.({ kind: "related", ok: true, items: [] });
     await vi.waitFor(() => {
       expect(status()).toBe("No related items found.");
     });
@@ -333,6 +346,87 @@ describe("panel-in-page query()", () => {
       expect(status()).not.toBe("Loading…");
     });
     expect(status()).toBe("Unexpected response.");
+  });
+});
+
+describe("panel-in-page related lane and the resolved item id", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #1",
+    resolveUrl: "https://github.com/acme/web/pull/1",
+  } as const;
+
+  const resolvedItem = {
+    id: "i1",
+    service: "github",
+    type: "pr",
+    title: "Add thing",
+    url: "https://github.com/acme/web/pull/1",
+    modifiedAt: 1_700_000_000_000,
+  };
+
+  const resolvedResponse = {
+    kind: "resolve",
+    ok: true,
+    recognition,
+    outcome: { kind: "found", matchKind: "exact", item: resolvedItem },
+  };
+
+  // Finding 1: `loadRelated` reads the header SYNCHRONOUSLY, before its own
+  // first `await`, so firing it alongside `loadHeader` on a plain panel open
+  // (no selection involved) sent every related request with `itemId`
+  // undefined — the header was still `{kind:"loading"}`. This pins the fix:
+  // a resolved page's very first related request must carry the item id.
+  test("sends itemId on a plain panel open of a resolved page", async () => {
+    const relatedMessages: unknown[] = [];
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const kind = (message as { kind?: string }).kind;
+      if (kind === "resolve") {
+        return resolvedResponse;
+      }
+      if (kind === "related") {
+        relatedMessages.push(message);
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+
+    await loadPanel();
+
+    await vi.waitFor(() => {
+      expect(relatedMessages.length).toBeGreaterThan(0);
+    });
+    expect(relatedMessages[0]).toMatchObject({ kind: "related", itemId: "i1" });
+  });
+
+  // Finding 2: an older gateway ignores `itemId` and applies no exclusion of
+  // its own, so the resolved page's own title-matched hit would render as its
+  // own top related result. The client filters it out regardless of what the
+  // gateway did.
+  test("filters the current item out of the rendered related list", async () => {
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const kind = (message as { kind?: string }).kind;
+      if (kind === "resolve") {
+        return resolvedResponse;
+      }
+      return {
+        kind: "related",
+        ok: true,
+        items: [
+          { id: "i1", title: "Self", service: "github", snippet: "s1", url: null },
+          { id: "i2", title: "Other", service: "github", snippet: "s2", url: null },
+        ],
+      };
+    });
+
+    await loadPanel();
+
+    await vi.waitFor(() => {
+      expect(shadow()?.querySelectorAll(".nimbus-related__item")).toHaveLength(1);
+    });
+    expect(shadow()?.querySelector(".nimbus-related__title")?.textContent).toBe("Other");
   });
 });
 

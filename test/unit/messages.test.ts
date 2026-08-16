@@ -85,6 +85,11 @@ describe("isRelatedRequest", () => {
     expect(isRelatedRequest({ kind: "related", title: 1 })).toBe(false);
     expect(isRelatedRequest(null)).toBe(false);
   });
+  test("isRelatedRequest accepts an itemId and rejects a non-string one", () => {
+    expect(isRelatedRequest({ kind: "related", itemId: "gh:1" })).toBe(true);
+    expect(isRelatedRequest({ kind: "related" })).toBe(true);
+    expect(isRelatedRequest({ kind: "related", itemId: 7 })).toBe(false);
+  });
 });
 
 describe("isRelatedResponse", () => {

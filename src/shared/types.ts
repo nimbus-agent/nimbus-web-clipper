@@ -51,6 +51,21 @@ export interface RelatedHit {
   readonly service: string;
   readonly snippet: string;
   readonly url: string | null;
+  /**
+   * The connector's item kind — `pr`, `issue`, `ci_run`, … OPTIONAL because a
+   * gateway older than the projection sends none, and an extension updates on a
+   * different schedule than the gateway it talks to. Absent renders no chip; it
+   * is never a reason to reject the hit.
+   *
+   * An OPEN vocabulary: connectors add kinds freely, so nothing may switch
+   * exhaustively over it. See `humaniseType` in `panel/related-groups.ts`.
+   */
+  readonly type?: string;
+  /** Epoch ms, renamed from the wire's `modified_at` at the HTTP boundary
+   *  (`gateway-client.ts`) so the wire shape stops at the parser — the same
+   *  treatment `ResolvedItem.modifiedAt` already gets. Optional for the same
+   *  reason as `type`. */
+  readonly modifiedAt?: number;
 }
 
 export type RelatedError = "not_paired" | "unauthorized" | "unreachable" | "server_error";
