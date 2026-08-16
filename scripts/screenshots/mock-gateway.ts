@@ -57,6 +57,7 @@ function wait(ms: number): Promise<void> {
 
 export async function handleRequest(req: Request, scenario: Scenario = {}): Promise<Response> {
   const url = new URL(req.url);
+  scenario.onRequest?.(url.pathname);
   const delayMs = scenario.delayMs?.[url.pathname];
   if (delayMs !== undefined && delayMs > 0) {
     await wait(delayMs);

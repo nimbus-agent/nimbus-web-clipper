@@ -382,10 +382,12 @@ building so the context menu is re-registered.
 
 ## Manual verification — Service lanes (C2.3)
 
-**Outstanding — this pass has not yet been performed.** Its summary form is
-folded into "Manual verification — Setup that works" below (item 8), so it is
-tracked as one backlog item rather than two — run either checklist to clear
-it.
+**Steps 1–4 run on every PR** (`test/e2e/service-lanes.e2e.ts`), so this pass
+is no longer outstanding — the summary form folded into "Manual verification —
+Setup that works" below (item 8) is now redundant with the suite for the same
+four steps; it stays as a quick human sanity check, not as the thing that
+proves the slice works. Steps 5 and 6 still need a human pass — see their own
+notes below.
 
 Prereq: paired, gateway running, a token scoped with `agents` (`resolve` and
 `fetch` are not required — a service lane needs neither, see
@@ -398,27 +400,39 @@ above). **Step 6 requires a real gateway with no git-aware
 real `ownership` agent noticing the absence of a configured root, which the
 mock's fixed brief cannot produce.
 
-1. On `https://github.com/` with page access granted, open the panel. The header
-   reads **GitHub dashboard** and names the scope; the three service lanes are
-   present; there is no Related lane and no fetch button.
-2. Expand *What happened while I was away*. It reaches `running`, then `done`
-   with a brief — or a named failure. Never an empty lane.
-3. Close and reopen the panel, then re-expand the same lane. The stored brief
-   replays; no second run starts.
-4. Open the panel on a pull request. Related, *What breaks if it lands* and
-   *Who should review it* are present; none of the three service lanes are.
-5. On the dashboard, confirm **no ambient cue** appears, with the per-host
-   toggle on.
-6. With no `[[filesystem.roots]]` configured, *Who owns what* renders the
-   gateway's gap brief including its `nimbus index add` line — not a blank
-   lane.
+1. <!-- e2e:service-lanes-1 --> On `https://github.com/` with page access
+   granted, open the panel. The header reads **GitHub dashboard** and names
+   the scope; the three service lanes are present; there is no Related lane
+   and no fetch button.
+2. <!-- e2e:service-lanes-2 --> Expand *What happened while I was away*. It
+   reaches `running`, then `done` with a brief — or a named failure. Never an
+   empty lane.
+3. <!-- e2e:service-lanes-3 --> Close and reopen the panel, then re-expand the
+   same lane. The stored brief replays; no second run starts.
+4. <!-- e2e:service-lanes-4 --> Open the panel on a pull request. Related,
+   *What breaks if it lands* and *Who should review it* are present; none of
+   the three service lanes are.
+5. **(not yet automated — the ambient cue's silence on a dashboard is decided
+   by a 600ms in-worker debounce with no outbound request behind it for a HOME
+   page, so nothing this harness's mock can hold open or count makes the
+   debounce's conclusion observable; the pure decision is already exhaustively
+   covered by `ambient.test.ts`'s unit suite, and this project's own
+   no-arbitrary-sleep rule rules out proving the silence by timing it instead
+   — it would need a deliberate completion hook exposed from the ambient
+   machinery itself, not the mock).** On the dashboard, confirm **no ambient
+   cue** appears, with the per-host toggle on.
+6. **(human — needs a real gateway with no `[[filesystem.roots]]`
+   configured).** With no `[[filesystem.roots]]` configured, *Who owns what*
+   renders the gateway's gap brief including its `nimbus index add` line — not
+   a blank lane.
 
 ## Manual verification — Setup that works (discovery, connection health, the trust panel)
 
 Prereq: a Nimbus gateway available to start/stop on demand. Step 1 needs a
 fresh, never-paired profile; steps 2–6 need to be able to stop and restart the
-gateway. Step 8 folds in the Service lanes (C2.3) manual pass below, which had
-never been run — this is that backlog being cleared, not new work.
+gateway. Step 8 folds in the Service lanes (C2.3) manual pass below — its
+steps 1–4 now run on every PR (see that section), so this is a quick human
+sanity check alongside the suite, not the thing that proves the slice works.
 
 1. Load unpacked in Chrome. On a fresh profile, Options shows stage 1 active
    and 2–3 dimmed.
@@ -483,31 +497,45 @@ Prereq: paired, with the `agents` scope. The glossary steps need at least one
 term in your Nimbus glossary; the ambiguity step needs a URL that resolves to
 more than one indexed item (the panel shows a chooser when it does).
 
-1. On any page, select a word → right-click → **Define in Nimbus**. The panel
-   opens, a lane titled with that term is **already expanded**, and it answers.
-2. With the panel still open, select a *different* word → **Define in Nimbus**.
-   The panel must **stay open** (this is the toggle hazard: the worker reaches
-   the open panel through its hook, never by re-injecting `panel.js`), and the
-   lane retitles and re-answers for the new term.
-3. Select a whole paragraph → **Define in Nimbus**. The lane says *"That's a
-   passage, not a term"*. Confirm in DevTools' network/SW logs that **no**
-   `/v1/agents/glossary` call went out.
-4. Repeat step 1 on a page Nimbus does **not** recognise — an internal wiki, a
-   vendor console. The lane must still work; the page lanes must still be
-   absent. This is the slice's central claim.
-5. Select text inside a `<textarea>` or `<input>` and define it — it must work
+1. <!-- e2e:input-lanes-1 --> **(e2e covers the handler; the context-menu
+   gesture itself is human.)** On any page, select a word → right-click →
+   **Define in Nimbus**. The panel opens, a lane titled with that term is
+   **already expanded**, and it answers.
+2. <!-- e2e:input-lanes-2 --> **(e2e covers the handler; the context-menu
+   gesture itself is human.)** With the panel still open, select a *different*
+   word → **Define in Nimbus**. The panel must **stay open** (this is the
+   toggle hazard: the worker reaches the open panel through its hook, never by
+   re-injecting `panel.js`), and the lane retitles and re-answers for the new
+   term.
+3. <!-- e2e:input-lanes-3 --> **(e2e covers the handler; the context-menu
+   gesture itself is human.)** Select a whole paragraph → **Define in
+   Nimbus**. The lane says *"That's a passage, not a term"*. Confirm in
+   DevTools' network/SW logs that **no** `/v1/agents/glossary` call went out.
+4. <!-- e2e:input-lanes-4 --> Repeat step 1 on a page Nimbus does **not**
+   recognise — an internal wiki, a vendor console. The lane must still work;
+   the page lanes must still be absent. This is the slice's central claim.
+5. <!-- e2e:input-lanes-5 --> **(e2e covers the handler; the context-menu
+   gesture itself is human — and specifically here, so is the browser's own
+   capture of `selectionText` from inside the field, which the e2e suite
+   cannot drive either: it hands the lane a term already read out of a
+   `<textarea>`'s own selection range, not one captured via a right-click.)**
+   Select text inside a `<textarea>` or `<input>` and define it — it must work
    (this is why the entry reads the browser's captured `selectionText` rather
    than the page's own selection).
-6. Select text → **What's related to this?**. The Related lane re-runs against
-   the selection, and the glossary lane appears **collapsed and unrun** — no
-   agent run is spent on a question nobody asked.
-7. Open the panel with no selection anywhere: **no glossary lane at all**.
-8. On an ambiguous page, pick a candidate. The two pull-request lanes now appear
-   under the chosen header and answer **about that item** — never *"Nimbus
-   couldn't pin this page to one indexed item."*
-9. Navigate away within an SPA and re-read: the glossary lane is gone, because
-   the selection belonged to the page the panel has stopped describing.
-10. Repeat 1, 2, 6 and 8 in Firefox.
+6. <!-- e2e:input-lanes-6 --> **(e2e covers the handler; the context-menu
+   gesture itself is human.)** Select text → **What's related to this?**. The
+   Related lane re-runs against the selection, and the glossary lane appears
+   **collapsed and unrun** — no agent run is spent on a question nobody asked.
+7. <!-- e2e:input-lanes-7 --> Open the panel with no selection anywhere: **no
+   glossary lane at all**.
+8. <!-- e2e:input-lanes-8 --> On an ambiguous page, pick a candidate. The two
+   pull-request lanes now appear under the chosen header and answer **about
+   that item** — never *"Nimbus couldn't pin this page to one indexed item."*
+9. <!-- e2e:input-lanes-9 --> Navigate away within an SPA and re-read: the
+   glossary lane is gone, because the selection belonged to the page the panel
+   has stopped describing.
+10. **(human — Firefox; the harness loads the Chrome build).** Repeat 1, 2, 6
+    and 8 in Firefox.
 
 ## Manual verification — Related lane (richer rows)
 
@@ -527,11 +555,10 @@ Prereq: paired, gateway running, a resolved GitHub pull request available.
 4. <!-- e2e:related-lane-4 --> Rows group under a service heading with a count.
 5. <!-- e2e:related-lane-5 --> The preview line is prose from the item, not its
    title repeated.
-6. **(human — host filtering is gateway-side business logic: the mock's
-   `/v1/clips/related` route is deliberately unconditional on the query, so
-   this repo's e2e harness has nothing to assert the filter against without
-   reimplementing the real gateway's exclusion rule).** Related shows items
-   *from github.com* — the host filter that used to hide them is working.
+6. **(human — host filtering is a GATEWAY behaviour this repo does not own: it
+   belongs to the gateway repo's own suite, not to a client harness whose mock
+   stands in for that gateway).** Related shows items *from github.com* — the
+   host filter that used to hide them is working.
 7. **(not yet automated — needs the selection-hook driving that the
    input-lanes suite establishes).** Select a phrase and run *What's related to
    this?* — the results must change, and the PR you are on must not appear

@@ -183,6 +183,19 @@ export interface Scenario {
    * queue) gateway, not just this one.
    */
   readonly delayMs?: Readonly<Record<string, number>>;
+  /**
+   * Called with every request's pathname, before routing. Exists for the same
+   * reason `delayMs` does — some claims this harness needs to make ("no second
+   * run started", "the cached brief replayed instead of invoking again") are
+   * about a request NOT happening, and the project's own no-arbitrary-sleep
+   * rule (a claim about the future is proven by waiting, which this repo
+   * treats as undeterminable, not as "wait long enough") rules out proving a
+   * negative by timing a response instead. A plain counter the calling TEST
+   * owns is a value to assert on, same as a locator — never a mutable control
+   * endpoint the server exposes to itself, which is what would make one test's
+   * meaning depend on another's.
+   */
+  readonly onRequest?: (pathname: string) => void;
 }
 
 const NOT_INDEXED = {
