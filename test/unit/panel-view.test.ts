@@ -872,6 +872,40 @@ describe("the navigated-away notice", () => {
   });
 });
 
+describe("the capture refusal line", () => {
+  const LANES = [
+    {
+      id: "related",
+      title: "Related",
+      expanded: false,
+      render: (d: Document) => d.createElement("div"),
+    },
+  ];
+
+  // Finding 1: a refusal must sit BENEATH the header, never replace it — the
+  // header (and its still-live capture offer) is the retry.
+  it("renders beneath the header, leaving the header's own content in place", () => {
+    const shell = renderShell(document, {
+      header: { kind: "unrecognised" },
+      lanes: LANES,
+      captureRefusal: "Couldn't read this page.",
+    });
+    const classes = [...shell.children].map((c) => c.className);
+    expect(classes[0]).toContain("nimbus-related__header-state");
+    expect(classes[1]).toContain("nimbus-related__capture-refusal");
+    expect(shell.querySelector(".nimbus-related__capture-refusal")?.textContent).toContain(
+      "Couldn't read this page.",
+    );
+    // The offer (rendered by renderHeader's own unrecognised arm) is still there.
+    expect(shell.querySelector(".nimbus-related__capture")).not.toBeNull();
+  });
+
+  it("renders nothing when captureRefusal is absent", () => {
+    const shell = renderShell(document, { header: { kind: "unrecognised" }, lanes: LANES });
+    expect(shell.querySelector(".nimbus-related__capture-refusal")).toBeNull();
+  });
+});
+
 describe("the fetch preview", () => {
   const target: FetchTarget = {
     product: "github",

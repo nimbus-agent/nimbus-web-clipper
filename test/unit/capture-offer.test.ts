@@ -57,6 +57,23 @@ describe("offersCapture", () => {
   test("loading, resolved, service and error never offer capture", () => {
     expect(offersCapture({ kind: "loading" })).toBe(false);
     expect(offersCapture({ kind: "error", surface: null, message: "x" })).toBe(false);
+    expect(
+      offersCapture({
+        kind: "resolved",
+        surface: SURFACE,
+        item: {
+          id: "1",
+          service: "github",
+          type: "pr",
+          title: "A PR",
+          url: "https://github.com/a/b/pull/1",
+          modifiedAt: 1_700_000_000_000,
+        },
+        matchKind: "exact",
+        nowMs: 1_700_000_000_000,
+      }),
+    ).toBe(false);
+    expect(offersCapture({ kind: "service", surface: SURFACE, product: "github" })).toBe(false);
   });
 });
 

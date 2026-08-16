@@ -528,8 +528,9 @@ same as the popup/options DOM and the SW glue.
 
 1. On a real page Nimbus does not recognise (an internal wiki, a vendor
    console), open the panel. It offers to capture the page. Click it.
-2. Confirm the copy is labelled as yours: a captured header naming the item as
-   a copy you saved, not connector data.
+2. Confirm the copy is labelled as yours: the terminal *"Saved a copy of …"*
+   line. This page never reaches resolve (see step 4), so this line — not a
+   captured header — is the honest signal here.
 3. On a **recognised** page (a self-hosted instance the gateway cannot fetch,
    e.g. a `not-configured` connector) run the same capture, then close and
    reopen the panel. → It still shows the captured header — the durability is

@@ -47,7 +47,13 @@ the gateway having nothing left to try:
 | `fetch-blocked: unfetchable` | **Yes** | Terminal. |
 | `fetch-blocked: not-configured` | **Yes** | Terminal. Likely the most common real dead end. |
 | `fetch-blocked: needs-fetch-scope` | **Yes** | Terminal until the user re-pairs. |
-| `unresolvable` | **Yes** | The URL resolves to nothing and never will. |
+
+There is no `unresolvable` row, and there should not be one: `HeaderState` has no such
+kind. The client collapses that resolve outcome into `not-indexed`, carrying `fetchable`
+through unchanged — an unresolvable answer reads to the user as "not indexed" either
+way, so it takes the `not-indexed` row above like any other miss, fetchable or not. See
+`offersCapture`'s own doc comment (`src/shared/capture-offer.ts`) for the same point made
+at the code.
 
 On a fetchable miss the offer appears only **after** a fetch has been attempted and
 failed *terminally* — which lands in one of the `fetch-blocked` rows above. So the rule
@@ -179,11 +185,18 @@ surface line.
 `LANE_RULES` gates page lanes on `SurfaceKind`. A captured wiki page is `unrecognised`,
 so it has no surface, so `impact` and `expert` correctly do not appear — they are
 questions about a change under review, and this is a wiki page. The glossary lane still
-works, because its rule declares no surfaces and its input is a term. Related answers
-against the new item like any other.
+works, because its rule declares no surfaces and its input is a term.
 
-Nothing to add. This is the C2.3/C2.5 lane-rules design paying off: a new kind of
-resolved item needed no lane change at all.
+**Related does not follow this cleanly, and that is a correction, not the original
+claim.** `loadRelated` (`panel-in-page.ts`) derives its `itemId` only from a `resolved`
+or `chosen` header — a `captured` header falls through neither arm, so Related runs with
+no `itemId` and falls back to its `canonicalUrl` path, which excludes the whole host
+rather than just this item. Not a regression to fix here — recorded as the accurate
+behaviour, in place of the original "Related answers against the new item like any
+other," which was wrong.
+
+Otherwise, nothing to add: this is the C2.3/C2.5 lane-rules design paying off — a new
+kind of resolved item needed no lane-rule change at all.
 
 ### 6. One capture in flight, and an explicit "Update this copy"
 
@@ -235,10 +248,14 @@ them.
   than inline because it is a rule over seven states that two files consult, and
   `panel-view.ts` (916 lines) is not where a rule belongs. Same precedent as
   `lane-input.ts`.
-- `src/background/capture-tab.ts` — the inject-and-read step, factored out of
-  `quick-clip.ts` so the hotkey path and the panel path share one injection, one
-  restricted-URL check, and one failure vocabulary. `quick-clip.ts` keeps its toast; the
-  panel renders its own states.
+- `src/background/capture-tab.ts` — the panel path's own inject-and-read step. Only the
+  restricted-URL check (`isRestrictedUrl`) actually moved out of `quick-clip.ts` and is
+  shared between the two paths; the injection call, the post-capture `url-changed`
+  re-check, and the failure vocabulary are this function's own. `quick-clip.ts` still
+  calls `deps.runCapture` itself and keeps its own toast and its own (deliberately
+  looser) empty-body rule — see `capture-tab.ts`'s own comment for why the two differ.
+  Routing `quickClip` through `captureTab` is the better end state but is not this
+  slice's change.
 
   **It enforces `isRestrictedUrl` itself, and that is a security requirement rather than
   defence in depth.** Decision 1 argues the *offer* cannot appear on a restricted page,

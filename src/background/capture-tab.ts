@@ -1,8 +1,21 @@
 // src/background/capture-tab.ts
 // Inject capture.js into one tab and read the result back, with the two refusals
-// that must happen BEFORE injection. Shared by the hotkey path (quick-clip.ts)
-// and the panel's capture offer so there is one injection, one scheme guard and
-// one failure vocabulary rather than two that drift.
+// that must happen BEFORE injection.
+//
+// `isRestrictedUrl` (the scheme guard) is the one thing actually SHARED with
+// the hotkey path — `quick-clip.ts` imports it and re-checks it itself before
+// calling its own `runCapture`. Everything else here — the injection call,
+// the post-capture `url-changed` re-check, and the empty-body refusal — is
+// this panel-capture path's own; `quick-clip.ts` still calls `deps.runCapture`
+// directly and handles its own failures, it does not call `captureTab`.
+//
+// The empty-body rule genuinely differs between the two, and deliberately so:
+// this function refuses `capture.body === ""` for EVERY mode, while
+// `quick-clip.ts` refuses it only for `mode === "selection"` — an empty
+// ARTICLE capture there is not specially refused and is clipped as-is. This
+// path's stricter rule is the right one and is not being loosened to match:
+// refusing an empty article capture, rather than saving a hollow item, is
+// what this last-resort flow exists to get right.
 import type { CaptureError, CaptureResult } from "../shared/types.ts";
 
 const RESTRICTED_SCHEMES = new Set([

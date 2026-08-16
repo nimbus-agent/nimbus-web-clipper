@@ -1171,6 +1171,78 @@ describe("panel-in-page capture state machine", () => {
     expect(panel.textContent).toMatch(/moved|changed/i);
   });
 
+  // FINDING 1 (branch review): `captureState` used to win unconditionally in
+  // `shownHeader()` and nothing ever cleared a REFUSAL's entry there — a
+  // refused capture stranded the panel with no header, no offer, nothing to
+  // retry but closing and reopening the panel. The refusal now lives in its
+  // own field, rendered BENEATH the header instead of replacing it, so the
+  // header — and the very offer that produced the refusal — stays fully live.
+  it("a refusal leaves the header and its capture offer live, not stranded", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [
+        { kind: "capture", ok: false, reason: "empty" },
+        { kind: "capture", ok: true, capture: CAPTURE, preview: null },
+      ],
+      clip: [{ kind: "clip", ok: true, status: "created", bookmarked: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    // The refusal is visible...
+    expect(panel.textContent).toContain("There's nothing readable on this page to save.");
+    // ...but the underlying header — surface line and all — never left.
+    expect(headerText()).toContain("GitHub PR");
+    expect(headerText()).toContain("acme/web #1");
+
+    // And the offer is a genuinely live control, not a dead one left on
+    // screen: clicking it again sends a fresh capture, which this time
+    // succeeds all the way through to a clip.
+    clickCapture(panel);
+    await flush();
+
+    expect(sent.filter((k) => k === "capture")).toHaveLength(2);
+    expect(sent).toContain("clip");
+  });
+
+  // FINDING 1 (branch review): `loadHeader`'s clearing rule for the sticky
+  // capture-success line covered only `captured` — so a post-save re-resolve
+  // landing on `ambiguous` left "Saved a copy of …" permanently covering a
+  // candidate chooser the user could never again reach. The rule now clears
+  // on every settle the user can act on, `ambiguous` included.
+  it("a success followed by an ambiguous settle does not cover the chooser", async () => {
+    const sent: string[] = [];
+    const AMBIGUOUS_RESOLVE = {
+      kind: "resolve",
+      ok: true,
+      recognition: UNFETCHABLE_MISS.recognition,
+      outcome: {
+        kind: "ambiguous",
+        fetchable: false,
+        truncated: false,
+        candidates: [
+          { id: "a", service: "jira", type: "issue", title: "One", url: null },
+          { id: "b", service: "jira", type: "issue", title: "Two", url: null },
+        ],
+      },
+    };
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS, AMBIGUOUS_RESOLVE],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "clip", ok: true, status: "created", bookmarked: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    // The re-resolve settled on an ambiguous answer — the chooser must be
+    // reachable, not buried under the sticky "Saved a copy" line.
+    expect(headerText()).not.toContain("Saved a copy");
+    expect(panel.querySelectorAll("button.nimbus-related__candidate")).toHaveLength(2);
+  });
+
   it("a second click while one is in flight sends only one capture", async () => {
     const sent: string[] = [];
     const panel = await mountPanelWithScript(sent, {
@@ -1188,11 +1260,11 @@ describe("panel-in-page capture state machine", () => {
   // FIX 1 (review round 1): `fetch-blocked` exists ONLY as a `fetchState`
   // value — `headerFrom` never produces it — so every earlier test above
   // reaches the capture offer through `header` (`unrecognised`/`not-indexed`),
-  // where `fetchState` is null and the old `fetchState`-first precedence in
-  // `shownHeader()` happened to be harmless. This test reaches the offer via
-  // `sendFetch` -> `not-configured` instead, so `fetchState` is genuinely
-  // non-null when capture starts — pinning that `captureState` must win, or
-  // every capture status/refusal on this arm is set and never shown.
+  // where `fetchState` is null. This test reaches the offer via `sendFetch`
+  // -> `not-configured` instead, so `fetchState` is genuinely non-null when
+  // capture starts. `captureRefusal` (FINDING 1, branch review) is rendered
+  // as its own line regardless of which header/fetchState combination the
+  // offer came from, so this exercises that independence.
   it("a capture refusal renders even when the offer came from a fetch-blocked (not-configured) header", async () => {
     const sent: string[] = [];
     const recognition = {
@@ -1228,10 +1300,9 @@ describe("panel-in-page capture state machine", () => {
     clickCapture(panel);
     await flush();
 
-    // Before the fix, `shownHeader()` returned `fetchState` ahead of
-    // `captureState`, so this refusal was set but silently never rendered —
-    // the panel would repaint straight back to the unchanged
-    // "No GitHub connector is configured" box, reading as a dead control.
+    // The fetch-blocked box (still `fetchState`) and the refusal (its own
+    // `captureRefusal` line) both render — neither replaces the other.
+    expect(panel.textContent).toContain("No GitHub connector is configured");
     expect(panel.textContent).toContain("Nimbus can't capture browser system pages.");
   });
 

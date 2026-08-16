@@ -275,6 +275,11 @@ const STYLES = `
 .nimbus-related__header-state .nimbus-related__status { padding: 4px 0 0; }
 .nimbus-related__navaway { padding: 10px 16px 12px; border-bottom: 1px solid var(--nimbus-border); }
 .nimbus-related__navaway .nimbus-related__status { padding: 2px 0 4px; }
+/* A capture refusal, appended BENEATH the header rather than replacing it —
+   see captureRefusal, above in this file. No border of its own: it reads as
+   a continuation of the header/offer above it, not a separate section. */
+.nimbus-related__capture-refusal { padding: 0 16px 10px; }
+.nimbus-related__capture-refusal .nimbus-related__status { padding: 0; }
 .nimbus-related__navaway-lead { margin: 0; font-weight: 600; }
 .nimbus-related__surface { margin: 0; font-weight: 600; }
 .nimbus-related__header-item { margin: 4px 0 0; }
@@ -624,7 +629,19 @@ function createPanel(body: HTMLElement): {
   let fetchPreview: FetchTarget | null = null;
   /**
    * Mirrors `fetchState`: an override that wins in `shownHeader()` while a
-   * capture is reading the page, saving the clip, or reporting a refusal.
+   * capture is reading the page, saving the clip, or — the ONE terminal
+   * outcome this also covers — once it has SUCCEEDED. A REFUSAL is
+   * deliberately NOT one of the things this holds; see `captureRefusal`
+   * below for why and where those go instead.
+   *
+   * The success line is sticky on purpose: on the primary target for this
+   * feature — a page with no configured connector at all — a post-save
+   * re-resolve can never produce anything richer (`handleResolve`'s own
+   * recognise gate means it never even calls the gateway for a page it
+   * cannot recognise), so this line is the only confirmation that path can
+   * ever show. `loadHeader` clears it once the settled header is something
+   * richer the user can act on instead — see its own doc comment for the
+   * exact list.
    *
    * NOT set while merely awaiting the user's own confirmation — that is
    * `capturePreview` below, the same split `fetchState`/`fetchPreview` already
@@ -632,6 +649,30 @@ function createPanel(body: HTMLElement): {
    * no network activity for a status line to describe.
    */
   let captureState: HeaderState | null = null;
+  /**
+   * A capture REFUSAL — `url-changed`, `empty`, `restricted`,
+   * `injection-failed`, a connect failure, an unreadable response, or a
+   * non-queued clip failure — kept SEPARATE from `captureState` above.
+   *
+   * Unlike `captureState`'s in-flight lines and its terminal success line,
+   * a refusal must NOT override the header: `shownHeader()` never reads
+   * this. It is instead rendered as its own line BENEATH the header (see
+   * `paint()`'s `captureRefusal` and `renderShell`'s own arm for it) so the
+   * header — and, critically, its still-live capture offer — stays on
+   * screen for the user to retry. Before this field existed, a refusal rode
+   * on `captureState` exactly like the in-flight/success lines and replaced
+   * the header outright; nothing ever cleared it, and a refusal on a
+   * fetchable-only page (e.g. an SPA route change mid-capture) stranded the
+   * panel with no control left to click.
+   *
+   * A queued clip outcome (offline, or rate-limit-paused) is NOT a refusal —
+   * the clip was not dropped — and stays on `captureState`; see
+   * `sendCapturedClip`'s own comment on that branch.
+   *
+   * Cleared the moment a fresh capture attempt starts (`sendCapture`) and on
+   * `reread()` — the same lifetime as every other per-attempt capture field.
+   */
+  let captureRefusal: string | null = null;
   /** The captured page, held between the preview and Send — and the exact
    *  payload `sendCapturedClip` POSTs. */
   let pendingCapture: CaptureResult | null = null;
@@ -757,13 +798,21 @@ function createPanel(body: HTMLElement): {
   }
 
   /**
-   * The surface line to carry on a `captureState` status/error box. Only two
-   * of the header kinds `offersCapture` allows have one — `fetch-blocked` and
-   * `not-indexed` — while `unrecognised` and the `captured` re-capture path do
-   * not, matching `error`'s own nullable `surface` field.
+   * The surface line to carry on a `captureState` status/error box. Reads
+   * `header`, the RAW resolve-derived state — deliberately not
+   * `shownHeader()`, which folds `fetchState` in and, once a capture state is
+   * set, returns that instead: `captureSurface` is called precisely to BUILD
+   * a fresh `captureState`, so reading `shownHeader()` here would read the
+   * very state this function exists to produce.
+   *
+   * `header` itself can never hold `fetch-blocked` — that kind lives only in
+   * `fetchState` (see `fetchOutcomeHeader`; `headerFrom` never produces it) —
+   * so `not-indexed` is the only header kind with a `surface` to read here.
+   * `unrecognised` and the `captured` re-capture path have none, matching
+   * `error`'s own nullable `surface` field.
    */
   function captureSurface(): string | null {
-    return header.kind === "fetch-blocked" || header.kind === "not-indexed" ? header.surface : null;
+    return header.kind === "not-indexed" ? header.surface : null;
   }
 
   /** Everything `lanesFor`/`laneRequestInput`/`laneCanRun` need, from one place —
@@ -1008,6 +1057,7 @@ function createPanel(body: HTMLElement): {
     // this just drops the now-stale UI state instead of leaving it stuck on
     // screen under a header describing a different page.
     captureState = null;
+    captureRefusal = null;
     pendingCapture = null;
     capturePreview = null;
     capturing = false;
@@ -1237,6 +1287,7 @@ function createPanel(body: HTMLElement): {
           ...(navAwayState === undefined ? {} : { navAway: navAwayState }),
           ...(fetchPreviewState === undefined ? {} : { fetchPreview: fetchPreviewState }),
           ...(capturePreviewState === undefined ? {} : { capturePreview: capturePreviewState }),
+          ...(captureRefusal === null ? {} : { captureRefusal }),
         },
         (c) => {
           chosen = c;
@@ -1324,10 +1375,23 @@ function createPanel(body: HTMLElement): {
     // message is the flow's only confirmation (see `sendCapturedClip`'s own
     // doc comment: `handleResolve`'s recognise gate means that re-resolve can
     // never produce anything richer), so clearing it on every settle would
-    // erase the one confirmation that path can ever show. Only the `captured`
-    // arm — item, freshness, and an "Update this copy" button — is richer
-    // than the plain success sentence, and earns the right to replace it.
-    if (header.kind === "captured") {
+    // erase the one confirmation that path can ever show. It clears only once
+    // the settled header is something RICHER the user can act on instead:
+    // `captured` (item, freshness, "Update this copy"), `resolved` (an
+    // ordinary indexed item), `chosen` (a candidate already picked — see
+    // `shownHeader`; `headerFrom` itself never produces this kind, but the
+    // list stays total over every acted-on state on principle), `ambiguous`
+    // (a chooser to pick from) or `needs-scope` (the pairing needs a grant).
+    // Without `ambiguous` here, a post-save re-resolve landing on a candidate
+    // chooser would leave the sticky "Saved a copy of …" line permanently
+    // covering it — a chooser the user could then never reach.
+    if (
+      header.kind === "captured" ||
+      header.kind === "resolved" ||
+      header.kind === "chosen" ||
+      header.kind === "ambiguous" ||
+      header.kind === "needs-scope"
+    ) {
       captureState = null;
     }
     paint();
@@ -1466,6 +1530,9 @@ function createPanel(body: HTMLElement): {
     const gen = generation;
     const surface = captureSurface();
     capturing = true;
+    // A fresh attempt retires whatever refusal the LAST one left on screen —
+    // see `captureRefusal`'s own doc comment for why nothing else clears it.
+    captureRefusal = null;
     captureState = { kind: "error", surface, message: "Capturing this page…" };
     paint();
     let res: unknown;
@@ -1477,7 +1544,8 @@ function createPanel(body: HTMLElement): {
         // this page's capture is no longer what the panel describes.
         return;
       }
-      captureState = { kind: "error", surface, message: "Couldn't connect to Nimbus." };
+      captureState = null;
+      captureRefusal = "Couldn't connect to Nimbus.";
       capturing = false;
       paint();
       return;
@@ -1486,13 +1554,15 @@ function createPanel(body: HTMLElement): {
       return;
     }
     if (!isCaptureResponse(res)) {
-      captureState = { kind: "error", surface, message: "Couldn't read Nimbus's answer." };
+      captureState = null;
+      captureRefusal = "Couldn't read Nimbus's answer.";
       capturing = false;
       paint();
       return;
     }
     if (!res.ok) {
-      captureState = { kind: "error", surface, message: CAPTURE_MESSAGES[res.reason] };
+      captureState = null;
+      captureRefusal = CAPTURE_MESSAGES[res.reason];
       capturing = false;
       paint();
       return;
@@ -1540,7 +1610,8 @@ function createPanel(body: HTMLElement): {
       if (gen !== generation) {
         return;
       }
-      captureState = { kind: "error", surface, message: "Couldn't connect to Nimbus." };
+      captureState = null;
+      captureRefusal = "Couldn't connect to Nimbus.";
       capturing = false;
       paint();
       return;
@@ -1549,7 +1620,8 @@ function createPanel(body: HTMLElement): {
       return;
     }
     if (!isClipResponse(res)) {
-      captureState = { kind: "error", surface, message: "Couldn't read Nimbus's answer." };
+      captureState = null;
+      captureRefusal = "Couldn't read Nimbus's answer.";
       capturing = false;
       paint();
       return;
@@ -1560,13 +1632,25 @@ function createPanel(body: HTMLElement): {
       // `queued` case so it never reads as "Nimbus is down", and `queued`
       // itself must not read as a failure — the clip was NOT dropped, it is
       // sitting in the offline queue and will be retried.
-      const message =
-        res.reason === "rate_limited"
+      //
+      // A queued outcome stays on `captureState`, same as the terminal
+      // success line below — the clip was not dropped, so there is nothing to
+      // retry and no reason to hide the header behind it. Only a genuine,
+      // NON-queued failure is the refusal Finding 1 is about: it goes to
+      // `captureRefusal` instead, so the header — and its capture offer —
+      // stays reachable for a retry rather than stranding the panel.
+      const queued = res.reason === "rate_limited" || res.queued === true;
+      const message = queued
+        ? res.reason === "rate_limited"
           ? "Nimbus is busy — queued, will retry shortly."
-          : res.queued === true
-            ? "Saved offline — will sync when Nimbus is back."
-            : "Couldn't save this copy to Nimbus.";
-      captureState = { kind: "error", surface, message };
+          : "Saved offline — will sync when Nimbus is back."
+        : "Couldn't save this copy to Nimbus.";
+      if (queued) {
+        captureState = { kind: "error", surface, message };
+      } else {
+        captureState = null;
+        captureRefusal = message;
+      }
       capturing = false;
       paint();
       return;

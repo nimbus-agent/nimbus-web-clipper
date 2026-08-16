@@ -2,8 +2,6 @@ import type { ClipRequest, ClipResponse } from "../shared/messages.ts";
 import type { CaptureResult, ToastState } from "../shared/types.ts";
 import { isRestrictedUrl } from "./capture-tab.ts";
 
-export { isRestrictedUrl };
-
 const RATE_LIMITED_TEXT = "Nimbus is busy — queued, will retry shortly.";
 
 // Deliberately the popup's vocabulary (src/popup/popup.ts CLIP_MESSAGES): the quick
