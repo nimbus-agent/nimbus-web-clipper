@@ -5,6 +5,7 @@ export interface RelatedQuery {
   readonly title?: string;
   readonly canonicalUrl?: string;
   readonly selection?: string;
+  readonly itemId?: string;
   readonly limit: number;
 }
 
@@ -17,16 +18,27 @@ export const RELATED_LIMIT = 10;
  * an absent field is omitted, never set to undefined), and attach the limit.
  */
 export function buildRelatedQuery(
-  ctx: { title?: string; canonicalUrl?: string; selection?: string },
+  ctx: { title?: string; canonicalUrl?: string; selection?: string; itemId?: string },
   limit: number = RELATED_LIMIT,
 ): RelatedQuery {
   const title = ctx.title?.trim();
   const canonicalUrl = ctx.canonicalUrl?.trim();
   const selection = ctx.selection?.trim();
+  const itemId = ctx.itemId?.trim();
+  const haveItem = itemId !== undefined && itemId !== "";
   return {
+    // `title` is sent even alongside `itemId`, and that is load-bearing: a
+    // gateway older than the itemId query ignores the id, and dropping the title
+    // would leave it with an empty query — which it answers with zero hits. The
+    // lane would go permanently blank for anyone who had not updated.
     ...(title !== undefined && title !== "" ? { title } : {}),
-    ...(canonicalUrl !== undefined && canonicalUrl !== "" ? { canonicalUrl } : {}),
+    // `canonicalUrl` is the one field withheld once we can name the item. The
+    // gateway uses it to exclude the whole HOST, which on a pull request throws
+    // away every other item from the one host holding all your context. With an
+    // id, the item excludes itself precisely instead.
+    ...(!haveItem && canonicalUrl !== undefined && canonicalUrl !== "" ? { canonicalUrl } : {}),
     ...(selection !== undefined && selection !== "" ? { selection } : {}),
+    ...(haveItem ? { itemId } : {}),
     limit,
   };
 }

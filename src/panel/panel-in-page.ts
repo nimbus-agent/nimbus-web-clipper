@@ -1348,9 +1348,20 @@ function createPanel(body: HTMLElement): {
     let res: unknown;
     try {
       const context = readContext();
+      // The item this panel's header names — `resolved`, or the candidate the
+      // user picked out of an ambiguous answer. Reusing `shownHeader()` means
+      // the lane can never be about a different item than the header above it.
+      const shown = shownHeader();
+      const itemId =
+        shown.kind === "resolved"
+          ? shown.item.id
+          : shown.kind === "chosen"
+            ? shown.candidate.id
+            : undefined;
       res = await sendMessage({
         kind: "related",
         ...context,
+        ...(itemId === undefined ? {} : { itemId }),
         ...(selection === undefined ? {} : { selection }),
       });
     } catch {

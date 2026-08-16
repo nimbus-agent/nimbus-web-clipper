@@ -31,6 +31,38 @@ describe("buildRelatedQuery", () => {
   });
 });
 
+describe("buildRelatedQuery with itemId", () => {
+  test("an itemId is sent, and title is STILL sent beside it", () => {
+    const q = buildRelatedQuery({ title: "Page title", itemId: "gh:1" });
+    expect(q.itemId).toBe("gh:1");
+    // Load-bearing: a gateway that does not know itemId falls back to title. If
+    // title were dropped, that gateway would receive an empty query and the lane
+    // would go permanently blank.
+    expect(q.title).toBe("Page title");
+  });
+
+  test("canonicalUrl is withheld once an itemId is present", () => {
+    const q = buildRelatedQuery({
+      title: "T",
+      canonicalUrl: "https://github.com/acme/web/pull/482",
+      itemId: "gh:1",
+    });
+    expect("canonicalUrl" in q).toBe(false);
+  });
+
+  test("without an itemId, canonicalUrl is sent exactly as before", () => {
+    const q = buildRelatedQuery({ title: "T", canonicalUrl: "https://ex.com/p" });
+    expect(q.canonicalUrl).toBe("https://ex.com/p");
+    expect("itemId" in q).toBe(false);
+  });
+
+  test("a blank itemId is treated as absent", () => {
+    const q = buildRelatedQuery({ title: "T", canonicalUrl: "https://ex.com/p", itemId: "  " });
+    expect("itemId" in q).toBe(false);
+    expect(q.canonicalUrl).toBe("https://ex.com/p");
+  });
+});
+
 describe("isRelatedHit", () => {
   const hit = { id: "1", title: "T", service: "gmail", snippet: "s", url: "https://ex.com" };
   test("accepts a well-formed hit (url string)", () => {

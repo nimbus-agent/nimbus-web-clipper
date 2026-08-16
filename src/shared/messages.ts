@@ -61,6 +61,10 @@ export interface RelatedRequest {
   readonly title?: string;
   readonly canonicalUrl?: string;
   readonly selection?: string;
+  /** The indexed item the panel has already resolved this page to. Untrusted —
+   *  it arrives from a content script — so it is guarded here like every other
+   *  cross-boundary value. */
+  readonly itemId?: string;
 }
 
 export interface ResolveRequest {
@@ -330,7 +334,8 @@ export function isRelatedRequest(v: unknown): v is RelatedRequest {
     v["kind"] === "related" &&
     (v["title"] === undefined || typeof v["title"] === "string") &&
     (v["canonicalUrl"] === undefined || typeof v["canonicalUrl"] === "string") &&
-    (v["selection"] === undefined || typeof v["selection"] === "string")
+    (v["selection"] === undefined || typeof v["selection"] === "string") &&
+    (v["itemId"] === undefined || typeof v["itemId"] === "string")
   );
 }
 
