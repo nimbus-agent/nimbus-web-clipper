@@ -545,34 +545,39 @@ Prereq: paired, gateway running, a resolved GitHub pull request available.
 Prereq: paired, gateway running. `capture-in-page.ts` is not unit-testable, the
 same as the popup/options DOM and the SW glue.
 
-1. On a real page Nimbus does not recognise (an internal wiki, a vendor
-   console), open the panel. It offers to capture the page. Click it.
-2. Confirm the copy is labelled as yours: the terminal *"Saved a copy of …"*
-   line. This page never reaches resolve (see step 4), so this line — not a
-   captured header — is the honest signal here.
-3. On a **recognised** page (a self-hosted instance the gateway cannot fetch,
-   e.g. a `not-configured` connector) run the same capture, then close and
-   reopen the panel. → It still shows the captured header — the durability is
-   real, because a recognised page's resolve reaches the gateway again on
-   reopen and gets the same `web_clip` item back.
-4. Repeat on the **unrecognised** page from step 1: close and reopen the panel.
-   → No durable header — the page never reaches resolve at all, so reopening
-   shows the ordinary `unrecognised` state. The one honest signal that the copy
-   was saved is the terminal *"Saved a copy of …"* line shown right after step
-   2's save; confirm it appeared then, not that it persists across a reopen.
+1. <!-- e2e:capture-1 --> On a real page Nimbus does not recognise (an
+   internal wiki, a vendor console), open the panel. It offers to capture the
+   page. Click it.
+2. <!-- e2e:capture-2 --> Confirm the copy is labelled as yours: the terminal
+   *"Saved a copy of …"* line. This page never reaches resolve (see step 4),
+   so this line — not a captured header — is the honest signal here.
+3. <!-- e2e:capture-3 --> On a **recognised** page (a self-hosted instance the
+   gateway cannot fetch, e.g. a `not-configured` connector) run the same
+   capture, then close and reopen the panel. → It still shows the captured
+   header — the durability is real, because a recognised page's resolve
+   reaches the gateway again on reopen and gets the same `web_clip` item back.
+4. <!-- e2e:capture-4 --> Repeat on the **unrecognised** page from step 1:
+   close and reopen the panel. → No durable header — the page never reaches
+   resolve at all, so reopening shows the ordinary `unrecognised` state. The
+   one honest signal that the copy was saved is the terminal *"Saved a copy
+   of …"* line shown right after step 2's save; confirm it appeared then, not
+   that it persists across a reopen.
 5. Run **Update this copy** on a captured header. → The gateway reports
    `updated`, and `nimbus search` (or the Nimbus app) shows one item for that
-   page, not two.
-6. Navigate an SPA mid-capture (start a capture, then trigger a client-side
-   route change before it resolves) → the panel reports `url-changed` rather
-   than filing the new page's content under the old address.
-7. In Options stage 4, switch the 1.3 preview off, then repeat step 1. →
-   The offer button is replaced by status lines (*Capturing this page…*, then
-   *Saving to Nimbus…*), and the run ends on the terminal *"Saved a copy of …"*
-   line — the same end state as step 2, because this is step 1's unrecognised
-   page and it never reaches resolve. What this step proves is that the
-   in-flight feedback does not depend on the preview being on: with the confirm
-   step gone, those two lines are the only evidence anything is happening.
+   page, not two. **(human — asserts against a real index; a mock cannot
+   honestly stand in for "one item, not two")**
+6. <!-- e2e:capture-6 --> Navigate an SPA mid-capture (start a capture, then
+   trigger a client-side route change before it resolves) → the panel reports
+   `url-changed` rather than filing the new page's content under the old
+   address.
+7. <!-- e2e:capture-7 --> In Options stage 4, switch the 1.3 preview off, then
+   repeat step 1. → The offer button is replaced by status lines (*Capturing
+   this page…*, then *Saving to Nimbus…*), and the run ends on the terminal
+   *"Saved a copy of …"* line — the same end state as step 2, because this is
+   step 1's unrecognised page and it never reaches resolve. What this step
+   proves is that the in-flight feedback does not depend on the preview being
+   on: with the confirm step gone, those two lines are the only evidence
+   anything is happening.
 
    Repeat once on step 3's **recognised** page to see the other ending: there
    the captured header settles at the end, superseding the terminal line.
