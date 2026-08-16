@@ -511,19 +511,29 @@ more than one indexed item (the panel shows a chooser when it does).
 
 ## Manual verification — Related lane (richer rows)
 
+This is the first checklist section to carry all three coverage labels a step
+can have, so later suites follow its lead: a step marked `<!-- e2e:<id> -->` is
+asserted by the e2e suite and runs in CI; **(human — reason)** can never be
+automated, and the reason says why; **(not yet automated — reason)** is
+automatable but has no suite covering it yet, and the reason names what would.
+
 Prereq: paired, gateway running, a resolved GitHub pull request available.
 
-1. On a resolved GitHub pull request, open the panel: Related must show items
-   *from github.com* (the host filter is what used to hide them).
-2. Each row has a kind chip.
-3. Each row has an "Updated …" line.
-4. Rows group under a service heading with a count.
-5. The preview line is prose from the item, not its title repeated.
-6. **(human — a design judgement, not an assertion).** Then select a phrase and
-   run *What's related to this?* — the results must change, and the PR you are
-   on must not appear among them. Finally, note whether the groups are mostly
-   one row each: if they are, the headings are noise and grouping should be
-   dropped from the lane (see the spec's "Not in this slice").
+1. <!-- e2e:related-lane-1 --> On a resolved GitHub pull request, open the
+   panel: Related must show items *from github.com* (the host filter is what
+   used to hide them).
+2. <!-- e2e:related-lane-2 --> Each row has a kind chip.
+3. <!-- e2e:related-lane-3 --> Each row has an "Updated …" line.
+4. <!-- e2e:related-lane-4 --> Rows group under a service heading with a count.
+5. <!-- e2e:related-lane-5 --> The preview line is prose from the item, not its
+   title repeated.
+6. **(not yet automated — needs the selection-hook driving that the
+   input-lanes suite establishes).** Select a phrase and run *What's related to
+   this?* — the results must change, and the PR you are on must not appear
+   among them.
+7. **(human — a design judgement, not an assertion).** Note whether the groups
+   are mostly one row each: if they are, the headings are noise and grouping
+   should be dropped from the lane (see the spec's "Not in this slice").
 
 ## Manual verification — Capture as the last resort (C3.2)
 
