@@ -120,7 +120,10 @@ Add to `packages/gateway/src/clips/clip-e2e.test.ts`, inside the existing top-le
     const { token } = (await confirmRes.json()) as { token: string };
 
     // Write a title-only row directly: the clip route always supplies a body.
-    const writeDb = new Database(dbPath, { readonly: false, create: false });
+    // `readwrite: true`, NOT `readonly: false` — bun:sqlite throws SQLITE_MISUSE
+    // on the latter. This is the spelling `openI13WriteHandle` already uses
+    // (`ipc/http-server.ts:883`).
+    const writeDb = new Database(dbPath, { create: false, readwrite: true });
     try {
       writeDb.run(
         `INSERT INTO item (id, service, type, external_id, title, url, modified_at, synced_at)
