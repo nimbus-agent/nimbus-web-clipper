@@ -734,14 +734,22 @@ function createPanel(body: HTMLElement): {
    * derive it differently.
    */
   function shownHeader(): HeaderState {
-    if (fetchState !== null) {
-      return fetchState;
-    }
-    // Same precedence reasoning as `fetchState` just above: a capture in
-    // flight (or its refusal) must stay on screen instead of the ordinary
-    // header for as long as it is set.
+    // `captureState` wins over `fetchState` — NOT the other way round. Capture
+    // is only ever reachable once a fetch has already settled terminally
+    // (`offersCapture` is true only for `unrecognised`, `fetch-blocked`, and
+    // an unfetchable `not-indexed` miss), so the two are never in flight at
+    // once — this is a precedence choice with no live conflict to arbitrate.
+    // But `fetch-blocked` EXISTS ONLY as a `fetchState` value (`headerFrom`
+    // never produces it), so checking `fetchState` first would make every
+    // capture state invisible on that whole arm: no "Capturing this page…",
+    // no "Saving to Nimbus…", and no refusal sentence from `CAPTURE_MESSAGES`
+    // — the offer's own click would repaint straight back to the unchanged
+    // `fetch-blocked` box, reading as a dead control.
     if (captureState !== null) {
       return captureState;
+    }
+    if (fetchState !== null) {
+      return fetchState;
     }
     return chosen !== null && header.kind === "ambiguous"
       ? { kind: "chosen", surface: header.surface, candidate: chosen }
@@ -1311,6 +1319,17 @@ function createPanel(body: HTMLElement): {
     if (header.kind !== "not-indexed") {
       fetchState = null;
     }
+    // A capture success message (set by `sendCapturedClip`) stays on screen
+    // through an ORDINARY re-resolve — on the unrecognised-page path that
+    // message is the flow's only confirmation (see `sendCapturedClip`'s own
+    // doc comment: `handleResolve`'s recognise gate means that re-resolve can
+    // never produce anything richer), so clearing it on every settle would
+    // erase the one confirmation that path can ever show. Only the `captured`
+    // arm — item, freshness, and an "Update this copy" button — is richer
+    // than the plain success sentence, and earns the right to replace it.
+    if (header.kind === "captured") {
+      captureState = null;
+    }
     paint();
   }
 
@@ -1529,16 +1548,48 @@ function createPanel(body: HTMLElement): {
     if (gen !== generation) {
       return;
     }
-    if (!isClipResponse(res) || !res.ok) {
-      captureState = { kind: "error", surface, message: "Couldn't save this copy to Nimbus." };
+    if (!isClipResponse(res)) {
+      captureState = { kind: "error", surface, message: "Couldn't read Nimbus's answer." };
       capturing = false;
       paint();
       return;
     }
-    captureState = null;
+    if (!res.ok) {
+      // Mirrors popup.ts's own wording for the identical `ClipResponse` shape
+      // (see its `send()`): `rate_limited` is checked BEFORE the generic
+      // `queued` case so it never reads as "Nimbus is down", and `queued`
+      // itself must not read as a failure — the clip was NOT dropped, it is
+      // sitting in the offline queue and will be retried.
+      const message =
+        res.reason === "rate_limited"
+          ? "Nimbus is busy — queued, will retry shortly."
+          : res.queued === true
+            ? "Saved offline — will sync when Nimbus is back."
+            : "Couldn't save this copy to Nimbus.";
+      captureState = { kind: "error", surface, message };
+      capturing = false;
+      paint();
+      return;
+    }
+    // A save produces its own visible confirmation, independent of the
+    // re-resolve below. On the primary target for this feature — a page with
+    // no configured connector at all — `handleResolve` never calls the
+    // gateway for a URL it cannot recognise (its own `!recognition.ok`
+    // short-circuit), so the richer `captured` header this panel would
+    // otherwise wait for is UNREACHABLE there: without this line, the
+    // `await loadHeader()` below would settle back to the exact pre-click
+    // "Save a copy" offer, and a successful save would look like nothing
+    // happened. This says only that a copy was saved — never that it is
+    // indexed or connector-backed, which on this path it is not.
+    captureState = {
+      kind: "error",
+      surface,
+      message: `Saved a copy of “${capture.title}” to Nimbus.`,
+    };
     pendingCapture = null;
     capturePreview = null;
     capturing = false;
+    paint();
     await loadHeader();
   }
 

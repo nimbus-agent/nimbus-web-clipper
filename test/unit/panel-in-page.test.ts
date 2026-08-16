@@ -1111,6 +1111,17 @@ describe("panel-in-page capture state machine", () => {
     },
   };
 
+  // A genuinely unrecognised page — `handleResolve` never calls the gateway
+  // for one (its own `!recognition.ok` short-circuit), so a re-resolve of
+  // this exact response is what a real re-resolve after capturing here would
+  // actually return: the SAME miss, forever. See FIX 2 below.
+  const UNRECOGNISED_RESOLVE = {
+    kind: "resolve",
+    ok: true,
+    recognition: { ok: false, reason: "unknown-host" },
+    outcome: { kind: "not-indexed", fetchable: false },
+  };
+
   it("preview OFF sends the clip and then re-resolves", async () => {
     const sent: string[] = [];
     const panel = await mountPanelWithScript(sent, {
@@ -1172,6 +1183,116 @@ describe("panel-in-page capture state machine", () => {
     await flush();
 
     expect(sent.filter((k) => k === "capture")).toHaveLength(1);
+  });
+
+  // FIX 1 (review round 1): `fetch-blocked` exists ONLY as a `fetchState`
+  // value — `headerFrom` never produces it — so every earlier test above
+  // reaches the capture offer through `header` (`unrecognised`/`not-indexed`),
+  // where `fetchState` is null and the old `fetchState`-first precedence in
+  // `shownHeader()` happened to be harmless. This test reaches the offer via
+  // `sendFetch` -> `not-configured` instead, so `fetchState` is genuinely
+  // non-null when capture starts — pinning that `captureState` must win, or
+  // every capture status/refusal on this arm is set and never shown.
+  it("a capture refusal renders even when the offer came from a fetch-blocked (not-configured) header", async () => {
+    const sent: string[] = [];
+    const recognition = {
+      ok: true,
+      product: "github",
+      kind: "pr",
+      label: "GitHub PR",
+      ref: "acme/web #1",
+      resolveUrl: "https://github.com/acme/web/pull/1",
+    } as const;
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [
+        {
+          kind: "resolve",
+          ok: true,
+          recognition,
+          outcome: { kind: "not-indexed", fetchable: true },
+        },
+      ],
+      fetch: [{ kind: "fetch", ok: true, recognition, outcome: { kind: "not-configured" } }],
+      capture: [{ kind: "capture", ok: false, reason: "restricted" }],
+    });
+
+    clickFetch(panel);
+    await flush();
+    clickPreviewSend(panel);
+    await flush();
+    expect(panel.textContent).toContain("No GitHub connector is configured");
+
+    // The offer is sourced from `fetchState` here, not from `headerFrom`.
+    expect(panel.querySelector(".nimbus-related__capture")).not.toBeNull();
+
+    clickCapture(panel);
+    await flush();
+
+    // Before the fix, `shownHeader()` returned `fetchState` ahead of
+    // `captureState`, so this refusal was set but silently never rendered —
+    // the panel would repaint straight back to the unchanged
+    // "No GitHub connector is configured" box, reading as a dead control.
+    expect(panel.textContent).toContain("Nimbus can't capture browser system pages.");
+  });
+
+  // FIX 2 (review round 1): on the primary target for this feature — a page
+  // with no configured connector at all — `handleResolve`'s recognise gate
+  // means the post-clip re-resolve can NEVER produce the richer `captured`
+  // header (it never even calls the gateway for a page it cannot
+  // recognise). Without a save producing its own confirmation, a successful
+  // capture on this path would repaint to the exact pre-click "Save a copy"
+  // offer — looking exactly like nothing happened.
+  it("a successful save on an unrecognised page shows its own confirmation, even though the re-resolve stays a miss", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      // The SAME miss both before and after the clip — mirrors
+      // `handleResolve`'s real short-circuit for a page it cannot recognise.
+      resolve: [UNRECOGNISED_RESOLVE, UNRECOGNISED_RESOLVE],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "clip", ok: true, status: "created", bookmarked: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    expect(sent).toContain("clip");
+    expect(headerText()).toContain("Saved a copy");
+    expect(headerText()).toContain("Runbook");
+    // Never claims connector/indexed status it does not have on this path.
+    expect(panel.querySelector(".nimbus-related__capture")).toBeNull();
+  });
+
+  // FIX 3 (review round 1): `ClipResponse`'s `queued` rides on the `ok:
+  // false` arm — a queued clip (offline, or rate-limit-paused) was NOT
+  // dropped, and reporting it as a plain failure is false. Mirrors
+  // popup.ts's own wording for the identical response shape.
+  it("a queued clip (offline/rate-limited) is reported as queued, not as a failure", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "clip", ok: false, reason: "unreachable", queued: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    expect(headerText()).not.toContain("Couldn't save this copy to Nimbus.");
+    expect(headerText()).toContain("Saved offline — will sync when Nimbus is back.");
+  });
+
+  it("a rate-limited clip says busy, distinctly from the generic queued wording", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "clip", ok: false, reason: "rate_limited", queued: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    expect(headerText()).toContain("Nimbus is busy — queued, will retry shortly.");
   });
 
   // Update this copy runs the IDENTICAL flow — not a second one. Ingest
