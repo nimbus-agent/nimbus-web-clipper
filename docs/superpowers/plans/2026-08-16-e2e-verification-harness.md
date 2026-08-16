@@ -426,12 +426,18 @@ test("a resolved page's related rows carry kind, freshness and grouping", async 
     const page = await h.context.newPage();
     await page.goto(`${h.origin}/sample`);
     await page.bringToFront();
-    await h.sw.evaluate(async () => {
-      const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      if (tab?.id !== undefined) {
-        await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["panel.js"] });
+    // Query by URL, not by `lastFocusedWindow`. capture.ts uses the latter and it
+    // works there, but window focus is exactly the sort of thing that is reliable
+    // on a developer's desktop and occasionally is not on a headless CI container
+    // — and a gate that flakes is a gate people route around. The URL is something
+    // this test just set, so it cannot be ambiguous.
+    await h.sw.evaluate(async (origin) => {
+      const [tab] = await chrome.tabs.query({ url: `${origin}/sample` });
+      if (tab?.id === undefined) {
+        throw new Error("e2e: no tab matched the sample page");
       }
-    });
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["panel.js"] });
+    }, h.origin);
 
     const rows = page.locator(".nimbus-related__item");
     await expect(rows.first()).toBeVisible();
@@ -516,7 +522,12 @@ const CHECKLIST = resolve(ROOT, "docs/development.md");
 const E2E_DIR = resolve(ROOT, "test/e2e");
 
 const MARKER = /<!--\s*e2e:([a-z0-9-]+)\s*-->/g;
-const DECLARED = /"([a-z0-9-]+)"/g;
+// Quote-agnostic. Biome formats this repo to double quotes, so single quotes or
+// backticks should never survive a commit — but if one did, a quote-specific
+// regex would parse the block to nothing and report a FALSE drift failure. A
+// guard that cries wolf is a guard people learn to ignore, which is the exact
+// death spiral this slice exists to end.
+const DECLARED = /['"`]([a-z0-9-]+)['"`]/g;
 
 function markersInChecklist(): string[] {
   const src = readFileSync(CHECKLIST, "utf8");
@@ -555,6 +566,23 @@ describe("e2e coverage markers stay in step with the suite", () => {
   test("marker ids are unique — a duplicate hides a gap", () => {
     const seen = markersInChecklist();
     expect(seen.length).toBe(new Set(seen).size);
+  });
+
+  test("every e2e file declares a non-empty COVERS", () => {
+    // Closes the vacuous case the two directional tests cannot see. A suite
+    // whose COVERS block fails to parse — or was never written — declares
+    // nothing, and "nothing" is trivially consistent with a checklist that has
+    // no markers for it yet. Both tests above would pass while the file's
+    // coverage went unrecorded.
+    const empty: string[] = [];
+    for (const file of readdirSync(E2E_DIR).filter((f) => f.endsWith(".e2e.ts"))) {
+      const src = readFileSync(join(E2E_DIR, file), "utf8");
+      const block = /export const COVERS = \[([^\]]*)\]/.exec(src);
+      if (block?.[1] === undefined || [...block[1].matchAll(DECLARED)].length === 0) {
+        empty.push(file);
+      }
+    }
+    expect(empty).toEqual([]);
   });
 });
 ```
@@ -666,6 +694,24 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 Split the difference honestly: mark the steps whose *behaviour* is covered, and add to each such step's text **(e2e covers the handler; the context-menu gesture itself is human)**.
 
+**Exactly how to deliver a selection — do not invent a mechanism.** The menu entries converge on `deliverSelection(tabId, selection)` (`src/browser/scripting.ts:85`), which calls the panel's selection hook and mounts the panel only if the hook is absent. That hook is a **property on the panel's host element**, not a global: `callSelectionHook` (`:56`) reads `document.getElementById("nimbus-related-host")` and invokes its `__nimbusSelection` property, passing `{ text, intent }` where `intent` is `"define"` or `"related"` (`src/shared/panel-host.ts` — `PANEL_HOST_ID`, `PANEL_SELECTION_HOOK`, `PanelSelection`).
+
+So an already-open panel takes a selection straight from the page, no service worker needed:
+
+```ts
+await page.evaluate(
+  ([hostId, hook, sel]) => {
+    const host = document.getElementById(hostId as string) as (HTMLElement & Record<string, unknown>) | null;
+    (host?.[hook as string] as (s: unknown) => void)(sel);
+  },
+  ["nimbus-related-host", "__nimbusSelection", { text: "readability", intent: "define" }] as const,
+);
+```
+
+Import the two constants from `src/shared/panel-host.ts` rather than retyping the literals, so a rename breaks the test loudly instead of silently skipping the hook.
+
+**State the boundary precisely in the file header.** This covers the panel's *handling* of a selection. It does not cover the context-menu registration, the click routing in the worker, or `deliverSelection`'s mount-on-miss fallback for a closed panel — that last one is why step 1 (panel not yet open) must inject `panel.js` first and then call the hook, in two visible steps, rather than pretending one call did both.
+
 - [ ] **Step 1: Write both suites**
 
 Follow Task 3's suite structure exactly — header comment naming covered and excluded steps, exported `COVERS`, one `test()` per covered step, `try/finally` around each. Use a `resolve` scenario keyed to a dashboard URL for the service lanes, and seed selections through the worker for the input lanes.
@@ -710,7 +756,11 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 
 **Context you need — two things here will silently break the job if missed.**
 
-**1. The runner is egress-blocked.** `ci.yml`'s first step is `step-security/harden-runner` with `egress-policy: block` and an explicit `allowed-endpoints` list. Playwright's browser download is **not** on it, so `playwright install chromium` will fail with a network error that looks nothing like a firewall. The new job needs its own harden-runner step whose allowlist adds the Playwright CDN — start with `cdn.playwright.dev:443`. If the install still fails, harden-runner prints the endpoint it blocked: add exactly what it names rather than widening the policy.
+**1. The runner is egress-blocked.** `ci.yml`'s first step is `step-security/harden-runner` with `egress-policy: block` and an explicit `allowed-endpoints` list. Playwright's browser download is **not** on it, so `playwright install chromium` will fail with a network error that looks nothing like a firewall. The new job needs its own harden-runner step whose allowlist adds the Playwright CDN.
+
+Add **both** known hosts up front — `cdn.playwright.dev:443` and `playwright.azureedge.net:443`. Playwright has served browser builds from the Azure endpoint historically and still redirects to region-dependent mirrors, so allowing only the newer host risks a failure that reproduces on the CI runner and nowhere else. Two entries cost nothing; a mirror-dependent failure costs an afternoon.
+
+If the install still fails, **read harden-runner's report** — it names the endpoint it blocked — and add exactly that. Do not widen `egress-policy` to `audit` to make it pass: that silently disables the protection this repo deliberately turned on.
 
 **2. Cache the browser**, keyed on the resolved Playwright version, at `~/.cache/ms-playwright` — roughly 150 MB per run otherwise. A miss simply downloads, so a stale key degrades to today's cost rather than failing.
 
