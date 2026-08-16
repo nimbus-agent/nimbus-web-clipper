@@ -17,9 +17,10 @@
  * make the debounce's conclusion observable. Proving silence would mean
  * waiting past a timer with nothing to assert on until the wait itself
  * elapses, which is exactly what this project's own no-arbitrary-sleep rule
- * (`docs/superpowers/plans/2026-08-16-e2e-verification-harness.md`: "assert on
- * observable state … never on elapsed time. A test that cannot be made
- * deterministic is deleted, not retried into submission") rules out. The pure
+ * (`docs/superpowers/specs/2026-08-16-e2e-verification-harness-design.md`:
+ * "assert on observable state, never on elapsed time … any test that cannot
+ * be made deterministic is deleted rather than retried into submission")
+ * rules out. The pure
  * decision this step exercises is already exhaustively covered by
  * `ambient.test.ts`'s unit suite (see that module's own header comment); what
  * is missing is a way to observe the REAL debounced worker settling on a

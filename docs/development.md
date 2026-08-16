@@ -1,5 +1,24 @@
 # Development
 
+## How to read the checklists below
+
+Every step in the manual-verification checklists below carries one of three
+labels:
+
+- A step marked `<!-- e2e:<id> -->` is covered by an automated suite in
+  `test/e2e/` and runs in CI on every pull request (the `e2e` job in
+  `.github/workflows/ci.yml`). Run the suite locally with `bun run test:e2e`.
+- A step marked **(human — reason)** can never be automated; the reason says
+  why (it asserts against real browser eviction, a real gateway index, a
+  gesture the harness cannot drive, and so on).
+- A step marked **(not yet automated — reason)** is automatable in principle
+  but has no suite covering it yet; the reason names what would close the gap.
+- An unmarked step has not been triaged into one of the labels above yet.
+
+`test/unit/e2e-coverage.test.ts` keeps the markers and the suites honest: it
+fails if a checklist step claims `e2e:` coverage no suite declares, or if a
+suite declares coverage no checklist step names.
+
 ## Build & load
 
 ```bash
