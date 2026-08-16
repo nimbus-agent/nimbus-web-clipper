@@ -86,9 +86,17 @@ words and none of the title's. That test fails if a future migration reorders
 `item_fts`, which a hardcoded assertion on the literal `1` would not.
 
 `item.body` is nullable, and title-only items (Notion pages never fetched,
-Confluence stubs) will now produce an **empty** snippet where they previously
-produced a title echo. That is the honest outcome, and the client handles it by
-omitting the line rather than rendering a blank paragraph — decision 5.
+Confluence stubs) will now produce no snippet where they previously produced a
+title echo. That is the honest outcome, and the client handles it by omitting the
+line rather than rendering a blank paragraph — decision 5.
+
+**But it produces SQL `NULL`, not `""`, and that must be coalesced at the
+gateway.** Confirmed empirically: `snippet()` over a `NULL` column returns `NULL`,
+which would serialise as `"snippet": null`. This client's `isRelatedHit` requires
+`typeof snippet === "string"` (`src/shared/related.ts:44`), so **every hit with a
+NULL body would fail the guard and be dropped from the lane** — a silent
+disappearance, not a missing line. The projection therefore coalesces to the
+empty string in SQL, and the gateway test suite pins it with a title-only row.
 
 ### 2. Relatedness comes from the resolved item, not the page title
 
