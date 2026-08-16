@@ -80,10 +80,23 @@ and sends a clip. Two steps, matching the popup. A single "capture and clip it" 
 would give the extension a second place that turns a page into a `ClipPayload`, and the
 1.3 preview exists precisely because there is one such place and it can be shown.
 
-**The captured page is the PINNED page, not the tab's current URL.** The panel pins the
-page it was opened on and notices navigation (the C1.3/page-context slice). Capture must
-use the same pinned URL, or a background SPA navigation would let the panel offer to save
-one page and actually save another — the exact defect that slice exists to prevent.
+**Capture is refused when the tab has moved off the pinned page — it does not "capture the
+pinned page".** An earlier draft of this decision said capture must simply use the pinned
+URL. That is wrong, and wrong in the dangerous direction: **the DOM cannot be pinned.** On
+an SPA the panel's pinned URL is a string the panel remembers, while the live DOM is
+whatever the user navigated to. Capturing that DOM under the pinned URL would file the new
+page's content against the old page's address — a corrupt index entry, which is worse than
+either capturing the wrong page honestly or refusing.
+
+So the check is an equality test at the moment of capture: if `window.location.href` no
+longer matches the pinned URL, the worker returns a `url-changed` failure and the panel
+says so, offering the re-read it already offers elsewhere.
+
+The panel's existing `checkNavigation` watcher (`panel-in-page.ts:788`) is **not**
+sufficient on its own. It polls at `NAV_CHECK_MS` (2 Hz) and early-returns while the tab is
+hidden, so a navigation can land in the window between two ticks — and a capture fired in
+that window would pass a stale check. The capture-time equality test closes the race; the
+watcher continues to do its own job of telling the user they have moved on.
 
 ### 3. The preview is 1.3's, off switch included
 
@@ -101,6 +114,14 @@ so it gets the popup's rule, not the fetch's.
 The brief's *"one gesture"* is therefore read as: one gesture, plus whatever confirmation
 the user has already chosen to keep. A user who turned the preview off gets literally one
 gesture.
+
+**Every in-flight state is rendered, and this matters most when the preview is OFF.** With
+the preview on, the confirm step is itself the feedback that something happened. With it
+off, one click is followed by an injection, a capture, a POST and a re-resolve — several
+hundred milliseconds to several seconds — and a button that does nothing visible reads as
+broken. So the offer button is replaced by a status line for each state: *Capturing this
+page…*, then *Saving to Nimbus…*, then the captured header. The button is disabled while
+any of them is showing, which is also what enforces one-capture-per-panel (decision 6).
 
 ### 4. The honesty is keyed on the item, not on the moment
 
@@ -121,6 +142,20 @@ own `SERVICE_ID` values. Recorded as a real coupling rather than waved away: if 
 gateway renames either, this header silently degrades to the ordinary resolved arm — it
 does not break, it just stops being honest, which is the failure mode worth knowing.
 
+**Sharing the constants from a common package was proposed and is not available here.**
+The gateway and this extension are **separate repositories** (`Nimbus` and
+`nimbus-web-clipper`), not two packages in one workspace — so there is nothing to import
+from. Even if there were, this repo's "bundled, no runtime deps" rule (`CLAUDE.md`) means
+the shipped extension carries no `node_modules`, so a shared constants package would have
+to be vendored at build time and would drift exactly as a copied literal does.
+
+What is available and worth doing: put both values in **one** named place in
+`src/shared/types.ts`, each with the upstream `file:line` in its comment, so a future
+reader has one thing to check rather than a literal buried in a predicate. This is
+precisely the duplication roadmap **Phase 8** (adopt the Nimbus SDK) exists to absorb —
+the SDK is where a shared constant can actually live — so it is named here as a known
+cost, not solved locally by growing a dependency the architecture forbids.
+
 **It cannot reuse the `resolved` arm.** That arm renders a surface line sourced from
 recognition, and an unrecognised page has no recognition to source it from. The captured
 arm names the item and its freshness, states that this is a copy you saved, and shows no
@@ -137,16 +172,26 @@ against the new item like any other.
 Nothing to add. This is the C2.3/C2.5 lane-rules design paying off: a new kind of
 resolved item needed no lane change at all.
 
-### 6. One capture per panel, and no silent re-capture
+### 6. One capture in flight, and an explicit "Update this copy"
 
-A capture in flight disables the offer, mirroring C3.1's one-fetch-per-panel rule. Once
-the item exists, the header is the captured arm and the offer is gone — so re-clicking
-cannot produce a duplicate.
+A capture in flight disables the offer, mirroring C3.1's one-fetch-per-panel rule.
 
-Re-capturing to refresh a stale copy is **not** in this slice. It is a real feature and a
-different one: it needs a freshness judgement the panel does not have, and quietly
-overwriting a copy the user saved deliberately is worse than showing them an honest
-"Updated 3 weeks ago" and letting them decide.
+**Re-capture ships in this slice.** An earlier draft deferred it, arguing that refreshing a
+stale copy "needs a freshness judgement the panel does not have". That argument does not
+survive the contract: `POST /v1/clips` is an **upsert**, keyed on the canonicalised URL —
+`clip-ingest.ts:132,155` checks whether the row existed and returns `"updated"` rather than
+`"created"`. Re-capturing is the same call, the same flow and the same code, and the
+freshness judgement is the user's: they can see *Updated 3 weeks ago* and decide.
+
+Deferring it would have left a real dead end dressed up as a choice. With no button,
+refreshing a stale copy means opening the Nimbus app, finding the clip, deleting it, and
+reloading the panel to get the offer back. So the captured header carries a
+low-prominence **Update this copy** control running the identical capture → preview → send
+flow. Because ingest is an upsert the result is one item with fresh content, never a
+duplicate — and the preview means an update is never silent.
+
+One instinct from the earlier draft survives: **nothing re-captures on its own.** No
+staleness threshold, no automatic refresh, no background re-clip. Every capture is a click.
 
 ## Shape
 
@@ -181,6 +226,14 @@ them.
   `quick-clip.ts` so the hotkey path and the panel path share one injection, one
   restricted-URL check, and one failure vocabulary. `quick-clip.ts` keeps its toast; the
   panel renders its own states.
+
+  **It enforces `isRestrictedUrl` itself, and that is a security requirement rather than
+  defence in depth.** Decision 1 argues the *offer* cannot appear on a restricted page,
+  which is true — but the offer is rendered by a **content script**, and the `pageUrl` on
+  the `capture` message therefore crosses an untrusted boundary exactly like every other
+  value this repo guards in `messages.ts`. A hostile or compromised page script can send
+  whatever it likes. The worker validates the scheme before injecting, so the trust story
+  does not rest on a rendering rule holding.
 - `src/background/handlers.ts` + `service-worker.ts` — route `capture`.
 - `src/panel/panel-view.ts` — the offer button, the reused preview, the captured header.
 - `src/panel/panel-in-page.ts` — the capture state machine (idle → capturing → previewing
@@ -194,15 +247,21 @@ and an item whose service matches but type does not; the capture state machine's
 transitions.
 
 **Handler**: capture → clip → resolve; a clip that fails mid-flow leaves the panel on an
-honest error and no captured header; a capture on a pinned URL that no longer matches the
-tab is refused rather than silently capturing the new page.
+honest error and no captured header; a `capture` message whose `pageUrl` is a restricted
+scheme is refused by the worker **without injecting**, proving the guard does not depend on
+the offer's rendering rule; a capture whose live URL no longer matches the pinned URL
+returns `url-changed` rather than filing new content under the old address.
 
 **Render (jsdom)**: the offer's presence on each eligible state, the preview reusing 1.3's
-markup, the captured header naming the item without a surface line.
+markup, the captured header naming the item without a surface line, the **Update this copy**
+control on that header, and the in-flight status lines replacing the button — including with
+the preview turned OFF, which is the path where they are the only feedback.
 
 **Manual** (`docs/development.md`): capture-in-page is not unit-testable. The pass needs a
-real unrecognised page, a `not-configured` dead end, and a re-open of the panel on an
-already-captured page to prove the honesty is durable rather than momentary.
+real unrecognised page, a `not-configured` dead end, a re-open of the panel on an
+already-captured page (to prove the honesty is durable rather than momentary), an **Update
+this copy** run that reports `updated` and leaves one item rather than two, and an SPA
+navigation mid-capture to see the `url-changed` refusal.
 
 ## Not in this slice
 
@@ -210,7 +269,9 @@ already-captured page to prove the honesty is durable rather than momentary.
   ask someone to categorise.
 - **Selection-mode capture.** Article only. A selection capture from the panel would
   compete with the glossary and related-on-selection gestures that already own selections.
-- **Re-capture / refresh** — decision 6.
+- **Automatic or scheduled re-capture.** Manual re-capture *is* in scope (decision 6);
+  what stays out is anything that refreshes a copy without a click — a staleness
+  threshold, a background re-clip, a "keep this up to date" toggle.
 - **Any change to `POST /v1/clips`.** This slice is a pure consumer; the ingest contract
   is untouched.
 
