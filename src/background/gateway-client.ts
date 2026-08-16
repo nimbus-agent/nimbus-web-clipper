@@ -1,6 +1,6 @@
 import type { ClipPayload } from "../shared/clip.ts";
 import { endpointUrl, type GatewayEndpoint, isLoopbackOrigin } from "../shared/gateway.ts";
-import { isRelatedHit, type RelatedQuery } from "../shared/related.ts";
+import { parseRelatedHit, type RelatedQuery } from "../shared/related.ts";
 import {
   type AgentError,
   type AgentLane,
@@ -258,8 +258,11 @@ export async function postRelated(
   }
   if (res.status === 200) {
     const data = await readJson(res);
-    if (isObject(data) && Array.isArray(data["items"]) && data["items"].every(isRelatedHit)) {
-      return { ok: true, items: data["items"] as RelatedHit[] };
+    if (isObject(data) && Array.isArray(data["items"])) {
+      const parsed = data["items"].map(parseRelatedHit);
+      if (parsed.every((h): h is RelatedHit => h !== null)) {
+        return { ok: true, items: parsed };
+      }
     }
     return { ok: false, reason: "server_error" };
   }

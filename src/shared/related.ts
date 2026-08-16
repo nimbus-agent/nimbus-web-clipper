@@ -35,13 +35,37 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
+/**
+ * Parse one wire hit, renaming `modified_at` → `modifiedAt`.
+ *
+ * The two new fields are dropped rather than fatal when malformed or missing:
+ * an older gateway sends neither, and rejecting the hit would empty the lane for
+ * anyone who has not updated. A malformed REQUIRED field is still fatal.
+ */
+export function parseRelatedHit(v: unknown): RelatedHit | null {
+  if (
+    !isObject(v) ||
+    typeof v["id"] !== "string" ||
+    typeof v["title"] !== "string" ||
+    typeof v["service"] !== "string" ||
+    typeof v["snippet"] !== "string" ||
+    (v["url"] !== null && typeof v["url"] !== "string")
+  ) {
+    return null;
+  }
+  const type = v["type"];
+  const modifiedAt = v["modified_at"];
+  return {
+    id: v["id"],
+    title: v["title"],
+    service: v["service"],
+    snippet: v["snippet"],
+    url: v["url"],
+    ...(typeof type === "string" && type !== "" ? { type } : {}),
+    ...(typeof modifiedAt === "number" && Number.isFinite(modifiedAt) ? { modifiedAt } : {}),
+  };
+}
+
 export function isRelatedHit(v: unknown): v is RelatedHit {
-  return (
-    isObject(v) &&
-    typeof v["id"] === "string" &&
-    typeof v["title"] === "string" &&
-    typeof v["service"] === "string" &&
-    typeof v["snippet"] === "string" &&
-    (v["url"] === null || typeof v["url"] === "string")
-  );
+  return parseRelatedHit(v) !== null;
 }

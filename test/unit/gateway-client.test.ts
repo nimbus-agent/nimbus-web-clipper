@@ -308,6 +308,64 @@ describe("postRelated", () => {
       vi.useRealTimers();
     }
   });
+
+  test("200 → modified_at is renamed to modifiedAt at the boundary", async () => {
+    const out = await postRelated(
+      "http://127.0.0.1:8765",
+      "t",
+      query,
+      async () =>
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: "gh:1",
+                title: "T",
+                service: "github",
+                snippet: "s",
+                url: null,
+                type: "pr",
+                modified_at: 1_700_000_000_000,
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    expect(out).toEqual({
+      ok: true,
+      items: [
+        {
+          id: "gh:1",
+          title: "T",
+          service: "github",
+          snippet: "s",
+          url: null,
+          type: "pr",
+          modifiedAt: 1_700_000_000_000,
+        },
+      ],
+    });
+  });
+
+  test("200 → a hit from a gateway with neither new field still parses", async () => {
+    const out = await postRelated(
+      "http://127.0.0.1:8765",
+      "t",
+      query,
+      async () =>
+        new Response(
+          JSON.stringify({
+            items: [{ id: "gh:2", title: "T", service: "github", snippet: "s", url: null }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    expect(out).toEqual({
+      ok: true,
+      items: [{ id: "gh:2", title: "T", service: "github", snippet: "s", url: null }],
+    });
+  });
 });
 
 describe("resolveItem", () => {
