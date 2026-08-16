@@ -4,7 +4,7 @@
 // attacker-influenceable, so plain-text rendering is the XSS backstop.
 import { offersCapture } from "../shared/capture-offer.ts";
 import { formatAge } from "../shared/freshness.ts";
-import { buildFetchPreview } from "../shared/preview.ts";
+import { buildFetchPreview, type ClipPreview } from "../shared/preview.ts";
 import { renderPreview } from "../shared/preview-view.ts";
 import { scopeCommand } from "../shared/scope-command.ts";
 import type {
@@ -285,6 +285,20 @@ export interface PanelState {
    */
   readonly fetchPreview?: {
     readonly target: FetchTarget;
+    readonly onSend: () => void;
+    readonly onCancel: () => void;
+  };
+  /**
+   * The pending "about to save a copy" confirm target — set once `capture`
+   * has answered with a preview to show (the 1.3 pref, read in the worker),
+   * cleared on Send or Cancel. Rendered INSTEAD of `header`, in the same box
+   * `renderHeader` itself would occupy — the identical precedence
+   * `fetchPreview` already has above, and for the same reason: a captured
+   * clip is an outbound write (`POST /v1/clips`), so what it contains must be
+   * named and agreed to before it goes out, not after.
+   */
+  readonly capturePreview?: {
+    readonly preview: ClipPreview;
     readonly onSend: () => void;
     readonly onCancel: () => void;
   };
@@ -738,6 +752,40 @@ export function renderFetchPreview(
 }
 
 /**
+ * The "about to save a copy" confirm step — the last-resort twin of
+ * {@link renderFetchPreview} above. Deliberately reuses that function's OWN
+ * Send/Cancel classes (`nimbus-related__fetch-send` /
+ * `nimbus-related__fetch-cancel`) rather than a parallel pair: both previews
+ * confirm one outbound write before it leaves the browser, and a control that
+ * means "yes, send this" should not need its own selector per caller —
+ * `panel-in-page.ts`'s `clickPreviewSend`/`clickPreviewCancel` test helpers
+ * find either one unmodified.
+ *
+ * `renderPreview` (shared/preview-view.ts) already renders a `ClipPreview`
+ * whole — fields, excerpt, and the truncation note — so this needs no field
+ * list of its own; it is the same box the popup's own clip confirm renders,
+ * built from the same `buildClipPreview`.
+ */
+export function renderCapturePreview(
+  doc: Document,
+  preview: ClipPreview,
+  onSend: () => void,
+  onCancel: () => void,
+): HTMLElement {
+  const box = doc.createElement("div");
+  box.className = "nimbus-related__header-state";
+  box.append(renderPreview(doc, preview));
+  const actions = doc.createElement("div");
+  actions.className = "nimbus-related__fetch-actions";
+  actions.append(
+    actionButton(doc, "nimbus-related__fetch-send", "Send", onSend),
+    actionButton(doc, "nimbus-related__fetch-cancel", "Cancel", onCancel),
+  );
+  box.append(actions);
+  return box;
+}
+
+/**
  * Renders the body of one agent lane — never the shared "related" lane, which
  * keeps its own `relatedBody` render path.
  *
@@ -974,6 +1022,8 @@ export function renderShell(
   state: PanelState,
   onChoose?: (c: ResolveCandidate) => void,
   onFetch?: (action: "fetch" | "resolve") => void,
+  onCapture?: () => void,
+  onRecapture?: () => void,
 ): HTMLElement {
   const shell = doc.createElement("div");
   shell.className = "nimbus-related__shell";
@@ -985,7 +1035,14 @@ export function renderShell(
           state.fetchPreview.onSend,
           state.fetchPreview.onCancel,
         )
-      : renderHeader(doc, state.header, onChoose, onFetch),
+      : state.capturePreview !== undefined
+        ? renderCapturePreview(
+            doc,
+            state.capturePreview.preview,
+            state.capturePreview.onSend,
+            state.capturePreview.onCancel,
+          )
+        : renderHeader(doc, state.header, onChoose, onFetch, onCapture, onRecapture),
   );
   if (state.navAway !== undefined) {
     shell.append(renderNavAway(doc, state.navAway));
