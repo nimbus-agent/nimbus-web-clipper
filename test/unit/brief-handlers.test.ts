@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   type BriefDeps,
+  handleBriefPoll,
   handleBriefSave,
   handleBriefStart,
   handleBriefTabs,
@@ -213,6 +214,39 @@ describe("handleBriefStart", () => {
     const put = d.store.put as ReturnType<typeof vi.fn>;
     const written = JSON.stringify(put.mock.calls.map((c) => c[0]));
     expect(written.toLowerCase()).not.toContain("body text");
+  });
+});
+
+describe("handleBriefPoll", () => {
+  it("settles a finished run and patches the log with the model", async () => {
+    const d = deps();
+    await handleBriefStart(d, { ...start, tabIds: [1] });
+    (d.log.update as ReturnType<typeof vi.fn>).mockClear();
+    const state = await handleBriefPoll(d, "b1");
+    expect(state.kind).toBe("done");
+    expect(d.log.update).toHaveBeenCalledWith("b1", { model: "llama3", remote: false });
+  });
+
+  it("stays running while the gateway is still working", async () => {
+    const d = deps({
+      client: client({
+        getBrief: vi.fn(() => Promise.resolve({ ok: true, status: "running" })) as never,
+      }),
+    });
+    await handleBriefStart(d, { ...start, tabIds: [1] });
+    expect(await handleBriefPoll(d, "b1")).toEqual({ kind: "running", id: "b1" });
+  });
+
+  it("is idle for a run that is gone, rather than broadcasting a failure over the page", async () => {
+    const d = deps();
+    expect(await handleBriefPoll(d, "vanished")).toEqual({ kind: "idle" });
+  });
+
+  it("fails closed when unpaired, without polling", async () => {
+    const d = deps({ connection: () => Promise.resolve(null) });
+    const state = await handleBriefPoll(d, "b1");
+    expect(state).toEqual({ kind: "failed", id: "b1", reason: "not_paired" });
+    expect(d.client.getBrief).not.toHaveBeenCalled();
   });
 });
 

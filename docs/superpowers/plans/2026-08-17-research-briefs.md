@@ -60,7 +60,7 @@
   - `type BriefSourceBody = { readonly url: string; readonly title: string; readonly body: string; readonly capturedAt: number; readonly truncated: boolean }`
   - `buildSourceBody(src: { url: string; title: string; body: string; capturedAt: number }): BriefSourceBody`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // test/unit/brief.test.ts
@@ -199,12 +199,12 @@ describe("buildCreateBody", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bunx vitest run test/unit/brief.test.ts`
 Expected: FAIL — `Failed to resolve import "../../src/shared/brief.ts"`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // src/shared/brief.ts
@@ -356,17 +356,17 @@ export function buildSourceBody(src: {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bunx vitest run test/unit/brief.test.ts`
 Expected: PASS, 13 tests.
 
-- [ ] **Step 5: Run the full gate set**
+- [x] **Step 5: Run the full gate set**
 
 Run: `bun run typecheck && bun run lint && bun run test`
 Expected: all pass; 1120 + 13 tests.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/shared/brief.ts test/unit/brief.test.ts
@@ -392,7 +392,7 @@ git commit -m "feat(brief): caps, question scaffolding and payload builders"
   - `QUOTES_OMITTED_GAP: string`
   - `quotesWereOmitted(report: BriefReport): boolean`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // test/unit/brief-report.test.ts
@@ -489,12 +489,12 @@ describe("quotesWereOmitted", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bunx vitest run test/unit/brief-report.test.ts`
 Expected: FAIL — cannot resolve `src/shared/brief-report.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // src/shared/brief-report.ts
@@ -622,17 +622,17 @@ export function quotesWereOmitted(report: BriefReport): boolean {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bunx vitest run test/unit/brief-report.test.ts`
 Expected: PASS, 11 tests.
 
-- [ ] **Step 5: Run the full gate set**
+- [x] **Step 5: Run the full gate set**
 
 Run: `bun run typecheck && bun run lint && bun run test`
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/shared/brief-report.ts test/unit/brief-report.test.ts
@@ -660,7 +660,7 @@ git commit -m "feat(brief): report guards and the equality-based disclosure filt
   - `getBrief(origin, token, id, doFetch?): Promise<{ ok: true; status: "collecting" | "running" } | { ok: true; status: "done"; report: BriefReport } | { ok: true; status: "failed"; failureReason?: string } | { ok: false; reason: BriefError }>`
   - `saveBrief(origin, token, id, doFetch?): Promise<{ ok: true; itemId: string } | { ok: false; reason: BriefError }>`
 
-- [ ] **Step 1: Add the endpoint path**
+- [x] **Step 1: Add the endpoint path**
 
 In `src/shared/gateway.ts`, inside `GATEWAY_PATHS`, after the `agentRuns` entry, add:
 
@@ -676,7 +676,7 @@ In `src/shared/gateway.ts`, inside `GATEWAY_PATHS`, after the `agentRuns` entry,
   briefs: "/v1/briefs",
 ```
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```ts
 // test/unit/brief-client.test.ts
@@ -895,12 +895,12 @@ describe("saveBrief", () => {
 });
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `bunx vitest run test/unit/brief-client.test.ts`
 Expected: FAIL — cannot resolve `src/background/brief-client.ts`.
 
-- [ ] **Step 4: Write the implementation**
+- [x] **Step 4: Write the implementation**
 
 ```ts
 // src/background/brief-client.ts
@@ -1210,17 +1210,17 @@ export async function saveBrief(
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `bunx vitest run test/unit/brief-client.test.ts`
 Expected: PASS, 21 tests.
 
-- [ ] **Step 6: Run the full gate set**
+- [x] **Step 6: Run the full gate set**
 
 Run: `bun run typecheck && bun run lint && bun run test`
 Expected: all pass. Note `test/unit/gateway.test.ts` may assert the shape of `GATEWAY_PATHS`; if it enumerates keys, add `briefs` there too.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/shared/gateway.ts src/background/brief-client.ts test/unit/brief-client.test.ts
@@ -1241,7 +1241,7 @@ git commit -m "feat(brief): the five research-brief routes"
   - `type TabCandidates = { readonly named: readonly CandidateTab[]; readonly hiddenCount: number }`
   - `listCandidateTabs(): Promise<TabCandidates>`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // test/unit/tabs.test.ts
@@ -1331,12 +1331,12 @@ describe("listCandidateTabs", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bunx vitest run test/unit/tabs.test.ts`
 Expected: FAIL — `listCandidateTabs` is not exported.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Append to `src/browser/tabs.ts`:
 
@@ -1438,17 +1438,17 @@ function isRestrictedTabUrl(url: string): boolean {
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `bunx vitest run test/unit/tabs.test.ts`
 Expected: PASS, 5 tests.
 
-- [ ] **Step 5: Run the full gate set**
+- [x] **Step 5: Run the full gate set**
 
 Run: `bun run typecheck && bun run lint && bun run test`
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/browser/tabs.ts test/unit/tabs.test.ts
@@ -1474,7 +1474,7 @@ git commit -m "feat(brief): enumerate candidate tabs, counting the ones we may n
   - `listBriefRuns(nowMs: number): Promise<StoredBrief[]>`
   - `clearBriefRuns(): Promise<void>`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // test/unit/brief-run-store.test.ts
@@ -1567,12 +1567,12 @@ describe("brief-run-store", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bunx vitest run test/unit/brief-run-store.test.ts`
 Expected: FAIL — cannot resolve the module.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // src/background/brief-run-store.ts
@@ -1723,17 +1723,17 @@ export function clearBriefRuns(): Promise<void> {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bunx vitest run test/unit/brief-run-store.test.ts`
 Expected: PASS, 7 tests.
 
-- [ ] **Step 5: Run the full gate set**
+- [x] **Step 5: Run the full gate set**
 
 Run: `bun run typecheck && bun run lint && bun run test`
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/background/brief-run-store.ts test/unit/brief-run-store.test.ts
@@ -1759,7 +1759,7 @@ git commit -m "feat(brief): persist an in-flight run, without its source text"
   - `readLog(): Promise<BriefLogEntry[]>`
   - `clearLog(): Promise<void>`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```ts
 // test/unit/brief-log.test.ts
@@ -1886,12 +1886,12 @@ describe("brief-log-store", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bunx vitest run test/unit/brief-log.test.ts`
 Expected: FAIL — cannot resolve the two modules.
 
-- [ ] **Step 3: Write the pure module**
+- [x] **Step 3: Write the pure module**
 
 ```ts
 // src/shared/brief-log.ts
@@ -1976,7 +1976,7 @@ export function evictLog(entries: readonly BriefLogEntry[], cap: number): BriefL
 }
 ```
 
-- [ ] **Step 4: Write the store**
+- [x] **Step 4: Write the store**
 
 ```ts
 // src/background/brief-log-store.ts
@@ -2039,17 +2039,17 @@ export function clearLog(): Promise<void> {
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `bunx vitest run test/unit/brief-log.test.ts`
 Expected: PASS, 15 tests.
 
-- [ ] **Step 6: Run the full gate set**
+- [x] **Step 6: Run the full gate set**
 
 Run: `bun run typecheck && bun run lint && bun run test`
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/shared/brief-log.ts src/background/brief-log-store.ts test/unit/brief-log.test.ts
@@ -2070,7 +2070,7 @@ git commit -m "feat(brief): a local disclosure log for egress the ledger does no
   - `buildBriefPreview(input: { question: string; sources: readonly { url: string; title: string }[] }): BriefPreview`
   - `SYNTHESIS_NOTICE: string`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `test/unit/preview.test.ts`:
 
@@ -2117,12 +2117,12 @@ describe("buildBriefPreview", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bunx vitest run test/unit/preview.test.ts`
 Expected: FAIL — `buildBriefPreview` is not exported.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Append to `src/shared/preview.ts`:
 
@@ -2178,17 +2178,17 @@ export function buildBriefPreview(input: {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bunx vitest run test/unit/preview.test.ts`
 Expected: PASS — existing tests plus 4 new.
 
-- [ ] **Step 5: Run the full gate set**
+- [x] **Step 5: Run the full gate set**
 
 Run: `bun run typecheck && bun run lint && bun run test`
 Expected: all pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/shared/preview.ts test/unit/preview.test.ts
@@ -2213,7 +2213,7 @@ git commit -m "feat(brief): pre-run preview naming every source and the honest s
   - `BriefLogClearRequest { kind: "brief-log-clear" }`
 - Also: `isBriefStartRequest(v: unknown): v is BriefStartRequest` used by the router.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `test/unit/messages.test.ts`:
 
@@ -2258,12 +2258,12 @@ describe("isBriefStartRequest", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bunx vitest run test/unit/messages.test.ts`
 Expected: FAIL — `isBriefStartRequest` is not exported.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 In `src/shared/messages.ts`, add the request interfaces before the `ExtensionRequest` union, add all six to that union, and add the guard:
 
@@ -2348,7 +2348,7 @@ export function isBriefStartRequest(v: unknown): v is BriefStartRequest {
 }
 ```
 
-- [ ] **Step 4: Add the cap-parity test**
+- [x] **Step 4: Add the cap-parity test**
 
 Append to `test/unit/messages.test.ts`:
 
@@ -2371,17 +2371,17 @@ it("the guard's caps match shared/brief.ts, which is the source of truth", () =>
 });
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `bunx vitest run test/unit/messages.test.ts`
 Expected: PASS — existing tests plus 9 new.
 
-- [ ] **Step 6: Run the full gate set**
+- [x] **Step 6: Run the full gate set**
 
 Run: `bun run typecheck && bun run lint && bun run test`
 Expected: all pass.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/shared/messages.ts test/unit/messages.test.ts

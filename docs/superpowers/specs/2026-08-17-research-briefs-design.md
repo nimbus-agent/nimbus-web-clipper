@@ -355,7 +355,8 @@ an egress that really happened, which is the one thing this log exists to preven
 The panel deliberately sticks to the page it was opened on — the 2026-08-11 page-context
 slice exists precisely so its header and its lanes cannot describe different items. A
 brief spans many tabs. Putting it in a panel lane would fight that invariant rather than
-extend it, in a file already 1,256 lines long.
+extend it, in a file already **1,939** lines long (the roadmap's C2.5 note says 1,256; that
+figure predates the slices since).
 
 The popup was ruled out on a harder mechanic: it is destroyed on blur, and a brief run
 outlives it, so clicking away mid-run would lose the composer and the report.

@@ -304,6 +304,35 @@ export async function handleBriefStart(
 }
 
 /**
+ * Poll a run once and settle it if it has finished.
+ *
+ * The worker's loop calls this; the cadence lives there, never here and never in
+ * the page. Reached both by the live `setTimeout` loop and by the eviction-net
+ * alarm after a worker death.
+ *
+ * The shortfall (`skipped` / `truncated`) is empty here, and deliberately so: it
+ * is per-attempt knowledge held by `handleBriefStart`'s call frame, which a
+ * resumed poll does not have. The gateway's own `gaps` still carries the
+ * authoritative "2 of 3 sources" account, so a resumed run reports the shortfall
+ * from the report rather than losing it — it just cannot re-name which local tab
+ * failed and why.
+ */
+export async function handleBriefPoll(deps: BriefDeps, id: string): Promise<BriefState> {
+  const conn = await deps.connection();
+  if (conn === null) {
+    return { kind: "failed", id, reason: "not_paired" };
+  }
+  const stored = await deps.store.get(id, deps.now());
+  if (stored === null) {
+    // Expired or cleared under us. Emit nothing: there is no run to report on,
+    // and a `failed` broadcast here would overwrite whatever the page is
+    // legitimately showing.
+    return { kind: "idle" };
+  }
+  return settleRun(deps, conn, id, { accepted: 0, skipped: [], truncated: [] });
+}
+
+/**
  * Save on the user's explicit click.
  *
  * EVERY failure path here is `save-failed`, never `failed`. A brief the user is

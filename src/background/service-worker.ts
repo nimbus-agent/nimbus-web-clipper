@@ -20,12 +20,14 @@ import {
   activeTab,
   addNavigationListener,
   addTabClosedListener,
+  listCandidateTabs,
   type TabNavigation,
   tabUrl,
 } from "../browser/tabs.ts";
 import {
   isAgentRunRequest,
   isAgentStateRequest,
+  isBriefStartRequest,
   isCaptureRequest,
   isClipRequest,
   isConnectionStatusRequest,
@@ -53,6 +55,17 @@ import {
 } from "./agent-run-store.ts";
 import { type AmbientDeps, decideAmbient } from "./ambient.ts";
 import { getAmbientHosts } from "./ambient-prefs.ts";
+import { createBrief, feedBriefSource, getBrief, runBrief, saveBrief } from "./brief-client.ts";
+import {
+  type BriefDeps,
+  type BriefState,
+  handleBriefPoll,
+  handleBriefSave,
+  handleBriefStart,
+  handleBriefTabs,
+} from "./brief-handlers.ts";
+import { appendLogEntry, clearLog, readLog, updateLogEntry } from "./brief-log-store.ts";
+import { clearBriefRuns, getBriefRun, listBriefRuns, putBriefRun } from "./brief-run-store.ts";
 import { captureTab } from "./capture-tab.ts";
 import { getQueue, updateQueue } from "./clip-queue-store.ts";
 import {
@@ -441,6 +454,199 @@ async function resumeAgentPolls(): Promise<void> {
   }
 }
 
+/**
+ * The eviction net for brief runs — NOT the poll cadence.
+ *
+ * Same split as {@link AGENT_POLL_ALARM}: `chrome.alarms` has a one-minute floor
+ * while the live cadence is a `setTimeout` backoff, so this only resumes runs
+ * whose worker died. The floor matters more here than for agent lanes, because
+ * synthesis over up to 4 MB of source text can genuinely outlast a worker.
+ */
+export const BRIEF_POLL_ALARM = "nimbus-brief-poll";
+
+/** Slower ceiling than the agent lanes' `POLL_MAX_MS`: synthesis over up to 4 MB
+ *  of source text runs for tens of seconds, so backing off further costs nothing
+ *  on loopback and saves a lot of pointless polls. */
+const BRIEF_POLL_MAX_MS = 5_000;
+
+/** Brief runs being polled by an in-worker loop, keyed by run id. Mirrors
+ *  `activeAgentPolls`: without it the alarm's resume double-polls a run whose
+ *  `setTimeout` loop is alive, since Chrome fires a periodic alarm whether or
+ *  not the worker died. */
+const activeBriefPolls = new Set<string>();
+
+const briefDeps: BriefDeps = {
+  now: () => Date.now(),
+  listTabs: listCandidateTabs,
+  origins: getOrigins,
+  capture: (tabId, expectedUrl) =>
+    captureTab({ tabUrl, runCapture }, tabId, "article", expectedUrl),
+  connection: async () => {
+    const conn = await getConnection();
+    return conn === null ? null : { origin: conn.origin, token: conn.token };
+  },
+  client: { createBrief, feedBriefSource, runBrief, getBrief, saveBrief },
+  store: { get: getBriefRun, put: putBriefRun },
+  log: { append: appendLogEntry, update: updateLogEntry },
+  onState: (state) => {
+    broadcastBriefState(state);
+  },
+};
+
+/**
+ * Push a state to the brief page if it is open, and keep the loop alive.
+ *
+ * A broadcast with no listener rejects ("Receiving end does not exist"), which
+ * is the normal case with the page closed — swallowed, because the store is
+ * still correct and reopening the page reads it.
+ */
+function broadcastBriefState(state: BriefState): void {
+  chrome.runtime.sendMessage({ kind: "brief-state", state }).catch(() => undefined);
+  if (state.kind === "running") {
+    startBriefPollLoop(state.id);
+  }
+}
+
+function scheduleBriefPoll(id: string, delayMs: number, generation: number): void {
+  setTimeout(() => {
+    tickBriefPoll(id, delayMs, generation).catch(() => {
+      activeBriefPolls.delete(id);
+    });
+  }, delayMs);
+}
+
+/** One poll, then either reschedule or stop. Honours `pairingGeneration` for the
+ *  same reason `tickAgentPoll` does: a poll that outlives its pairing must write
+ *  nothing, not even a terminal state. */
+async function tickBriefPoll(id: string, delayMs: number, generation: number): Promise<void> {
+  if (pairingChangedSince(generation)) {
+    activeBriefPolls.delete(id);
+    return;
+  }
+  const state = await handleBriefPoll(briefDeps, id);
+  if (pairingChangedSince(generation)) {
+    activeBriefPolls.delete(id);
+    return;
+  }
+  if (state.kind === "running") {
+    scheduleBriefPoll(id, Math.min(delayMs * 2, BRIEF_POLL_MAX_MS), generation);
+    return;
+  }
+  activeBriefPolls.delete(id);
+  chrome.runtime.sendMessage({ kind: "brief-state", state }).catch(() => undefined);
+  await disarmBriefAlarmIfIdle();
+}
+
+/** Start the in-worker loop for a run now `running`. Idempotent per id, and the
+ *  one place the eviction net is armed. */
+function startBriefPollLoop(id: string): void {
+  if (activeBriefPolls.has(id)) {
+    return;
+  }
+  activeBriefPolls.add(id);
+  ensureAlarm(BRIEF_POLL_ALARM, 1).catch(() => undefined);
+  scheduleBriefPoll(id, POLL_START_MS, pairingGeneration);
+}
+
+/**
+ * Clear the alarm ONLY when nothing is left running.
+ *
+ * Clearing whenever *a* run reaches a terminal state would disarm the net for a
+ * second brief still in flight — and two can overlap, since the gateway allows
+ * three concurrent runs.
+ */
+async function disarmBriefAlarmIfIdle(): Promise<void> {
+  const runs = await listBriefRuns(Date.now()).catch(() => []);
+  if (runs.some((r) => r.phase.kind === "running")) {
+    return;
+  }
+  await clearAlarm(BRIEF_POLL_ALARM).catch(() => undefined);
+}
+
+/** The alarm's job: after a real eviction `activeBriefPolls` was wiped with the
+ *  rest of module state, so poll every still-running brief once, immediately. */
+async function resumeBriefPolls(): Promise<void> {
+  const running = (await listBriefRuns(Date.now())).filter((r) => r.phase.kind === "running");
+  await Promise.all(
+    running
+      .filter((run) => !activeBriefPolls.has(run.id))
+      .map((run) => {
+        activeBriefPolls.add(run.id);
+        return tickBriefPoll(run.id, POLL_START_MS, pairingGeneration).catch(() => {
+          activeBriefPolls.delete(run.id);
+        });
+      }),
+  );
+  await disarmBriefAlarmIfIdle();
+}
+
+/**
+ * The six brief kinds, narrowed off the raw message.
+ *
+ * `id` is optional and only read by the two kinds that carry one; every other
+ * field a caller might send is ignored. `brief-start`'s payload gets the real
+ * guard (`isBriefStartRequest`) inside the fan-out, since it is the one that
+ * drives injection.
+ */
+type BriefMessage = {
+  readonly kind:
+    | "brief-tabs"
+    | "brief-start"
+    | "brief-state"
+    | "brief-save"
+    | "brief-log"
+    | "brief-log-clear";
+  readonly id?: string;
+};
+
+function isBriefMessage(v: unknown): v is BriefMessage {
+  if (typeof v !== "object" || v === null) {
+    return false;
+  }
+  const kind = (v as { kind?: unknown }).kind;
+  if (typeof kind !== "string" || !kind.startsWith("brief-")) {
+    return false;
+  }
+  const id = (v as { id?: unknown }).id;
+  return id === undefined || typeof id === "string";
+}
+
+/**
+ * Fan-out for the six brief message kinds.
+ *
+ * A separate function, not six branches in the router: that function is already
+ * at fourteen branches and needed `openPanelForCue` extracted to stay under
+ * Sonar's cognitive-complexity cap (S3776, 15).
+ */
+async function routeBriefMessage(message: BriefMessage): Promise<unknown> {
+  if (message.kind === "brief-tabs") {
+    return handleBriefTabs(briefDeps);
+  }
+  if (message.kind === "brief-start") {
+    return isBriefStartRequest(message)
+      ? handleBriefStart(briefDeps, message)
+      : ({ kind: "failed", reason: "invalid_request" } satisfies BriefState);
+  }
+  if (message.kind === "brief-save") {
+    const id = message.id;
+    return id === undefined
+      ? ({ kind: "failed", reason: "invalid_request" } satisfies BriefState)
+      : handleBriefSave(briefDeps, id);
+  }
+  if (message.kind === "brief-log") {
+    return { entries: await readLog() };
+  }
+  if (message.kind === "brief-log-clear") {
+    await clearLog();
+    return { ok: true };
+  }
+  if (message.kind === "brief-state") {
+    const id = message.id;
+    return { run: id === undefined ? null : await getBriefRun(id, Date.now()) };
+  }
+  return { kind: "failed", reason: "unknown_brief_message" } satisfies BriefState;
+}
+
 const quickClipDeps: QuickClipDeps = {
   activeTab,
   runCapture,
@@ -593,9 +799,19 @@ addMenuClickListener((menuItemId, tabId, selectionText) => {
  * moment the pairing changes rather than after `clearRuns`'s own storage write
  * settles.
  */
-function clearRunsAndBumpGeneration(): Promise<void> {
+/**
+ * Bump the generation, then drop every cached answer from the gateway the
+ * browser is leaving — agent lane briefs AND research-brief runs alike. A stored
+ * report is one gateway's answer, and the next pairing may be a different one.
+ *
+ * The disclosure log is deliberately NOT cleared here: it records egress that
+ * already happened, and a change of pairing does not make it un-happen. Only the
+ * user's own "Clear this list" empties it.
+ */
+async function clearRunsAndBumpGeneration(): Promise<void> {
   pairingGeneration += 1;
-  return clearRuns();
+  await clearRuns();
+  await clearBriefRuns().catch(() => undefined);
 }
 
 function openPanelForCue(tabId: number | undefined): void {
@@ -818,6 +1034,17 @@ addMessageListener((message, rawRespond, sender) => {
       });
     return true;
   }
+  // ONE branch for six kinds — the fan-out lives in `routeBriefMessage` so this
+  // router stays under S3776's cap. Placed before the narrower guards below only
+  // because its own guard is exact (a `brief-` prefix plus an optional string id).
+  if (isBriefMessage(message)) {
+    routeBriefMessage(message)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "failed", reason: "server_error" });
+      });
+    return true;
+  }
   if (isUnpairRequest(message)) {
     handleUnpair({ clearConnection, clearRuns: clearRunsAndBumpGeneration })
       .then(respond)
@@ -959,6 +1186,10 @@ addAlarmListener((name) => {
   }
   if (name === AGENT_POLL_ALARM) {
     resumeAgentPolls().catch(() => undefined);
+    return;
+  }
+  if (name === BRIEF_POLL_ALARM) {
+    resumeBriefPolls().catch(() => undefined);
   }
 });
 
