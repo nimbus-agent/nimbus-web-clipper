@@ -193,6 +193,47 @@ export interface DiscoverRequest {
   readonly kind: "discover";
 }
 
+/** Ask the worker which open tabs may be offered as brief sources. */
+export interface BriefTabsRequest {
+  readonly kind: "brief-tabs";
+}
+
+/**
+ * Start a brief.
+ *
+ * `tabIds` arrives from an extension page, which is same-origin and not a
+ * content script — but it is still a message payload, and the worker will
+ * `executeScript` into every id in it. So it is narrowed like every other
+ * cross-boundary value: integers only, at least one, never more than the
+ * gateway's source cap. A forged id cannot widen what the worker may inject into
+ * (host permission still gates that), but an unbounded list would let one
+ * message fan out into arbitrarily many injections.
+ */
+export interface BriefStartRequest {
+  readonly kind: "brief-start";
+  readonly question: string;
+  readonly tabIds: readonly number[];
+}
+
+/** Read a brief's current state. Read-only — never invokes. */
+export interface BriefStateRequest {
+  readonly kind: "brief-state";
+  readonly id?: string;
+}
+
+export interface BriefSaveRequest {
+  readonly kind: "brief-save";
+  readonly id: string;
+}
+
+export interface BriefLogRequest {
+  readonly kind: "brief-log";
+}
+
+export interface BriefLogClearRequest {
+  readonly kind: "brief-log-clear";
+}
+
 export type ExtensionRequest =
   | CaptureRequest
   | PairRequest
@@ -209,7 +250,13 @@ export type ExtensionRequest =
   | QueueRemoveRequest
   | ConnectionStatusRequest
   | UnpairRequest
-  | DiscoverRequest;
+  | DiscoverRequest
+  | BriefTabsRequest
+  | BriefStartRequest
+  | BriefStateRequest
+  | BriefSaveRequest
+  | BriefLogRequest
+  | BriefLogClearRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -617,6 +664,36 @@ export function isAgentStateRequest(v: unknown): v is AgentStateRequest {
     typeof v["pageUrl"] === "string" &&
     hasValidLaneInput(v)
   );
+}
+
+/**
+ * The two caps this guard enforces, duplicated from `shared/brief.ts` rather
+ * than imported.
+ *
+ * Deliberate: this module is the narrowing boundary every entry point imports,
+ * and pulling in the brief module here would drag `types.ts` into it. A test
+ * asserts the two agree (`messages.test.ts`), so the duplication is checked
+ * rather than trusted.
+ */
+const MAX_BRIEF_SOURCES = 20;
+const MAX_BRIEF_QUESTION_CHARS = 4000;
+
+export function isBriefStartRequest(v: unknown): v is BriefStartRequest {
+  if (!isObject(v) || v["kind"] !== "brief-start") {
+    return false;
+  }
+  const question = v["question"];
+  if (typeof question !== "string" || question.trim() === "") {
+    return false;
+  }
+  if (question.length > MAX_BRIEF_QUESTION_CHARS) {
+    return false;
+  }
+  const tabIds = v["tabIds"];
+  if (!Array.isArray(tabIds) || tabIds.length === 0 || tabIds.length > MAX_BRIEF_SOURCES) {
+    return false;
+  }
+  return tabIds.every((id) => typeof id === "number" && Number.isInteger(id) && id >= 0);
 }
 
 /**
