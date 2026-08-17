@@ -1,0 +1,54 @@
+:root { color-scheme: light dark; }
+body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
+.brief { max-width: 760px; margin: 0 auto; padding: 32px 24px 64px; }
+.brief__title { margin: 0 0 4px; font-size: 22px; }
+.brief__lede { margin: 0 0 24px; opacity: 0.8; }
+.brief h2 { font-size: 15px; margin: 24px 0 8px; }
+
+.brief__tabs { list-style: none; margin: 0; padding: 0; }
+.brief__tab label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: "box title" ". url";
+  gap: 2px 8px;
+  align-items: center;
+  padding: 6px 4px;
+  cursor: pointer;
+}
+.brief__tab input { grid-area: box; }
+.brief__tab-title { grid-area: title; }
+.brief__tab-url {
+  grid-area: url;
+  font-size: 12px;
+  opacity: 0.65;
+  overflow-wrap: anywhere;
+}
+
+.brief__questions { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.brief__question { padding: 6px 12px; cursor: pointer; border-radius: 999px; }
+.brief__custom { margin-top: 12px; }
+.brief__custom summary { cursor: pointer; font-size: 13px; }
+.brief__custom textarea { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 8px; }
+
+.brief__banner { padding: 8px 12px; border-radius: 6px; font-size: 13px; }
+.brief__banner--remote { background: rgba(200, 120, 0, 0.16); }
+.brief__banner--local { background: rgba(0, 150, 90, 0.14); }
+.brief__model { font-size: 12px; opacity: 0.75; margin-top: 4px; }
+
+.brief__items, .brief__gaps, .brief__skipped { padding-left: 20px; }
+.brief__items > li { margin-bottom: 16px; }
+.brief__citations { list-style: none; margin: 4px 0 0; padding: 0; font-size: 13px; opacity: 0.85; }
+.brief__citations blockquote { margin: 4px 0 4px 12px; padding-left: 8px; border-left: 2px solid rgba(127,127,127,0.4); }
+.brief__cite-title { font-weight: 600; }
+.brief__note { font-size: 13px; opacity: 0.8; }
+.brief__error { font-size: 13px; }
+.brief__save { margin-top: 20px; padding: 8px 16px; cursor: pointer; }
+
+.preview { margin-top: 24px; padding: 12px; border: 1px solid rgba(127,127,127,0.35); border-radius: 6px; }
+.preview__heading { margin: 0 0 8px; font-size: 14px; }
+.preview__row { display: flex; gap: 8px; font-size: 13px; padding: 2px 0; }
+.preview__label { min-width: 90px; opacity: 0.7; }
+.preview__value { overflow-wrap: anywhere; }
+.preview__sources { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(127,127,127,0.25); }
+.preview__note { font-size: 12px; opacity: 0.8; margin: 8px 0 0; }
+#run { margin-top: 12px; padding: 8px 16px; cursor: pointer; }
