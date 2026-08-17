@@ -185,6 +185,42 @@ describe("renderState", () => {
     expect(root.textContent?.toLowerCase()).toContain("left out the supporting quotes");
   });
 
+  it("links an http(s) citation url, opened safely", () => {
+    const withUrl: BriefReport = {
+      ...report,
+      findings: [
+        { text: "f", citations: [{ kind: "source", title: "A", url: "https://ex.com/a" }] },
+      ],
+    };
+    renderState(root, done({ report: withUrl }));
+    const a = root.querySelector<HTMLAnchorElement>("a");
+    expect(a?.href).toBe("https://ex.com/a");
+    expect(a?.rel).toBe("noopener noreferrer");
+    expect(a?.target).toBe("_blank");
+  });
+
+  it("NEVER puts a javascript: citation url into an href, but still shows it", () => {
+    // The report crosses two trust boundaries and isBriefReport only checks that
+    // `url` is a string. Rendering it as text keeps the hostile citation visible
+    // rather than hiding what was claimed.
+    for (const hostile of [
+      "javascript:alert(1)",
+      "data:text/html,<script>1</script>",
+      "vbscript:x",
+    ]) {
+      document.body.replaceChildren();
+      root = document.createElement("div");
+      document.body.appendChild(root);
+      const withUrl: BriefReport = {
+        ...report,
+        findings: [{ text: "f", citations: [{ kind: "source", title: "A", url: hostile }] }],
+      };
+      renderState(root, done({ report: withUrl }));
+      expect(root.querySelector("a")).toBeNull();
+      expect(root.textContent).toContain(hostile);
+    }
+  });
+
   it("escapes source-controlled text rather than parsing it as HTML", () => {
     renderState(root, done({ report: { ...report, summary: "<img src=x onerror=alert(1)>" } }));
     expect(root.querySelector("img")).toBeNull();

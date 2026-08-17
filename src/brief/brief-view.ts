@@ -13,6 +13,7 @@ import {
   quotesWereOmitted,
   visibleGaps,
 } from "../shared/brief-report.ts";
+import { safeHttpUrl } from "../shared/safe-url.ts";
 
 export type ComposerModel = {
   readonly named: readonly CandidateTab[];
@@ -133,10 +134,22 @@ function renderCitations(item: BriefReportItem): HTMLElement {
     if (c.quote !== undefined) {
       li.appendChild(el("blockquote", c.quote));
     }
+    // A citation url is as untrusted as the rest of the report — `isBriefReport`
+    // checks it is a string, not that it is safe to click — so the scheme is
+    // validated before it reaches an href. A rejected url is still shown as
+    // TEXT: the user should see what the citation claimed, just not be able to
+    // click it into `javascript:` or `data:`.
     if (c.url !== undefined) {
-      const a = el("a", c.url);
-      a.href = c.url;
-      li.appendChild(a);
+      const href = safeHttpUrl(c.url);
+      if (href === null) {
+        li.appendChild(el("span", c.url, "brief__cite-url"));
+      } else {
+        const a = el("a", c.url, "brief__cite-url");
+        a.href = href;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        li.appendChild(a);
+      }
     }
     list.appendChild(li);
   }
