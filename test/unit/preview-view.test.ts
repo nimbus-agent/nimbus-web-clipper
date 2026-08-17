@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // test/unit/preview-view.test.ts
 import { describe, expect, test } from "vitest";
-import type { ClipPreview, FetchPreview } from "../../src/shared/preview.ts";
+import type { BriefPreview, ClipPreview, FetchPreview } from "../../src/shared/preview.ts";
 import { renderPreview } from "../../src/shared/preview-view.ts";
 
 const clip: ClipPreview = {
@@ -64,5 +64,47 @@ describe("renderPreview", () => {
     const frag = renderPreview(document, { ...clip, excerpt: "<script>alert(1)</script>" });
     expect(frag.querySelector("script")).toBeNull();
     expect(frag.textContent).toContain("<script>alert(1)</script>");
+  });
+});
+
+describe("renderPreview — brief", () => {
+  const brief: BriefPreview = {
+    fields: [
+      { label: "Question", value: "What do these changes disagree about?" },
+      { label: "Sources", value: "2 pages" },
+    ],
+    sources: [
+      { label: "Fix the thing", value: "https://github.com/acme/web/pull/1" },
+      { label: "Also fix the thing", value: "https://github.com/acme/web/pull/2" },
+    ],
+    synthesisNotice: "Local or remote, depending on configuration.",
+  };
+
+  test("renders EVERY source, not just the count", () => {
+    // A brief carries no `excerpt`, so before this shape was recognised it fell
+    // through the fetch branch and every source row was silently dropped.
+    const frag = renderPreview(document, brief);
+    expect(frag.textContent).toContain("https://github.com/acme/web/pull/1");
+    expect(frag.textContent).toContain("https://github.com/acme/web/pull/2");
+    expect(frag.querySelectorAll(".preview__sources .preview__row")).toHaveLength(2);
+  });
+
+  test("renders the synthesis notice", () => {
+    const frag = renderPreview(document, brief);
+    expect(frag.textContent).toContain("Local or remote, depending on configuration.");
+  });
+
+  test("renders no body section — a brief preview shows no excerpt", () => {
+    const frag = renderPreview(document, brief);
+    expect(frag.querySelector(".preview__body")).toBeNull();
+  });
+
+  test("a source title containing markup is text, not markup", () => {
+    const frag = renderPreview(document, {
+      ...brief,
+      sources: [{ label: "<img src=x onerror=alert(1)>", value: "https://ex.com/a" }],
+    });
+    expect(frag.querySelector("img")).toBeNull();
+    expect(frag.textContent).toContain("<img src=x onerror=alert(1)>");
   });
 });

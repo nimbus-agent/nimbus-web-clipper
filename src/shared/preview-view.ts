@@ -1,5 +1,5 @@
 // Renders either preview shape. Pure: takes a Document, returns a fragment.
-import type { ClipPreview, FetchPreview, PreviewField } from "./preview.ts";
+import type { BriefPreview, ClipPreview, FetchPreview, PreviewField } from "./preview.ts";
 
 function row(doc: Document, field: PreviewField): HTMLElement {
   const el = doc.createElement("div");
@@ -16,17 +16,41 @@ function row(doc: Document, field: PreviewField): HTMLElement {
   return el;
 }
 
-function isClipPreview(p: ClipPreview | FetchPreview): p is ClipPreview {
+type AnyPreview = ClipPreview | FetchPreview | BriefPreview;
+
+function isClipPreview(p: AnyPreview): p is ClipPreview {
   return "excerpt" in p;
 }
 
-export function renderPreview(
-  doc: Document,
-  preview: ClipPreview | FetchPreview,
-): DocumentFragment {
+/**
+ * Checked BEFORE the clip test and by its own marker field, not by elimination.
+ * A brief carries no `excerpt`, so falling through to the fetch branch would
+ * render its `fields` and silently drop every source row and the synthesis
+ * notice — the two things that make it a consent surface rather than a summary.
+ */
+function isBriefPreview(p: AnyPreview): p is BriefPreview {
+  return "synthesisNotice" in p;
+}
+
+export function renderPreview(doc: Document, preview: AnyPreview): DocumentFragment {
   const frag = doc.createDocumentFragment();
   for (const field of preview.fields) {
     frag.append(row(doc, field));
+  }
+  if (isBriefPreview(preview)) {
+    // Every source named individually: a count is not consent to send twenty
+    // specific pages.
+    const list = doc.createElement("div");
+    list.className = "preview__sources";
+    for (const source of preview.sources) {
+      list.append(row(doc, source));
+    }
+    frag.append(list);
+    const notice = doc.createElement("p");
+    notice.className = "preview__note";
+    notice.textContent = preview.synthesisNotice;
+    frag.append(notice);
+    return frag;
   }
   if (!isClipPreview(preview)) {
     // A fetch sends no body, so there is no body section. Rendering an empty one

@@ -1,7 +1,13 @@
 // test/unit/preview.test.ts
 import { describe, expect, test } from "vitest";
 import type { ClipPayload } from "../../src/shared/clip.ts";
-import { buildClipPreview, buildFetchPreview, EXCERPT_CHARS } from "../../src/shared/preview.ts";
+import {
+  buildBriefPreview,
+  buildClipPreview,
+  buildFetchPreview,
+  EXCERPT_CHARS,
+  SYNTHESIS_NOTICE,
+} from "../../src/shared/preview.ts";
 import type { FetchTarget } from "../../src/shared/types.ts";
 
 const payload: ClipPayload = {
@@ -87,5 +93,48 @@ describe("buildFetchPreview", () => {
       const value = buildFetchPreview({ ...target, surface }).fields[1]?.value;
       expect(value).toBeTruthy();
     }
+  });
+});
+
+describe("buildBriefPreview", () => {
+  const input = {
+    question: "What do these changes disagree about?",
+    sources: [
+      { url: "https://github.com/acme/web/pull/1", title: "Fix the thing" },
+      { url: "https://github.com/acme/web/pull/2", title: "Also fix the thing" },
+    ],
+  };
+
+  test("names the question and the source count", () => {
+    const p = buildBriefPreview(input);
+    expect(p.fields).toEqual([
+      { label: "Question", value: "What do these changes disagree about?" },
+      { label: "Sources", value: "2 pages" },
+    ]);
+  });
+
+  test("names EVERY source, so nothing leaves unnamed", () => {
+    const p = buildBriefPreview(input);
+    expect(p.sources).toHaveLength(2);
+    expect(p.sources[0]).toEqual({
+      label: "Fix the thing",
+      value: "https://github.com/acme/web/pull/1",
+    });
+  });
+
+  test("uses the singular for one source", () => {
+    const only = input.sources[0];
+    if (only === undefined) {
+      throw new Error("fixture");
+    }
+    const p = buildBriefPreview({ question: "q", sources: [only] });
+    expect(p.fields[1]).toEqual({ label: "Sources", value: "1 page" });
+  });
+
+  test("carries the synthesis notice and never claims the run stays local", () => {
+    const p = buildBriefPreview(input);
+    expect(p.synthesisNotice).toBe(SYNTHESIS_NOTICE);
+    expect(p.synthesisNotice.toLowerCase()).not.toContain("stays on your machine");
+    expect(p.synthesisNotice.toLowerCase()).toContain("local or a remote model");
   });
 });

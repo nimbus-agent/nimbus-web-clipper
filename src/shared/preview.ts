@@ -80,3 +80,54 @@ export function buildFetchPreview(target: FetchTarget): FetchPreview {
     ],
   };
 }
+
+export interface BriefPreview {
+  readonly fields: readonly PreviewField[];
+  /** One row per source: `label` is the title, `value` the address. */
+  readonly sources: readonly PreviewField[];
+  readonly synthesisNotice: string;
+}
+
+/**
+ * What the user is told before source text leaves — and it deliberately does not
+ * promise local synthesis.
+ *
+ * The client CANNOT know: `createBriefLlm` resolves `[briefs].prefer_local` and
+ * falls back to remote when no local provider is available, `GET /v1/health`
+ * reports only liveness, and `/v1/admin/status` needs a token this client does
+ * not hold. Saying "stays on your machine" would be a guess presented as a
+ * guarantee. The report's `synthesis.remote` is what actually happened, and the
+ * page shows it afterwards.
+ */
+export const SYNTHESIS_NOTICE =
+  "Your gateway will read these pages and answer with a local or a remote model, depending on how it is configured. The finished brief names which one it used.";
+
+/**
+ * A brief run, source by source.
+ *
+ * Same construction rule as {@link buildClipPreview}: fields are listed
+ * explicitly, never derived by iterating an object, so the bearer token cannot
+ * arrive here by inheritance. Every source is named individually rather than
+ * summarised as a count alone — a count is not consent to send twenty specific
+ * pages.
+ *
+ * Unlike the clip preview there is no off switch, the same reasoning C4.2
+ * applied to the targeted fetch: this is a larger egress than a fetch, not a
+ * smaller one.
+ */
+export function buildBriefPreview(input: {
+  question: string;
+  sources: readonly { url: string; title: string }[];
+}): BriefPreview {
+  return {
+    fields: [
+      { label: "Question", value: input.question },
+      {
+        label: "Sources",
+        value: `${input.sources.length} ${input.sources.length === 1 ? "page" : "pages"}`,
+      },
+    ],
+    sources: input.sources.map((s) => ({ label: s.title, value: s.url })),
+    synthesisNotice: SYNTHESIS_NOTICE,
+  };
+}
