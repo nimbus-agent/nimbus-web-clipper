@@ -4,6 +4,7 @@ import { isPreviewEnabled, setPreviewEnabled } from "../background/preview-pref.
 import { getAllCommands } from "../browser/commands.ts";
 import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.ts";
 import { isFirefoxRuntime, sendMessage } from "../browser/runtime.ts";
+import { isBriefLogEntry } from "../shared/brief-log.ts";
 import {
   type DiscoverResponse,
   isConnectionResponse,
@@ -18,6 +19,7 @@ import {
 } from "../shared/origins.ts";
 import { BUILT_IN_SURFACES } from "../shared/recognise.ts";
 import type { ConfiguredOrigin } from "../shared/types.ts";
+import { renderBriefLog } from "./brief-log-view.ts";
 import { applyStages, healthLine, stagesFrom } from "./setup-view.ts";
 import { renderShortcuts, shortcutRows, shortcutsHint } from "./shortcuts-view.ts";
 import { renderSurfaceList, type SurfaceRow, sharedHostNote } from "./surfaces-view.ts";
@@ -380,6 +382,38 @@ async function onSurfaceClick(event: Event): Promise<void> {
   await refreshSurfaces();
 }
 
+/**
+ * Paint the disclosure log from the worker's copy.
+ *
+ * The try/catch is REQUIRED, same rule as `refreshShortcuts` and
+ * `refreshPreviewToggle`: this is `void`-called from DOMContentLoaded, so a
+ * rejecting read would surface as an unhandled rejection and fail the Vitest
+ * run. On a failed read the section stays empty rather than claiming nothing has
+ * ever been sent — which would be the one wrong thing to say here.
+ */
+async function refreshBriefLog(): Promise<void> {
+  const host = document.getElementById("brief-log");
+  if (host === null) {
+    return;
+  }
+  try {
+    const res: unknown = await sendMessage({ kind: "brief-log" });
+    const entries = (res as { entries?: unknown }).entries;
+    renderBriefLog(host, Array.isArray(entries) ? entries.filter(isBriefLogEntry) : []);
+  } catch {
+    /* leave the section as it is — see the doc comment */
+  }
+}
+
+async function onClearBriefLog(): Promise<void> {
+  try {
+    await sendMessage({ kind: "brief-log-clear" });
+  } catch {
+    /* the refresh below still repaints from whatever the worker holds */
+  }
+  await refreshBriefLog();
+}
+
 function previewToggle(): HTMLInputElement | null {
   const el = document.getElementById("preview-toggle");
   return el instanceof HTMLInputElement ? el : null;
@@ -440,8 +474,19 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("preview-toggle")?.addEventListener("change", () => {
     void onPreviewChange();
   });
+  // Opens in a tab of its own — a brief run outlives this page too, and the
+  // composer needs the room. Click-driven, deliberately not a `commands` entry.
+  document.getElementById("open-brief")?.addEventListener("click", () => {
+    void chrome.tabs.create({ url: chrome.runtime.getURL("brief.html") }).catch(() => undefined);
+  });
+  document.getElementById("brief-log")?.addEventListener("click", (event) => {
+    if (event.target instanceof HTMLButtonElement && event.target.id === "clear-brief-log") {
+      void onClearBriefLog();
+    }
+  });
   void refreshConnection();
   void refreshSurfaces();
   void refreshShortcuts();
   void refreshPreviewToggle();
+  void refreshBriefLog();
 });

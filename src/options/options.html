@@ -30,6 +30,10 @@
         <output id="connection-status" class="options__status"></output>
         <button id="unpair" type="button">Unpair this browser</button>
         <button id="unpair-cancel" type="button" hidden>Cancel</button>
+        <h3 class="stage__sub">Research briefs</h3>
+        <p>Ask one question across several tabs you have open. Works on the sites you have granted page access to in stage 3.</p>
+        <button id="open-brief" type="button">Write a research brief</button>
+
         <h3 class="stage__sub">Keyboard shortcuts</h3>
         <div id="shortcut-list"></div>
         <p id="shortcut-hint" class="options__status"></p>
@@ -65,6 +69,7 @@
             Show me the payload before sending, when I clip from the toolbar
           </label>
         </p>
+        <section id="brief-log"></section>
         <p><strong>The secret stays secret.</strong> Your pairing token lives in extension storage, is never shown on this page, never written to a log, and never placed in any web page.</p>
         <p><strong>You can check all of this.</strong> The extension is MIT-licensed, has no runtime dependencies, and its build is reproducible from source.</p>
       </section>

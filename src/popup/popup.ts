@@ -191,6 +191,13 @@ document.addEventListener("DOMContentLoaded", () => {
     .getElementById("clip-selection")
     ?.addEventListener("click", () => void clip("selection"));
   document.getElementById("show-related")?.addEventListener("click", () => void showRelated());
+  // Opens in a TAB, never in this popup: the popup is destroyed on blur and a
+  // brief run outlives it, so composing here would lose the run on the first
+  // click away. Click-driven rather than a `commands` entry — C1.5 exists
+  // because `suggested_key` is a suggestion the browser may silently decline.
+  document.getElementById("open-brief")?.addEventListener("click", () => {
+    void chrome.tabs.create({ url: chrome.runtime.getURL("brief.html") }).catch(() => undefined);
+  });
   document.getElementById("preview-confirm")?.addEventListener("click", () => {
     const p = pending;
     hidePreview();

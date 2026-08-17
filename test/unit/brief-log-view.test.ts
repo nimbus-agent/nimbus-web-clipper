@@ -1,0 +1,97 @@
+// @vitest-environment jsdom
+// test/unit/brief-log-view.test.ts
+import { beforeEach, describe, expect, it } from "vitest";
+import { renderBriefLog } from "../../src/options/brief-log-view.ts";
+import { MAX_LOG_ENTRIES } from "../../src/shared/brief-log.ts";
+
+let root: HTMLElement;
+
+beforeEach(() => {
+  document.body.replaceChildren();
+  root = document.createElement("div");
+  document.body.appendChild(root);
+});
+
+describe("renderBriefLog", () => {
+  it("says plainly when nothing has left", () => {
+    renderBriefLog(root, []);
+    expect(root.textContent).toContain("No research briefs");
+  });
+
+  it("names the model and whether it was remote", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1_700_000_000_000,
+        question: "Why?",
+        sourceCount: 3,
+        truncatedCount: 1,
+        model: "gpt-4",
+        remote: true,
+      },
+    ]);
+    expect(root.textContent).toContain("gpt-4");
+    expect(root.textContent).toContain("3 pages");
+    expect(root.textContent?.toLowerCase()).toContain("remote");
+    expect(root.textContent).toContain("1 shortened to fit");
+  });
+
+  it("distinguishes a local run", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 1,
+        truncatedCount: 0,
+        model: "llama3",
+        remote: false,
+      },
+    ]);
+    expect(root.textContent?.toLowerCase()).toContain("on your machine");
+  });
+
+  it("shows a failed run — the source text still left", () => {
+    renderBriefLog(root, [
+      { runId: "r1", at: 1, question: "q", sourceCount: 2, truncatedCount: 0, failed: true },
+    ]);
+    expect(root.textContent?.toLowerCase()).toContain("didn't finish");
+    expect(root.textContent).toContain("2 pages were sent");
+  });
+
+  it("states the retention cap rather than forgetting quietly", () => {
+    renderBriefLog(root, []);
+    expect(root.textContent).toContain(String(MAX_LOG_ENTRIES));
+  });
+
+  it("newest first", () => {
+    renderBriefLog(root, [
+      { runId: "old", at: 1, question: "first", sourceCount: 1, truncatedCount: 0 },
+      { runId: "new", at: 2, question: "second", sourceCount: 1, truncatedCount: 0 },
+    ]);
+    const text = root.textContent ?? "";
+    expect(text.indexOf("second")).toBeLessThan(text.indexOf("first"));
+  });
+
+  it("marks a saved run", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 1,
+        truncatedCount: 0,
+        savedItemId: "i1",
+      },
+    ]);
+    expect(root.textContent).toContain("Saved to your index.");
+  });
+
+  it("escapes the question rather than parsing it", () => {
+    renderBriefLog(root, [
+      { runId: "r1", at: 1, question: "<b>hi</b>", sourceCount: 1, truncatedCount: 0 },
+    ]);
+    expect(root.querySelector("b")).toBeNull();
+    expect(root.textContent).toContain("<b>hi</b>");
+  });
+});
