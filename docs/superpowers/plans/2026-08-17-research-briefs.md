@@ -35,9 +35,11 @@
   FAIL test/unit/doc-references.test.ts > references to docs/superpowers resolve > plans are pruned, per the convention CLAUDE.md states
   ```
 
-  Any second failure is real. Task 14 deletes this file, which is what turns the
+  Any second failure is real. Task 14 clears the directory, which is what turns the
   gate green — do not merge to `main` with it still present, and do not "fix" the
-  assertion.
+  assertion. Note the assertion counts **every** `.md` in that folder, so review
+  notes left beside this plan grow the reported array without adding a second
+  failing test: still one red line, listing more files.
 
 ---
 
@@ -1309,12 +1311,22 @@ describe("listCandidateTabs", () => {
     expect(out.hiddenCount).toBe(0);
   });
 
-  it("returns an empty result rather than throwing when query fails", async () => {
+  it("DISTINGUISHES a failed query from an empty one, rather than throwing", async () => {
+    // "You have no eligible tabs" and "we couldn't read your tabs" are different
+    // facts and must not render the same. `noConsole` is an error inside `src/`,
+    // and this extension ships no telemetry, so the failure is surfaced to the
+    // USER rather than to a log they will never see.
     (globalThis as unknown as { chrome: unknown }).chrome = {
       tabs: { query: vi.fn(() => Promise.reject(new Error("no"))) },
     };
     const out = await listCandidateTabs();
-    expect(out).toEqual({ named: [], hiddenCount: 0 });
+    expect(out).toEqual({ named: [], hiddenCount: 0, enumerationFailed: true });
+  });
+
+  it("reports enumerationFailed false on a genuinely empty tab set", async () => {
+    installTabs([]);
+    const out = await listCandidateTabs();
+    expect(out).toEqual({ named: [], hiddenCount: 0, enumerationFailed: false });
   });
 });
 ```
@@ -1343,6 +1355,16 @@ export type CandidateTab = {
 export type TabCandidates = {
   readonly named: readonly CandidateTab[];
   readonly hiddenCount: number;
+  /**
+   * True when the query itself failed, as opposed to genuinely finding nothing.
+   *
+   * These are different facts and must not render identically: an empty list says
+   * "nothing here to brief on", and a failed query says "we could not look". This
+   * flag is how the failure reaches the user, which is the only place it can go —
+   * `noConsole` is an error inside `src/` and this extension ships no telemetry,
+   * so there is no log to write it to and there should not be one.
+   */
+  readonly enumerationFailed: boolean;
 };
 
 /**
@@ -1370,7 +1392,7 @@ export async function listCandidateTabs(): Promise<TabCandidates> {
   try {
     tabs = await chrome.tabs.query({});
   } catch {
-    return { named: [], hiddenCount: 0 };
+    return { named: [], hiddenCount: 0, enumerationFailed: true };
   }
   const named: CandidateTab[] = [];
   let hiddenCount = 0;
@@ -1389,7 +1411,7 @@ export async function listCandidateTabs(): Promise<TabCandidates> {
     }
     named.push({ id, url, title: tab.title ?? url });
   }
-  return { named, hiddenCount };
+  return { named, hiddenCount, enumerationFailed: false };
 }
 
 const RESTRICTED_TAB_SCHEMES = new Set([
@@ -1456,8 +1478,8 @@ git commit -m "feat(brief): enumerate candidate tabs, counting the ones we may n
 
 ```ts
 // test/unit/brief-run-store.test.ts
-import { beforeEach, describe, expect, it } from "vitest";
-import { installChromeMock, restore } from "./helpers/chrome-mock.ts";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 import {
   BRIEF_RUN_TTL_MS,
   type StoredBrief,
@@ -1481,20 +1503,24 @@ function run(over: Partial<StoredBrief> = {}): StoredBrief {
 }
 
 describe("brief-run-store", () => {
+  let harness: ChromeHarness;
+
   beforeEach(() => {
-    installChromeMock();
+    harness = installChromeMock();
+  });
+
+  afterEach(() => {
+    harness.restore();
   });
 
   it("round-trips a run", async () => {
     await putBriefRun(run(), NOW);
     expect(await getBriefRun("b1", NOW)).toEqual(run());
-    restore();
   });
 
   it("hides an expired run", async () => {
     await putBriefRun(run({ expiresAtMs: NOW - 1 }), NOW);
     expect(await getBriefRun("b1", NOW)).toBeNull();
-    restore();
   });
 
   it("keeps a done report so reopening the page replays instead of re-running", async () => {
@@ -1508,22 +1534,19 @@ describe("brief-run-store", () => {
     await putBriefRun(run({ phase: { kind: "done", report } }), NOW);
     const got = await getBriefRun("b1", NOW);
     expect(got?.phase).toEqual({ kind: "done", report });
-    restore();
   });
 
   it("NEVER stores source text — only declared url and title", async () => {
     await putBriefRun(run(), NOW);
-    const raw = JSON.stringify(await chrome.storage.local.get(null));
+    const raw = JSON.stringify([...harness.storage.entries()]);
     expect(raw.includes("https://example.com/a")).toBe(true);
     expect(raw.toLowerCase().includes("body")).toBe(false);
-    restore();
   });
 
   it("discards a stored entry that fails the guard rather than throwing", async () => {
-    await chrome.storage.local.set({ briefRuns: { b1: { id: "b1", phase: "nonsense" } } });
+    harness.storage.set("briefRuns", { b1: { id: "b1", phase: "nonsense" } });
     expect(await getBriefRun("b1", NOW)).toBeNull();
     expect(await listBriefRuns(NOW)).toEqual([]);
-    restore();
   });
 
   it("serialises concurrent writes instead of clobbering", async () => {
@@ -1534,14 +1557,12 @@ describe("brief-run-store", () => {
     ]);
     const ids = (await listBriefRuns(NOW)).map((r) => r.id).sort();
     expect(ids).toEqual(["a", "b", "c"]);
-    restore();
   });
 
   it("clearBriefRuns drops everything, so a brief cannot outlive its gateway", async () => {
     await putBriefRun(run(), NOW);
     await clearBriefRuns();
     expect(await listBriefRuns(NOW)).toEqual([]);
-    restore();
   });
 });
 ```
@@ -1742,8 +1763,8 @@ git commit -m "feat(brief): persist an in-flight run, without its source text"
 
 ```ts
 // test/unit/brief-log.test.ts
-import { beforeEach, describe, expect, it } from "vitest";
-import { installChromeMock, restore } from "./helpers/chrome-mock.ts";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 import {
   type BriefLogEntry,
   MAX_LOG_ENTRIES,
@@ -1814,15 +1835,20 @@ describe("evictLog", () => {
 });
 
 describe("brief-log-store", () => {
+  let harness: ChromeHarness;
+
   beforeEach(() => {
-    installChromeMock();
+    harness = installChromeMock();
+  });
+
+  afterEach(() => {
+    harness.restore();
   });
 
   it("appends and reads back, newest last", async () => {
     await appendLogEntry(entry({ runId: "a", at: 1 }));
     await appendLogEntry(entry({ runId: "b", at: 2 }));
     expect((await readLog()).map((e) => e.runId)).toEqual(["a", "b"]);
-    restore();
   });
 
   it("patches an entry in place, so the model lands on the run that caused it", async () => {
@@ -1831,21 +1857,18 @@ describe("brief-log-store", () => {
     const [got] = await readLog();
     expect(got?.model).toBe("llama3");
     expect(got?.remote).toBe(false);
-    restore();
   });
 
   it("ignores a patch for an unknown runId rather than inventing a row", async () => {
     await appendLogEntry(entry({ runId: "a" }));
     await updateLogEntry("zzz", { model: "m" });
     expect(await readLog()).toHaveLength(1);
-    restore();
   });
 
   it("never stores a question longer than the log needs, and never a body", async () => {
     await appendLogEntry(entry({ question: "q".repeat(500) }));
-    const raw = JSON.stringify(await chrome.storage.local.get(null));
+    const raw = JSON.stringify([...harness.storage.entries()]);
     expect(raw.toLowerCase().includes("body")).toBe(false);
-    restore();
   });
 
   it("enforces the cap on write", async () => {
@@ -1853,14 +1876,12 @@ describe("brief-log-store", () => {
       await appendLogEntry(entry({ runId: `r${i}`, at: i }));
     }
     expect((await readLog()).length).toBe(MAX_LOG_ENTRIES);
-    restore();
   });
 
   it("clearLog empties it", async () => {
     await appendLogEntry(entry());
     await clearLog();
     expect(await readLog()).toEqual([]);
-    restore();
   });
 });
 ```
@@ -2380,7 +2401,7 @@ git commit -m "feat(brief): typed brief messages, with tabIds narrowed at the bo
 - Produces:
   - `interface BriefDeps { readonly now: () => number; readonly listTabs: () => Promise<TabCandidates>; readonly capture: (tabId: number, expectedUrl: string) => Promise<CaptureOutcome>; readonly connection: () => Promise<{ origin: string; token: string } | null>; readonly client: { createBrief; feedBriefSource; runBrief; getBrief; saveBrief }; readonly store: { get; put }; readonly log: { append; update }; readonly onState: (state: BriefState) => void }`
   - `type BriefState` — the page-facing view of a run
-  - `handleBriefTabs(deps): Promise<{ named: readonly CandidateTab[]; hiddenCount: number; questions: readonly string[]; recognitions: readonly Recognition[] }>`
+  - `handleBriefTabs(deps): Promise<{ named: readonly CandidateTab[]; hiddenCount: number; enumerationFailed: boolean; questions: readonly string[]; recognitions: readonly Recognition[] }>`
   - `handleBriefStart(deps, req: BriefStartRequest): Promise<BriefState>`
   - `handleBriefSave(deps, id: string): Promise<BriefState>`
 
@@ -2414,6 +2435,7 @@ function deps(over: Partial<BriefDeps> = {}): BriefDeps {
           { id: 2, url: "https://example.com/b", title: "B" },
         ],
         hiddenCount: 0,
+        enumerationFailed: false,
       }),
     capture: (tabId) =>
       Promise.resolve({
@@ -2611,8 +2633,24 @@ export type BriefState =
       readonly skipped: readonly { readonly title: string; readonly reason: string }[];
       readonly truncated: readonly string[];
       readonly savedItemId?: string;
+      /**
+       * A failed Save, reported WITHOUT discarding the report.
+       *
+       * This is why a save failure is not a `failed` state: `renderState` clears
+       * the root before drawing, so transitioning to `failed` would erase the
+       * brief the user was reading because a save they attempted afterwards
+       * didn't land. The spec's failure table says the report stays on screen,
+       * and this field is how.
+       */
+      readonly saveError?: string;
     }
-  | { readonly kind: "failed"; readonly id?: string; readonly reason: string; readonly hint?: string };
+  | { readonly kind: "failed"; readonly id?: string; readonly reason: string; readonly hint?: string }
+  /**
+   * Save failed. Carries no report, because the handler may no longer hold one —
+   * the page merges this into the `done` state it is already showing. See
+   * `brief.ts`'s `lastDone`.
+   */
+  | { readonly kind: "save-failed"; readonly id: string; readonly reason: string };
 
 export interface BriefDeps {
   readonly now: () => number;
@@ -2650,6 +2688,7 @@ export async function handleBriefTabs(deps: BriefDeps): Promise<{
   return {
     named: tabs.named,
     hiddenCount: tabs.hiddenCount,
+    enumerationFailed: tabs.enumerationFailed,
     questions: suggestQuestions(recognitions),
     recognitions,
   };
@@ -2843,19 +2882,28 @@ async function pollToTerminal(
   });
 }
 
+/**
+ * Save on the user's explicit click.
+ *
+ * EVERY failure path here is `save-failed`, never `failed`. A brief the user is
+ * reading must not vanish because the save they tried afterwards was refused —
+ * and refusal is a real state, not a theoretical one: `MAX_RETAINED_TERMINAL_RUNS`
+ * is 16 and the TTL is not refreshed on access, so a brief left open for half an
+ * hour is genuinely no longer saveable.
+ */
 export async function handleBriefSave(deps: BriefDeps, id: string): Promise<BriefState> {
   const conn = await deps.connection();
   if (conn === null) {
-    return emit(deps, { kind: "failed", id, reason: "not_paired" });
+    return emit(deps, { kind: "save-failed", id, reason: "not_paired" });
   }
   const nowMs = deps.now();
   const stored = await deps.store.get(id, nowMs);
   if (stored === null || stored.phase.kind !== "done") {
-    return emit(deps, { kind: "failed", id, reason: "expired" });
+    return emit(deps, { kind: "save-failed", id, reason: "expired" });
   }
   const saved = await deps.client.saveBrief(conn.origin, conn.token, id);
   if (!saved.ok) {
-    return emit(deps, { kind: "failed", id, reason: saved.reason });
+    return emit(deps, { kind: "save-failed", id, reason: saved.reason });
   }
   await deps.log.update(id, { savedItemId: saved.itemId });
   await deps.store.put(
@@ -2904,7 +2952,7 @@ git commit -m "feat(brief): the staged create-capture-feed-run orchestration"
 - Produces:
   - `renderComposer(root: HTMLElement, model: ComposerModel): void`
   - `renderState(root: HTMLElement, state: BriefState): void`
-  - `type ComposerModel = { named: readonly CandidateTab[]; hiddenCount: number; questions: readonly string[]; selected: ReadonlySet<number> }`
+  - `type ComposerModel = { named: readonly CandidateTab[]; hiddenCount: number; questions: readonly string[]; selected: ReadonlySet<number>; enumerationFailed?: boolean }`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2977,6 +3025,18 @@ describe("renderComposer", () => {
     expect(root.textContent).not.toContain("page access");
   });
 
+  it("says the tabs couldn't be READ rather than claiming there are none", () => {
+    renderComposer(root, {
+      named: [],
+      hiddenCount: 0,
+      questions: [],
+      selected: new Set(),
+      enumerationFailed: true,
+    });
+    expect(root.textContent).toContain("Couldn't read your open tabs");
+    expect(root.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+  });
+
   it("offers the scaffolded questions and a COLLAPSED custom-question control", () => {
     renderComposer(root, {
       named: [{ id: 1, url: "https://example.com/a", title: "A" }],
@@ -3037,6 +3097,35 @@ describe("renderState", () => {
     expect(root.textContent?.trim()).not.toBe("");
   });
 
+  it("A FAILED SAVE KEEPS THE REPORT ON SCREEN and offers the button again", () => {
+    // The whole reason `saveError` exists rather than a transition to `failed`:
+    // the user was reading this brief, and a refused save must not erase it.
+    renderState(root, {
+      kind: "done",
+      id: "b1",
+      report,
+      skipped: [],
+      truncated: [],
+      saveError: "expired",
+    });
+    expect(root.textContent).toContain("They disagree about retries.");
+    expect(root.textContent?.toLowerCase()).toContain("no longer available to save");
+    expect(root.querySelector("#save-brief")).not.toBeNull();
+  });
+
+  it("hides the save button once saved, and shows no save error", () => {
+    renderState(root, {
+      kind: "done",
+      id: "b1",
+      report,
+      skipped: [],
+      truncated: [],
+      savedItemId: "i1",
+    });
+    expect(root.querySelector("#save-brief")).toBeNull();
+    expect(root.textContent).toContain("Saved to your index.");
+  });
+
   it("escapes source-controlled text rather than parsing it as HTML", () => {
     renderState(root, {
       kind: "done",
@@ -3073,6 +3162,8 @@ export type ComposerModel = {
   readonly hiddenCount: number;
   readonly questions: readonly string[];
   readonly selected: ReadonlySet<number>;
+  /** See `TabCandidates.enumerationFailed` — rendered, not logged. */
+  readonly enumerationFailed?: boolean;
 };
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -3093,6 +3184,16 @@ function el<K extends keyof HTMLElementTagNameMap>(
 export function renderComposer(root: HTMLElement, model: ComposerModel): void {
   root.replaceChildren();
   root.appendChild(el("h2", "Pick the pages"));
+
+  // A failed enumeration is not an empty one. Saying "no eligible tabs" here
+  // would be a false statement about the browser rather than an honest one about
+  // us, and it is the only place this failure can be reported.
+  if (model.enumerationFailed === true) {
+    root.appendChild(
+      el("p", "Couldn't read your open tabs. Reload this page to try again.", "enumerate-error"),
+    );
+    return;
+  }
 
   const list = el("ul", undefined, "tabs");
   for (const tab of model.named) {
@@ -3169,7 +3270,26 @@ export function renderState(root: HTMLElement, state: BriefState): void {
     }
     return;
   }
-  renderReport(root, state.report, state.skipped, state.truncated, state.savedItemId);
+  if (state.kind === "save-failed") {
+    // Only reached if the page has no retained `done` state to merge into — see
+    // brief.ts's `lastDone`. Normally a save failure arrives here as a `done`
+    // state carrying `saveError`, with the report intact.
+    root.appendChild(el("h2", "Couldn't save this brief"));
+    root.appendChild(el("p", saveErrorText(state.reason), "reason"));
+    return;
+  }
+  renderReport(root, state);
+}
+
+/** Save refusals in the user's words. `expired` is the common one, not an edge case. */
+function saveErrorText(reason: string): string {
+  if (reason === "expired" || reason === "not_found") {
+    return "This brief is no longer available to save — your gateway only keeps a finished brief for a while.";
+  }
+  if (reason === "not_paired") {
+    return "Not paired with a gateway any more, so there is nowhere to save it.";
+  }
+  return `Couldn't save it: ${reason}.`;
 }
 
 function renderCitations(item: { citations: BriefReport["findings"][number]["citations"] }): HTMLElement {
@@ -3205,13 +3325,8 @@ function renderItems(root: HTMLElement, heading: string, items: BriefReport["fin
   root.appendChild(list);
 }
 
-function renderReport(
-  root: HTMLElement,
-  report: BriefReport,
-  skipped: readonly { title: string; reason: string }[],
-  truncated: readonly string[],
-  savedItemId?: string,
-): void {
+function renderReport(root: HTMLElement, state: Extract<BriefState, { kind: "done" }>): void {
+  const { report, skipped, truncated, savedItemId, saveError } = state;
   // The banner, and the gaps list with its duplicate removed BY EQUALITY.
   if (report.synthesis.remote) {
     root.appendChild(
@@ -3258,6 +3373,11 @@ function renderReport(
   }
 
   if (savedItemId === undefined) {
+    // The error goes ABOVE the button, and the button stays: a refusal the user
+    // can retry is not the same as a dead end, and the report is still here.
+    if (saveError !== undefined) {
+      root.appendChild(el("p", saveErrorText(saveError), "save-error"));
+    }
     const save = el("button", "Save to Nimbus", "save");
     save.type = "button";
     save.id = "save-brief";
@@ -3310,6 +3430,7 @@ async function loadTabs(): Promise<void> {
     named?: CandidateTab[];
     hiddenCount?: number;
     questions?: string[];
+    enumerationFailed?: boolean;
   };
   named = data.named ?? [];
   renderComposer(root("composer"), {
@@ -3317,6 +3438,7 @@ async function loadTabs(): Promise<void> {
     hiddenCount: data.hiddenCount ?? 0,
     questions: data.questions ?? [],
     selected,
+    enumerationFailed: data.enumerationFailed === true,
   });
 }
 
@@ -3352,10 +3474,58 @@ root("run").addEventListener("click", () => {
     .catch(() => undefined);
 });
 
+/**
+ * The last `done` state, retained so a later save failure can be shown WITHOUT
+ * discarding the brief the user is reading. `save-failed` carries no report —
+ * the worker may no longer hold one — so merging it here is what keeps the
+ * report on screen.
+ */
+let lastDone: Extract<BriefState, { kind: "done" }> | null = null;
+
+function show(state: BriefState): void {
+  if (state.kind === "done") {
+    lastDone = state;
+    renderState(root("state"), state);
+    return;
+  }
+  if (state.kind === "save-failed" && lastDone !== null) {
+    renderState(root("state"), { ...lastDone, saveError: state.reason });
+    return;
+  }
+  renderState(root("state"), state);
+}
+
 chrome.runtime.onMessage.addListener((msg: unknown) => {
   if (typeof msg === "object" && msg !== null && (msg as { kind?: string }).kind === "brief-state") {
-    renderState(root("state"), (msg as { state: BriefState }).state);
+    show((msg as { state: BriefState }).state);
   }
+});
+
+// The Save button is created by `renderState`, so it is bound by DELEGATION on a
+// container that outlives it rather than by id after each render.
+root("state").addEventListener("click", (ev) => {
+  const target = ev.target;
+  if (!(target instanceof HTMLButtonElement) || target.id !== "save-brief") {
+    return;
+  }
+  const id = lastDone?.id;
+  if (id === undefined) {
+    return;
+  }
+  target.disabled = true;
+  void chrome.runtime
+    .sendMessage({ kind: "brief-save", id })
+    .then((res: unknown) => {
+      if (typeof res === "object" && res !== null && "kind" in res) {
+        show(res as BriefState);
+      }
+    })
+    .catch(() => {
+      // Re-enable rather than leaving a dead disabled button: an unreachable
+      // worker is retryable, and a spinner that never resolves is the failure
+      // mode this guards against.
+      target.disabled = false;
+    });
 });
 
 // Returning from Options must not need a manual reload — the grant may have
@@ -3428,26 +3598,31 @@ git commit -m "feat(brief): the brief page, composer and report renderer"
 
 ```ts
 // test/unit/brief-service-worker.test.ts
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { emitMessage, installChromeMock, restore } from "./helpers/chrome-mock.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
 async function settle(): Promise<void> {
   await new Promise((r) => setTimeout(r, 0));
 }
 
 describe("service worker brief routing", () => {
-  beforeEach(async () => {
-    installChromeMock();
+  let harness: ChromeHarness;
+
+  beforeEach(() => {
+    harness = installChromeMock();
     vi.resetModules();
+  });
+
+  afterEach(() => {
+    harness.restore();
   });
 
   it("routes brief-tabs and answers with named tabs plus a hidden count", async () => {
     await import("../../src/background/service-worker.ts");
     await settle();
-    const res = await emitMessage({ kind: "brief-tabs" });
+    const res = await harness.emitMessage({ kind: "brief-tabs" });
     expect(res).toHaveProperty("named");
     expect(res).toHaveProperty("hiddenCount");
-    restore();
   });
 
   it("refuses a brief-start whose tabIds fail the guard, without calling the gateway", async () => {
@@ -3455,70 +3630,85 @@ describe("service worker brief routing", () => {
     globalThis.fetch = fetchSpy as unknown as typeof fetch;
     await import("../../src/background/service-worker.ts");
     await settle();
-    const res = await emitMessage({ kind: "brief-start", question: "q", tabIds: ["1"] });
+    const res = await harness.emitMessage({ kind: "brief-start", question: "q", tabIds: ["1"] });
     expect(res).toMatchObject({ kind: "failed" });
     expect(fetchSpy).not.toHaveBeenCalled();
-    restore();
   });
 
   it("registers the brief poll alarm as the eviction net, not the cadence", async () => {
     await import("../../src/background/service-worker.ts");
     await settle();
-    const created = (chrome.alarms.create as ReturnType<typeof vi.fn>).mock.calls.map(
-      (c) => c[0],
-    );
+    const created = harness.alarmsCreate.mock.calls.map((c) => c[0]);
     // The alarm exists only to resume a run whose worker died. A one-minute
     // floor is far slower than a brief poll cadence.
     expect(created).not.toContain("nimbus-brief-poll-cadence");
-    restore();
+  });
+
+  it("does NOT disarm the eviction net while another brief is still running", async () => {
+    // Two briefs can overlap — the gateway allows three concurrent runs. Clearing
+    // the alarm when the first reaches a terminal state would orphan the second.
+    const now = Date.now();
+    const run = (id: string, kind: string) => ({
+      id,
+      question: "q",
+      declared: [],
+      phase: { kind },
+      expiresAtMs: now + 60_000,
+      writtenAtMs: now,
+    });
+    harness.storage.set("briefRuns", { a: run("a", "running"), b: run("b", "running") });
+    await import("../../src/background/service-worker.ts");
+    await settle();
+    const clear = harness.alarmsClear;
+    clear.mockClear();
+    // One run finishes; the other is still running.
+    harness.storage.set("briefRuns", { a: run("a", "done"), b: run("b", "running") });
+    harness.emitAlarm("nimbus-brief-poll");
+    await settle();
+    expect(clear).not.toHaveBeenCalledWith("nimbus-brief-poll");
   });
 
   it("clears stored briefs on unpair, so a report cannot outlive its gateway", async () => {
-    await chrome.storage.local.set({
-      briefRuns: {
-        b1: {
-          id: "b1",
-          question: "q",
-          declared: [],
-          phase: { kind: "running" },
-          expiresAtMs: Date.now() + 60_000,
-          writtenAtMs: Date.now(),
-        },
+    harness.storage.set("briefRuns", {
+      b1: {
+        id: "b1",
+        question: "q",
+        declared: [],
+        phase: { kind: "running" },
+        expiresAtMs: Date.now() + 60_000,
+        writtenAtMs: Date.now(),
       },
     });
     await import("../../src/background/service-worker.ts");
     await settle();
-    await emitMessage({ kind: "unpair" });
+    await harness.emitMessage({ kind: "unpair" });
     await settle();
-    const stored = await chrome.storage.local.get("briefRuns");
-    expect(stored["briefRuns"]).toEqual({});
-    restore();
+    const stored = harness.storage.get("briefRuns");
+    expect(stored).toEqual({});
   });
 
   it("keeps the disclosure log across unpair — a past egress did not un-happen", async () => {
-    await chrome.storage.local.set({
-      briefLog: [{ runId: "r1", at: 1, question: "q", sourceCount: 1, truncatedCount: 0 }],
-    });
+    harness.storage.set("briefLog", [
+      { runId: "r1", at: 1, question: "q", sourceCount: 1, truncatedCount: 0 },
+    ]);
     await import("../../src/background/service-worker.ts");
     await settle();
-    await emitMessage({ kind: "unpair" });
+    await harness.emitMessage({ kind: "unpair" });
     await settle();
-    const stored = await chrome.storage.local.get("briefLog");
-    expect(stored["briefLog"]).toHaveLength(1);
-    restore();
+    const stored = harness.storage.get("briefLog");
+    expect(stored).toHaveLength(1);
   });
 
   it("serves the log and clears it on request", async () => {
-    await chrome.storage.local.set({
-      briefLog: [{ runId: "r1", at: 1, question: "q", sourceCount: 1, truncatedCount: 0 }],
-    });
+    harness.storage.set("briefLog", [
+      { runId: "r1", at: 1, question: "q", sourceCount: 1, truncatedCount: 0 },
+    ]);
     await import("../../src/background/service-worker.ts");
     await settle();
-    expect(await emitMessage({ kind: "brief-log" })).toMatchObject({ entries: [{ runId: "r1" }] });
-    await emitMessage({ kind: "brief-log-clear" });
+    expect(await harness.emitMessage({ kind: "brief-log" })).toMatchObject({ entries: [{ runId: "r1" }] });
+    await harness.emitMessage({ kind: "brief-log-clear" });
     await settle();
-    expect(await emitMessage({ kind: "brief-log" })).toMatchObject({ entries: [] });
-    restore();
+    expect(await harness.emitMessage({ kind: "brief-log" })).toMatchObject({ entries: [] });
   });
 });
 ```
@@ -3616,7 +3806,21 @@ async function routeBriefMessage(msg: ExtensionRequest, deps: BriefDeps): Promis
 }
 ```
 
-5. In the alarm listener, beside the `AGENT_POLL_ALARM` branch, resume any brief left `running`, and clear stored briefs in the existing unpair path (alongside `clearRuns()`), **without** clearing the log.
+5. **The alarm lifecycle, copied from the agent-lane pattern rather than invented.** A periodic alarm left armed wakes the worker every minute forever, so it is armed on demand and disarmed when nothing needs it — with one subtlety that is easy to get wrong.
+
+   - **Arm it where a run is persisted as `running`**, not at startup. `service-worker.ts:215` does exactly this inside the `putRun` seam wrapper, which is also the one place a poll loop starts. Use **`ensureAlarm(BRIEF_POLL_ALARM, 1)`**, never `chrome.alarms.create`: `alarms.ts`'s comment records why — `create` cancels and replaces a same-named alarm, restarting its countdown, so calling it on every state change would push the next fire out indefinitely and the net would never fire.
+   - **Disarm it only when NO run is left running.** `service-worker.ts:440` is the model:
+
+     ```ts
+     if ((await listBriefRuns(Date.now())).filter((r) => r.phase.kind === "running").length === 0) {
+       await clearAlarm(BRIEF_POLL_ALARM).catch(() => undefined);
+     }
+     ```
+
+     Clearing unconditionally when *a* run reaches a terminal state would disarm the net for a second brief still in flight — two briefs can overlap, since the gateway allows three concurrent runs. This is the part the lifecycle is easy to get wrong in a way no test notices until a run is silently orphaned.
+   - **Keep an `activeBriefPolls: Set<string>` of runIds being polled in-worker**, mirroring `activeAgentPolls`. Chrome fires a periodic alarm whether or not the worker died, so without it the alarm's resume double-polls a run whose `setTimeout` loop is alive and well.
+
+6. Resume any brief left `running` from the alarm handler, and clear stored briefs in the existing unpair path (alongside `clearRuns()`) — **without** clearing the log, which records something that already happened.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -3965,16 +4169,27 @@ Expected: all pass. `test/unit/doc-references.test.ts` walks `ROADMAP.md` and `d
 
 - [ ] **Step 6: Prune this plan and the review notes**
 
+The assertion is `readdirSync("docs/superpowers/plans").filter(f => f.endsWith(".md"))` — it
+does not care *which* markdown file is in there. So a review-notes file dropped beside the
+plan trips the same gate, and pruning only the plan by name would leave it red. Clear the
+directory, then remove the review notes wherever they were left:
+
 ```bash
-git rm docs/superpowers/plans/2026-08-17-research-briefs.md
-rm -f docs/superpowers/specs/2026-08-17-research-briefs-design-suggestions.md
+git rm -f docs/superpowers/plans/*.md
+rm -f docs/superpowers/plans/*.md
+rm -f docs/superpowers/specs/*-suggestions.md
 bun run test
 ```
 
-This is what turns `doc-references.test.ts`'s "plans are pruned" assertion green, and
-it is the last step for a reason: the plan is a working document, the spec is the
-record, and git history keeps both. Expect a **fully** green suite after this —
-zero failures. If anything else is red, it was hiding behind the known one.
+Then confirm the directory is actually empty rather than trusting the glob:
+
+```bash
+ls docs/superpowers/plans/
+```
+
+This is the last step for a reason: the plan is a working document, the spec is the record,
+and git history keeps both. Expect a **fully** green suite after this — zero failures. If
+anything else is red, it was hiding behind the known one all along.
 
 - [ ] **Step 7: Commit**
 
