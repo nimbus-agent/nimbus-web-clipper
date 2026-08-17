@@ -2,7 +2,7 @@ import { describe, expect, it, test } from "vitest";
 import { endpointUrl, GATEWAY_PATHS, isLoopbackOrigin } from "../../src/shared/gateway.ts";
 
 describe("GATEWAY_PATHS", () => {
-  it("is the eight contracted gateway paths", () => {
+  it("is the nine contracted gateway paths", () => {
     expect(GATEWAY_PATHS).toEqual({
       ingest: "/v1/clips",
       pairConfirm: "/v1/clips/pair/confirm",
@@ -12,7 +12,20 @@ describe("GATEWAY_PATHS", () => {
       health: "/v1/health",
       agents: "/v1/agents",
       agentRuns: "/v1/agents/runs",
+      briefs: "/v1/briefs",
     });
+  });
+
+  it("builds the four brief sub-paths from the one base", () => {
+    // `briefs` is a BASE like `agents`: create posts to it directly, and the
+    // other four routes append the run id plus an action. Asserted here so the
+    // single-home rule holds — a second path map is what the resolve slice's
+    // Task 1 existed to delete.
+    const base = endpointUrl("http://127.0.0.1:8765/", "briefs");
+    expect(base).toBe("http://127.0.0.1:8765/v1/briefs");
+    expect(`${base}/b1/sources`).toBe("http://127.0.0.1:8765/v1/briefs/b1/sources");
+    expect(`${base}/b1/run`).toBe("http://127.0.0.1:8765/v1/briefs/b1/run");
+    expect(`${base}/b1/save`).toBe("http://127.0.0.1:8765/v1/briefs/b1/save");
   });
 
   test("builds a resolve URL under a trailing-slash origin", () => {
