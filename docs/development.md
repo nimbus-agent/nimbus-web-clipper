@@ -1,5 +1,34 @@
 # Development
 
+## How to read the checklists below
+
+Every step in the manual-verification checklists below carries one of three
+labels:
+
+- A step marked `<!-- e2e:<id> -->` is covered by an automated suite in
+  `test/e2e/` and runs in CI on every pull request (the `e2e` job in
+  `.github/workflows/ci.yml`). Run the suite locally with `bun run test:e2e`.
+- A step marked **(human — reason)** can never be automated; the reason says
+  why (it asserts against real browser eviction, a real gateway index, a
+  gesture the harness cannot drive, and so on).
+- A step marked **(not yet automated — reason)** is automatable in principle
+  but has no suite covering it yet; the reason names what would close the gap.
+- An unmarked step has not been triaged into one of the labels above yet.
+
+`test/unit/e2e-coverage.test.ts` keeps the markers and the suites honest: it
+fails if a checklist step claims `e2e:` coverage no suite declares, or if a
+suite declares coverage no checklist step names.
+
+A `e2e:` marker means a test asserts *something* about that step — not
+necessarily the step's whole claim. When the e2e narrows what it actually
+proves (only part of the step, a substituted mechanism, a different page than
+the step describes), that narrowing is stated as a bracketed note right after
+the step's own marker; a marker with no bracket covers the step's full claim.
+`test/unit/e2e-coverage.test.ts` only compares marker **ids** against
+declared `COVERS` ids — it has no way to check that a step's prose matches
+what its test actually asserts, so this convention is not machine-enforced.
+Read the bracket, not just the marker.
+
 ## Build & load
 
 ```bash
@@ -382,10 +411,12 @@ building so the context menu is re-registered.
 
 ## Manual verification — Service lanes (C2.3)
 
-**Outstanding — this pass has not yet been performed.** Its summary form is
-folded into "Manual verification — Setup that works" below (item 8), so it is
-tracked as one backlog item rather than two — run either checklist to clear
-it.
+**Steps 1–4 run on every PR** (`test/e2e/service-lanes.e2e.ts`), so this pass
+is no longer outstanding — the summary form folded into "Manual verification —
+Setup that works" below (item 8) is now redundant with the suite for the same
+four steps; it stays as a quick human sanity check, not as the thing that
+proves the slice works. Steps 5 and 6 still need a human pass — see their own
+notes below.
 
 Prereq: paired, gateway running, a token scoped with `agents` (`resolve` and
 `fetch` are not required — a service lane needs neither, see
@@ -398,27 +429,39 @@ above). **Step 6 requires a real gateway with no git-aware
 real `ownership` agent noticing the absence of a configured root, which the
 mock's fixed brief cannot produce.
 
-1. On `https://github.com/` with page access granted, open the panel. The header
-   reads **GitHub dashboard** and names the scope; the three service lanes are
-   present; there is no Related lane and no fetch button.
-2. Expand *What happened while I was away*. It reaches `running`, then `done`
-   with a brief — or a named failure. Never an empty lane.
-3. Close and reopen the panel, then re-expand the same lane. The stored brief
-   replays; no second run starts.
-4. Open the panel on a pull request. Related, *What breaks if it lands* and
-   *Who should review it* are present; none of the three service lanes are.
-5. On the dashboard, confirm **no ambient cue** appears, with the per-host
-   toggle on.
-6. With no `[[filesystem.roots]]` configured, *Who owns what* renders the
-   gateway's gap brief including its `nimbus index add` line — not a blank
-   lane.
+1. <!-- e2e:service-lanes-1 --> On `https://github.com/` with page access
+   granted, open the panel. The header reads **GitHub dashboard** and names
+   the scope; the three service lanes are present; there is no Related lane
+   and no fetch button.
+2. <!-- e2e:service-lanes-2 --> Expand *What happened while I was away*. It
+   reaches `running`, then `done` with a brief — or a named failure. Never an
+   empty lane.
+3. <!-- e2e:service-lanes-3 --> Close and reopen the panel, then re-expand the
+   same lane. The stored brief replays; no second run starts.
+4. <!-- e2e:service-lanes-4 --> Open the panel on a pull request. Related,
+   *What breaks if it lands* and *Who should review it* are present; none of
+   the three service lanes are.
+5. **(not yet automated — the ambient cue's silence on a dashboard is decided
+   by a 600ms in-worker debounce with no outbound request behind it for a HOME
+   page, so nothing this harness's mock can hold open or count makes the
+   debounce's conclusion observable; the pure decision is already exhaustively
+   covered by `ambient.test.ts`'s unit suite, and this project's own
+   no-arbitrary-sleep rule rules out proving the silence by timing it instead
+   — it would need a deliberate completion hook exposed from the ambient
+   machinery itself, not the mock).** On the dashboard, confirm **no ambient
+   cue** appears, with the per-host toggle on.
+6. **(human — needs a real gateway with no `[[filesystem.roots]]`
+   configured).** With no `[[filesystem.roots]]` configured, *Who owns what*
+   renders the gateway's gap brief including its `nimbus index add` line — not
+   a blank lane.
 
 ## Manual verification — Setup that works (discovery, connection health, the trust panel)
 
 Prereq: a Nimbus gateway available to start/stop on demand. Step 1 needs a
 fresh, never-paired profile; steps 2–6 need to be able to stop and restart the
-gateway. Step 8 folds in the Service lanes (C2.3) manual pass below, which had
-never been run — this is that backlog being cleared, not new work.
+gateway. Step 8 folds in the Service lanes (C2.3) manual pass below — its
+steps 1–4 now run on every PR (see that section), so this is a quick human
+sanity check alongside the suite, not the thing that proves the slice works.
 
 1. Load unpacked in Chrome. On a fresh profile, Options shows stage 1 active
    and 2–3 dimmed.
@@ -483,80 +526,157 @@ Prereq: paired, with the `agents` scope. The glossary steps need at least one
 term in your Nimbus glossary; the ambiguity step needs a URL that resolves to
 more than one indexed item (the panel shows a chooser when it does).
 
-1. On any page, select a word → right-click → **Define in Nimbus**. The panel
-   opens, a lane titled with that term is **already expanded**, and it answers.
-2. With the panel still open, select a *different* word → **Define in Nimbus**.
-   The panel must **stay open** (this is the toggle hazard: the worker reaches
-   the open panel through its hook, never by re-injecting `panel.js`), and the
-   lane retitles and re-answers for the new term.
-3. Select a whole paragraph → **Define in Nimbus**. The lane says *"That's a
-   passage, not a term"*. Confirm in DevTools' network/SW logs that **no**
-   `/v1/agents/glossary` call went out.
-4. Repeat step 1 on a page Nimbus does **not** recognise — an internal wiki, a
-   vendor console. The lane must still work; the page lanes must still be
-   absent. This is the slice's central claim.
-5. Select text inside a `<textarea>` or `<input>` and define it — it must work
+1. <!-- e2e:input-lanes-1 --> **(e2e covers the handler; the context-menu
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly.)** On any page, select a word → right-click →
+   **Define in Nimbus**. The panel opens, a lane titled with that term is
+   **already expanded**, and it answers.
+2. <!-- e2e:input-lanes-2 --> **(e2e covers the handler; the context-menu
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly.)** With the panel still open, select a *different*
+   word → **Define in Nimbus**. The panel must **stay open** (this is the
+   toggle hazard: the worker reaches the open panel through its hook, never by
+   re-injecting `panel.js`), and the lane retitles and re-answers for the new
+   term.
+3. <!-- e2e:input-lanes-3 --> **(e2e covers the handler; the context-menu
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly.)** Select a whole paragraph → **Define in
+   Nimbus**. The lane says *"That's a passage, not a term"*. Confirm in
+   DevTools' network/SW logs that **no** `/v1/agents/glossary` call went out.
+4. <!-- e2e:input-lanes-4 --> **(e2e covers the handler; the context-menu
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly.)** Repeat step 1 on a page Nimbus does **not**
+   recognise — an internal wiki, a vendor console. The lane must still work;
+   the page lanes must still be absent. This is the slice's central claim.
+5. <!-- e2e:input-lanes-5 --> **(e2e covers the handler; the context-menu
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly. And
+   specifically here, so is the browser's own capture of `selectionText` from
+   inside the field, which the e2e suite cannot drive either: it hands the
+   lane a term already read out of a `<textarea>`'s own selection range, not
+   one captured via a right-click.)**
+   Select text inside a `<textarea>` or `<input>` and define it — it must work
    (this is why the entry reads the browser's captured `selectionText` rather
    than the page's own selection).
-6. Select text → **What's related to this?**. The Related lane re-runs against
-   the selection, and the glossary lane appears **collapsed and unrun** — no
-   agent run is spent on a question nobody asked.
-7. Open the panel with no selection anywhere: **no glossary lane at all**.
-8. On an ambiguous page, pick a candidate. The two pull-request lanes now appear
-   under the chosen header and answer **about that item** — never *"Nimbus
-   couldn't pin this page to one indexed item."*
-9. Navigate away within an SPA and re-read: the glossary lane is gone, because
-   the selection belonged to the page the panel has stopped describing.
-10. Repeat 1, 2, 6 and 8 in Firefox.
+6. <!-- e2e:input-lanes-6 --> **(e2e covers the handler; the context-menu
+   gesture itself is human, and so is the worker's click routing to
+   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   simulates in two visible steps rather than exercising directly.)** Select text → **What's related to this?**. The
+   Related lane re-runs against the selection, and the glossary lane appears
+   **collapsed and unrun** — no agent run is spent on a question nobody asked.
+7. <!-- e2e:input-lanes-7 --> Open the panel with no selection anywhere: **no
+   glossary lane at all**.
+8. <!-- e2e:input-lanes-8 --> On an ambiguous page, pick a candidate. The two
+   pull-request lanes now appear under the chosen header and answer **about
+   that item** — never *"Nimbus couldn't pin this page to one indexed item."*
+9. <!-- e2e:input-lanes-9 --> Navigate away within an SPA and re-read: the
+   glossary lane is gone, because the selection belonged to the page the panel
+   has stopped describing.
+10. **(human — Firefox; the harness loads the Chrome build).** Repeat 1, 2, 6
+    and 8 in Firefox.
 
 ## Manual verification — Related lane (richer rows)
 
-- **Related lane (richer rows).** On a resolved GitHub pull request, open the
-  panel: Related must show items *from github.com* (the host filter is what used
-  to hide them), each with a kind chip and an "Updated …" line, grouped under a
-  service heading with a count. Check the preview line is prose from the item,
-  not its title repeated. Then select a phrase and run *What's related to this?* —
-  the results must change, and the PR you are on must not appear among them.
-  Finally, note whether the groups are mostly one row each: if they are, the
-  headings are noise and grouping should be dropped from the lane (see the spec's
-  "Not in this slice").
+This is the first checklist section to carry all three coverage labels a step
+can have, so later suites follow its lead: a step marked `<!-- e2e:<id> -->` is
+asserted by the e2e suite and runs in CI; **(human — reason)** can never be
+automated, and the reason says why; **(not yet automated — reason)** is
+automatable but has no suite covering it yet, and the reason names what would.
+
+Prereq: paired, gateway running, a resolved GitHub pull request available.
+
+1. <!-- e2e:related-lane-1 --> Open the panel on any page — Related renders
+   whether or not the page is recognised (see "Lanes that take an input" step
+   4 for why): every hit the gateway returns is rendered as a row — none
+   dropped client-side.
+2. <!-- e2e:related-lane-2 --> Each row has a kind chip.
+3. <!-- e2e:related-lane-3 --> Each row has an "Updated …" line.
+4. <!-- e2e:related-lane-4 --> Rows group under a service heading with a count.
+5. <!-- e2e:related-lane-5 --> The preview line is prose from the item, not its
+   title repeated.
+6. **(human — host filtering is a GATEWAY behaviour this repo does not own: it
+   belongs to the gateway repo's own suite, not to a client harness whose mock
+   stands in for that gateway).** Related shows items *from github.com* — the
+   host filter that used to hide them is working.
+7. **(not yet automated — the mock's `/v1/clips/related` route is
+   deliberately unconditional on the query (see step 6 above), so "the
+   results must change" has nothing to change against; input-lanes.e2e.ts's
+   selection hook can already drive the gesture, this just needs a
+   query-aware related route in the mock to answer differently).** Select a
+   phrase and run *What's related to this?* — the results must change, and
+   the PR you are on must not appear among them.
+8. **(human — a design judgement, not an assertion).** Note whether the groups
+   are mostly one row each: if they are, the headings are noise and grouping
+   should be dropped from the lane (see the spec's "Not in this slice").
 
 ## Manual verification — Capture as the last resort (C3.2)
 
 Prereq: paired, gateway running. `capture-in-page.ts` is not unit-testable, the
 same as the popup/options DOM and the SW glue.
 
-1. On a real page Nimbus does not recognise (an internal wiki, a vendor
-   console), open the panel. It offers to capture the page. Click it.
-2. Confirm the copy is labelled as yours: the terminal *"Saved a copy of …"*
-   line. This page never reaches resolve (see step 4), so this line — not a
-   captured header — is the honest signal here.
-3. On a **recognised** page (a self-hosted instance the gateway cannot fetch,
-   e.g. a `not-configured` connector) run the same capture, then close and
-   reopen the panel. → It still shows the captured header — the durability is
-   real, because a recognised page's resolve reaches the gateway again on
-   reopen and gets the same `web_clip` item back.
-4. Repeat on the **unrecognised** page from step 1: close and reopen the panel.
-   → No durable header — the page never reaches resolve at all, so reopening
-   shows the ordinary `unrecognised` state. The one honest signal that the copy
-   was saved is the terminal *"Saved a copy of …"* line shown right after step
-   2's save; confirm it appeared then, not that it persists across a reopen.
+1. <!-- e2e:capture-1 --> On a real page Nimbus does not recognise (an
+   internal wiki, a vendor console), open the panel. It offers to capture the
+   page. Click it.
+2. <!-- e2e:capture-2 --> Confirm the copy is labelled as yours: the terminal
+   *"Saved a copy of …"* line. This page never reaches resolve (see step 4),
+   so this line — not a captured header — is the honest signal here.
+3. <!-- e2e:capture-3 --> On a **recognised** page (a self-hosted instance the
+   gateway cannot fetch, e.g. a `not-configured` connector) run the same
+   capture, then close and reopen the panel. → It still shows the captured
+   header — the durability is real, because a recognised page's resolve
+   reaches the gateway again on reopen and gets the same `web_clip` item back.
+   **[The e2e seeds `resolveDefault` with an already-captured item, so resolve
+   answers "captured" from the very first open — it proves only the header's
+   durability across a reopen, not that a real capture is what produced that
+   item. That a capture actually populates this state needs a real index —
+   see step 5.]**
+4. <!-- e2e:capture-4 --> Repeat on the **unrecognised** page from step 1:
+   close and reopen the panel. → No durable header — the page never reaches
+   resolve at all, so reopening shows the ordinary `unrecognised` state. The
+   one honest signal that the copy was saved is the terminal *"Saved a copy
+   of …"* line shown right after step 2's save; confirm it appeared then, not
+   that it persists across a reopen.
 5. Run **Update this copy** on a captured header. → The gateway reports
    `updated`, and `nimbus search` (or the Nimbus app) shows one item for that
-   page, not two.
-6. Navigate an SPA mid-capture (start a capture, then trigger a client-side
-   route change before it resolves) → the panel reports `url-changed` rather
-   than filing the new page's content under the old address.
-7. In Options stage 4, switch the 1.3 preview off, then repeat step 1. →
-   The offer button is replaced by status lines (*Capturing this page…*, then
-   *Saving to Nimbus…*), and the run ends on the terminal *"Saved a copy of …"*
-   line — the same end state as step 2, because this is step 1's unrecognised
-   page and it never reaches resolve. What this step proves is that the
-   in-flight feedback does not depend on the preview being on: with the confirm
-   step gone, those two lines are the only evidence anything is happening.
+   page, not two. **(human — asserts against a real index; a mock cannot
+   honestly stand in for "one item, not two")**
+6. <!-- e2e:capture-6 --> Navigate an SPA away from the panel's pinned page,
+   *then* click the capture offer → the panel refuses with `url-changed`
+   before ever injecting `capture.js`, rather than filing the new page's
+   content under the old address. **[This is the PRE-injection guard
+   (`captureTab`, `capture-tab.ts:74`) — the tab has already moved by the time
+   the click reaches the worker. The separate MID-capture guard
+   (`capture-tab.ts:93`, catching a route change *during* the injected
+   capture's own round trip) is not reachable this way; it is covered by
+   `test/unit/capture-tab.test.ts` instead.]**
+7. <!-- e2e:capture-7 --> In Options stage 4, switch the 1.3 preview off, then
+   repeat step 1. → The offer button is replaced by a status line (*Saving to
+   Nimbus…*), and the run ends on the terminal *"Saved a copy of …"* line —
+   the same end state as step 2, because this is step 1's unrecognised page
+   and it never reaches resolve. What this step proves is that the in-flight
+   feedback does not depend on the preview being on: with the confirm step
+   gone, *Saving to Nimbus…* is on-screen evidence that something is
+   happening, before the terminal line supersedes it. (*Capturing this
+   page…*, the line shown before *Saving to Nimbus…*, is step 8's claim, not
+   this one's — see its own marker below.)
 
-   Repeat once on step 3's **recognised** page to see the other ending: there
-   the captured header settles at the end, superseding the terminal line.
+   **(not yet automated — repeating this on step 3's recognised page, where
+   the captured header settles at the end instead of the terminal line, needs
+   a second scenario/page combination this suite does not yet drive).** Repeat
+   once on step 3's **recognised** page to see the other ending: there the
+   captured header settles at the end, superseding the terminal line.
+8. Confirm the *Capturing this page…* line appears too — immediately after
+   clicking the offer, and before *Saving to Nimbus…*. **(not yet automated —
+   this phase makes no request to the gateway at all: it is
+   `chrome.scripting.executeScript` plus a local DOM read inside the tab, so
+   nothing the mock gateway can hold open makes it observable; it would need
+   a deliberate delay hook inside `capture-in-page.ts`/`capture-tab.ts`
+   itself, not the mock)**
 
 ## Security check
 

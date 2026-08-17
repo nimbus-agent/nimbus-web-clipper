@@ -60,3 +60,81 @@ jobs:
 
       - name: Check build invariant
         run: bun run check-build
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            registry.npmjs.org:443
+            bun.sh:443
+            cdn.playwright.dev:443
+            playwright.azureedge.net:443
+            storage.googleapis.com:443
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+
+      - name: Install Playwright browsers
+        # Two egress facts about this one line, both learned the hard way.
+        #
+        # 1. storage.googleapis.com:443 is on the allowlist above *for this
+        #    step*. Playwright asks cdn.playwright.dev for the Chrome for
+        #    Testing build and gets a 307 to
+        #    storage.googleapis.com/chrome-for-testing-public/... — so
+        #    allowing only cdn.playwright.dev lets the request start and then
+        #    dies with ECONNREFUSED on the redirect target. Don't prune that
+        #    entry as an unrelated Google host; it is where the browser
+        #    actually comes from.
+        # 2. No --with-deps: it shells out to `apt-get update && apt-get
+        #    install`, and this job's allowlist has no Ubuntu archive host and
+        #    no port-80 entry at all, so that apt call cannot succeed under
+        #    egress-policy: block. Don't widen the allowlist to fix that — the
+        #    ubuntu-24.04 runner image already ships the shared libraries
+        #    Chromium needs, so plain `install chromium` succeeds without it.
+        #    Do not add --with-deps back without also solving the egress
+        #    problem.
+        run: bunx playwright install chromium
+
+      - name: Build
+        run: bun run build
+
+      - name: E2E
+        run: bun run test:e2e
+        env:
+          CI: "true"
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

@@ -19,5 +19,5 @@
     "verbatimModuleSyntax": false,
     "noEmit": true
   },
-  "include": ["src/**/*", "test/**/*", "esbuild.mjs", "scripts/**/*"]
+  "include": ["src/**/*", "test/**/*", "esbuild.mjs", "scripts/**/*", "playwright.config.ts"]
 }

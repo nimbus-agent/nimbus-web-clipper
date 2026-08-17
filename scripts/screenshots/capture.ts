@@ -11,69 +11,29 @@
 import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
-import { DEFAULT_PORT, startMockGateway } from "./mock-gateway.ts";
+import { launchExtension } from "../e2e/launch.ts";
+import { DEFAULT_PORT } from "./mock-gateway.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const EXT_DIR = resolve(ROOT, "dist/chrome");
 const OUT_CHROME = resolve(ROOT, "store/screenshots/chrome");
 const OUT_FIREFOX = resolve(ROOT, "store/screenshots/firefox");
-const ORIGIN = `http://127.0.0.1:${DEFAULT_PORT}`;
 const VIEWPORT = { width: 1280, height: 800 } as const;
 const SHOTS = ["popup.png", "options.png", "panel.png"] as const;
-// A fixed "paired since" instant (2026-07-01T09:30:00Z). Not `0` — the options
-// page renders this date, and the epoch reads as "Jan 1, 1970" (looks like a bug
-// in a store screenshot). Pinned with timezoneId/locale below so the rendered
-// date is identical on every machine.
-const PAIRED_AT = 1_782_898_200_000;
 
 async function main(): Promise<void> {
   mkdirSync(OUT_CHROME, { recursive: true });
   mkdirSync(OUT_FIREFOX, { recursive: true });
 
-  const server = startMockGateway();
-  // headless: true resolves to Playwright's separate "headless shell" binary,
-  // which silently loads no extensions (the MV3 service worker never appears).
-  // Force the regular Chromium binary into new-headless mode via the CLI flag so
-  // the extension actually loads.
-  const context = await chromium.launchPersistentContext("", {
-    headless: false,
+  // Opt out of launchExtension's default ephemeral port: the options page
+  // renders the seeded origin (including the port) as visible text, so a
+  // random port would make this screenshot differ on every run. This script
+  // is a single process with no parallelism, so a fixed port is safe here.
+  const { context, sw, extId, origin, close } = await launchExtension({
     viewport: VIEWPORT,
-    timezoneId: "UTC",
-    locale: "en-US",
-    args: [
-      "--headless=new",
-      `--disable-extensions-except=${EXT_DIR}`,
-      `--load-extension=${EXT_DIR}`,
-    ],
+    port: DEFAULT_PORT,
   });
 
   try {
-    // Resolve the dynamically-generated extension id from the MV3 service worker.
-    // MV3 workers can register lazily under headless, so nudge activation by
-    // opening a page first, then resolve via Playwright's serviceWorkers()/event
-    // with a timeout (fail loudly, don't hang). Note: the Puppeteer
-    // `targetcreated` / `target.type()` form does not exist in Playwright.
-    await context.newPage();
-    let [sw] = context.serviceWorkers();
-    if (!sw) {
-      sw = await context.waitForEvent("serviceworker", { timeout: 15_000 });
-    }
-    const extId = new URL(sw.url()).host;
-
-    // Seed a paired connection (storage key "connection") pointing at the mock.
-    await sw.evaluate(
-      async (conn) => {
-        await chrome.storage.local.set({ connection: conn });
-      },
-      {
-        origin: ORIGIN,
-        token: "mock-bearer-token-not-a-real-secret",
-        label: "Mock Device",
-        pairedAt: PAIRED_AT,
-      },
-    );
-
     // Popup — composited centered on a padded canvas (the popup is ~360px wide).
     const popup = await context.newPage();
     await popup.setViewportSize(VIEWPORT);
@@ -98,7 +58,7 @@ async function main(): Promise<void> {
     // Related panel — inject panel.js into the loopback sample page, wait for items.
     const sample = await context.newPage();
     await sample.setViewportSize(VIEWPORT);
-    await sample.goto(`${ORIGIN}/sample`);
+    await sample.goto(`${origin}/sample`);
     await sample.bringToFront();
     await sw.evaluate(async () => {
       const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -115,8 +75,7 @@ async function main(): Promise<void> {
     }
     console.log(`wrote ${SHOTS.length} screenshots to store/screenshots/{chrome,firefox}/`);
   } finally {
-    await context.close();
-    server.close();
+    await close();
   }
 }
 

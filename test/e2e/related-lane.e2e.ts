@@ -1,0 +1,77 @@
+/**
+ * Covers `docs/development.md` → "Manual verification — Related lane (richer rows)".
+ *
+ * COVERS steps 1-5 (ids related-lane-1..5). Step 6 (host filtering shows items
+ * from github.com) is human: that filtering is gateway-side business logic, and
+ * the mock's `/v1/clips/related` route is deliberately unconditional on the
+ * query, so this harness has nothing to assert it against without reimplementing
+ * the real gateway's exclusion rule. Step 7 (the selection re-run) is not yet
+ * automated — it needs the selection-hook driving the input-lanes suite
+ * establishes. Step 8 (the grouping judgement) is human: whether groups are
+ * mostly one row each is a design call about whether grouping earns its place,
+ * not a property a machine can assert.
+ */
+import { expect, test } from "@playwright/test";
+import { launchExtension } from "../../scripts/e2e/launch.ts";
+import { togglePanel } from "./helpers.ts";
+
+export const COVERS = [
+  "related-lane-1",
+  "related-lane-2",
+  "related-lane-3",
+  "related-lane-4",
+  "related-lane-5",
+] as const;
+
+test("a resolved page's related rows carry kind, freshness and grouping", async () => {
+  const h = await launchExtension();
+  try {
+    const page = await h.context.newPage();
+    const url = `${h.origin}/sample`;
+    await page.goto(url);
+    await page.bringToFront();
+    // Query by URL, not by `lastFocusedWindow`: window focus is reliable on a
+    // developer's desktop and occasionally is not on a headless CI container
+    // — and a gate that flakes is a gate people route around. The URL is
+    // something this test just set, so it cannot be ambiguous.
+    await togglePanel(h.sw, url);
+
+    // related-lane-1: every hit the fixture hands the client is rendered —
+    // nothing dropped client-side. (Host filtering itself is gateway-side; see
+    // the file doc comment above.) Scoped to the related lane, not a bare
+    // `.nimbus-related__item` — the same class input-lanes.e2e.ts scopes the
+    // same way.
+    const rows = page.locator('[data-lane="related"] .nimbus-related__item');
+    await expect(rows).toHaveCount(3);
+
+    // related-lane-2: EVERY row names its kind, not just the first — a chip
+    // rendered on one row and silently dropped on another must fail this.
+    const kinds = page.locator(".nimbus-related__kind");
+    await expect(kinds).toHaveCount(3);
+    for (let i = 0; i < 3; i++) {
+      await expect(kinds.nth(i)).toBeVisible();
+    }
+
+    // related-lane-3: EVERY row dates itself, in the header's wording.
+    const ages = page.locator(".nimbus-related__age");
+    await expect(ages).toHaveCount(3);
+    for (let i = 0; i < 3; i++) {
+      await expect(ages.nth(i)).toContainText("Updated ");
+    }
+
+    // related-lane-4: rows group under a service heading carrying the TRUE
+    // count for that group, not just a delimiter — the fixture's two `web`
+    // hits must read "web · 2", not "web · 1" repeated or a bare "·".
+    const groupHeads = page.locator(".nimbus-related__group-head");
+    await expect(groupHeads).toHaveCount(2);
+    await expect(groupHeads.nth(0)).toHaveText("web · 2");
+    await expect(groupHeads.nth(1)).toHaveText("note · 1");
+
+    // related-lane-5: the preview line is body prose, not the title repeated.
+    const title = await rows.first().locator(".nimbus-related__title").innerText();
+    const snippet = await rows.first().locator(".nimbus-related__snippet").innerText();
+    expect(snippet).not.toBe(title);
+  } finally {
+    await h.close();
+  }
+});

@@ -6,6 +6,11 @@ coverage/
 *.tsbuildinfo
 .DS_Store
 
+# Playwright's own run artifacts (test:e2e) — regenerated every run, never
+# committed, same as coverage/ above.
+test-results/
+playwright-report/
+
 # Claude Code scratch. Deliberately NOT a blanket `.claude/` ignore: a
 # project-shared `.claude/settings.json` is meant to be committable, while
 # `settings.local.json` is personal and `worktrees/` is scratch.

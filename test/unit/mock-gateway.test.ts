@@ -1,5 +1,11 @@
 import { describe, expect, it, test } from "vitest";
-import { CLIP_INGEST, PAIR_CONFIRM, RELATED } from "../../scripts/screenshots/gateway-fixtures.ts";
+import {
+  CLIP_INGEST,
+  PAIR_CONFIRM,
+  RELATED,
+  RESOLVE_FIXTURE,
+  type Scenario,
+} from "../../scripts/screenshots/gateway-fixtures.ts";
 import { handleRequest } from "../../scripts/screenshots/mock-gateway.ts";
 
 describe("mock gateway fixtures — locked contract shape", () => {
@@ -74,5 +80,114 @@ describe("mock gateway fixtures — locked contract shape", () => {
     );
     expect(poll.status).toBe(200);
     expect(await poll.json()).toMatchObject({ status: "done" });
+  });
+});
+
+describe("scenarios", () => {
+  test("no scenario returns today's fixtures (the screenshot path)", async () => {
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips/related", { method: "POST" }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(RELATED);
+  });
+
+  test("a related override replaces the fixture", async () => {
+    const related = { items: [] };
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips/related", { method: "POST" }),
+      { related },
+    );
+    expect(await res.json()).toEqual(related);
+  });
+
+  test("resolve is keyed off the url query param", async () => {
+    const scenario: Scenario = {
+      resolve: { "https://github.com/acme/web/pull/482": RESOLVE_FIXTURE },
+      resolveDefault: { found: false, reason: "not_indexed", service: null, fetchable: false },
+    };
+    const hit = await handleRequest(
+      new Request(
+        "http://127.0.0.1:8765/v1/items/resolve?url=https%3A%2F%2Fgithub.com%2Facme%2Fweb%2Fpull%2F482",
+      ),
+      scenario,
+    );
+    expect(await hit.json()).toEqual(RESOLVE_FIXTURE);
+
+    const miss = await handleRequest(
+      new Request(
+        "http://127.0.0.1:8765/v1/items/resolve?url=https%3A%2F%2Fwiki.internal%2Frunbook",
+      ),
+      scenario,
+    );
+    expect((await miss.json()).found).toBe(false);
+  });
+
+  test("a status override wins over the body (rate limiting)", async () => {
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips", { method: "POST" }),
+      { status: { "/v1/clips": 429 } },
+    );
+    expect(res.status).toBe(429);
+  });
+
+  test("the related fixture carries the wire's type and modified_at", () => {
+    // Guards the defect this task fixes: typed against the CLIENT shape, the
+    // fixture silently omitted both fields and no e2e could assert the chip
+    // or the freshness line.
+    for (const item of RELATED.items) {
+      expect(typeof item.type).toBe("string");
+      expect(typeof item.modified_at).toBe("number");
+    }
+  });
+
+  test("a delayMs route takes measurably longer than one without", async () => {
+    // Not a tight timing assertion — a real timer on a shared CI runner can
+    // overshoot by a lot. The claim this guards is just "delayMs held the
+    // response open at all", so the bar is generous and one-sided.
+    const scenario: Scenario = { delayMs: { "/v1/clips": 200 } };
+
+    const undelayedStart = performance.now();
+    await handleRequest(new Request("http://127.0.0.1:8765/v1/clips", { method: "POST" }));
+    const undelayedMs = performance.now() - undelayedStart;
+
+    const delayedStart = performance.now();
+    await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips", { method: "POST" }),
+      scenario,
+    );
+    const delayedMs = performance.now() - delayedStart;
+
+    expect(delayedMs).toBeGreaterThanOrEqual(150);
+    expect(delayedMs).toBeGreaterThan(undelayedMs);
+  });
+
+  test("delayMs is keyed by path — a route absent from the map is unaffected", async () => {
+    // Not a wall-clock upper bound (the earlier version asserted
+    // `toBeLessThan(150)`, which a single GC stall under v8 coverage
+    // instrumentation can blow past, reddening the unit run that feeds
+    // SonarCloud's coverage gate for a route with no delay configured at
+    // all). The claim this guards is relative: a route absent from `delayMs`
+    // settles faster than one the SAME scenario deliberately holds open —
+    // see the companion test above for the symmetric lower-bound claim on
+    // the delayed route itself.
+    const scenario: Scenario = { delayMs: { "/v1/clips": 200 } };
+
+    const unaffectedStart = performance.now();
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips/related", { method: "POST" }),
+      scenario,
+    );
+    const unaffectedMs = performance.now() - unaffectedStart;
+
+    const delayedStart = performance.now();
+    await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/clips", { method: "POST" }),
+      scenario,
+    );
+    const delayedMs = performance.now() - delayedStart;
+
+    expect(unaffectedMs).toBeLessThan(delayedMs);
+    expect(await res.json()).toEqual(RELATED);
   });
 });
