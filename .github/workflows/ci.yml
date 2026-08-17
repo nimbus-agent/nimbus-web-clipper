@@ -79,6 +79,7 @@ jobs:
             bun.sh:443
             cdn.playwright.dev:443
             playwright.azureedge.net:443
+            storage.googleapis.com:443
 
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -100,14 +101,24 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
 
       - name: Install Playwright browsers
-        # No --with-deps: it shells out to `apt-get update && apt-get
-        # install`, and this job's egress allowlist (Harden Runner, above) has
-        # no Ubuntu archive host and no port-80 entry at all, so that apt call
-        # cannot succeed under egress-policy: block. Don't widen the allowlist
-        # to fix this — the ubuntu-24.04 runner image already ships the shared
-        # libraries Chromium needs, so plain `install chromium` succeeds
-        # without it. Do not add --with-deps back without also solving the
-        # egress problem.
+        # Two egress facts about this one line, both learned the hard way.
+        #
+        # 1. storage.googleapis.com:443 is on the allowlist above *for this
+        #    step*. Playwright asks cdn.playwright.dev for the Chrome for
+        #    Testing build and gets a 307 to
+        #    storage.googleapis.com/chrome-for-testing-public/... — so
+        #    allowing only cdn.playwright.dev lets the request start and then
+        #    dies with ECONNREFUSED on the redirect target. Don't prune that
+        #    entry as an unrelated Google host; it is where the browser
+        #    actually comes from.
+        # 2. No --with-deps: it shells out to `apt-get update && apt-get
+        #    install`, and this job's allowlist has no Ubuntu archive host and
+        #    no port-80 entry at all, so that apt call cannot succeed under
+        #    egress-policy: block. Don't widen the allowlist to fix that — the
+        #    ubuntu-24.04 runner image already ships the shared libraries
+        #    Chromium needs, so plain `install chromium` succeeds without it.
+        #    Do not add --with-deps back without also solving the egress
+        #    problem.
         run: bunx playwright install chromium
 
       - name: Build
