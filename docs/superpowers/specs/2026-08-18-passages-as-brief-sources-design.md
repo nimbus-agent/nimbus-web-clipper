@@ -220,7 +220,7 @@ add and says so, leaving the held collection intact.
 
 ### 9. Passages fed into an accepted run are removed; a failed run keeps them
 
-The collection is cleared of exactly the groups that were **accepted into a run that
+The collection is cleared of exactly the passages that were **accepted into a run that
 reached `/run`** — the same moment `brief-handlers.ts` writes the disclosure log entry,
 and for the same reason: that is the moment the text left.
 
