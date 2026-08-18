@@ -784,7 +784,7 @@ describe("quick clip — context menu + shortcut routes", () => {
     await load();
 
     expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
-    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(5);
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(6);
     const ids = harness.contextMenusCreate.mock.calls.map((c) => (c[0] as { id: string }).id);
     expect(ids).toEqual([
       "clip-page",
@@ -792,6 +792,7 @@ describe("quick clip — context menu + shortcut routes", () => {
       "show-related",
       "define-selection",
       "related-to-selection",
+      "add-passage",
     ]);
   });
 
@@ -804,7 +805,7 @@ describe("quick clip — context menu + shortcut routes", () => {
     await settle();
 
     expect(harness.contextMenusRemoveAll).toHaveBeenCalled();
-    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(5);
+    expect(harness.contextMenusCreate).toHaveBeenCalledTimes(6);
   });
 
   test("clip-page command captures the active tab and posts a clip", async () => {
@@ -2002,6 +2003,7 @@ describe("show-related context menu", () => {
       "show-related",
       "define-selection",
       "related-to-selection",
+      "add-passage",
     ]);
   });
 });

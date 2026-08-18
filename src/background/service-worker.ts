@@ -105,6 +105,8 @@ import {
 } from "./handlers.ts";
 import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
+import { collectPassage, type PassageCollectDeps } from "./passage-collect.ts";
+import { updatePassages } from "./passage-store.ts";
 import { isPreviewEnabled } from "./preview-pref.ts";
 import { type FlushDeps, flushQueue } from "./queue-flush.ts";
 import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
@@ -668,6 +670,22 @@ const quickClipDeps: QuickClipDeps = {
     ),
 };
 
+// Reuses the same `tabUrl`/`runCapture` seams `quickClipDeps.runCapture` and
+// `captureTab` above already use, with "selection" and no `expectedUrl` — a
+// menu click has no pinned page to be wrong about.
+const passageCollectDeps: PassageCollectDeps = {
+  capture: (tabId) => captureTab({ tabUrl, runCapture }, tabId, "selection"),
+  update: updatePassages,
+  showFeedback: (tabId, state, restricted) =>
+    showFeedback(
+      { showToast, setBadgeText, restoreBadge: syncQueueState },
+      tabId,
+      state,
+      restricted,
+    ),
+  now: () => Date.now(),
+};
+
 // Menus are re-registered from scratch (removeAll first) so a reload/upgrade can't
 // leave a duplicate id behind — chrome.contextMenus.create throws on a duplicate.
 // Single-flighted because on a fresh install the startup sequence and onInstalled
@@ -770,6 +788,17 @@ addMenuClickListener((menuItemId, tabId, selectionText) => {
     case "define-selection":
     case "related-to-selection":
       handleSelectionMenu(action, tabId, selectionText);
+      return;
+    case "add-passage":
+      // `tabId` is `number | undefined` here. Early return, never a `!`
+      // (`noNonNullAssertion` is an error in this repo) and never the active tab
+      // as a fallback: a right-click in a non-focused window targets a different
+      // tab than `tabs.query({active})`, and the activeTab grant belongs to the
+      // CLICKED tab — the same reasoning the clip path already documents.
+      if (tabId === undefined) {
+        return;
+      }
+      collectPassage(passageCollectDeps, tabId).catch(() => undefined);
       return;
     default: {
       const unreachable: never = action;

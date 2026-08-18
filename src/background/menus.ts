@@ -11,6 +11,7 @@ export const MENU_CLIP_SELECTION = "clip-selection";
 export const MENU_SHOW_RELATED = "show-related";
 export const MENU_DEFINE = "define-selection";
 export const MENU_RELATED_TO_SELECTION = "related-to-selection";
+export const MENU_ADD_PASSAGE = "add-passage";
 
 /**
  * Menu ids and the manifest's command names (`src/manifest/manifest.ts`) are
@@ -49,6 +50,10 @@ export const MENU_ITEMS: readonly MenuItem[] = Object.freeze([
     title: "What's related to this?",
     contexts: ["selection"],
   },
+  // Selection-only, like the two lane-input entries above and for the same
+  // reason: it is meaningless without selected text, and Chrome only offers a
+  // selection item when there is some.
+  { id: MENU_ADD_PASSAGE, title: "Add to brief", contexts: ["selection"] },
 ]);
 
 export type MenuAction =
@@ -56,7 +61,8 @@ export type MenuAction =
   | "clip-selection"
   | "show-related"
   | "define-selection"
-  | "related-to-selection";
+  | "related-to-selection"
+  | "add-passage";
 
 /**
  * The action an id means, or null when the id is not ours.
@@ -77,6 +83,8 @@ export function menuAction(menuItemId: string): MenuAction | null {
       return "define-selection";
     case MENU_RELATED_TO_SELECTION:
       return "related-to-selection";
+    case MENU_ADD_PASSAGE:
+      return "add-passage";
     default:
       return null;
   }
