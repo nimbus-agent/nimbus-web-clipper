@@ -1208,7 +1208,9 @@ asserted by tests that grep the whole store. For the same reason briefs are
 **never queued**: the offline queue persists payloads, and there is nothing
 here it may persist. A passage (below) is the one deliberate exception: it is
 captured *before* any run exists, by the user's own gesture, and must survive
-a closed tab — so it is the one piece of source text this client does hold.
+a closed tab — so it is the one piece of source text this client holds **ahead
+of any send**. The queue's own persisted `body` is text the user already
+committed to sending; a passage is text held before that moment ever arrives.
 
 ### Passages: a source collected ahead of any run
 

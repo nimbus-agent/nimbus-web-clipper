@@ -878,7 +878,7 @@ the editor structurally cannot.*
 > show the actual text that will leave rather than a description of it.
 > **Touches** `src/shared/passage.ts` (new, pure); `src/background/passage-store.ts`,
 > `passage-collect.ts` (new), `menus.ts`, `service-worker.ts`;
-> `src/shared/messages.ts` (`BriefStartRequest.picks`), `preview.ts`,
+> `src/shared/messages.ts` (`BriefStartRequest.picks`'s shape guard — the outer fence, not the dedupe), `preview.ts`,
 > `preview-view.ts`; `src/background/brief-handlers.ts`; `src/brief/brief-view.ts`,
 > `brief.ts`, `brief.css`.
 > **Approach** The collect gesture reuses `captureTab` — the same call the
