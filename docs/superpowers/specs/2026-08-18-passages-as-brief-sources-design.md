@@ -95,6 +95,22 @@ The separator is a visible marker, not a blank line. The body is a set of excerp
 continuous prose, and a reader (human or model) that cannot see the joins will quote across
 one as if the page had said it.
 
+```ts
+/** The scholarly mark for omitted text. Not a label, not jargon, not a heading. */
+export const PASSAGE_SEPARATOR = "\n\n[...]\n\n";
+```
+
+A bracketed ellipsis rather than a rule (`---`) or a worded marker
+(`--- passage break ---`): a horizontal rule is legal page content and reads as one, and an
+invented label is client vocabulary injected into text the gateway may quote back as though
+the page had written it. `[...]` is the one convention that means *text was omitted here* to
+a human and a model alike, and it fabricates nothing.
+
+One constant, exported, used by `stitch` **and** by the preview renderer, so the text
+decision 7 shows is the exact string decision 3 sends — byte for byte, joins included.
+**The gateway never sees this constant.** It receives an opaque `body`; nothing upstream
+parses the joins, and nothing in this slice asks it to.
+
 ### 4. `capturedAt` is the OLDEST passage's time
 
 A stitched body is only as fresh as the oldest text in it. `capturedAt` says when this text
@@ -138,8 +154,19 @@ wrong. A tab pick is identified by tab id (the composer has one) and a passage p
 (the collection's key).
 
 The composer is a page, so this is untrusted cross-boundary input and gets a guard in
-`messages.ts` like every other message — including rejecting a `kind` outside the union and
-a `url` that is not a string.
+`messages.ts` like every other message. The guard keeps exactly what `tabIds` already
+enforces — array, non-empty, at most `MAX_BRIEF_SOURCES`, and for a tab pick
+`Number.isInteger(id) && id >= 0` — and adds, for a passage pick, `safeHttpUrl(url) !== null`
+rather than a bare `typeof === "string"`, reusing the shipped scheme validation instead of
+inventing a second rule.
+
+**The guard is not what makes an unknown URL safe, though.** `handleBriefStart` resolves every
+pick against state the background already holds — a tab id against `listTabs`, a URL against
+the stored collection — and an unmatched pick is dropped exactly as an unmatched `tabId` is
+dropped today. A URL the collection never held cannot become a source, so it cannot become a
+fetch or a declared address; there is no path from `picks` into a request except through text
+this extension itself captured. That is the same shape as C2.5's rule for a supplied `itemId`:
+honour it only after confirming it appears in the set we produced.
 
 ### 7. The preview distinguishes a page from a set of passages — and shows the passages
 
@@ -181,6 +208,16 @@ A refusal the user can act on immediately beats a silent loss they discover at s
 An exact-duplicate add (same URL, same text) is a no-op with its own toast — re-highlighting
 the same paragraph is a mis-click, not an instruction to send it twice.
 
+**On the 4 MB the two caps multiply to:** that product is a ceiling, not a size. A passage is
+a paragraph — kilobytes — so a full twenty-page collection of real highlights is tens of
+kilobytes, and the only way to approach 200 KB in one page is to select an entire long
+document, which is the case decision 8's first row already refuses. `unlimitedStorage` is
+**not** added for it: the manifest's permission list is deliberately "minimal,
+capability-scoped", and widening the install-time prompt to insure a ceiling nothing
+realistic reaches is a bad trade against a refusal that already handles it. The graceful
+quota handling is the same paragraph above — the write is guarded, and a failure refuses the
+add and says so, leaving the held collection intact.
+
 ### 9. Passages fed into an accepted run are removed; a failed run keeps them
 
 The collection is cleared of exactly the groups that were **accepted into a run that
@@ -192,8 +229,21 @@ is the failure mode a persistent collection invites. A run that fails before `/r
 everything, because nothing left. A group skipped for `run_capacity` keeps its passages,
 because it was never fed.
 
+**A row sent in whole-page mode keeps its passages.** The rule is *clear what left*, and in
+whole-page mode the passages did not leave — the page did. Whole-page is a choice about one
+question ("this time I want the full context"), not a statement about the collection, so
+destroying hand-made highlights on the back of it would be a loss with no connection to its
+cause. The kept group is not a ghost: it renders as a passages row next time, visible and
+pickable, and the preview names it before anything is sent.
+
 The cost is real and accepted: re-running the same sources with a tweaked question needs
-re-collecting. Manual per-row remove and a clear-all in the composer cover the rest.
+re-collecting. Three composer controls cover the rest — **remove one passage** from an
+expanded row, remove the row, and clear all.
+
+Per-passage remove lives on the composer row, **not** in the pre-send preview. The preview's
+job is to state what will be sent; a mutation control inside it means the panel the user
+confirmed is not the panel they read. Pruning happens where picking happens, one screen
+earlier.
 
 ### 10. No badge
 
@@ -238,7 +288,8 @@ src/shared/preview.ts                  BriefPreview sources gain a kind + passag
 src/shared/preview-view.ts             render a passages row
 src/background/brief-handlers.ts       picks -> source union; feedAll skips capture for
                                        passages; clear fed groups after /run
-src/brief/brief-view.ts                passage rows, whole-page toggle, remove, cap counter
+src/brief/brief-view.ts                passage rows, whole-page toggle, per-passage and row
+                                       remove, clear-all, cap counter
 src/brief/brief.ts                     send picks; request the collection
 src/brief/brief.css                    the new row affordances
 ```
@@ -261,6 +312,7 @@ export type PassageGroup = {
 
 export const PASSAGE_CAPS = { maxPages: BRIEF_CAPS.maxSources } as const;
 
+export function groupKey(url: string): string;                  // fragment stripped, below
 export function groupPassages(all: readonly Passage[]): readonly PassageGroup[];
 export function stitch(group: PassageGroup): string;
 export function groupCapturedAt(group: PassageGroup): number;   // decision 4
@@ -268,6 +320,8 @@ export function addPassage(
   all: readonly Passage[],
   next: Passage,
 ): { ok: true; all: readonly Passage[] } | { ok: false; reason: PassageRefusal };
+export function removePassage(all: readonly Passage[], url: string, at: number): readonly Passage[];
+export function removeGroup(all: readonly Passage[], url: string): readonly Passage[];
 export function isPassage(v: unknown): v is Passage;            // storage read guard
 ```
 
@@ -275,11 +329,33 @@ export function isPassage(v: unknown): v is Passage;            // storage read 
 per-page bytes, page count. A store that only persists what this function returns cannot
 drift from the rules, and every rule is testable without a browser.
 
-**Grouping is by exact URL string.** Two visits to the same page under different query
-strings are two groups, and an SPA navigation makes a new one. That is the correct
-behaviour — they are different addresses and the brief will cite them as such — and it is
-the same identity `CandidateTab.url` uses, so decision 5's row match is a string equality
-and not a normalisation question. Canonicalisation stays the gateway's job (`recognise.ts`).
+**Grouping is by the URL with its fragment removed, and nothing else removed.**
+
+The fragment goes because it is not part of the document's identity by the URL spec's own
+rules — it is never sent to a server — and because `recognise.ts` records that the gateway
+drops it too: *"canonicalizeUrl drops the fragment, utm_*/click-ids and a trailing slash"*.
+Keeping it would let `page#intro` and `page#appendix` become two groups that the gateway then
+resolves to **one** canonical identity, so a single page would be declared twice in one run's
+`sources` — precisely what decision 3 exists to prevent. Stripping it is not a normalisation
+rule the gateway could redo under different rules; every layer already agrees.
+
+**`utm_*`, click-ids and trailing slashes stay**, even though the gateway drops those too.
+That is canonicalisation, and `recognise.ts` is explicit that doing it here "would be work
+the gateway redoes under different rules — and its rules are load-bearing, because
+`externalIdFor` hashes `canonicalizeUrl`'s output." A client blocklist that drifts from the
+gateway's is worse than no blocklist.
+
+The accepted consequence, stated rather than hidden: highlighting the same page once with a
+`utm_source` and once without produces **two rows**. They are visibly two rows with visibly
+near-identical addresses, the preview names both, and the user can drop one. A visible
+duplicate the user can act on beats a silent identity rule that disagrees with the gateway's.
+
+Two query strings that differ in anything else — `?tab=files`, a search query, a page
+number — remain two groups, and correctly: those are different documents.
+
+**Decision 5's row match strips both sides.** `CandidateTab.url` may carry a fragment, so the
+match is stripped-key to stripped-key, and the URL the composer declares is the stripped one.
+One function produces the key; it is the only place a URL is touched.
 
 ### `src/background/passage-collect.ts`
 
@@ -332,6 +408,10 @@ passage list that disagree about the same URL.
 | Passage group's tab closed | row still shown, still sendable — text is already held |
 | Group's URL also an open tab | one row, passages mode, whole-page toggle |
 | Group's URL on an ungranted origin | row shown; no toggle (nothing to capture) |
+| Same page collected with and without a `utm_*` | two rows, both visible, either droppable |
+| Same page collected under two fragments | one row — the fragment is not in the key |
+| Row sent in whole-page mode | its passages are kept, not cleared |
+| Pick names a URL the collection lost | dropped like an unknown `tabId`; the run proceeds |
 | `run_capacity` hits a passage group | skipped like any source; its passages are kept |
 
 A passage source **cannot** fail to capture, so it never enters `skipped` and the report's
@@ -341,11 +421,18 @@ passage group misses a run is a gateway refusal.
 ## Testing
 
 **Pure (`test/unit/`, node):**
-- grouping by exact URL; stitch order is collection order; the separator is present between
-  passages and absent around a single one
+- `groupKey`: the fragment is stripped; `utm_*`, a click-id, a trailing slash and every other
+  query string are **preserved**; `page#a` and `page#b` are one group while `page?utm=x` and
+  `page` are two
+- stitch order is collection order; `PASSAGE_SEPARATOR` appears between passages and never
+  leads or trails a body, including a single-passage group
+- the string `stitch` produces and the string the preview renders are identical — one
+  assertion, because decision 7's honesty rests on it
 - `groupCapturedAt` returns the oldest, including when passages were added out of order
 - `addPassage`: duplicate refused; per-page byte cap refused at the boundary; 21st page
   refused; a refusal never mutates
+- `removePassage` drops one and leaves its siblings and their order; `removePassage` on the
+  last passage of a group leaves no empty group behind; `removeGroup` drops only its own URL
 - `isPassage` rejects every malformed stored shape
 - preview: page row vs passages row wording; the mixed count string; passage text present
 
@@ -355,11 +442,18 @@ passage group misses a run is a gateway refusal.
   call `capture` for a passage source; feed order matches `picks` order; `capturedAt` is the
   group's oldest; a fed group is cleared only after `/run` is accepted; a failed run clears
   nothing; `run_capacity` keeps the unfed groups
-- message guard: `picks` rejects an unknown `kind`, a non-string url, a non-number id
+- a row sent in **whole-page mode** keeps its passages after an accepted run, while a
+  passages-mode row in the same run is cleared — one test, both halves
+- message guard: `picks` rejects an unknown `kind`, a non-integer or negative id, and a url
+  `safeHttpUrl` rejects
+- a well-formed pick naming a URL the collection does not hold is **dropped**, not sent, and
+  does not fail the run — the same treatment an unknown `tabId` gets today
 
 **DOM (jsdom docblock):** composer renders a passage row with its count and age; the
-whole-page toggle appears only for an open named tab and flips the row's mode; remove drops
-one row; the cap counter counts both kinds.
+whole-page toggle appears only for an open named tab and flips the row's mode; the `picks`
+the composer would send changes `kind` with that toggle and keeps its position in the list;
+per-passage remove drops one passage and leaves the row; row remove drops the row; the cap
+counter counts both kinds.
 
 **E2E (`test/e2e/passages.e2e.ts`, against `mock-gateway.ts`):** the gate that matters, and
 the composer has none today — the four shipped specs cover capture and three lane surfaces.
@@ -385,6 +479,10 @@ confirm each toast, then open the composer.
   is a follow-up with evidence behind it.
 - **Passage-level citations.** The gateway cites a source; a source is a page. Finer-grained
   citation is a gateway question, not a client one.
+- **Any URL normalisation beyond dropping the fragment.** Tracking-parameter stripping is
+  canonicalisation, and `recognise.ts` records why a second implementation of it here is worse
+  than none. If the two-rows-for-one-page case turns out to bite in practice, the fix is a
+  gateway-side identity read the client can consult — proposed there, not guessed here.
 
 ## Corrections to the roadmap
 
