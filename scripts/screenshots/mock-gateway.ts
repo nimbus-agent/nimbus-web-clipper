@@ -8,8 +8,10 @@ import { AGENT_LANES } from "../../src/shared/types.ts";
 import {
   AGENT_INVOKE,
   AGENT_RUN_DONE,
+  BRIEF_REPORT,
   CLIP_INGEST,
   FETCH_FIXTURE,
+  type FedBriefSource,
   PAIR_CONFIRM,
   RELATED,
   RESOLVE_FIXTURE,
@@ -43,6 +45,25 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
+/** Local, deliberately — see the module comment on `newBriefRuns` for why this
+ *  does not import `isObject` from `src/`. */
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+/**
+ * One mock server's live brief runs, keyed by the id it issued. Created per
+ * `startMockGateway` call and closed over by that server alone — NOT module
+ * scope, so two harnesses (or two suites' servers) alive in one process
+ * cannot see each other's counts, the same isolation every other per-test
+ * fixture in this file gets from being constructed fresh.
+ */
+export type BriefRuns = Map<string, { expected: number; received: number }>;
+
+export function newBriefRuns(): BriefRuns {
+  return new Map();
+}
+
 /**
  * Pure request→response routing, over the Fetch API's `Request`/`Response`
  * so it is unit-testable without a real socket. `startMockGateway` is the
@@ -55,7 +76,11 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function handleRequest(req: Request, scenario: Scenario = {}): Promise<Response> {
+export async function handleRequest(
+  req: Request,
+  scenario: Scenario = {},
+  runs: BriefRuns = newBriefRuns(),
+): Promise<Response> {
   const url = new URL(req.url);
   scenario.onRequest?.(url.pathname);
   const delayMs = scenario.delayMs?.[url.pathname];
@@ -89,6 +114,41 @@ export async function handleRequest(req: Request, scenario: Scenario = {}): Prom
   // every run reports `done` immediately (see AGENT_RUN_DONE's doc comment).
   if (req.method === "GET" && url.pathname.startsWith(`${GATEWAY_PATHS.agentRuns}/`)) {
     return jsonResponse(scenario.agentRun ?? AGENT_RUN_DONE);
+  }
+  // The five research-brief routes. `expected` is echoed from what create
+  // declared, so the page's received/expected counter is real rather than fixed.
+  // Checked ahead of the POST-only gate below because `GET /v1/briefs/{id}` (the
+  // poll route) is not POST — create is the bare base, the other four append
+  // `/{id}` and an action.
+  if (url.pathname === GATEWAY_PATHS.briefs && req.method === "POST") {
+    const body: unknown = await req.json();
+    const sources = isObject(body) && Array.isArray(body["sources"]) ? body["sources"] : [];
+    const id = `brief-${runs.size + 1}`;
+    runs.set(id, { expected: sources.length, received: 0 });
+    return jsonResponse({ id, status: "collecting", expected: sources.length });
+  }
+  const brief = /^\/v1\/briefs\/([^/]+)(?:\/(sources|run|save))?$/.exec(url.pathname);
+  if (brief !== null) {
+    const id = brief[1] ?? "";
+    const run = runs.get(id);
+    if (run === undefined) {
+      // An id this server never issued. 404 rather than a cheerful default: a
+      // fixture that answers for a run it does not have hides a client bug.
+      return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
+    }
+    const action = brief[2];
+    if (action === "sources" && req.method === "POST") {
+      scenario.onBriefSource?.((await req.json()) as FedBriefSource);
+      run.received += 1;
+      return jsonResponse({ accepted: true, received: run.received, expected: run.expected });
+    }
+    if (action === "run") {
+      return jsonResponse({ status: "running" });
+    }
+    if (action === "save") {
+      return jsonResponse({ itemId: "item-1" });
+    }
+    return jsonResponse({ status: "done", report: BRIEF_REPORT });
   }
   if (req.method !== "POST") {
     return new Response(null, { status: 405 });
@@ -133,24 +193,47 @@ function toFetchHeaders(incoming: IncomingMessage["headers"]): Headers {
   return headers;
 }
 
+/** Buffer the whole request body. Node's `IncomingMessage` is a readable
+ *  stream, and the brief routes are the first ones in this file that need the
+ *  POST body at all (every earlier route ignores it) — so buffering it here,
+ *  once, is simpler than teaching `Request` to stream a Node stream, and a
+ *  loopback dev fixture has no reason to handle a body large enough for that
+ *  to matter. */
+async function readBody(req: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
 async function serve(
   req: IncomingMessage,
   res: ServerResponse,
   port: number,
   scenario: Scenario,
+  runs: BriefRuns,
 ): Promise<void> {
+  const method = req.method ?? "GET";
+  // Fetch's `Request` refuses a body on GET/HEAD, so only buffer — and only
+  // attach — one for a method that can carry one.
+  const bodyBuf = method === "GET" || method === "HEAD" ? null : await readBody(req);
   const request = new Request(`http://127.0.0.1:${port}${req.url ?? "/"}`, {
-    method: req.method ?? "GET",
+    method,
     headers: toFetchHeaders(req.headers),
+    ...(bodyBuf !== null && bodyBuf.length > 0 ? { body: new Uint8Array(bodyBuf) } : {}),
   });
-  const response = await handleRequest(request, scenario);
+  const response = await handleRequest(request, scenario, runs);
   res.writeHead(response.status, Object.fromEntries(response.headers));
   res.end(response.body === null ? undefined : await response.text());
 }
 
 export function startMockGateway(scenario: Scenario = {}, port: number = DEFAULT_PORT): Server {
+  // One run map per server, closed over here — see `newBriefRuns`'s own
+  // comment for why this must not live at module scope.
+  const runs = newBriefRuns();
   const server = createServer((req, res) => {
-    serve(req, res, port, scenario).catch(() => {
+    serve(req, res, port, scenario, runs).catch(() => {
       res.writeHead(500).end();
     });
   });

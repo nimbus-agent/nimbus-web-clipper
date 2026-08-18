@@ -681,11 +681,14 @@ same as the popup/options DOM and the SW glue.
 ## Manual verification — Research briefs
 
 **Needs a REAL gateway, and this checklist is mostly unverifiable without one.**
-`scripts/screenshots/mock-gateway.ts` builds its `Request` from method and headers
-only and **drops the POST body**, so every behaviour below is body-driven and
-therefore invisible to it: `expected`, `received`, `accepted`, all four caps, the
-two `413` details, `briefs_busy`, and the disabled-seam 404. A pass against the
-mock is not evidence for any of them. Enable the gateway's briefs seam first.
+`scripts/screenshots/mock-gateway.ts` now forwards the real POST body to its five
+`/v1/briefs` routes and echoes back real `expected`/`received`/`accepted` counts
+(see "Manual verification — Passages as brief sources" below for what that lets
+an e2e prove), but it enforces none of the gateway's own business rules — no
+caps, no `413` refusals, no `briefs_busy`, no disabled-seam distinction beyond a
+fixed 404. A pass against the mock is still not evidence for any of the four
+caps, the two `413` details, `briefs_busy`, or the disabled-seam 404. Enable the
+gateway's briefs seam first for those.
 
 1. Open three tabs on a host you have granted page access to, open the brief page
    from the popup's **Brief from open tabs…**, tick all three.
@@ -725,6 +728,26 @@ a brief, then force-stop the service worker from `chrome://extensions` while it 
 running. Within a minute the alarm should resume the poll and the result should
 still land. Whether Chrome preserves a registered alarm across a genuine eviction
 is Chrome's behaviour, not ours.
+
+## Manual verification — Passages as brief sources
+
+Prereq: paired. `test/e2e/passages.e2e.ts` seeds the collection through the
+service worker rather than the context-menu gesture — see that file's own
+header comment for why.
+
+1. On a normal article page, select a paragraph, right-click → **Add to
+   brief**. Confirm the toast reads *"Added — 1 passage from this page."*
+   Select a second paragraph and repeat; the toast now says *2 passages*.
+   Right-click the same text a third time: *"Already collected."*
+2. <!-- e2e:passages-2 --> Open the brief page. The page appears as **one**
+   row saying *2 passages*, not two rows and not a whole page.
+3. <!-- e2e:passages-3 --> Pick it, choose a question, and read the preview:
+   it names the source as passages and shows both, with `[...]` between them.
+4. <!-- e2e:passages-4 --> Send. The finished brief cites that page.
+5. <!-- e2e:passages-5 --> Reopen the brief page: the sent page is gone from
+   the collection.
+6. With that page still open in a tab, collect a passage, then use *use the
+   whole page instead* and send. Reopen: the passages are still there.
 
 ## Security check
 

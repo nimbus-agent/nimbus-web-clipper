@@ -148,6 +148,39 @@ export const RELATED: RelatedResponse = {
   ],
 };
 
+/** One source `POST /v1/briefs/{id}/sources` received — the wire body a real
+ *  feed sends, so a test asserting on it is asserting on the bytes that left
+ *  the extension, not on the extension's own idea of what it sent. */
+export interface FedBriefSource {
+  readonly url: string;
+  readonly title: string;
+  readonly body: string;
+  readonly capturedAt: number;
+  readonly truncated: boolean;
+}
+
+/**
+ * A minimal done report: one finding citing the first source.
+ *
+ * Shaped against `isBriefReport` (src/shared/brief-report.ts), not against a
+ * looser sketch — that guard is what decides whether a report is accepted, and
+ * a fixture missing a field (`citations[].kind`, notably) would make the page
+ * render a failure for a reason that has nothing to do with what the e2e is
+ * actually testing.
+ */
+export const BRIEF_REPORT = {
+  summary: "Both sources describe the same change.",
+  findings: [
+    {
+      text: "The sources agree on the approach.",
+      citations: [{ kind: "source", url: "", title: "Source 1" }],
+    },
+  ],
+  conflicts: [],
+  gaps: [],
+  synthesis: { remote: false, model: "local-fixture" },
+} as const;
+
 /**
  * Per-test overrides for the mock. Every field is optional and falls back to the
  * canned fixture, so the screenshot script needs no scenario at all.
@@ -196,4 +229,7 @@ export interface Scenario {
    * meaning depend on another's.
    */
   readonly onRequest?: (pathname: string) => void;
+  /** Called with every `POST /v1/briefs/{id}/sources` body — the assertion no
+   *  unit test can make: what a feed actually put on the wire. */
+  readonly onBriefSource?: (source: FedBriefSource) => void;
 }
