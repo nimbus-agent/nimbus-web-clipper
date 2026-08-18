@@ -121,6 +121,17 @@ describe("groupPassages", () => {
   });
 });
 
+describe("PASSAGE_SEPARATOR", () => {
+  // Pinned by value, not because a formatter would rewrite a string literal —
+  // none does — but because these bytes are visible in three places at once: the
+  // body the gateway receives, the text the preview shows, and the e2e's literal
+  // assertion. Changing it is allowed; changing it by accident is not, and this
+  // is the test that names the contract when someone does.
+  test("is exactly a bracketed ellipsis on its own line", () => {
+    expect(PASSAGE_SEPARATOR).toBe("\n\n[...]\n\n");
+  });
+});
+
 describe("stitch", () => {
   test("joins in collection order with the separator between passages", () => {
     const group = groupPassages([p("http://h/a", "one"), p("http://h/a", "two")])[0];
@@ -959,13 +970,17 @@ rather than inventing one. Then add the switch arm to `addMenuClickListener`, be
 
 ```ts
     case "add-passage":
+      // `tabId` is `number | undefined` here. Early return, never a `!`
+      // (`noNonNullAssertion` is an error in this repo) and never the active tab
+      // as a fallback: a right-click in a non-focused window targets a different
+      // tab than `tabs.query({active})`, and the activeTab grant belongs to the
+      // CLICKED tab — the same reasoning the clip path already documents.
+      if (tabId === undefined) {
+        return;
+      }
       collectPassage(passageCollectDeps, tabId).catch(() => undefined);
       return;
 ```
-
-`tabId` is `number | undefined` in that listener. Guard it the way the neighbouring arms do —
-`handleSelectionMenu` returns early when it is `undefined`; do the same here rather than
-asserting (`noNonNullAssertion`).
 
 - [ ] **Step 8: Run the full suite**
 
@@ -1895,6 +1910,38 @@ describe("composer passage rows", () => {
     expect(boxes).toEqual(["passages:http://h/a"]);
   });
 
+  test("the same page open in two tabs is still ONE passages row", () => {
+    // Two fragments of one document, or the same page opened twice: one page
+    // key, one row. A row per tab would let the user pick the page twice, and
+    // `declare()` would send `http://h/a#one` and `http://h/a` — two strings the
+    // gateway canonicalises to one identity.
+    const root = render({
+      named: [
+        { id: 1, url: "http://h/a#one", title: "A page" },
+        { id: 2, url: "http://h/a#two", title: "A page" },
+      ],
+      passages: [GROUP],
+    });
+    expect(root.querySelectorAll(".brief__tab")).toHaveLength(1);
+    expect([...root.querySelectorAll("input[type=checkbox]")].map((b) => b.getAttribute("value"))).toEqual(
+      ["passages:http://h/a"],
+    );
+  });
+
+  test("the same page open in two tabs with NO passages is one tab row", () => {
+    // The shipped composer emits a row per tab and so shows this page twice.
+    // This slice makes one-row-per-page an invariant; the two cases must agree.
+    const root = render({
+      named: [
+        { id: 1, url: "http://h/dup", title: "Dup" },
+        { id: 2, url: "http://h/dup", title: "Dup" },
+      ],
+    });
+    expect([...root.querySelectorAll("input[type=checkbox]")].map((b) => b.getAttribute("value"))).toEqual(
+      ["tab:1"],
+    );
+  });
+
   test("that row offers the whole-page control", () => {
     const root = render({
       named: [{ id: 1, url: "http://h/a", title: "A page" }],
@@ -2073,28 +2120,51 @@ function passageRow(
 ```ts
   const byKey = new Map(model.passages.map((g) => [g.url, g]));
   const whole = model.wholePage ?? new Set<string>();
-  const consumed = new Set<string>();
+  // ONE row per page key, whichever kind that row turns out to be. The same page
+  // can be open in two tabs — plainly, or as two fragments of one document — and
+  // both resolve to one key. Emitting a row per TAB would put two rows for one
+  // page in a list whose whole job is "here is what goes", and picking both
+  // would declare one page twice in `sources`: `declare()` sends `tab.url` for a
+  // tab pick and `group.url` for a passages pick, so the two rows would send
+  // `http://h/a#one` and `http://h/a`, which the gateway canonicalises to the
+  // same identity. That is the defect the fragment-stripped group key exists to
+  // prevent, arriving through a second door.
+  const seen = new Set<string>();
   for (const tab of model.named) {
-    const group = byKey.get(groupKey(tab.url));
+    const key = groupKey(tab.url);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    const group = byKey.get(key);
     if (group === undefined || whole.has(group.url)) {
       list.appendChild(tabRow(tab, model.selected));
       continue;
     }
-    consumed.add(group.url);
     list.appendChild(passageRow(group, model.selected, tab));
   }
   for (const group of model.passages) {
-    if (!consumed.has(group.url) && !whole.has(group.url)) {
+    if (!seen.has(group.url) && !whole.has(group.url)) {
       list.appendChild(passageRow(group, model.selected, null));
     }
   }
 ```
 
-Note the `whole.has(group.url)` in the first loop: a row switched to whole-page mode renders as a
-plain tab row, which is exactly what "use the whole page instead" means. A group in `wholePage`
-whose tab has since closed falls to neither branch — it has no tab to capture and the user asked
-not to use its passages, so it renders nowhere until they toggle back. Add the cap counter after
-the list:
+Two notes on that loop.
+
+`whole.has(group.url)` in the first branch: a row switched to whole-page mode renders as a plain
+tab row, which is exactly what "use the whole page instead" means. A group in `wholePage` whose
+tab has since closed falls to neither branch — it has no tab to capture and the user asked not to
+use its passages — so it renders nowhere until they toggle back.
+
+**Deduping tab rows is a deliberate behaviour change to shipped code.** Today's composer emits a
+row per named tab, so a page open in two tabs already appears twice and picking both already
+declares it twice. It goes unnoticed because nothing else depended on page identity. This slice
+makes "one row per page" an invariant, so the two cases must not disagree: a duplicate tab is the
+same document, and dropping it is the same rule as merging two fragments. Cover it with a test
+(Step 1) so the change is asserted rather than incidental.
+
+Add the cap counter after the list:
 
 ```ts
   const picked = model.selected.size;
@@ -2243,23 +2313,55 @@ that has nothing to do with passages. Read the guard, then match it.
 In `mock-gateway.ts`'s `handleRequest`, before the fallthrough (note the path shapes: create is
 the bare base, the other four append `/{id}` and an action):
 
+The per-run counters live in state **owned by one server**, never at module scope:
+
+```ts
+/** One mock server's live brief runs. Created per `startMockGateway` call. */
+export type BriefRuns = Map<string, { expected: number; received: number }>;
+
+export function newBriefRuns(): BriefRuns {
+  return new Map();
+}
+```
+
+`handleRequest` takes it as a third parameter, defaulting to a fresh map so its existing callers
+and unit tests are unaffected:
+
+```ts
+export async function handleRequest(
+  req: Request,
+  scenario: Scenario = {},
+  runs: BriefRuns = newBriefRuns(),
+): Promise<Response> {
+```
+
+and `startMockGateway` creates one per server and closes over it, so two harnesses alive in one
+process cannot see each other's counts.
+
 ```ts
   // The five research-brief routes. `expected` is echoed from what create
   // declared, so the page's received/expected counter is real rather than fixed.
   if (url.pathname === GATEWAY_PATHS.briefs && req.method === "POST") {
     const body: unknown = await req.json();
     const sources = isObject(body) && Array.isArray(body["sources"]) ? body["sources"] : [];
-    briefExpected = sources.length;
-    briefReceived = 0;
-    return jsonResponse({ id: "brief-1", status: "collecting", expected: briefExpected });
+    const id = `brief-${runs.size + 1}`;
+    runs.set(id, { expected: sources.length, received: 0 });
+    return jsonResponse({ id, status: "collecting", expected: sources.length });
   }
   const brief = /^\/v1\/briefs\/([^/]+)(?:\/(sources|run|save))?$/.exec(url.pathname);
   if (brief !== null) {
+    const id = brief[1] ?? "";
+    const run = runs.get(id);
+    if (run === undefined) {
+      // An id this server never issued. 404 rather than a cheerful default: a
+      // fixture that answers for a run it does not have hides a client bug.
+      return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
+    }
     const action = brief[2];
     if (action === "sources" && req.method === "POST") {
       scenario.onBriefSource?.((await req.json()) as FedBriefSource);
-      briefReceived += 1;
-      return jsonResponse({ accepted: true, received: briefReceived, expected: briefExpected });
+      run.received += 1;
+      return jsonResponse({ accepted: true, received: run.received, expected: run.expected });
     }
     if (action === "run") {
       return jsonResponse({ status: "running" });
@@ -2271,9 +2373,10 @@ the bare base, the other four append `/{id}` and an action):
   }
 ```
 
-`briefExpected` / `briefReceived` are module-level counters in the mock, reset by the create
-route. That is fine for a fixture driving one run per launch; if a suite ever needs two, move
-them into the `Scenario`. Do not add persistence the fixture does not need.
+Per-server state, not module state, and ids issued rather than fixed: two runs in one suite, or
+two harnesses in one worker process, stay isolated without the caller thinking about it. It also
+keeps `handleRequest` honest about its own doc comment — it is request→response over state it is
+handed, with nothing hidden at module scope.
 
 - [ ] **Step 2: Write the e2e**
 
