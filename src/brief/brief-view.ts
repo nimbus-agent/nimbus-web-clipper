@@ -7,22 +7,104 @@
 // are model output derived from page content, so all of it is untrusted.
 import type { BriefState, SkippedSource } from "../background/brief-handlers.ts";
 import type { CandidateTab } from "../browser/tabs.ts";
+import { BRIEF_CAPS } from "../shared/brief.ts";
 import {
   type BriefReport,
   type BriefReportItem,
   quotesWereOmitted,
   visibleGaps,
 } from "../shared/brief-report.ts";
+import { groupKey, type PassageGroup } from "../shared/passage.ts";
 import { safeHttpUrl } from "../shared/safe-url.ts";
 
 export type ComposerModel = {
   readonly named: readonly CandidateTab[];
   readonly hiddenCount: number;
   readonly questions: readonly string[];
-  readonly selected: ReadonlySet<number>;
+  /** Pick ids — `tab:<id>` or `passages:<url>`. One namespace, so a toggle
+   *  identifies its own kind without a lookup. */
+  readonly selected: ReadonlySet<string>;
+  readonly passages: readonly PassageGroup[];
+  /** Urls the user switched back to whole-page mode. */
+  readonly wholePage?: ReadonlySet<string>;
   /** See `TabCandidates.enumerationFailed` — rendered, not logged. */
   readonly enumerationFailed?: boolean;
 };
+
+/**
+ * One row of the composer: a page, and which of the two things it offers.
+ *
+ * `tab` on a passages row is the open tab that page is showing, or null when it
+ * has none.
+ */
+export type ComposerRow =
+  | { readonly kind: "tab"; readonly tab: CandidateTab }
+  | {
+      readonly kind: "passages";
+      readonly group: PassageGroup;
+      readonly tab: CandidateTab | null;
+    };
+
+/**
+ * The rows this composer shows, in the order it shows them.
+ *
+ * Exported and pure because the page needs the SAME order to build the preview
+ * and the run payload: what is listed is what is sent, in that sequence. A
+ * second copy of this loop in brief.ts would be a second copy of the one-row-
+ * per-page rule, which is exactly the drift the fragment-stripped key exists to
+ * prevent.
+ *
+ * ONE row per page key, whichever kind that row turns out to be. The same page
+ * can be open in two tabs — plainly, or as two fragments of one document — and
+ * both resolve to one key. Emitting a row per TAB would put two rows for one
+ * page in a list whose whole job is "here is what goes", and picking both would
+ * declare one page twice in `sources`: `declare()` sends `tab.url` for a tab
+ * pick and `group.url` for a passages pick, so the two rows would send
+ * `http://h/a#one` and `http://h/a`, which the gateway canonicalises to the same
+ * identity. That is the defect the fragment-stripped group key exists to
+ * prevent, arriving through a second door.
+ *
+ * A row switched to whole-page mode renders as a plain tab row, which is exactly
+ * what "use the whole page instead" means. A group in `wholePage` whose tab has
+ * since closed falls to neither branch — it has no tab to capture and the user
+ * asked not to use its passages — so it appears nowhere until they toggle back.
+ */
+export function composerRows(model: {
+  readonly named: readonly CandidateTab[];
+  readonly passages: readonly PassageGroup[];
+  readonly wholePage?: ReadonlySet<string>;
+}): readonly ComposerRow[] {
+  const byKey = new Map(model.passages.map((g) => [g.url, g]));
+  const whole = model.wholePage ?? new Set<string>();
+  const rows: ComposerRow[] = [];
+  const seen = new Set<string>();
+  for (const tab of model.named) {
+    const key = groupKey(tab.url);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    const group = byKey.get(key);
+    if (group === undefined || whole.has(group.url)) {
+      rows.push({ kind: "tab", tab });
+      continue;
+    }
+    rows.push({ kind: "passages", group, tab });
+  }
+  for (const group of model.passages) {
+    if (!seen.has(group.url) && !whole.has(group.url)) {
+      rows.push({ kind: "passages", group, tab: null });
+    }
+  }
+  return rows;
+}
+
+/** The one place a pick id is spelled. The page compares and stores these
+ *  strings; it never parses them, so the two prefixes stay an implementation
+ *  detail of this module. */
+export function pickId(row: ComposerRow): string {
+  return row.kind === "tab" ? `tab:${row.tab.id}` : `passages:${row.group.url}`;
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -37,6 +119,85 @@ function el<K extends keyof HTMLElementTagNameMap>(
     node.className = className;
   }
   return node;
+}
+
+/** Exported so ticking a box can refresh the counter WITHOUT redrawing the
+ *  composer: a redraw would recreate the custom-question box the user may be
+ *  typing in, and a tick changes nothing else on the page. */
+export function sourceCountText(picked: number): string {
+  return `${picked} of ${BRIEF_CAPS.maxSources} sources`;
+}
+
+function pickBox(value: string, checked: boolean): HTMLInputElement {
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.value = value;
+  box.checked = checked;
+  return box;
+}
+
+function iconButton(
+  className: string,
+  text: string,
+  data: Record<string, string>,
+): HTMLButtonElement {
+  const button = el("button", text, className);
+  button.type = "button";
+  for (const [key, value] of Object.entries(data)) {
+    button.dataset[key] = value;
+  }
+  return button;
+}
+
+function tabRow(
+  row: Extract<ComposerRow, { kind: "tab" }>,
+  selected: ReadonlySet<string>,
+): HTMLElement {
+  const item = el("li", undefined, "brief__tab");
+  const label = el("label");
+  const id = pickId(row);
+  label.appendChild(pickBox(id, selected.has(id)));
+  label.appendChild(el("span", row.tab.title, "brief__tab-title"));
+  label.appendChild(el("span", row.tab.url, "brief__tab-url"));
+  item.appendChild(label);
+  return item;
+}
+
+/** The passages held for one page, each removable, plus the row's own controls. */
+function passageRow(
+  row: Extract<ComposerRow, { kind: "passages" }>,
+  selected: ReadonlySet<string>,
+): HTMLElement {
+  const group = row.group;
+  const item = el("li", undefined, "brief__tab brief__tab--passages");
+  const label = el("label");
+  const id = pickId(row);
+  label.appendChild(pickBox(id, selected.has(id)));
+  label.appendChild(el("span", group.title, "brief__tab-title"));
+  const n = group.passages.length;
+  label.appendChild(el("span", `${n} ${n === 1 ? "passage" : "passages"}`, "brief__tab-count"));
+  label.appendChild(el("span", group.url, "brief__tab-url"));
+  item.appendChild(label);
+
+  // Offered ONLY when the tab is open: whole-page mode means "capture this tab
+  // at start", so on a closed tab it would be a dead control.
+  if (row.tab !== null) {
+    item.appendChild(iconButton("brief__mode", "Use the whole page instead", { url: group.url }));
+  }
+
+  const list = el("ul", undefined, "brief__passages");
+  for (const passage of group.passages) {
+    const line = el("li");
+    // textContent via `el` — passage text is page content, never markup.
+    line.appendChild(el("span", passage.text, "brief__passage-text"));
+    line.appendChild(
+      iconButton("brief__drop", "Remove", { url: group.url, at: String(passage.at) }),
+    );
+    list.appendChild(line);
+  }
+  item.appendChild(list);
+  item.appendChild(iconButton("brief__drop-row", "Remove page", { url: group.url }));
+  return item;
 }
 
 export function renderComposer(root: HTMLElement, model: ComposerModel): void {
@@ -56,18 +217,10 @@ export function renderComposer(root: HTMLElement, model: ComposerModel): void {
   root.appendChild(el("h2", "Pick the pages"));
 
   const list = el("ul", undefined, "brief__tabs");
-  for (const tab of model.named) {
-    const item = el("li", undefined, "brief__tab");
-    const label = el("label");
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.value = String(tab.id);
-    box.checked = model.selected.has(tab.id);
-    label.appendChild(box);
-    label.appendChild(el("span", tab.title, "brief__tab-title"));
-    label.appendChild(el("span", tab.url, "brief__tab-url"));
-    item.appendChild(label);
-    list.appendChild(item);
+  for (const row of composerRows(model)) {
+    list.appendChild(
+      row.kind === "tab" ? tabRow(row, model.selected) : passageRow(row, model.selected),
+    );
   }
   root.appendChild(list);
 
@@ -89,6 +242,16 @@ export function renderComposer(root: HTMLElement, model: ComposerModel): void {
         "brief__note",
       ),
     );
+  }
+
+  // Both kinds count against ONE cap: the gateway's source cap is about sources,
+  // and a set of passages is a source.
+  root.appendChild(el("p", sourceCountText(model.selected.size), "brief__count"));
+  if (model.passages.length > 0) {
+    const clear = el("button", "Clear collected passages", "brief__clear");
+    clear.type = "button";
+    clear.id = "clear-passages";
+    root.appendChild(clear);
   }
 
   root.appendChild(el("h2", "Ask"));

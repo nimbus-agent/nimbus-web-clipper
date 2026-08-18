@@ -35,6 +35,8 @@ import {
   isDiscoverRequest,
   isFetchRequest,
   isPairRequest,
+  isPassageClearRequest,
+  isPassageDropRequest,
   isQueueListRequest,
   isQueueRemoveRequest,
   isQueueRetryRequest,
@@ -43,7 +45,7 @@ import {
   isResolveRequest,
   isUnpairRequest,
 } from "../shared/messages.ts";
-import { removeGroup } from "../shared/passage.ts";
+import { removeGroup, removePassage } from "../shared/passage.ts";
 import type { AgentError, AgentLane, LaneState, Recognition } from "../shared/types.ts";
 import {
   AGENT_RUN_CACHE_TTL_MS,
@@ -656,6 +658,45 @@ async function routeBriefMessage(message: BriefMessage): Promise<unknown> {
   return { kind: "failed", reason: "unknown_brief_message" } satisfies BriefState;
 }
 
+/**
+ * Is this one of the collection's two mutations?
+ *
+ * A prefix check like `isBriefMessage`'s, and for the same reason: the router is
+ * at Sonar's cognitive-complexity cap, so these two kinds arrive through ONE
+ * branch and are re-narrowed by their real guards inside the fan-out.
+ */
+function isPassageMessage(v: unknown): boolean {
+  if (typeof v !== "object" || v === null) {
+    return false;
+  }
+  const kind = (v as { kind?: unknown }).kind;
+  return kind === "passage-drop" || kind === "passage-clear";
+}
+
+/**
+ * Apply a collection mutation and report whether it stuck.
+ *
+ * Every path goes through `updatePassages`, the store's one serialized
+ * read-modify-write — a menu click collecting a passage and a composer click
+ * dropping one can genuinely interleave.
+ */
+async function routePassageMessage(message: unknown): Promise<{ ok: boolean }> {
+  if (isPassageDropRequest(message)) {
+    const { url, at } = message;
+    const res = await updatePassages((all) => ({
+      ok: true,
+      // No `at` means the whole page: the row's own remove, not a passage's.
+      all: at === undefined ? removeGroup(all, url) : removePassage(all, url, at),
+    }));
+    return { ok: res.ok };
+  }
+  if (isPassageClearRequest(message)) {
+    const res = await updatePassages(() => ({ ok: true, all: [] }));
+    return { ok: res.ok };
+  }
+  return { ok: false };
+}
+
 const quickClipDeps: QuickClipDeps = {
   activeTab,
   runCapture,
@@ -1078,6 +1119,16 @@ addMessageListener((message, rawRespond, sender) => {
       .then(respond)
       .catch(() => {
         respond({ kind: "failed", reason: "server_error" });
+      });
+    return true;
+  }
+  // ONE branch for the collection's two mutations, same shape and same reason as
+  // the brief branch above.
+  if (isPassageMessage(message)) {
+    routePassageMessage(message)
+      .then(respond)
+      .catch(() => {
+        respond({ ok: false });
       });
     return true;
   }

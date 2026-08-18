@@ -245,6 +245,26 @@ export interface BriefLogClearRequest {
   readonly kind: "brief-log-clear";
 }
 
+/**
+ * Drop collected passages: one passage when `at` names its capture instant,
+ * otherwise every passage held for that page.
+ *
+ * One message for both because they are one gesture with two scopes, and the
+ * store applies them through the same serialized read-modify-write. `url` is
+ * narrowed by `safeHttpUrl` for the same reason a passage pick is — the same
+ * string reaches the same collection.
+ */
+export interface PassageDropRequest {
+  readonly kind: "passage-drop";
+  readonly url: string;
+  readonly at?: number;
+}
+
+/** Empty the whole collection. Carries nothing: there is nothing to name. */
+export interface PassageClearRequest {
+  readonly kind: "passage-clear";
+}
+
 export type ExtensionRequest =
   | CaptureRequest
   | PairRequest
@@ -267,7 +287,9 @@ export type ExtensionRequest =
   | BriefStateRequest
   | BriefSaveRequest
   | BriefLogRequest
-  | BriefLogClearRequest;
+  | BriefLogClearRequest
+  | PassageDropRequest
+  | PassageClearRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -721,6 +743,27 @@ export function isBriefStartRequest(v: unknown): v is BriefStartRequest {
     return false;
   }
   return picks.every(isBriefPick);
+}
+
+/**
+ * `at` is the passage's capture instant, and it is OPTIONAL: absent means "the
+ * whole page". So it is checked as an integer only when present — accepting a
+ * fractional or non-numeric `at` would silently match no passage and read to the
+ * user as a remove that did nothing.
+ */
+export function isPassageDropRequest(v: unknown): v is PassageDropRequest {
+  if (!isObject(v) || v["kind"] !== "passage-drop") {
+    return false;
+  }
+  if (typeof v["url"] !== "string" || safeHttpUrl(v["url"]) === null) {
+    return false;
+  }
+  const at = v["at"];
+  return at === undefined || (typeof at === "number" && Number.isInteger(at));
+}
+
+export function isPassageClearRequest(v: unknown): v is PassageClearRequest {
+  return isObject(v) && v["kind"] === "passage-clear";
 }
 
 /**

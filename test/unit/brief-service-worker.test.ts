@@ -131,6 +131,57 @@ describe("service worker brief routing", () => {
     expect(harness.storage.get("briefLog")).toHaveLength(1);
   });
 
+  it("routes a passage-drop naming one passage and leaves the rest of the page", async () => {
+    harness.storage.set("passages", [
+      { url: "http://h/a", title: "A", text: "one", at: 100 },
+      { url: "http://h/a#x", title: "A", text: "two", at: 200 },
+    ]);
+    await import("../../src/background/service-worker.ts");
+    await settle();
+    expect(await harness.emitMessage({ kind: "passage-drop", url: "http://h/a", at: 100 })).toEqual(
+      { ok: true },
+    );
+    await settle();
+    expect(harness.storage.get("passages")).toEqual([
+      { url: "http://h/a#x", title: "A", text: "two", at: 200 },
+    ]);
+  });
+
+  it("routes a passage-drop with no `at` as the whole page, fragments included", async () => {
+    harness.storage.set("passages", [
+      { url: "http://h/a", title: "A", text: "one", at: 100 },
+      { url: "http://h/a#x", title: "A", text: "two", at: 200 },
+      { url: "http://h/b", title: "B", text: "three", at: 300 },
+    ]);
+    await import("../../src/background/service-worker.ts");
+    await settle();
+    await harness.emitMessage({ kind: "passage-drop", url: "http://h/a" });
+    await settle();
+    expect(harness.storage.get("passages")).toEqual([
+      { url: "http://h/b", title: "B", text: "three", at: 300 },
+    ]);
+  });
+
+  it("routes a passage-clear to an empty collection", async () => {
+    harness.storage.set("passages", [{ url: "http://h/a", title: "A", text: "one", at: 100 }]);
+    await import("../../src/background/service-worker.ts");
+    await settle();
+    expect(await harness.emitMessage({ kind: "passage-clear" })).toEqual({ ok: true });
+    await settle();
+    expect(harness.storage.get("passages")).toEqual([]);
+  });
+
+  it("refuses a passage-drop whose url fails the guard, and writes nothing", async () => {
+    harness.storage.set("passages", [{ url: "http://h/a", title: "A", text: "one", at: 100 }]);
+    await import("../../src/background/service-worker.ts");
+    await settle();
+    expect(await harness.emitMessage({ kind: "passage-drop", url: "javascript:alert(1)" })).toEqual(
+      { ok: false },
+    );
+    await settle();
+    expect(harness.storage.get("passages")).toHaveLength(1);
+  });
+
   it("serves the log and clears it only on request", async () => {
     harness.storage.set("briefLog", [
       { runId: "r1", at: 1, question: "q", sourceCount: 1, truncatedCount: 0 },

@@ -14,6 +14,8 @@ import {
   isCueOpenRequest,
   isFetchResponse,
   isPairRequest,
+  isPassageClearRequest,
+  isPassageDropRequest,
   isPingMessage,
   isQueueListRequest,
   isQueueRemoveRequest,
@@ -789,5 +791,43 @@ describe("isBriefStartRequest picks", () => {
     expect(isBriefStartRequest({ kind: "brief-start", picks: [{ kind: "tab", id: 1 }] })).toBe(
       false,
     );
+  });
+});
+
+describe("isPassageDropRequest", () => {
+  test("accepts a whole-page drop, which carries no `at`", () => {
+    expect(isPassageDropRequest({ kind: "passage-drop", url: "http://h/a" })).toBe(true);
+  });
+
+  test("accepts one passage, named by its capture instant", () => {
+    expect(isPassageDropRequest({ kind: "passage-drop", url: "http://h/a", at: 100 })).toBe(true);
+  });
+
+  test("rejects a url safeHttpUrl rejects, not merely a non-string", () => {
+    expect(isPassageDropRequest({ kind: "passage-drop", url: 5 })).toBe(false);
+    expect(isPassageDropRequest({ kind: "passage-drop", url: "javascript:alert(1)" })).toBe(false);
+    expect(isPassageDropRequest({ kind: "passage-drop", url: "not a url" })).toBe(false);
+  });
+
+  test("rejects a non-integer `at` rather than letting it match nothing", () => {
+    expect(isPassageDropRequest({ kind: "passage-drop", url: "http://h/a", at: 1.5 })).toBe(false);
+    expect(isPassageDropRequest({ kind: "passage-drop", url: "http://h/a", at: "100" })).toBe(
+      false,
+    );
+    expect(isPassageDropRequest({ kind: "passage-drop", url: "http://h/a", at: null })).toBe(false);
+  });
+
+  test("rejects the wrong kind and non-objects", () => {
+    expect(isPassageDropRequest({ kind: "passage-clear", url: "http://h/a" })).toBe(false);
+    expect(isPassageDropRequest(null)).toBe(false);
+    expect(isPassageDropRequest("passage-drop")).toBe(false);
+  });
+});
+
+describe("isPassageClearRequest", () => {
+  test("accepts the bare message and rejects everything else", () => {
+    expect(isPassageClearRequest({ kind: "passage-clear" })).toBe(true);
+    expect(isPassageClearRequest({ kind: "passage-drop", url: "http://h/a" })).toBe(false);
+    expect(isPassageClearRequest(null)).toBe(false);
   });
 });
