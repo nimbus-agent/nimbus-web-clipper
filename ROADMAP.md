@@ -819,7 +819,10 @@ the editor structurally cannot.*
 > permission is exactly what capture needs — so the set the composer can *name*
 > is the set it can *read*. An ungranted tab is counted, never guessed at. This
 > is the second thing **C1.4**'s per-host grant buys, and the first that needs it
-> on several tabs at once.
+> on several tabs at once. **Qualifier (C5.3):** this holds for *enumeration* —
+> `tabs.query` withholding a name without a host grant. A passage is named on an
+> ungranted origin too, because the user selected the text and right-clicked it;
+> the gesture is the grant, the same way it already is for `clip-selection`.
 > **The question is scaffolded by the recognised set**, with free text behind a
 > collapsed control — the non-goal below is about which affordance leads, not
 > about forbidding typing.
@@ -860,6 +863,59 @@ the editor structurally cannot.*
 > **The "thirteen agents" figure is still stale**, as the 2026-08-13 correction
 > flagged without fixing globally. Not fixed here either — this phase consumes no
 > agent — but noted again so the next reader does not treat it as verified.
+
+### C5.3 Passages as brief sources · 🟢 · M — ✅ shipped
+> **What** Right-click a selection anywhere → **Add to brief**. Passages
+> accumulate across pages and across tabs; the brief composer shows each page
+> as one row you can pick, passages by default; a page you highlighted three
+> times arrives at the gateway as one source holding those three passages, in
+> the order you collected them.
+> **Why it wows** A brief's sources were whole pages; reading isn't — you find
+> the three paragraphs that matter and want the brief built on those, not the
+> navigation chrome and the eleven other sections that happened to share the
+> URL. Because the text is captured *when you highlight it*, a passage
+> survives closing the tab, and for the first time the pre-send preview can
+> show the actual text that will leave rather than a description of it.
+> **Touches** `src/shared/passage.ts` (new, pure); `src/background/passage-store.ts`,
+> `passage-collect.ts` (new), `menus.ts`, `service-worker.ts`;
+> `src/shared/messages.ts` (`BriefStartRequest.picks`), `preview.ts`,
+> `preview-view.ts`; `src/background/brief-handlers.ts`; `src/brief/brief-view.ts`,
+> `brief.ts`, `brief.css`.
+> **Approach** The collect gesture reuses `captureTab` — the same call the
+> clip path already makes — never the menu click's `info.selectionText`, which
+> the browser truncates without saying so; a passage is long by nature, so
+> collecting off that field would file a silently cut excerpt under the user's
+> own gesture. Passages sharing a fragment-stripped URL stitch into one source
+> body joined by `PASSAGE_SEPARATOR`; `capturedAt` is the oldest passage's
+> time, because a stitched body is only as fresh as its oldest text. One
+> storage key, one pure rules module owning every cap, and a failed write
+> refuses rather than evicts — a passage exists in exactly one place and was
+> put there by hand.
+> **Done when** A highlighted passage is named in the composer, its exact text
+> is visible in the pre-send preview, and sending it removes it from the
+> collection — while a run that fails, or a row sent as the whole page
+> instead, leaves its passages untouched. ✅
+> **Status** Shipped, with divergences from the plan worth recording. The
+> whole-page toggle is reversible in both directions: a review caught that the
+> first pass made passages vanish for the session once you clicked "Use the
+> whole page instead", so a row already in whole-page mode now carries "Use
+> its passages instead", and a tab closing releases whole-page mode rather
+> than stranding the collection. "A URL is declared exactly once" is enforced
+> in `handleBriefStart`, not the composer — the composer renders one row per
+> page key, but the message guard checks shape, not uniqueness, so the dedupe
+> lives at the layer that declares. A failed tab enumeration no longer hides
+> the collection; a passage group needs no tab, so its rows render beneath the
+> error line. And the preview shows the exact bytes: `stitch` and the
+> preview's body join on the same imported `PASSAGE_SEPARATOR`, so what the
+> preview shows is byte-for-byte what gets sent — asserted by
+> `test/e2e/passages.e2e.ts` against what the mock gateway actually receives,
+> which required fixing a real pre-existing bug: the mock gateway's `serve()`
+> silently dropped every POST body, so no spec had ever been able to assert on
+> one. This entry is itself a correction: Phase C5 had no brief for this work,
+> only C5.2's note that it was coming. 2.3's status line below and C5.1's
+> qualifier above record the other two the design's own *Corrections to the
+> roadmap* lists. Full reasoning:
+> [`docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md`](./docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md).
 
 ---
 
@@ -981,7 +1037,18 @@ endpoint.*
 > and source; clearing/committing the collection is obvious.
 > **Reframe** Lower priority, and it now competes with **C1.3** for the same
 > in-page real estate — if both ship, the collect UI has to live as a panel lane,
-> not as a second overlay.
+> not as a second overlay. **Correction (C5.3):** the overlay half of that
+> sentence stands; the lane half does not. It was written before `panel-in-page.ts`
+> reached 1,939 lines and before **C1.5** gave the panel a second entry point — a
+> lane costs a gesture per page before you can highlight into it, which defeats
+> the point of collecting being cheap. The collect UI is a context-menu entry;
+> the collection is reviewed where sources are already picked, the brief
+> composer. Nothing in `src/panel/` changed.
+> **Status** Delivered, re-aimed — not as written. Its own acceptance bar
+> ("multiple highlights on a page become a single clip") is deliberately
+> **unmet**: **C5.2** re-aimed this item at a brief's source list rather than a
+> clip, and **C5.3** is where it landed. See
+> [`docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md`](./docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md).
 
 ### 2.4 Full-page vs. readable toggle · 🟢 · S
 > **What** Let the user choose readable extraction or the full page content.
