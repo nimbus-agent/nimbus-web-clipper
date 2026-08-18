@@ -36,6 +36,15 @@ let hiddenCount = 0;
 let questions: readonly string[] = [];
 let enumerationFailed = false;
 let question = "";
+/**
+ * What is in the custom-question box, kept apart from `question`.
+ *
+ * `question` is whichever question is in play, suggested or typed; this is only
+ * the typed text, so a picked suggestion never reappears as though the user had
+ * written it. It goes into the model so a repaint redraws it — the composer now
+ * repaints mid-compose whenever the collection changes.
+ */
+let customQuestion = "";
 
 /**
  * The last `done` state, retained so a later save failure can be shown WITHOUT
@@ -133,6 +142,7 @@ function paint(): void {
     selected,
     passages,
     wholePage,
+    customQuestion,
     enumerationFailed,
   });
   showPreview();
@@ -255,6 +265,9 @@ root("composer").addEventListener("click", (ev) => {
 root("composer").addEventListener("input", (ev) => {
   const target = ev.target;
   if (target instanceof HTMLTextAreaElement && target.id === "custom-question") {
+    // The raw value is kept for the redraw and the trimmed one for the request:
+    // trimming what is redrawn would eat a space the moment it is typed.
+    customQuestion = target.value;
     question = target.value.trim();
     showPreview();
   }

@@ -27,6 +27,17 @@ export type ComposerModel = {
   readonly passages: readonly PassageGroup[];
   /** Urls the user switched back to whole-page mode. */
   readonly wholePage?: ReadonlySet<string>;
+  /**
+   * What the user has typed into the custom-question box.
+   *
+   * Carried in the MODEL rather than restored after the fact, so a re-render is
+   * idempotent: the same model draws the same composer whoever calls it. The
+   * page repaints mid-compose now — dropping a passage re-reads the store — and
+   * a redraw that forgot this would wipe a question the user is still writing.
+   * Kept apart from the chosen question: picking a suggested one must not make
+   * that text appear as though they had typed it.
+   */
+  readonly customQuestion?: string;
   /** See `TabCandidates.enumerationFailed` — rendered, not logged. */
   readonly enumerationFailed?: boolean;
 };
@@ -203,18 +214,23 @@ function passageRow(
 export function renderComposer(root: HTMLElement, model: ComposerModel): void {
   root.replaceChildren();
 
+  root.appendChild(el("h2", "Pick the pages"));
+
   // A failed enumeration is not an empty one. Saying "no eligible tabs" here
   // would be a false statement about the browser rather than an honest one about
   // us, and it is the only place this failure can be reported.
+  //
+  // It reports the TABS and stops there — it no longer returns. A passage group
+  // needs no tab: its text was captured when the user highlighted it, and the
+  // run path feeds it without touching `listTabs`. Hiding the collection behind
+  // a tab failure would deny the user sources that are sitting in storage and
+  // are perfectly usable. Those rows carry no whole-page control, because no tab
+  // is named — already the right behaviour for a group whose tab has closed.
   if (model.enumerationFailed === true) {
-    root.appendChild(el("h2", "Pick the pages"));
     root.appendChild(
       el("p", "Couldn't read your open tabs. Reload this page to try again.", "brief__error"),
     );
-    return;
   }
-
-  root.appendChild(el("h2", "Pick the pages"));
 
   const list = el("ul", undefined, "brief__tabs");
   for (const row of composerRows(model)) {
@@ -224,7 +240,9 @@ export function renderComposer(root: HTMLElement, model: ComposerModel): void {
   }
   root.appendChild(list);
 
-  if (model.named.length === 0) {
+  // Not said when the enumeration FAILED: the error line above already accounts
+  // for the empty list, and saying both would claim two different reasons for it.
+  if (model.named.length === 0 && model.enumerationFailed !== true) {
     root.appendChild(
       el("p", "No open tabs on sites you have granted page access to.", "brief__note"),
     );
@@ -274,7 +292,12 @@ export function renderComposer(root: HTMLElement, model: ComposerModel): void {
   const input = document.createElement("textarea");
   input.id = "custom-question";
   input.rows = 3;
+  const typed = model.customQuestion ?? "";
+  input.value = typed;
   details.appendChild(input);
+  // Opened when there is text, because restoring the words into a collapsed
+  // disclosure would look exactly like losing them.
+  details.open = typed !== "";
   root.appendChild(details);
 }
 

@@ -385,3 +385,43 @@ describe("composer passage rows", () => {
     expect(host.textContent).toContain("<img src=x onerror=1>");
   });
 });
+
+describe("composer resilience", () => {
+  it("a failed enumeration still offers the passages it holds", () => {
+    // A passage group needs no tab — its text was captured when the user
+    // highlighted it. Reporting the tab failure AND hiding the collection would
+    // deny sources that are sitting in storage and are perfectly usable.
+    const host = render({ enumerationFailed: true, passages: [GROUP] });
+    expect(host.textContent).toContain("Couldn't read your open tabs");
+    expect(host.querySelector("input")?.getAttribute("value")).toBe("passages:http://h/a");
+    // No tab is named, so there is nothing to capture whole.
+    expect(host.querySelector("button.brief__mode")).toBeNull();
+    expect(host.querySelector("#clear-passages")).not.toBeNull();
+  });
+
+  it("a failed enumeration does not ALSO claim there are no granted tabs", () => {
+    const host = render({ enumerationFailed: true, passages: [GROUP] });
+    expect(host.textContent).not.toContain("No open tabs on sites");
+  });
+
+  it("a failed enumeration with nothing collected still says only that", () => {
+    const host = render({ enumerationFailed: true });
+    expect(host.textContent).toContain("Couldn't read your open tabs");
+    expect(host.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+  });
+
+  it("redraws the question the user has typed, in an OPEN disclosure", () => {
+    // The composer repaints mid-compose now (dropping a passage re-reads the
+    // store), so a redraw that forgot this would wipe words still being written.
+    const host = render({ customQuestion: "Where do these disagree" });
+    const box = host.querySelector<HTMLTextAreaElement>("#custom-question");
+    expect(box?.value).toBe("Where do these disagree");
+    expect(host.querySelector("details")?.open).toBe(true);
+  });
+
+  it("leaves the disclosure collapsed when nothing has been typed", () => {
+    const host = render();
+    expect(host.querySelector<HTMLTextAreaElement>("#custom-question")?.value).toBe("");
+    expect(host.querySelector("details")?.open).toBe(false);
+  });
+});

@@ -414,6 +414,44 @@ describe("collected passages", () => {
     );
   });
 
+  test("a question the user typed survives dropping a passage", async () => {
+    // The drop re-reads the store and redraws — the right architecture — but a
+    // redraw that forgot the typed words would make an unrelated click eat them.
+    await loadWithPassages();
+    const custom = document.querySelector<HTMLTextAreaElement>("#custom-question");
+    if (custom === null) {
+      throw new Error("no custom-question box");
+    }
+    custom.value = "What do these have in common?";
+    custom.dispatchEvent(new Event("input", { bubbles: true }));
+    tick(pickBox("passages:https://example.com/c"), true);
+    expect($("preview").hidden).toBe(false);
+
+    document
+      .querySelector<HTMLButtonElement>("#composer button.brief__drop")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenLastCalledWith({ kind: "brief-tabs" }),
+    );
+    const redrawn = document.querySelector<HTMLTextAreaElement>("#custom-question");
+    expect(redrawn?.value).toBe("What do these have in common?");
+    expect($("preview").hidden).toBe(false);
+    expect($("preview-body").textContent).toContain("What do these have in common?");
+  });
+
+  test("ticking a row updates the source counter without redrawing the composer", async () => {
+    await loadWithPassages();
+    const custom = document.querySelector<HTMLTextAreaElement>("#custom-question");
+    custom?.focus();
+    tick(pickBox("passages:https://example.com/c"), true);
+    expect($("composer").querySelector(".brief__count")?.textContent).toBe("1 of 20 sources");
+    // The node the user was in is the SAME node — a tick redraws nothing.
+    expect(document.querySelector("#custom-question")).toBe(custom);
+    tick(pickBox("passages:https://example.com/c"), false);
+    expect($("composer").querySelector(".brief__count")?.textContent).toBe("0 of 20 sources");
+  });
+
   test("switching a row to the whole page moves the pick rather than dropping it", async () => {
     // The group's page is also open as tab 3, so the whole-page control is offered.
     harness.sendMessage.mockResolvedValue({
