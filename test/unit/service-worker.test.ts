@@ -19,6 +19,8 @@ const FLUSH_ALARM = "flush-clip-queue";
 const AGENT_POLL_ALARM = "nimbus-agent-poll";
 const CONNECTION_KEY = "connection";
 const QUEUE_KEY = "clipQueue";
+// Mirrored the same way: a local const in passage-store.ts, not exported.
+const PASSAGES_KEY = "passages";
 
 const conn: Connection = {
   origin: "http://127.0.0.1:8765",
@@ -978,6 +980,58 @@ describe("quick clip — context menu + shortcut routes", () => {
       }),
     );
     expect((harness.storage.get(CONNECTION_KEY) as Connection).stale).toBe(true);
+  });
+
+  test("the add-passage menu item captures the CLICKED tab's selection and stores a passage", async () => {
+    await load();
+    harness.executeScript
+      .mockResolvedValueOnce([{ result: undefined }])
+      .mockResolvedValueOnce([
+        {
+          result: {
+            url: "https://ex.com/a",
+            title: "A",
+            mode: "selection",
+            body: "the selected words",
+            readableFound: true,
+          },
+        },
+      ])
+      .mockResolvedValue([{ result: undefined }]);
+
+    harness.emitMenuClick("add-passage", 5);
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 5 },
+      files: ["capture.js"],
+    });
+    expect(harness.storage.get(PASSAGES_KEY)).toEqual([
+      { url: "https://ex.com/a", title: "A", text: "the selected words", at: expect.any(Number) },
+    ]);
+    // Confirmed in page, worded exactly like collectPassage's success toast.
+    expect(harness.executeScript).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        target: { tabId: 5 },
+        args: [{ variant: "success", text: "Added — 1 passage from this page." }],
+      }),
+    );
+  });
+
+  // The early return the brief spends a full comment justifying: never a `!`,
+  // never the active tab as a fallback. A right-click in a non-focused window
+  // targets a different tab than tabs.query({active}), and the activeTab grant
+  // belongs to the CLICKED tab — so a missing tabId must do nothing at all,
+  // not silently reach for whatever tab happens to be active.
+  test("an add-passage click with no tabId does nothing — no capture, nothing stored", async () => {
+    await load();
+    harness.executeScript.mockClear();
+
+    harness.emitMenuClick("add-passage", undefined);
+    await settle();
+
+    expect(harness.executeScript).not.toHaveBeenCalled();
+    expect(harness.storage.get(PASSAGES_KEY)).toBeUndefined();
   });
 });
 

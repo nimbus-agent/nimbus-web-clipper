@@ -66,6 +66,7 @@ describe("menuAction", () => {
     expect(menuAction(MENU_SHOW_RELATED)).toBe("show-related");
     expect(menuAction(MENU_DEFINE)).toBe("define-selection");
     expect(menuAction(MENU_RELATED_TO_SELECTION)).toBe("related-to-selection");
+    expect(menuAction(MENU_ADD_PASSAGE)).toBe("add-passage");
   });
 
   test("an unknown id is null — NOT a default clip", () => {

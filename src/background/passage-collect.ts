@@ -67,13 +67,15 @@ export async function collectPassage(deps: PassageCollectDeps, tabId: number): P
     at: deps.now(),
   };
   const res = await deps.update((all) => addPassage(all, passage));
-  const state: ToastState = res.ok
-    ? {
-        variant: "success",
-        text: `Added — ${heldForPage(res.all, passage.url)} ${
-          heldForPage(res.all, passage.url) === 1 ? "passage" : "passages"
-        } from this page.`,
-      }
-    : { variant: "error", text: REFUSAL_TEXT[res.reason] };
+  let state: ToastState;
+  if (res.ok) {
+    const count = heldForPage(res.all, passage.url);
+    state = {
+      variant: "success",
+      text: `Added — ${count} ${count === 1 ? "passage" : "passages"} from this page.`,
+    };
+  } else {
+    state = { variant: "error", text: REFUSAL_TEXT[res.reason] };
+  }
   await deps.showFeedback(tabId, state).catch(() => undefined);
 }

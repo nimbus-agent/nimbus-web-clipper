@@ -83,6 +83,26 @@ describe("collectPassage", () => {
     expect(restrictedFlags).toEqual([true]);
   });
 
+  test("an injection failure gets the same toast as restricted, but not the badge fallback", async () => {
+    // The distinction between the two branches IS the point: both reach
+    // CANT_INJECT's text, but only "restricted" is un-injectable — an
+    // "injection-failed" page can still host a toast, so `restricted` must be
+    // falsy here even though the wording is identical to the restricted case.
+    const restrictedFlags: (boolean | undefined)[] = [];
+    const { deps: d, toasts } = deps({
+      capture: async () => ({ ok: false, reason: "injection-failed" }),
+      showFeedback: async (_tabId, state, restricted) => {
+        toasts.push(state);
+        restrictedFlags.push(restricted);
+      },
+    });
+    await collectPassage(d, 7);
+    expect(toasts).toEqual([
+      { variant: "error", text: "Nimbus can't read a selection on this page." },
+    ]);
+    expect(restrictedFlags).toEqual([false]);
+  });
+
   test("each refusal reason gets its own words", async () => {
     for (const [reason, text] of [
       ["duplicate", "Already collected."],
