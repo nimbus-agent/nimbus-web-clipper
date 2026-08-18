@@ -60,8 +60,13 @@ describe("brief-run-store", () => {
 
   it("NEVER stores source text — only declared url and title", async () => {
     await putBriefRun(run(), NOW);
+    // Asserted on the parsed entry rather than by substring-matching the url in
+    // the serialised blob: the structural form says which FIELD carries it, and
+    // a substring test on a url literal reads to CodeQL as an incomplete-url
+    // sanitisation check (js/incomplete-url-substring-sanitization).
+    const stored = harness.storage.get("briefRuns") as Record<string, StoredBrief> | undefined;
+    expect(stored?.["b1"]?.declared).toEqual(run().declared);
     const raw = JSON.stringify([...harness.storage.entries()]);
-    expect(raw.includes("https://example.com/a")).toBe(true);
     expect(raw.toLowerCase().includes('"body"')).toBe(false);
   });
 
