@@ -827,7 +827,7 @@ const REFUSAL_TEXT: Record<PassageRefusal, string> = {
   duplicate: "Already collected.",
   "page-full": "That page's passages are full.",
   "collection-full": "Collection is full — send or clear a brief first.",
-  storage-full: "Couldn't store that passage.",
+  "storage-full": "Couldn't store that passage.",
 };
 
 const CANT_READ: ToastState = { variant: "error", text: "Nothing selected." };
@@ -885,9 +885,8 @@ export async function collectPassage(deps: PassageCollectDeps, tabId: number): P
 }
 ```
 
-Fix the one deliberate syntax trap before running: `storage-full` is not a bare identifier —
-quote it as `"storage-full"` in `REFUSAL_TEXT`. (Left visible here because Biome will not
-auto-fix an invalid key.)
+Note the quoted keys: three of the four `PassageRefusal` members are hyphenated, so they are not
+bare identifiers.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1024,6 +1023,13 @@ Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 set, so the renderer needs no second flag. The strings are the passage texts in collection
 order — the renderer joins them with `PASSAGE_SEPARATOR` so what is shown is byte-for-byte what
 `stitch` will send.
+
+**`bodies` is required, not optional, and that breaks existing test literals.** Every
+`BriefPreview` object literal in `test/unit/preview-view.test.ts` must gain `bodies: []`. Do that
+rather than marking the field optional: an absent list and an empty list would render identically
+while meaning different things, and the whole point of decision 7 is that this preview cannot
+quietly omit what it is about to send. Same treatment as the menus test in Task 3 — update the
+callers, don't weaken the type.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2309,6 +2315,10 @@ export const BRIEF_REPORT = {
 sketch above.** That module is what accepts or rejects the payload; a fixture that misses a
 required field makes the page render a failure and the e2e's banner assertion fail for a reason
 that has nothing to do with passages. Read the guard, then match it.
+
+**`isObject` does not exist in `mock-gateway.ts` or `gateway-fixtures.ts`** — verified, neither
+file has one. Add a two-line local guard in the mock rather than importing from `src/`: this is a
+dev fixture and must not grow a dependency on shipped code it is supposed to test against.
 
 In `mock-gateway.ts`'s `handleRequest`, before the fallthrough (note the path shapes: create is
 the bare base, the other four append `/{id}` and an action):

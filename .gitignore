@@ -23,4 +23,10 @@ playwright-report/
 # explicitly; this entry is the belt to that brace, and it keeps the directory
 # out of `git status` besides.
 .claude/worktrees/
+
+# Subagent-driven-development scratch: one directory per plan, holding its
+# ledger, per-task briefs, implementer reports and review packages. Working
+# notes for a run in progress — the commits it names are the durable record,
+# and the directory is deleted when the plan's final review is clean.
+.superpowers/
 .claude/settings.local.json
