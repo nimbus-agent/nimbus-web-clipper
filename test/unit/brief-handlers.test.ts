@@ -261,8 +261,13 @@ describe("handleBriefStart", () => {
 describe("handleBriefStart with mixed picks", () => {
   it("declares every picked url exactly once, in picks order", async () => {
     const created: unknown[] = [];
+    const store = {
+      get: vi.fn(() => Promise.resolve(null)),
+      put: vi.fn(() => Promise.resolve()),
+    } as unknown as BriefDeps["store"];
     await handleBriefStart(
       deps({
+        store,
         listTabs: async () => ({
           named: [tab(1, "http://h/a")],
           hiddenCount: 0,
@@ -296,6 +301,11 @@ describe("handleBriefStart with mixed picks", () => {
         useIndex: false,
       },
     ]);
+    // The STORED run must declare exactly what the gateway was told. Both come
+    // from `declare()`, and this is the assertion that keeps them from drifting:
+    // the stored `declared` is what a resumed poll reports the run as being about.
+    const put = vi.mocked(store.put).mock.calls[0]?.[0];
+    expect(put?.declared).toEqual((created[0] as { sources: unknown }).sources);
   });
 
   it("never captures for a passage source, and feeds its stitched body", async () => {
@@ -326,6 +336,7 @@ describe("handleBriefStart with mixed picks", () => {
   });
 
   it("a pick naming a url the collection does not hold is dropped, and the run proceeds", async () => {
+    const created: unknown[] = [];
     const state = await handleBriefStart(
       deps({
         listTabs: async () => ({
@@ -334,6 +345,13 @@ describe("handleBriefStart with mixed picks", () => {
           enumerationFailed: false,
         }),
         passages: async () => [],
+        client: {
+          ...client(),
+          createBrief: async (_o, _t, body) => {
+            created.push(body);
+            return { ok: true, id: "r1", expected: 1 };
+          },
+        },
       }),
       {
         kind: "brief-start",
@@ -345,6 +363,108 @@ describe("handleBriefStart with mixed picks", () => {
       },
     );
     expect(state.kind).not.toBe("failed");
+    // DROPPED, not silently turned into a source: "did not fail" alone would
+    // pass either way.
+    expect(created).toEqual([
+      { brief: "q", sources: [{ url: "http://h/a", title: "Tab 1" }], useIndex: false },
+    ]);
+  });
+
+  it("declares one page ONCE when a tab pick and a passage pick both name it", async () => {
+    // The composer renders one row per page key, but the composer is UI. The
+    // guard checks shape, not uniqueness, so the invariant "a url is declared
+    // exactly once, in exactly one mode" is enforced HERE — at the layer that
+    // declares.
+    const created: unknown[] = [];
+    await handleBriefStart(
+      deps({
+        listTabs: async () => ({
+          named: [tab(1, "http://h/a#live")],
+          hiddenCount: 0,
+          enumerationFailed: false,
+        }),
+        passages: async () => [{ url: "http://h/a", title: "A", text: "one", at: 5 }],
+        client: {
+          ...client(),
+          createBrief: async (_o, _t, body) => {
+            created.push(body);
+            return { ok: true, id: "r1", expected: 1 };
+          },
+        },
+      }),
+      {
+        kind: "brief-start",
+        question: "q",
+        picks: [
+          { kind: "passages", url: "http://h/a" },
+          { kind: "tab", id: 1 },
+        ],
+      },
+    );
+    // First pick wins — the order the composer displayed is the order it meant.
+    expect(created).toEqual([
+      { brief: "q", sources: [{ url: "http://h/a", title: "A" }], useIndex: false },
+    ]);
+  });
+
+  it("two passage picks differing only by fragment are one source", async () => {
+    const created: unknown[] = [];
+    await handleBriefStart(
+      deps({
+        listTabs: async () => ({ named: [], hiddenCount: 0, enumerationFailed: false }),
+        passages: async () => [{ url: "http://h/a", title: "A", text: "one", at: 5 }],
+        client: {
+          ...client(),
+          createBrief: async (_o, _t, body) => {
+            created.push(body);
+            return { ok: true, id: "r1", expected: 1 };
+          },
+        },
+      }),
+      {
+        kind: "brief-start",
+        question: "q",
+        picks: [
+          { kind: "passages", url: "http://h/a" },
+          { kind: "passages", url: "http://h/a#x" },
+        ],
+      },
+    );
+    expect(created).toEqual([
+      { brief: "q", sources: [{ url: "http://h/a", title: "A" }], useIndex: false },
+    ]);
+  });
+
+  it("two tabs showing the same page declare it once", async () => {
+    const created: unknown[] = [];
+    await handleBriefStart(
+      deps({
+        listTabs: async () => ({
+          named: [tab(1, "http://h/a#one"), tab(2, "http://h/a#two")],
+          hiddenCount: 0,
+          enumerationFailed: false,
+        }),
+        passages: async () => [],
+        client: {
+          ...client(),
+          createBrief: async (_o, _t, body) => {
+            created.push(body);
+            return { ok: true, id: "r1", expected: 1 };
+          },
+        },
+      }),
+      {
+        kind: "brief-start",
+        question: "q",
+        picks: [
+          { kind: "tab", id: 1 },
+          { kind: "tab", id: 2 },
+        ],
+      },
+    );
+    expect(created).toEqual([
+      { brief: "q", sources: [{ url: "http://h/a#one", title: "Tab 1" }], useIndex: false },
+    ]);
   });
 
   it("picks that match nothing at all fail as no_sources", async () => {

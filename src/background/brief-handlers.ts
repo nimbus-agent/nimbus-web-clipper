@@ -10,7 +10,7 @@ import type { CandidateTab, TabCandidates } from "../browser/tabs.ts";
 import { BRIEF_CAPS, buildCreateBody, buildSourceBody, suggestQuestions } from "../shared/brief.ts";
 import type { BriefLogEntry } from "../shared/brief-log.ts";
 import type { BriefReport } from "../shared/brief-report.ts";
-import type { BriefStartRequest } from "../shared/messages.ts";
+import type { BriefPick, BriefStartRequest } from "../shared/messages.ts";
 import type { Passage, PassageGroup } from "../shared/passage.ts";
 import { groupCapturedAt, groupKey, groupPassages, stitch } from "../shared/passage.ts";
 import { recognise } from "../shared/recognise.ts";
@@ -135,6 +135,31 @@ function declare(source: PickedSource): { url: string; title: string } {
   return source.kind === "tab"
     ? { url: source.tab.url, title: source.tab.title }
     : { url: source.group.url, title: source.group.title };
+}
+
+/** The PAGE this source is, fragment stripped — what "declared once" is counted
+ *  in. Not `declare().url`, which keeps a tab's fragment because that is the
+ *  address the user is actually looking at. */
+function pageKey(source: PickedSource): string {
+  return source.kind === "tab" ? groupKey(source.tab.url) : source.group.url;
+}
+
+/**
+ * One pick, against state the background already holds — a tab id against
+ * `listTabs`, a url against the collection. `null` is "nothing here any more",
+ * and the caller drops it.
+ */
+function resolvePick(
+  pick: BriefPick,
+  named: readonly CandidateTab[],
+  groups: readonly PassageGroup[],
+): PickedSource | null {
+  if (pick.kind === "tab") {
+    const tab = named.find((t) => t.id === pick.id);
+    return tab === undefined ? null : { kind: "tab", tab };
+  }
+  const group = groups.find((g) => g.url === groupKey(pick.url));
+  return group === undefined ? null : { kind: "passages", group };
 }
 
 interface FeedResult {
@@ -290,19 +315,23 @@ export async function handleBriefStart(
   // DROPPED, exactly as an unmatched tabId always was. A url the collection
   // never held cannot become a source, so the guard in messages.ts is the outer
   // fence, not the load-bearing one. Same rule C2.5 applies to a supplied itemId.
+  //
+  // A page is claimed at most ONCE, in whichever mode named it first. This is
+  // the spec's "a URL is declared exactly once, in exactly one mode", enforced
+  // at the layer that declares: the composer renders one row per page key, but
+  // the composer is UI and the guard checks shape, not uniqueness. Without this
+  // a tab pick and a passage pick naming the same page — or two passage picks
+  // differing only by fragment — would each become a source, and the gateway
+  // canonicalises them to one identity.
   const picked: PickedSource[] = [];
+  const claimed = new Set<string>();
   for (const pick of req.picks) {
-    if (pick.kind === "tab") {
-      const tab = tabs.named.find((t) => t.id === pick.id);
-      if (tab !== undefined) {
-        picked.push({ kind: "tab", tab });
-      }
+    const source = resolvePick(pick, tabs.named, groups);
+    if (source === null || claimed.has(pageKey(source))) {
       continue;
     }
-    const group = groups.find((g) => g.url === groupKey(pick.url));
-    if (group !== undefined) {
-      picked.push({ kind: "passages", group });
-    }
+    claimed.add(pageKey(source));
+    picked.push(source);
   }
   const sources = picked.slice(0, BRIEF_CAPS.maxSources);
   if (sources.length === 0) {
