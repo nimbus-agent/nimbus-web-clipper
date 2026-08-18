@@ -85,8 +85,22 @@ export function groupPassages(all: readonly Passage[]): readonly PassageGroup[] 
   });
 }
 
+/**
+ * The ONE join, spelled once.
+ *
+ * Three call sites depend on producing byte-for-byte the same string: `stitch`
+ * builds the body that is sent, `addPassage` builds the candidate body its cap
+ * is measured against, and `buildBriefPreview` builds the body it SHOWS. If any
+ * of them joined differently — trimming each passage, say — the preview would
+ * stop being the honest statement decision 7 claims it is, and the cap would
+ * stop measuring what actually leaves. Only the e2e would notice.
+ */
+export function joinPassages(texts: readonly string[]): string {
+  return texts.join(PASSAGE_SEPARATOR);
+}
+
 export function stitch(group: PassageGroup): string {
-  return group.passages.map((passage) => passage.text).join(PASSAGE_SEPARATOR);
+  return joinPassages(group.passages.map((passage) => passage.text));
 }
 
 /**
@@ -117,7 +131,7 @@ export function addPassage(all: readonly Passage[], next: Passage): PassageUpdat
   if (same.some((passage) => passage.text === next.text)) {
     return { ok: false, reason: "duplicate" };
   }
-  const stitched = [...same.map((passage) => passage.text), next.text].join(PASSAGE_SEPARATOR);
+  const stitched = joinPassages([...same.map((passage) => passage.text), next.text]);
   if (utf8Bytes(stitched) > PASSAGE_CAPS.maxPageBytes) {
     return { ok: false, reason: "page-full" };
   }

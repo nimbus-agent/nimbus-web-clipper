@@ -148,6 +148,28 @@ export function sourceCountText(picked: number): string {
   return `${picked} of ${BRIEF_CAPS.maxSources} sources`;
 }
 
+/**
+ * At the cap, the boxes that are NOT ticked stop accepting one.
+ *
+ * The counter alone would happily read "21 of 20 sources" and let the user send
+ * it — and `isBriefStartRequest` rejects a pick list over the cap WHOLE, so the
+ * page would print a bare `invalid_request` under "Couldn't finish this brief"
+ * after everything was composed. (`handleBriefStart`'s own `slice` never runs:
+ * the guard refuses before it.) Refusing the twenty-first tick says the same
+ * thing one click earlier, at the control that caused it, and leaves every
+ * ticked box live so the user can trade one source for another.
+ *
+ * Exported and applied from two places for one reason: `renderComposer` calls it
+ * after a redraw, and the page calls it after a tick — which deliberately does
+ * NOT redraw, because that would recreate the custom-question box mid-sentence.
+ */
+export function applyPickLimit(root: HTMLElement, picked: number): void {
+  const full = picked >= BRIEF_CAPS.maxSources;
+  for (const box of root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')) {
+    box.disabled = full && !box.checked;
+  }
+}
+
 function pickBox(value: string, checked: boolean): HTMLInputElement {
   const box = document.createElement("input");
   box.type = "checkbox";
@@ -316,6 +338,9 @@ export function renderComposer(root: HTMLElement, model: ComposerModel): void {
   // disclosure would look exactly like losing them.
   details.open = typed !== "";
   root.appendChild(details);
+
+  // Last, because it reads the boxes this render just created.
+  applyPickLimit(root, model.selected.size);
 }
 
 /** Save refusals in the user's words. `expired` is the common one, not an edge case. */

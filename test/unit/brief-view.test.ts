@@ -2,7 +2,13 @@
 // test/unit/brief-view.test.ts
 import { beforeEach, describe, expect, it } from "vitest";
 import type { BriefState } from "../../src/background/brief-handlers.ts";
-import { type ComposerModel, renderComposer, renderState } from "../../src/brief/brief-view.ts";
+import {
+  applyPickLimit,
+  type ComposerModel,
+  renderComposer,
+  renderState,
+} from "../../src/brief/brief-view.ts";
+import { BRIEF_CAPS } from "../../src/shared/brief.ts";
 import type { BriefReport } from "../../src/shared/brief-report.ts";
 
 let root: HTMLElement;
@@ -104,6 +110,49 @@ describe("renderComposer", () => {
     expect(details).not.toBeNull();
     expect(details?.open).toBe(false);
     expect(details?.textContent).toContain("Ask your own question");
+  });
+
+  it("stops the tick at the cap: unticked boxes go dead, ticked ones stay live", () => {
+    // Over the cap `isBriefStartRequest` refuses the whole request, so a counter
+    // that reads "21 of 20 sources" buys the user a bare `invalid_request` at
+    // the end of a composition. The boxes refuse one click earlier instead.
+    const named = Array.from({ length: BRIEF_CAPS.maxSources + 1 }, (_, i) => ({
+      id: i + 1,
+      url: `https://example.com/${i}`,
+      title: `T${i}`,
+    }));
+    renderComposer(root, {
+      named,
+      hiddenCount: 0,
+      questions: [],
+      selected: new Set(named.slice(0, BRIEF_CAPS.maxSources).map((t) => `tab:${t.id}`)),
+      passages: [],
+    });
+    const boxes = [...root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    expect(boxes).toHaveLength(BRIEF_CAPS.maxSources + 1);
+    expect(boxes.filter((b) => b.disabled).map((b) => b.value)).toEqual([
+      `tab:${BRIEF_CAPS.maxSources + 1}`,
+    ]);
+  });
+
+  it("re-enables every box the moment the pick count drops below the cap", () => {
+    const named = Array.from({ length: 3 }, (_, i) => ({
+      id: i + 1,
+      url: `https://example.com/${i}`,
+      title: `T${i}`,
+    }));
+    renderComposer(root, {
+      named,
+      hiddenCount: 0,
+      questions: [],
+      selected: new Set(["tab:1"]),
+      passages: [],
+    });
+    const boxes = [...root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    applyPickLimit(root, BRIEF_CAPS.maxSources);
+    expect(boxes.filter((b) => b.disabled)).toHaveLength(2);
+    applyPickLimit(root, BRIEF_CAPS.maxSources - 1);
+    expect(boxes.filter((b) => b.disabled)).toHaveLength(0);
   });
 
   it("renders a tab title as text, never as markup", () => {

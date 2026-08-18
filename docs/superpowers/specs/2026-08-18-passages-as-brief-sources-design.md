@@ -229,6 +229,15 @@ is the failure mode a persistent collection invites. A run that fails before `/r
 everything, because nothing left. A group skipped for `run_capacity` keeps its passages,
 because it was never fed.
 
+**By passage identity, not by page.** The collection is read once, at the top of
+`handleBriefStart`, and the feed that follows is sequential — up to twenty loopback POSTs,
+each tab source a `scripting.executeScript` round trip — so tens of seconds can pass before
+`/run` is accepted. A passage collected in that window was never stitched into anything and
+never left, so what is forgotten is the exact passages that WERE stitched, named by their
+capture instants and dropped through `removePassage`. Clearing the page would evict
+hand-made text that never left, which is decision 8's *refuse, never evict* and this
+decision's *clear what left*, broken at once.
+
 **A row sent in whole-page mode keeps its passages.** The rule is *clear what left*, and in
 whole-page mode the passages did not leave — the page did. Whole-page is a choice about one
 question ("this time I want the full context"), not a statement about the collection, so

@@ -139,6 +139,49 @@ describe("composer", () => {
     await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalled());
     expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(0);
   });
+
+  test("a FAILED brief-tabs renders the error, not a claim about the browser", async () => {
+    // The router answers a rejected handler with a BriefState. Read as a tab
+    // answer it is an empty browser, and the composer would then say "No open
+    // tabs on sites you have granted page access to" — which we have no evidence
+    // for. A failed enumeration is not an empty one.
+    harness.sendMessage.mockResolvedValue({ kind: "failed", reason: "server_error" });
+    document.body.innerHTML = FIXTURE;
+    vi.resetModules();
+    await import("../../src/brief/brief.ts");
+    await vi.waitFor(() => expect($("composer").querySelector(".brief__error")).not.toBeNull());
+    expect($("composer").textContent).toContain("Couldn't read your open tabs");
+    expect($("composer").textContent).not.toContain("No open tabs on sites you have granted");
+  });
+
+  test("the twenty-first box refuses the tick instead of buying an invalid_request", async () => {
+    // `isBriefStartRequest` rejects a pick list over the cap WHOLE, so a counter
+    // that keeps climbing ends a finished composition at a bare
+    // `invalid_request`. The tick is refused at the box instead — and this is
+    // the in-place path, which deliberately does not redraw the composer.
+    const many = Array.from({ length: 21 }, (_, i) => ({
+      id: i + 1,
+      url: `https://example.com/t${i}`,
+      title: `T${i}`,
+    }));
+    harness.sendMessage.mockResolvedValue({ ...TABS, named: many });
+    document.body.innerHTML = FIXTURE;
+    vi.resetModules();
+    await import("../../src/brief/brief.ts");
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(21),
+    );
+    for (let i = 1; i <= 20; i += 1) {
+      tick(checkbox(i), true);
+    }
+    expect($("composer").querySelector(".brief__count")?.textContent).toBe("20 of 20 sources");
+    expect(checkbox(21).disabled).toBe(true);
+    expect(checkbox(1).disabled).toBe(false);
+
+    // Trading one source for another still works — the cap is not a lock.
+    tick(checkbox(1), false);
+    expect(checkbox(21).disabled).toBe(false);
+  });
 });
 
 describe("the preview gate", () => {

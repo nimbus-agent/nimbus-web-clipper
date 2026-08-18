@@ -16,6 +16,7 @@ import { groupKey, type PassageGroup } from "../shared/passage.ts";
 import { type BriefPreviewSource, buildBriefPreview } from "../shared/preview.ts";
 import { renderPreview } from "../shared/preview-view.ts";
 import {
+  applyPickLimit,
   type ComposerRow,
   composerRows,
   pickId,
@@ -174,6 +175,18 @@ async function loadTabs(): Promise<void> {
   if (typeof res !== "object" || res === null) {
     return;
   }
+  // A `BriefState` came back, which for this message means the worker's router
+  // caught a rejection: `{kind:"failed", reason:"server_error"}`. Read as a
+  // `TabsAnswer` it is an empty browser, and the composer would then state "No
+  // open tabs on sites you have granted page access to" — a claim about the
+  // browser nothing here can support, beside a collection the user may believe
+  // they lost. A failed enumeration is not an empty one, so it renders as the
+  // error it is, over whatever was last drawn.
+  if ("kind" in res) {
+    enumerationFailed = true;
+    paint();
+    return;
+  }
   const data = res as TabsAnswer;
   named = data.named ?? [];
   passages = data.passages ?? [];
@@ -272,6 +285,10 @@ root("composer").addEventListener("click", (ev) => {
     if (count !== null) {
       count.textContent = sourceCountText(selected.size);
     }
+    // The cap is enforced at the boxes, not at Send: over the cap
+    // `isBriefStartRequest` refuses the whole request and the page can only
+    // print `invalid_request` at the end of a composition.
+    applyPickLimit(root("composer"), selected.size);
     showPreview();
     return;
   }

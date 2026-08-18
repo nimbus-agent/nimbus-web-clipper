@@ -4,7 +4,7 @@
 // requests they describe: both are built from exactly the data the caller is
 // about to send, not from a second description of it.
 import type { ClipPayload } from "./clip.ts";
-import { PASSAGE_SEPARATOR } from "./passage.ts";
+import { joinPassages } from "./passage.ts";
 import type { FetchTarget } from "./types.ts";
 
 /** How much body text the preview shows. The FULL body is still what is sent. */
@@ -152,8 +152,9 @@ export const SYNTHESIS_NOTICE =
  * applied to the targeted fetch: this is a larger egress than a fetch, not a
  * smaller one.
  *
- * A passage source's body is joined with `PASSAGE_SEPARATOR`, the same constant
- * `stitch` uses, so the text shown is the text sent.
+ * A passage source's body is joined by `joinPassages` — the SAME function
+ * `stitch` calls to build the body that is sent — so the text shown is the text
+ * sent, and cannot drift from it.
  */
 export function buildBriefPreview(input: {
   question: string;
@@ -175,7 +176,7 @@ export function buildBriefPreview(input: {
       .filter(
         (s): s is BriefPreviewSource & { passages: readonly string[] } => s.passages !== undefined,
       )
-      .map((s) => ({ label: s.title, value: s.passages.join(PASSAGE_SEPARATOR) })),
+      .map((s) => ({ label: s.title, value: joinPassages(s.passages) })),
     synthesisNotice: SYNTHESIS_NOTICE,
   };
 }

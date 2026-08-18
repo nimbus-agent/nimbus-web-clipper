@@ -7,6 +7,7 @@ import {
   handleBriefTabs,
 } from "../../src/background/brief-handlers.ts";
 import type { BriefReport } from "../../src/shared/brief-report.ts";
+import { type Passage, removePassage } from "../../src/shared/passage.ts";
 
 const REPORT: BriefReport = {
   summary: "They disagree about retries.",
@@ -483,8 +484,8 @@ describe("handleBriefStart with mixed picks", () => {
     await handleBriefStart(
       deps({
         passages: async () => [{ url: "http://h/b", title: "B", text: "one", at: 5 }],
-        forgetPassages: async (urls) => {
-          forgotten.push(...urls);
+        forgetPassages: async (fed) => {
+          forgotten.push(...fed.map((f) => f.url));
         },
       }),
       { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
@@ -492,13 +493,43 @@ describe("handleBriefStart with mixed picks", () => {
     expect(forgotten).toEqual(["http://h/b"]);
   });
 
+  it("a passage collected while the run was feeding survives the clear", async () => {
+    // The collection is read ONCE, at the top of handleBriefStart, and the feed
+    // that follows can take tens of seconds. Anything collected in that window
+    // never reached the gateway, so clearing it would be silent, unrecoverable
+    // loss of text the user made by hand — decision 8's refuse-never-evict and
+    // decision 9's "clear what left", both at once.
+    let all: readonly Passage[] = [{ url: "http://h/b", title: "B", text: "one", at: 5 }];
+    const late = { url: "http://h/b", title: "B", text: "two", at: 9 };
+    await handleBriefStart(
+      deps({
+        passages: async () => all,
+        // The service worker's wiring, verbatim: remove by identity.
+        forgetPassages: async (fed) => {
+          for (const { url, ats } of fed) {
+            all = ats.reduce((rest, at) => removePassage(rest, url, at), all);
+          }
+        },
+        client: client({
+          feedBriefSource: (async () => {
+            // The user highlights one more paragraph mid-feed.
+            all = [...all, late];
+            return { ok: true, received: 1, expected: 1 };
+          }) as never,
+        }),
+      }),
+      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+    );
+    expect(all).toEqual([late]);
+  });
+
   it("a run that fails before /run forgets nothing", async () => {
     const forgotten: string[] = [];
     await handleBriefStart(
       deps({
         passages: async () => [{ url: "http://h/b", title: "B", text: "one", at: 5 }],
-        forgetPassages: async (urls) => {
-          forgotten.push(...urls);
+        forgetPassages: async (fed) => {
+          forgotten.push(...fed.map((f) => f.url));
         },
         client: client({
           runBrief: (async () => ({ ok: false, reason: "server_error" })) as never,
@@ -517,8 +548,8 @@ describe("handleBriefStart with mixed picks", () => {
           { url: "http://h/b", title: "B", text: "one", at: 5 },
           { url: "http://h/c", title: "C", text: "two", at: 6 },
         ],
-        forgetPassages: async (urls) => {
-          forgotten.push(...urls);
+        forgetPassages: async (fed) => {
+          forgotten.push(...fed.map((f) => f.url));
         },
         client: client({
           feedBriefSource: (async (_o: string, _t: string, _id: string, body: { url: string }) =>
@@ -552,8 +583,8 @@ describe("handleBriefStart with mixed picks", () => {
           enumerationFailed: false,
         }),
         passages: async () => [{ url: "http://h/b", title: "B", text: "one", at: 5 }],
-        forgetPassages: async (urls) => {
-          forgotten.push(...urls);
+        forgetPassages: async (fed) => {
+          forgotten.push(...fed.map((f) => f.url));
         },
       }),
       { kind: "brief-start", question: "q", picks: [{ kind: "tab", id: 1 }] },

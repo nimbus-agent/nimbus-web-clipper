@@ -7,6 +7,7 @@ import {
   groupKey,
   groupPassages,
   isPassage,
+  joinPassages,
   PASSAGE_CAPS,
   PASSAGE_SEPARATOR,
   type Passage,
@@ -81,6 +82,23 @@ describe("stitch", () => {
   test("a single passage carries no leading or trailing separator", () => {
     const group = groupPassages([p("http://h/a", "only")])[0];
     expect(stitch(group as never)).toBe("only");
+  });
+
+  // The body that is SENT and the body the preview SHOWS are the same string, and
+  // this is what keeps them that way: `buildBriefPreview` calls `joinPassages`
+  // too, and `addPassage` measures its cap against it. Were `stitch` to acquire a
+  // join rule of its own, decision 7's honesty claim and decision 8's cap
+  // arithmetic would both be quietly wrong.
+  test("is exactly joinPassages over the group's texts", () => {
+    const group = groupPassages([
+      p("http://h/a", "one"),
+      p("http://h/a", "two"),
+      p("http://h/a", "three"),
+    ])[0];
+    expect(group).toBeDefined();
+    expect(stitch(group as never)).toBe(
+      joinPassages((group as never as { passages: Passage[] }).passages.map((x) => x.text)),
+    );
   });
 });
 

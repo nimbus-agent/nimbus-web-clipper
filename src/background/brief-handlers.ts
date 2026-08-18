@@ -22,6 +22,19 @@ import type { CaptureOutcome } from "./capture-tab.ts";
 /** One page that could not be read, and the reason in the client's vocabulary. */
 export type SkippedSource = { readonly title: string; readonly reason: string };
 
+/**
+ * The passages of one page that were actually STITCHED INTO a fed source —
+ * named individually, by the instant each was captured.
+ *
+ * By identity, never by page, because the collection is read once at the top of
+ * `handleBriefStart` and the feed that follows is sequential: up to twenty
+ * loopback POSTs, each tab source a `scripting.executeScript` round trip. A
+ * passage the user collects in that window never reached the gateway, so
+ * clearing its page would destroy hand-made text that never left — decision 8's
+ * refuse-never-evict and decision 9's "clear what left", broken at once.
+ */
+export type FedPassages = { readonly url: string; readonly ats: readonly number[] };
+
 /** The page-facing view of a run. Never carries source text. */
 export type BriefState =
   | { readonly kind: "idle" }
@@ -67,8 +80,8 @@ export interface BriefDeps {
   readonly capture: (tabId: number, expectedUrl: string) => Promise<CaptureOutcome>;
   /** The passage collection, as stored. Grouped here, not by the caller. */
   readonly passages: () => Promise<readonly Passage[]>;
-  /** Drop every passage held for these pages. Called once, after `/run`. */
-  readonly forgetPassages: (urls: readonly string[]) => Promise<void>;
+  /** Drop exactly these passages. Called once, after `/run`. */
+  readonly forgetPassages: (fed: readonly FedPassages[]) => Promise<void>;
   readonly connection: () => Promise<{ origin: string; token: string } | null>;
   readonly client: {
     readonly createBrief: typeof briefClient.createBrief;
@@ -166,8 +179,8 @@ interface FeedResult {
   readonly accepted: number;
   readonly skipped: readonly SkippedSource[];
   readonly truncated: readonly string[];
-  /** Passage-source urls the gateway ACCEPTED. Only these are forgotten. */
-  readonly fedPassageUrls: readonly string[];
+  /** The passages the gateway ACCEPTED, per page. Only these are forgotten. */
+  readonly fedPassages: readonly FedPassages[];
 }
 
 async function putPhase(deps: BriefDeps, id: string, phase: StoredBrief["phase"]): Promise<void> {
@@ -198,7 +211,7 @@ async function feedAll(
 ): Promise<FeedResult> {
   const skipped: SkippedSource[] = [];
   const truncated: string[] = [];
-  const fedPassageUrls: string[] = [];
+  const fedPassages: FedPassages[] = [];
   let accepted = 0;
   for (const source of picked) {
     const declared = declare(source);
@@ -232,7 +245,12 @@ async function feedAll(
         truncated.push(declared.title);
       }
       if (source.kind === "passages") {
-        fedPassageUrls.push(declared.url);
+        // What was STITCHED, captured at the moment the feed was accepted — not
+        // the page, whose collection may have grown since the read.
+        fedPassages.push({
+          url: declared.url,
+          ats: source.group.passages.map((p) => p.at),
+        });
       }
       emit(deps, { kind: "feeding", id, received: res.received, expected });
       continue;
@@ -246,7 +264,7 @@ async function feedAll(
     }
     skipped.push({ title: declared.title, reason: res.reason });
   }
-  return { accepted, skipped, truncated, fedPassageUrls };
+  return { accepted, skipped, truncated, fedPassages };
 }
 
 /**
@@ -391,8 +409,8 @@ export async function handleBriefStart(
   // Cleared HERE, not on the report: this is the moment the text left. Leaving
   // them would mean the next brief silently re-sends text already sent. A run
   // that failed before this line keeps everything, because nothing left.
-  if (fed.fedPassageUrls.length > 0) {
-    await deps.forgetPassages(fed.fedPassageUrls).catch(() => undefined);
+  if (fed.fedPassages.length > 0) {
+    await deps.forgetPassages(fed.fedPassages).catch(() => undefined);
   }
   await putPhase(deps, id, { kind: "running" });
   emit(deps, { kind: "running", id });
@@ -426,7 +444,7 @@ export async function handleBriefPoll(deps: BriefDeps, id: string): Promise<Brie
     // legitimately showing.
     return { kind: "idle" };
   }
-  return settleRun(deps, conn, id, { accepted: 0, skipped: [], truncated: [], fedPassageUrls: [] });
+  return settleRun(deps, conn, id, { accepted: 0, skipped: [], truncated: [], fedPassages: [] });
 }
 
 /**

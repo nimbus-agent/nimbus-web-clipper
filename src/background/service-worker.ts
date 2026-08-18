@@ -487,9 +487,17 @@ const briefDeps: BriefDeps = {
   capture: (tabId, expectedUrl) =>
     captureTab({ tabUrl, runCapture }, tabId, "article", expectedUrl),
   passages: getPassages,
-  forgetPassages: async (urls) => {
-    for (const url of urls) {
-      await updatePassages((all) => ({ ok: true, all: removeGroup(all, url) }));
+  // BY IDENTITY, page by page: each fed passage is dropped by the instant it was
+  // captured, through the same `removePassage` the composer's per-passage remove
+  // uses. Dropping the whole group would also destroy anything the user
+  // collected while the run was still feeding, which never left — see
+  // `FedPassages`.
+  forgetPassages: async (fed) => {
+    for (const { url, ats } of fed) {
+      await updatePassages((all) => ({
+        ok: true,
+        all: ats.reduce((rest, at) => removePassage(rest, url, at), all),
+      }));
     }
   },
   connection: async () => {
