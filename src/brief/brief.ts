@@ -43,7 +43,9 @@ function show(state: BriefState): void {
 }
 
 function showPreview(): void {
-  const sources = named.filter((t) => selected.has(t.id));
+  const sources = named
+    .filter((t) => selected.has(t.id))
+    .map((t) => ({ title: t.title, url: t.url }));
   const panel = root("preview");
   if (sources.length === 0 || question === "") {
     panel.hidden = true;

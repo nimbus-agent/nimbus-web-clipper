@@ -46,6 +46,21 @@ export function renderPreview(doc: Document, preview: AnyPreview): DocumentFragm
       list.append(row(doc, source));
     }
     frag.append(list);
+    for (const body of preview.bodies) {
+      // A disclosure, not an always-open block: on a full collection the text
+      // would push the Send button off the screen, and a consent surface the
+      // user has to scroll past is one they stop reading.
+      const details = doc.createElement("details");
+      details.className = "preview__passages";
+      const summary = doc.createElement("summary");
+      summary.textContent = body.label;
+      const text = doc.createElement("div");
+      text.className = "preview__body";
+      // textContent, never innerHTML — this is page content the user selected.
+      text.textContent = body.value;
+      details.append(summary, text);
+      frag.append(details);
+    }
     const notice = doc.createElement("p");
     notice.className = "preview__note";
     notice.textContent = preview.synthesisNotice;
