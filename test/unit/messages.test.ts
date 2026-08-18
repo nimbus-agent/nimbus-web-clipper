@@ -668,32 +668,40 @@ describe("ConnectionResponse health fields", () => {
 
 describe("isBriefStartRequest", () => {
   it("accepts a well-formed request", () => {
-    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: [1, 2] })).toBe(true);
+    expect(
+      isBriefStartRequest({
+        kind: "brief-start",
+        question: "q",
+        picks: [
+          { kind: "tab", id: 1 },
+          { kind: "tab", id: 2 },
+        ],
+      }),
+    ).toBe(true);
   });
 
-  it("rejects a non-array tabIds", () => {
-    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: 1 })).toBe(false);
+  it("rejects a non-array picks", () => {
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", picks: 1 })).toBe(false);
   });
 
-  it("rejects non-numeric tab ids — the page is untrusted input", () => {
-    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: ["1"] })).toBe(false);
-  });
-
-  it("rejects a non-integer or negative tab id", () => {
-    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: [1.5] })).toBe(false);
-    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: [-1] })).toBe(false);
-  });
-
-  it("rejects an empty tabIds — a brief needs at least one source", () => {
-    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: [] })).toBe(false);
+  it("rejects an empty picks — a brief needs at least one source", () => {
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", picks: [] })).toBe(false);
   });
 
   it("rejects a blank question", () => {
-    expect(isBriefStartRequest({ kind: "brief-start", question: "   ", tabIds: [1] })).toBe(false);
+    expect(
+      isBriefStartRequest({
+        kind: "brief-start",
+        question: "   ",
+        picks: [{ kind: "tab", id: 1 }],
+      }),
+    ).toBe(false);
   });
 
   it("rejects the wrong kind", () => {
-    expect(isBriefStartRequest({ kind: "clip", question: "q", tabIds: [1] })).toBe(false);
+    expect(
+      isBriefStartRequest({ kind: "clip", question: "q", picks: [{ kind: "tab", id: 1 }] }),
+    ).toBe(false);
   });
 
   it("rejects non-objects", () => {
@@ -705,25 +713,81 @@ describe("isBriefStartRequest", () => {
     // Two literals for one rule drift silently; this is the assertion that stops
     // it. The guard cannot import BRIEF_CAPS without dragging types.ts into the
     // narrowing boundary, so the agreement is checked here instead.
-    const tooMany = Array.from({ length: BRIEF_CAPS.maxSources + 1 }, (_, i) => i);
-    const atCap = Array.from({ length: BRIEF_CAPS.maxSources }, (_, i) => i);
-    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: tooMany })).toBe(
-      false,
-    );
-    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: atCap })).toBe(true);
+    const tooMany = Array.from({ length: BRIEF_CAPS.maxSources + 1 }, () => ({
+      kind: "tab" as const,
+      id: 1,
+    }));
+    const atCap = Array.from({ length: BRIEF_CAPS.maxSources }, () => ({
+      kind: "tab" as const,
+      id: 1,
+    }));
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", picks: tooMany })).toBe(false);
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", picks: atCap })).toBe(true);
     expect(
       isBriefStartRequest({
         kind: "brief-start",
         question: "q".repeat(BRIEF_CAPS.maxQuestionChars),
-        tabIds: [1],
+        picks: [{ kind: "tab", id: 1 }],
       }),
     ).toBe(true);
     expect(
       isBriefStartRequest({
         kind: "brief-start",
         question: "q".repeat(BRIEF_CAPS.maxQuestionChars + 1),
-        tabIds: [1],
+        picks: [{ kind: "tab", id: 1 }],
       }),
     ).toBe(false);
+  });
+});
+
+describe("isBriefStartRequest picks", () => {
+  const base = { kind: "brief-start", question: "q" };
+
+  test("accepts a mixed, ordered pick list", () => {
+    expect(
+      isBriefStartRequest({
+        ...base,
+        picks: [
+          { kind: "tab", id: 3 },
+          { kind: "passages", url: "http://h/a" },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects an empty or over-long list", () => {
+    expect(isBriefStartRequest({ ...base, picks: [] })).toBe(false);
+    expect(
+      isBriefStartRequest({
+        ...base,
+        picks: Array.from({ length: 21 }, () => ({ kind: "tab", id: 1 })),
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects a kind outside the union", () => {
+    expect(isBriefStartRequest({ ...base, picks: [{ kind: "clip", id: 1 }] })).toBe(false);
+  });
+
+  test("rejects a non-integer or negative tab id, as tabIds did", () => {
+    expect(isBriefStartRequest({ ...base, picks: [{ kind: "tab", id: 1.5 }] })).toBe(false);
+    expect(isBriefStartRequest({ ...base, picks: [{ kind: "tab", id: -1 }] })).toBe(false);
+    expect(isBriefStartRequest({ ...base, picks: [{ kind: "tab", id: "1" }] })).toBe(false);
+  });
+
+  test("rejects a url safeHttpUrl rejects, not merely a non-string", () => {
+    expect(isBriefStartRequest({ ...base, picks: [{ kind: "passages", url: 5 }] })).toBe(false);
+    expect(
+      isBriefStartRequest({ ...base, picks: [{ kind: "passages", url: "javascript:alert(1)" }] }),
+    ).toBe(false);
+    expect(isBriefStartRequest({ ...base, picks: [{ kind: "passages", url: "not a url" }] })).toBe(
+      false,
+    );
+  });
+
+  test("still rejects a missing or over-long question", () => {
+    expect(isBriefStartRequest({ kind: "brief-start", picks: [{ kind: "tab", id: 1 }] })).toBe(
+      false,
+    );
   });
 });
