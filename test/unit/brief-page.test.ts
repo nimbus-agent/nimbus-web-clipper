@@ -1,0 +1,342 @@
+// @vitest-environment jsdom
+// test/unit/brief-page.test.ts
+//
+// The brief page's own wiring: selection, question choice, the preview gate, and
+// the two message round trips. `brief-view.test.ts` covers what the DOM looks
+// like; this file covers what the page DOES.
+//
+// `src/brief/brief.ts` binds its listeners as a MODULE-EVALUATION side effect, so
+// the fixture must exist before the import and every test re-imports through
+// `vi.resetModules()` — a second import of a live module would drive the previous
+// test's listeners against a detached DOM.
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { BriefReport } from "../../src/shared/brief-report.ts";
+import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
+
+const FIXTURE = `
+  <main class="brief">
+    <section id="composer"></section>
+    <section id="preview" hidden>
+      <div id="preview-body"></div>
+      <button id="run" type="button">Send</button>
+    </section>
+    <section id="state"></section>
+  </main>
+`;
+
+const TABS = {
+  named: [
+    { id: 1, url: "https://example.com/a", title: "A" },
+    { id: 2, url: "https://example.com/b", title: "B" },
+  ],
+  hiddenCount: 0,
+  questions: ["Where do these contradict each other?"],
+  enumerationFailed: false,
+};
+
+const REPORT: BriefReport = {
+  summary: "They disagree about the rollout date.",
+  findings: [],
+  conflicts: [],
+  gaps: [],
+  synthesis: { model: "llama-3", remote: false },
+};
+
+let harness: ChromeHarness;
+
+function $(id: string): HTMLElement {
+  const node = document.getElementById(id);
+  if (node === null) {
+    throw new Error(`missing #${id}`);
+  }
+  return node;
+}
+
+function checkbox(tabId: number): HTMLInputElement {
+  const box = document.querySelector<HTMLInputElement>(
+    `#composer input[type="checkbox"][value="${tabId}"]`,
+  );
+  if (box === null) {
+    throw new Error(`no checkbox for tab ${tabId}`);
+  }
+  return box;
+}
+
+/**
+ * `.click()` rather than a synthetic MouseEvent: a checkbox's pre-click
+ * activation behaviour TOGGLES `checked`, so assigning it first and then
+ * dispatching flips it back and the delegated handler sees the opposite of what
+ * the test asked for.
+ */
+function tick(box: HTMLInputElement, checked: boolean): void {
+  if (box.checked !== checked) {
+    box.click();
+  }
+}
+
+function pickQuestion(): void {
+  const button = document.querySelector<HTMLButtonElement>("#composer button[data-question]");
+  button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+}
+
+function click(id: string): void {
+  $(id).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+}
+
+/** Load the page module against the current fixture and let its initial
+ *  `loadTabs()` settle. */
+async function loadPage(): Promise<void> {
+  document.body.innerHTML = FIXTURE;
+  vi.resetModules();
+  await import("../../src/brief/brief.ts");
+  await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "brief-tabs" }));
+  await vi.waitFor(() => expect(document.querySelectorAll("#composer input").length).toBe(2));
+}
+
+/** Select both tabs and a question — the state from which Send is meaningful. */
+async function compose(): Promise<void> {
+  tick(checkbox(1), true);
+  tick(checkbox(2), true);
+  pickQuestion();
+  await vi.waitFor(() => expect($("preview").hidden).toBe(false));
+}
+
+beforeEach(() => {
+  harness = installChromeMock();
+  harness.sendMessage.mockResolvedValue(TABS);
+});
+
+afterEach(() => {
+  harness.restore();
+});
+
+describe("composer", () => {
+  test("renders a row per named tab and asks the worker for them on load", async () => {
+    await loadPage();
+    expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "brief-tabs" });
+    expect(checkbox(1).checked).toBe(false);
+  });
+
+  test("a non-object answer is ignored rather than thrown through", async () => {
+    harness.sendMessage.mockResolvedValue(undefined);
+    document.body.innerHTML = FIXTURE;
+    vi.resetModules();
+    await import("../../src/brief/brief.ts");
+    await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalled());
+    expect($("composer").children.length).toBe(0);
+  });
+
+  test("a partial answer falls back to empty lists rather than rendering undefined", async () => {
+    harness.sendMessage.mockResolvedValue({});
+    document.body.innerHTML = FIXTURE;
+    vi.resetModules();
+    await import("../../src/brief/brief.ts");
+    await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalled());
+    expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(0);
+  });
+});
+
+describe("the preview gate", () => {
+  test("stays hidden with sources but no question", async () => {
+    await loadPage();
+    tick(checkbox(1), true);
+    expect($("preview").hidden).toBe(true);
+  });
+
+  test("stays hidden with a question but no sources", async () => {
+    await loadPage();
+    pickQuestion();
+    expect($("preview").hidden).toBe(true);
+  });
+
+  test("appears once both are present, and names the sources", async () => {
+    await loadPage();
+    await compose();
+    expect($("preview-body").textContent).toContain("A");
+    expect($("preview-body").textContent).toContain("B");
+  });
+
+  test("unticking the last source hides it again", async () => {
+    await loadPage();
+    await compose();
+    tick(checkbox(1), false);
+    tick(checkbox(2), false);
+    expect($("preview").hidden).toBe(true);
+  });
+
+  test("a typed question drives the preview the same way a picked one does", async () => {
+    await loadPage();
+    tick(checkbox(1), true);
+    const custom = document.createElement("textarea");
+    custom.id = "custom-question";
+    $("composer").appendChild(custom);
+    custom.value = "  What breaks if all of these land?  ";
+    custom.dispatchEvent(new Event("input", { bubbles: true }));
+    expect($("preview").hidden).toBe(false);
+  });
+});
+
+describe("send", () => {
+  test("sends the picked question and tab ids, and renders what comes back", async () => {
+    await loadPage();
+    await compose();
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "feeding",
+      id: "b1",
+      received: 0,
+      expected: 2,
+    });
+
+    click("run");
+
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenCalledWith({
+        kind: "brief-start",
+        question: "Where do these contradict each other?",
+        tabIds: [1, 2],
+      }),
+    );
+    await vi.waitFor(() => expect($("state").textContent).not.toBe(""));
+  });
+
+  test("an answer without a kind is not rendered as state", async () => {
+    await loadPage();
+    await compose();
+    harness.sendMessage.mockResolvedValueOnce({ nope: true });
+
+    click("run");
+
+    await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledTimes(2));
+    expect($("state").textContent).toBe("");
+  });
+
+  test("a rejected send leaves the page intact rather than throwing", async () => {
+    await loadPage();
+    await compose();
+    harness.sendMessage.mockRejectedValueOnce(new Error("worker gone"));
+
+    click("run");
+
+    await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledTimes(2));
+    expect($("state").textContent).toBe("");
+  });
+});
+
+describe("pushed state", () => {
+  test("a brief-state broadcast renders", async () => {
+    await loadPage();
+    await harness.emitMessage({ kind: "brief-state", state: { kind: "running", id: "b1" } });
+    expect($("state").textContent).not.toBe("");
+  });
+
+  test("an unrelated broadcast is ignored", async () => {
+    await loadPage();
+    await harness.emitMessage({ kind: "clip", ok: true });
+    expect($("state").textContent).toBe("");
+  });
+});
+
+describe("save", () => {
+  async function reachDone(): Promise<void> {
+    await loadPage();
+    await harness.emitMessage({
+      kind: "brief-state",
+      state: { kind: "done", id: "b1", report: REPORT, skipped: [], truncated: [] },
+    });
+    await vi.waitFor(() => expect(document.getElementById("save-brief")).not.toBeNull());
+  }
+
+  test("sends the finished brief's id and reports the save", async () => {
+    await reachDone();
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "done",
+      id: "b1",
+      report: REPORT,
+      skipped: [],
+      truncated: [],
+      savedItemId: "item-9",
+    });
+
+    click("save-brief");
+
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "brief-save", id: "b1" }),
+    );
+    await vi.waitFor(() => expect($("state").textContent).toContain("Saved to your index."));
+  });
+
+  test("a save-failed keeps the report on screen and offers the button again", async () => {
+    await reachDone();
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "save-failed",
+      id: "b1",
+      reason: "expired",
+    });
+
+    click("save-brief");
+
+    // The report survives a failed save — the whole reason `save-failed` is not
+    // a `failed` state — and the retry control comes back.
+    await vi.waitFor(() => expect(document.getElementById("save-brief")).not.toBeNull());
+    expect($("state").textContent).toContain(REPORT.summary);
+  });
+
+  test("a save-failed with no report ever seen renders as its own state", async () => {
+    await loadPage();
+    await harness.emitMessage({
+      kind: "brief-state",
+      state: { kind: "save-failed", id: "b1", reason: "expired" },
+    });
+    expect($("state").textContent).not.toBe("");
+  });
+
+  test("a rejected save re-enables the button rather than leaving a dead control", async () => {
+    await reachDone();
+    harness.sendMessage.mockRejectedValueOnce(new Error("worker gone"));
+
+    click("save-brief");
+
+    await vi.waitFor(() => {
+      const save = document.getElementById("save-brief") as HTMLButtonElement | null;
+      expect(save?.disabled).toBe(false);
+    });
+  });
+
+  test("a stray click in the state panel is not a save", async () => {
+    await reachDone();
+    const calls = harness.sendMessage.mock.calls.length;
+    $("state").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(harness.sendMessage.mock.calls.length).toBe(calls);
+  });
+});
+
+describe("re-enumeration", () => {
+  test("a grant made in Options refreshes the composer without a reload", async () => {
+    await loadPage();
+    const calls = harness.sendMessage.mock.calls.length;
+
+    harness.emitPermissionsAdded();
+
+    await vi.waitFor(() => expect(harness.sendMessage.mock.calls.length).toBeGreaterThan(calls));
+    expect(harness.sendMessage).toHaveBeenLastCalledWith({ kind: "brief-tabs" });
+  });
+
+  test("regaining focus re-enumerates too", async () => {
+    await loadPage();
+    const calls = harness.sendMessage.mock.calls.length;
+
+    window.dispatchEvent(new Event("focus"));
+
+    await vi.waitFor(() => expect(harness.sendMessage.mock.calls.length).toBeGreaterThan(calls));
+  });
+
+  test("a re-enumeration that rejects is swallowed, not thrown at the page", async () => {
+    await loadPage();
+    harness.sendMessage.mockRejectedValueOnce(new Error("worker gone"));
+
+    harness.emitPermissionsAdded();
+
+    await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledTimes(2));
+    expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(2);
+  });
+});

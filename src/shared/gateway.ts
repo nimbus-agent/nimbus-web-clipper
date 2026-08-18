@@ -39,6 +39,20 @@ export const GATEWAY_PATHS = {
    */
   agents: "/v1/agents",
   agentRuns: "/v1/agents/runs",
+  /**
+   * BASE, not a complete path: create is `POST /v1/briefs`, and the other four
+   * routes append `/{id}` and an action (`/sources`, `/run`, `/save`) which this
+   * static map cannot express.
+   *
+   * Bearer-authed under the `briefs` scope — which is a LEGACY scope
+   * (`clips/api-scopes.ts`'s `LEGACY_SCOPES = ["clip", "briefs"]`), so unlike
+   * `resolve` / `fetch` / `agents` every token already in the wild carries it. A
+   * token minted after scopes existed can still lack it if the owner narrowed
+   * `--scopes`, so the 403 path stays; it is just not the common case.
+   *
+   * Returns 404 `briefs_disabled` when the gateway's briefs seam is not wired.
+   */
+  briefs: "/v1/briefs",
 } as const;
 
 export type GatewayEndpoint = keyof typeof GATEWAY_PATHS;

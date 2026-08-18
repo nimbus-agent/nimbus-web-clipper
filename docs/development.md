@@ -678,7 +678,58 @@ same as the popup/options DOM and the SW glue.
    a deliberate delay hook inside `capture-in-page.ts`/`capture-tab.ts`
    itself, not the mock)**
 
+## Manual verification — Research briefs
+
+**Needs a REAL gateway, and this checklist is mostly unverifiable without one.**
+`scripts/screenshots/mock-gateway.ts` builds its `Request` from method and headers
+only and **drops the POST body**, so every behaviour below is body-driven and
+therefore invisible to it: `expected`, `received`, `accepted`, all four caps, the
+two `413` details, `briefs_busy`, and the disabled-seam 404. A pass against the
+mock is not evidence for any of them. Enable the gateway's briefs seam first.
+
+1. Open three tabs on a host you have granted page access to, open the brief page
+   from the popup's **Brief from open tabs…**, tick all three.
+2. Pick a suggested question. Confirm the preview names **all three** sources
+   individually and states that synthesis may be local or remote — it must not
+   claim the run stays on your machine.
+3. Send. Confirm progress counts up (`n of 3`), then the report renders with a
+   summary, findings, and — if your sources disagree — a conflicts section.
+4. Confirm the banner says local or remote, that the model is named on its own
+   line, and that a remote disclosure appears **exactly once** (not repeated in
+   *Not covered*).
+5. Open a fourth tab on a host you have **not** granted. Reopen the brief page:
+   it must be **counted, not named** ("1 open tab is on a site you haven't
+   granted page access to").
+6. Grant that host in Options stage 3, switch back to the brief tab. The new tab
+   must appear **without a manual reload** (`permissions.onAdded` + focus).
+7. Start a brief, then navigate one source tab away before it finishes. The brief
+   must still complete and name the skipped page under *Pages that couldn't be
+   read*.
+8. With 17+ large tabs selected, confirm feeding stops on `run_capacity` and the
+   brief still answers, with the shortfall named in the gateway's own gaps.
+9. Turn the gateway's briefs seam **off**; confirm the page reports it using the
+   gateway's own hint rather than a generic error.
+10. Start a fourth concurrent brief; confirm `briefs_busy` reads as "already
+    running three" and does **not** auto-retry (there is no `Retry-After`).
+11. Save a finished brief. Confirm Options stage 4 lists the run, marks it saved,
+    and that a report over the 64 KB metadata ceiling says its quotes were
+    dropped from the saved copy.
+12. Leave a finished brief open for 30+ minutes, then Save. It must say "no
+    longer available to save" **with the report still on screen** — not replace
+    it with an error panel.
+13. Unpair. Confirm stored briefs are gone and the **disclosure log survives**.
+14. Repeat 1–4 in Firefox.
+
+**Service-worker eviction (Chrome only, and unverifiable by construction):** start
+a brief, then force-stop the service worker from `chrome://extensions` while it is
+running. Within a minute the alarm should resume the poll and the result should
+still land. Whether Chrome preserves a registered alarm across a genuine eviction
+is Chrome's behaviour, not ours.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any
   log. Confirm via DevTools that no `console` output or DOM node contains it.
+- A brief's citation links point only at `http(s)` addresses. A citation whose
+  url is `javascript:` or `data:` must render as plain text, never as a link
+  (`safeHttpUrl`, `src/shared/safe-url.ts`).

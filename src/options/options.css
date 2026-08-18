@@ -42,3 +42,10 @@ code { font-family: ui-monospace, monospace; padding: 1px 4px; border-radius: 4p
 .shortcut__key { font-family: ui-monospace, monospace; opacity: 0.8; }
 /* The unbound row is the whole point of this block — mark it, don't just word it. */
 .shortcut[data-bound="false"] .shortcut__key { color: #b23; font-style: italic; }
+.brief-log { list-style: none; margin: 8px 0 0; padding: 0; }
+.brief-log > li { padding: 8px 0; border-top: 1px solid rgba(127,127,127,0.25); }
+.brief-log__when { font-size: 12px; opacity: 0.65; margin: 0; }
+.brief-log__question { margin: 2px 0; font-weight: 600; }
+.brief-log__what { margin: 2px 0; font-size: 13px; }
+.brief-log__saved { margin: 2px 0; font-size: 12px; opacity: 0.75; }
+.brief-log__clear { margin-top: 12px; padding: 6px 12px; cursor: pointer; }

@@ -6,6 +6,7 @@ import { offersCapture } from "../shared/capture-offer.ts";
 import { formatAge } from "../shared/freshness.ts";
 import { buildFetchPreview, type ClipPreview, type FetchPreview } from "../shared/preview.ts";
 import { renderPreview } from "../shared/preview-view.ts";
+import { safeHttpUrl } from "../shared/safe-url.ts";
 import { scopeCommand } from "../shared/scope-command.ts";
 import type {
   FetchTarget,
@@ -38,18 +39,6 @@ const PRODUCT_CORPUS: Record<Product, string> = {
   jenkins: "Jenkins builds",
   jira: "Jira projects",
 };
-
-/** Returns the parsed href when the scheme is http or https; null otherwise.
- *  Rejects javascript:, data:, vbscript:, relative paths, and malformed URLs. */
-function safeHttpUrl(raw: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    return null;
-  }
-  return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
-}
 
 export function renderError(doc: Document, message: string): HTMLElement {
   const p = doc.createElement("p");

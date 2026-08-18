@@ -1147,6 +1147,108 @@ rewords a sentence.
 
 Full reasoning: `docs/superpowers/specs/2026-08-13-c2-3-service-lanes-design.md`.
 
+## Research briefs
+
+One question across several tabs you have open, answered by the gateway reading
+them together. It is the first capability here whose input is a *set* of pages
+rather than the page you are on, and that shapes almost every decision below.
+
+**Its own page, not a panel lane.** The panel deliberately pins the one page it
+was opened on, so its header and its lanes can never describe different items. A
+brief spans many tabs, so a lane would fight that invariant rather than extend
+it. The popup was ruled out on a harder mechanic: it is destroyed on blur, and a
+run outlives it. So `brief.html` is a normal extension page, reached from a popup
+button and an Options link — both click-driven, deliberately not a `commands`
+entry (see C1.5 on why a hotkey-only capability can vanish silently).
+
+**The staged protocol.** Five routes, in order: `POST /v1/briefs` (create) →
+`POST /v1/briefs/{id}/sources` once per tab (feed) → `POST /v1/briefs/{id}/run` →
+`GET /v1/briefs/{id}` (poll) → `POST /v1/briefs/{id}/save`. `src/background/brief-client.ts`
+owns the wire; `src/background/brief-handlers.ts` owns the order.
+
+**Every picked tab is declared at create, even the ones that then fail to
+capture.** `BriefRun.declared` is fixed at create and never grows, and the
+gateway reports the shortfall in the report's `gaps` ("2 of 3 sources"). Capturing
+first and declaring only the survivors would produce a report with no gap entry —
+hiding the shortfall by routing around the contract's own honesty mechanism. The
+client adds *which* tabs and *why*, which the gateway cannot know.
+
+**The extraction cap is 200 KB, and that number is load-bearing.**
+`MAX_RUN_BYTES / MAX_SOURCE_BYTES` is exactly 16, so a client that truncated at
+the gateway's 256 KB per-source ceiling would fit only sixteen sources into a run
+whose declared limit is twenty — the seventeenth feed refused, every time.
+Upstream sized the run budget against a 200 KB client cap and says so. Asserted
+by a test against the real constants, not left as a comment.
+
+**Two different `413`s.** `payload_too_large` arrives for both an over-cap source
+and a full run, distinguished only by `detail`: `source_too_large` re-cuts and
+retries that one source, `run_capacity` stops feeding and runs what was already
+accepted. Collapsing them would turn a run that is complete enough to answer into
+what looks like a client bug.
+
+**Truncate and declare** — the opposite of the clip path. `POST /v1/clips` has no
+way to say a body was cut, so a truncated clip would be a silent lie (the defect
+Nimbus#1005 actually was). `BriefSource.truncated` is a contract field, so here
+the honest move is to cut and say so, and the page names the shortened sources.
+
+**The worker is the only poller.** Live cadence is a `setTimeout` backoff in the
+service worker (to a 5s ceiling, slower than the lanes' 2s because synthesis runs
+for tens of seconds); `BRIEF_POLL_ALARM` is the eviction net only, and is
+disarmed **only when no run is left running** — two briefs can overlap, since the
+gateway allows three concurrent runs, and clearing on the first would orphan the
+second. The page never polls and never calls the gateway; it sends a message and
+renders what comes back. Polls honour `pairingGeneration` for the same reason
+agent polls do: a poll that outlives its pairing must write nothing.
+
+**No source text is ever persisted.** `BriefSource.body` is ephemeral by contract
+("never written to disk"), and this client must not hold what the gateway refuses
+to hold. `chrome.storage.local` gets the run record (id, question, declared
+url/title, phase) and the disclosure log, and nothing else — asserted by tests
+that grep the whole store. For the same reason briefs are **never queued**: the
+offline queue persists payloads, and there is nothing here it may persist.
+
+### Why there is a local disclosure log
+
+The gateway's egress ledger does **not** cover a brief's model call.
+`THIS_BINARY_COVERAGE.model` is `none` (`egress/egress-coverage.ts`) — the `model`
+source type is declared but its appender has not landed — and
+`agent-brief-egress.ts` covers `agents.*` briefs, which is a different route from
+`/v1/briefs`. So `nimbus prove` shows nothing for a brief's synthesis, and without
+a local record the only disclosure (`Report.synthesis`) dies with the run's
+30-minute TTL.
+
+C4.1's caution — read the gateway's record rather than keep a private one that
+could quietly disagree — binds wherever a gateway record exists. For this class
+none does, and a local record cannot disagree with one that was never written.
+
+The log is written when `/run` is **accepted** — the moment of egress — not when
+the report arrives, so a run that fails during synthesis still gets an entry: the
+source text left either way. Eviction favours keeping **unsaved** runs, which is
+the opposite of the intuitive rule: `brief-save.ts` persists `synthesis` as its
+own metadata field on the saved item, so dropping a saved run's entry loses a
+pointer, while dropping an unsaved one loses the only record anywhere. It renders
+in Options stage 4 and is **not** cleared on unpair — a past egress does not
+un-happen when the pairing changes.
+
+### What the client cannot promise
+
+It cannot say synthesis stays on your machine. `createBriefLlm` resolves
+`[briefs].prefer_local` and falls back to remote when no local provider is
+available; `GET /v1/health` reports only liveness; `/v1/admin/status` needs the
+admin token this client does not hold. So the pre-run confirmation names every
+source and states the uncertainty, the report's `synthesis.remote` is what
+actually happened, and the model is named on its own line — because on a remote
+run the banner is the gateway's `disclosure` string verbatim, and that string is
+not guaranteed to name the model.
+
+A gateway-side proposal to close this is written up **in the Nimbus repo**, not
+this one — `2026-08-17-brief-synthesis-destination-design` on the
+`dev/asafgolombek/briefs-prerun-disclosure` branch: a synthesis policy echoed at
+create, a request-side `requireLocal` that may only tighten it, and the `model`
+egress class raised behind a router chokepoint.
+
+Full reasoning: `docs/superpowers/specs/2026-08-17-research-briefs-design.md`.
+
 ## Two state machines worth understanding
 
 These are the parts that are easy to get subtly wrong, and where most of the

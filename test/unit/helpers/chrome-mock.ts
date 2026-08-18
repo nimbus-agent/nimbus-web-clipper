@@ -55,6 +55,9 @@ export interface ChromeHarness {
    *  `emitMessage` itself delegates here with `tabId: undefined`, exercising the
    *  no-tab sender a popup/options message carries. */
   emitMessageFromTab(message: unknown, tabId: number): Promise<unknown>;
+  /** Fire `chrome.permissions.onAdded` — a grant made in ANOTHER surface, which
+   *  `permissionsRequest` deliberately does not raise. */
+  emitPermissionsAdded(): void;
   /**
    * Make the NEXT gateway resolve call the ambient describe block's own fetch
    * stub answers wait on `gate` before returning its stubbed response — lets two
@@ -172,6 +175,12 @@ export function installChromeMock(): ChromeHarness {
     }
     return true;
   });
+  // `permissions.onAdded` is the browser telling a page ALREADY OPEN that a grant
+  // landed elsewhere (Options). `permissionsRequest` above deliberately does not
+  // fire it: the real event is out-of-band, and a surface that only ever saw it
+  // as a side effect of its own request would not be testing the case that
+  // matters — the grant made in another tab.
+  const permissionsAddedListeners: Array<() => void> = [];
 
   const fakeChrome = {
     runtime: {
@@ -234,6 +243,11 @@ export function installChromeMock(): ChromeHarness {
       contains: permissionsContains,
       request: permissionsRequest,
       remove: permissionsRemove,
+      onAdded: {
+        addListener: (cb: () => void): void => {
+          permissionsAddedListeners.push(cb);
+        },
+      },
     },
     contextMenus: {
       create: contextMenusCreate,
@@ -283,6 +297,12 @@ export function installChromeMock(): ChromeHarness {
 
   function emitMessageFromTab(message: unknown, tabId: number): Promise<unknown> {
     return emitMessageWithSender(message, tabId);
+  }
+
+  function emitPermissionsAdded(): void {
+    for (const cb of permissionsAddedListeners) {
+      cb();
+    }
   }
 
   function emitCommand(command: string): void {
@@ -375,6 +395,7 @@ export function installChromeMock(): ChromeHarness {
     grantedOrigins,
     emitMessage,
     emitMessageFromTab,
+    emitPermissionsAdded,
     holdNextResolve,
     takeResolveGate,
     emitCommand,

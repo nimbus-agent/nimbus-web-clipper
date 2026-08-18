@@ -1,9 +1,11 @@
 import { describe, expect, it, test } from "vitest";
+import { BRIEF_CAPS } from "../../src/shared/brief.ts";
 import type { CueOpenRequest } from "../../src/shared/messages.ts";
 import {
   isAgentRunRequest,
   isAgentStateRequest,
   isAgentStateResponse,
+  isBriefStartRequest,
   isCaptureRequest,
   isCaptureResponse,
   isClipRequest,
@@ -661,5 +663,67 @@ describe("ConnectionResponse health fields", () => {
 
   test("the unpaired arm is unchanged", () => {
     expect(isConnectionResponse({ kind: "connection", paired: false })).toBe(true);
+  });
+});
+
+describe("isBriefStartRequest", () => {
+  it("accepts a well-formed request", () => {
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: [1, 2] })).toBe(true);
+  });
+
+  it("rejects a non-array tabIds", () => {
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: 1 })).toBe(false);
+  });
+
+  it("rejects non-numeric tab ids — the page is untrusted input", () => {
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: ["1"] })).toBe(false);
+  });
+
+  it("rejects a non-integer or negative tab id", () => {
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: [1.5] })).toBe(false);
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: [-1] })).toBe(false);
+  });
+
+  it("rejects an empty tabIds — a brief needs at least one source", () => {
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: [] })).toBe(false);
+  });
+
+  it("rejects a blank question", () => {
+    expect(isBriefStartRequest({ kind: "brief-start", question: "   ", tabIds: [1] })).toBe(false);
+  });
+
+  it("rejects the wrong kind", () => {
+    expect(isBriefStartRequest({ kind: "clip", question: "q", tabIds: [1] })).toBe(false);
+  });
+
+  it("rejects non-objects", () => {
+    expect(isBriefStartRequest(null)).toBe(false);
+    expect(isBriefStartRequest("brief-start")).toBe(false);
+  });
+
+  it("the guard's caps match shared/brief.ts, which is the source of truth", () => {
+    // Two literals for one rule drift silently; this is the assertion that stops
+    // it. The guard cannot import BRIEF_CAPS without dragging types.ts into the
+    // narrowing boundary, so the agreement is checked here instead.
+    const tooMany = Array.from({ length: BRIEF_CAPS.maxSources + 1 }, (_, i) => i);
+    const atCap = Array.from({ length: BRIEF_CAPS.maxSources }, (_, i) => i);
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: tooMany })).toBe(
+      false,
+    );
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: atCap })).toBe(true);
+    expect(
+      isBriefStartRequest({
+        kind: "brief-start",
+        question: "q".repeat(BRIEF_CAPS.maxQuestionChars),
+        tabIds: [1],
+      }),
+    ).toBe(true);
+    expect(
+      isBriefStartRequest({
+        kind: "brief-start",
+        question: "q".repeat(BRIEF_CAPS.maxQuestionChars + 1),
+        tabIds: [1],
+      }),
+    ).toBe(false);
   });
 });

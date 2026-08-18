@@ -794,6 +794,73 @@ grow a second half to match.*
 > preview, this one has **no off switch** — a targeted fetch is an I13 write
 > under your own stored credential, so it is always confirmed.
 
+## Phase C5 — Ask across what you have open 🟢
+
+*Theme: the first capability whose input is a set of pages rather than the page
+you are on — and the one thing a browser surface can do that the terminal and
+the editor structurally cannot.*
+
+### C5.1 Research briefs from your open tabs · 🟢 · L — ✅ shipped
+> **What** Pick the tabs you have open, ask one question the recognised set
+> scaffolds, and read a cited brief with findings, conflicts and gaps.
+> **Why it wows** "The six things I have open right now" is context no other
+> Nimbus surface has. Conflict detection across your own tabs is the output no
+> clipper can produce at all.
+> **Touches** `src/shared/brief.ts`, `brief-report.ts`, `brief-log.ts`,
+> `safe-url.ts`; `src/background/brief-client.ts`, `brief-handlers.ts`,
+> `brief-run-store.ts`, `brief-log-store.ts`; `src/brief/`;
+> `src/options/brief-log-view.ts`.
+> **Status** Shipped against the gateway's five-route research-briefs surface
+> (`POST /v1/briefs` → `/sources` → `/run` → poll → `/save`), which was already
+> built for a client like this one — `MAX_SOURCES_PER_RUN`'s comment reads "the
+> client caps its composer at this number".
+> **No new manifest permission, and that is not a compromise:** `tabs.query`
+> withholds `url`/`title` without host permission for that tab, and host
+> permission is exactly what capture needs — so the set the composer can *name*
+> is the set it can *read*. An ungranted tab is counted, never guessed at. This
+> is the second thing **C1.4**'s per-host grant buys, and the first that needs it
+> on several tabs at once.
+> **The question is scaffolded by the recognised set**, with free text behind a
+> collapsed control — the non-goal below is about which affordance leads, not
+> about forbidding typing.
+> **The honest gap:** the client cannot promise synthesis stays local.
+> `createBriefLlm` falls back to a remote provider when no local one is
+> available, and no pre-run signal exists. So the confirmation names every source
+> and states the uncertainty; the report says what actually happened. The
+> upstream fix is proposed **in the gateway repo, not this one** — the
+> `dev/asafgolombek/briefs-prerun-disclosure` branch's
+> `2026-08-17-brief-synthesis-destination-design` spec: a synthesis policy echoed
+> at create, a tighten-only `requireLocal`, and the `model` egress class raised.
+> **Done when** A set of open tabs becomes one cited brief, a page that cannot be
+> read is named rather than silently dropped, and nothing claims a destination it
+> cannot know. ✅ Full reasoning:
+> [`docs/superpowers/specs/2026-08-17-research-briefs-design.md`](./docs/superpowers/specs/2026-08-17-research-briefs-design.md).
+
+### C5.2 Corrections this phase records
+> **5.1 "Ask-your-clips" is superseded, not delivered.** Its stated dependency —
+> "a query/QA endpoint on the gateway (e.g. `POST /v1/clips/ask`)" — does not
+> exist and, on this evidence, will not. The capability landed in a different and
+> better shape: a staged brief whose sources the client supplies. Recorded the
+> same way **3.4** was recorded as superseded by C1.3's ambient half, rather than
+> silently retagged.
+> **2.3 "Highlight-stitching" is re-aimed.** Its reframe note already said the
+> collect UI would have to live as a panel lane. A brief's source list is the
+> better home for "assemble several things into one"; the selection half becomes
+> a follow-up to C5.1.
+> **C4.1 is half-delivered, and its approach note needs qualifying.** It says to
+> read the gateway's record rather than keep a private one that could disagree.
+> True for fetches; **false for `model`-class egress**, where
+> `THIS_BINARY_COVERAGE.model` is `none` and there is no record to read at all.
+> C5.1's local disclosure log is that half; reading the gateway's own record for
+> the other half is still blocked on a read surface that does not exist.
+> **C1.4's status line is stale.** It says the per-host grant "buys only
+> gesture-free recognition, which **C2** is the first to need". C1.3's ambient
+> half already dated that, and C5.1 is the first consumer needing the grant on
+> several tabs simultaneously.
+> **The "thirteen agents" figure is still stale**, as the 2026-08-13 correction
+> flagged without fixing globally. Not fixed here either — this phase consumes no
+> agent — but noted again so the next reader does not treat it as verified.
+
 ---
 
 ## Phase 1 — Trust you can see 🟢
@@ -1087,7 +1154,14 @@ engine to grow.*
 *Theme: the flagship AI feature — a question box answered from your own clips, on
 your machine. The client is straightforward; the retrieval surface is the work.*
 
-### 5.1 Ask-your-clips · 🟡 · L
+### 5.1 Ask-your-clips · 🟡 · L — superseded by C5.1
+> **Superseded, not delivered.** The dependency this item named —
+> `POST /v1/clips/ask` — does not exist upstream and, on the evidence of the
+> read that produced **C5.1**, will not. What landed instead is the staged
+> research-briefs surface, where the *client* supplies the sources rather than
+> the gateway searching its own index. **C5.1** consumes it. What remains
+> genuinely unbuilt from this brief is the index-backed half — a brief with
+> `useIndex: true` — which is a follow-up to C5.1, not a separate feature.
 > **What** A question box (popup + command palette) that answers from the local
 > index with citations back to your clips.
 > **Why it wows** The thing no cloud clipper can safely offer and no local tool has

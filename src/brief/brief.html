@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Research brief — Nimbus</title>
+    <link rel="stylesheet" href="brief.css" />
+  </head>
+  <body>
+    <main class="brief">
+      <h1 class="brief__title">Research brief</h1>
+      <p class="brief__lede">
+        Pick the pages you have open, choose a question, and your gateway reads them together.
+      </p>
+
+      <section id="composer" class="brief__composer"></section>
+
+      <section id="preview" class="preview" hidden>
+        <h2 class="preview__heading">This is what gets sent</h2>
+        <div id="preview-body"></div>
+        <button id="run" type="button">Send</button>
+      </section>
+
+      <section id="state" class="brief__state"></section>
+    </main>
+    <script src="brief.js"></script>
+  </body>
+</html>

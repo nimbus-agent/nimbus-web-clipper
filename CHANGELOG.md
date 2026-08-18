@@ -48,6 +48,19 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **Ask one question across several tabs you have open.** A new research-brief
+  page lets you pick the pages you have open, choose a question Nimbus suggests
+  from what those pages are, and get back a brief with findings, the places your
+  sources disagree, and an honest list of what it could not cover. Every finding
+  cites the page it came from. Open it from the toolbar popup or from Options.
+  It works on the sites you have granted page access to; other tabs are counted,
+  never named, because Nimbus cannot read them. A page that can't be read doesn't
+  sink the brief — it finishes and tells you which one was missing.
+- **A record of what left.** Options now lists every research brief you have run:
+  when, how many pages, whether any were shortened to fit, and whether the answer
+  came from a model on your own machine or a remote one. Nimbus's own audit trail
+  does not cover model calls, so this list is kept in your browser — and it
+  survives unpairing, because a past send does not un-happen.
 - **Save a copy when Nimbus can't reach a page itself.** On a site Nimbus has no
   connector for — an internal wiki, a vendor console — the panel now offers to
   save a copy of the page so your agents have something to work with. It appears
