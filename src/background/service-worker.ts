@@ -43,6 +43,7 @@ import {
   isResolveRequest,
   isUnpairRequest,
 } from "../shared/messages.ts";
+import { removeGroup } from "../shared/passage.ts";
 import type { AgentError, AgentLane, LaneState, Recognition } from "../shared/types.ts";
 import {
   AGENT_RUN_CACHE_TTL_MS,
@@ -106,7 +107,7 @@ import {
 import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
 import { collectPassage, type PassageCollectDeps } from "./passage-collect.ts";
-import { updatePassages } from "./passage-store.ts";
+import { getPassages, updatePassages } from "./passage-store.ts";
 import { isPreviewEnabled } from "./preview-pref.ts";
 import { type FlushDeps, flushQueue } from "./queue-flush.ts";
 import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
@@ -483,6 +484,12 @@ const briefDeps: BriefDeps = {
   origins: getOrigins,
   capture: (tabId, expectedUrl) =>
     captureTab({ tabUrl, runCapture }, tabId, "article", expectedUrl),
+  passages: getPassages,
+  forgetPassages: async (urls) => {
+    for (const url of urls) {
+      await updatePassages((all) => ({ ok: true, all: removeGroup(all, url) }));
+    }
+  },
   connection: async () => {
     const conn = await getConnection();
     return conn === null ? null : { origin: conn.origin, token: conn.token };

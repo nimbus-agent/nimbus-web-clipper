@@ -108,7 +108,11 @@ root("composer").addEventListener("input", (ev) => {
 
 root("run").addEventListener("click", () => {
   void chrome.runtime
-    .sendMessage({ kind: "brief-start", question, tabIds: [...selected] })
+    .sendMessage({
+      kind: "brief-start",
+      question,
+      picks: [...selected].map((id) => ({ kind: "tab" as const, id })),
+    })
     .then((res: unknown) => {
       if (typeof res === "object" && res !== null && "kind" in res) {
         show(res as BriefState);

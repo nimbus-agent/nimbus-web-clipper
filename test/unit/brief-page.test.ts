@@ -177,7 +177,7 @@ describe("the preview gate", () => {
 });
 
 describe("send", () => {
-  test("sends the picked question and tab ids, and renders what comes back", async () => {
+  test("sends the picked question and tab picks, and renders what comes back", async () => {
     await loadPage();
     await compose();
     harness.sendMessage.mockResolvedValueOnce({
@@ -193,7 +193,10 @@ describe("send", () => {
       expect(harness.sendMessage).toHaveBeenCalledWith({
         kind: "brief-start",
         question: "Where do these contradict each other?",
-        tabIds: [1, 2],
+        picks: [
+          { kind: "tab", id: 1 },
+          { kind: "tab", id: 2 },
+        ],
       }),
     );
     await vi.waitFor(() => expect($("state").textContent).not.toBe(""));

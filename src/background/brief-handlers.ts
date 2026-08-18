@@ -11,6 +11,8 @@ import { BRIEF_CAPS, buildCreateBody, buildSourceBody, suggestQuestions } from "
 import type { BriefLogEntry } from "../shared/brief-log.ts";
 import type { BriefReport } from "../shared/brief-report.ts";
 import type { BriefStartRequest } from "../shared/messages.ts";
+import type { Passage, PassageGroup } from "../shared/passage.ts";
+import { groupCapturedAt, groupKey, groupPassages, stitch } from "../shared/passage.ts";
 import { recognise } from "../shared/recognise.ts";
 import type { ConfiguredOrigin, Recognition } from "../shared/types.ts";
 import type * as briefClient from "./brief-client.ts";
@@ -63,6 +65,10 @@ export interface BriefDeps {
   readonly listTabs: () => Promise<TabCandidates>;
   readonly origins: () => Promise<readonly ConfiguredOrigin[]>;
   readonly capture: (tabId: number, expectedUrl: string) => Promise<CaptureOutcome>;
+  /** The passage collection, as stored. Grouped here, not by the caller. */
+  readonly passages: () => Promise<readonly Passage[]>;
+  /** Drop every passage held for these pages. Called once, after `/run`. */
+  readonly forgetPassages: (urls: readonly string[]) => Promise<void>;
   readonly connection: () => Promise<{ origin: string; token: string } | null>;
   readonly client: {
     readonly createBrief: typeof briefClient.createBrief;
@@ -88,6 +94,8 @@ export interface BriefTabsResult {
   readonly enumerationFailed: boolean;
   readonly questions: readonly string[];
   readonly recognitions: readonly Recognition[];
+  /** The collection, grouped one row per page — see the spec's decision 5. */
+  readonly passages: readonly PassageGroup[];
 }
 
 export async function handleBriefTabs(deps: BriefDeps): Promise<BriefTabsResult> {
@@ -98,8 +106,12 @@ export async function handleBriefTabs(deps: BriefDeps): Promise<BriefTabsResult>
     named: tabs.named,
     hiddenCount: tabs.hiddenCount,
     enumerationFailed: tabs.enumerationFailed,
+    // The suggested questions come from the tab recognitions only: a passage
+    // group carries no `Recognition`, and manufacturing one from its url would
+    // claim a recognition the client never ran.
     questions: suggestQuestions(recognitions),
     recognitions,
+    passages: groupPassages(await deps.passages()),
   };
 }
 
@@ -108,10 +120,29 @@ function emit(deps: BriefDeps, state: BriefState): BriefState {
   return state;
 }
 
+/**
+ * One source the composer picked, resolved against state the background
+ * already holds: a tab against `listTabs`, a url against the passage
+ * collection.
+ */
+type PickedSource =
+  | { readonly kind: "tab"; readonly tab: CandidateTab }
+  | { readonly kind: "passages"; readonly group: PassageGroup };
+
+/** The url/title a source declares — identical for the created brief and the
+ *  stored run, because both come from this one function. */
+function declare(source: PickedSource): { url: string; title: string } {
+  return source.kind === "tab"
+    ? { url: source.tab.url, title: source.tab.title }
+    : { url: source.group.url, title: source.group.title };
+}
+
 interface FeedResult {
   readonly accepted: number;
   readonly skipped: readonly SkippedSource[];
   readonly truncated: readonly string[];
+  /** Passage-source urls the gateway ACCEPTED. Only these are forgotten. */
+  readonly fedPassageUrls: readonly string[];
 }
 
 async function putPhase(deps: BriefDeps, id: string, phase: StoredBrief["phase"]): Promise<void> {
@@ -124,7 +155,7 @@ async function putPhase(deps: BriefDeps, id: string, phase: StoredBrief["phase"]
 }
 
 /**
- * Capture and feed each declared tab, in order.
+ * Capture and feed each declared source, in order.
  *
  * Sequential, and not because of the rate limit — `brief-src` is a 60/min bucket
  * sized upstream so twenty back-to-back feeds cannot starve clipping. It is
@@ -137,29 +168,46 @@ async function feedAll(
   deps: BriefDeps,
   conn: { origin: string; token: string },
   id: string,
-  picked: readonly CandidateTab[],
+  picked: readonly PickedSource[],
   expected: number,
 ): Promise<FeedResult> {
   const skipped: SkippedSource[] = [];
   const truncated: string[] = [];
+  const fedPassageUrls: string[] = [];
   let accepted = 0;
-  for (const tab of picked) {
-    const outcome = await deps.capture(tab.id, tab.url);
-    if (!outcome.ok) {
-      skipped.push({ title: tab.title, reason: outcome.reason });
-      continue;
+  for (const source of picked) {
+    const declared = declare(source);
+    let text: string;
+    let capturedAt: number;
+    if (source.kind === "tab") {
+      const outcome = await deps.capture(source.tab.id, source.tab.url);
+      if (!outcome.ok) {
+        skipped.push({ title: declared.title, reason: outcome.reason });
+        continue;
+      }
+      text = outcome.capture.body;
+      capturedAt = deps.now();
+    } else {
+      // No capture, and no way to fail one: the text was captured when the user
+      // highlighted it. `capturedAt` is the group's OLDEST passage — a stitched
+      // body is only as fresh as its oldest text.
+      text = stitch(source.group);
+      capturedAt = groupCapturedAt(source.group);
     }
     const body = buildSourceBody({
-      url: tab.url,
-      title: tab.title,
-      body: outcome.capture.body,
-      capturedAt: deps.now(),
+      url: declared.url,
+      title: declared.title,
+      body: text,
+      capturedAt,
     });
     const res = await deps.client.feedBriefSource(conn.origin, conn.token, id, body);
     if (res.ok) {
       accepted += 1;
       if (body.truncated) {
-        truncated.push(tab.title);
+        truncated.push(declared.title);
+      }
+      if (source.kind === "passages") {
+        fedPassageUrls.push(declared.url);
       }
       emit(deps, { kind: "feeding", id, received: res.received, expected });
       continue;
@@ -168,12 +216,12 @@ async function feedAll(
       // The run is full. Every remaining source would be refused too, and the
       // sources already accepted still produce a report whose `gaps` name the
       // shortfall. Stopping is the correct answer, not an error.
-      skipped.push({ title: tab.title, reason: "run_capacity" });
+      skipped.push({ title: declared.title, reason: "run_capacity" });
       break;
     }
-    skipped.push({ title: tab.title, reason: res.reason });
+    skipped.push({ title: declared.title, reason: res.reason });
   }
-  return { accepted, skipped, truncated };
+  return { accepted, skipped, truncated, fedPassageUrls };
 }
 
 /**
@@ -222,10 +270,10 @@ async function settleRun(
 /**
  * Create → capture → feed → run → poll.
  *
- * The order matters: every picked tab is DECLARED at create even though some may
- * fail to capture, because `BriefRun.declared` is fixed at create and the
- * gateway reports the shortfall in the report's `gaps` ("2 of 3"). Capturing
- * first and declaring only the survivors would hide it.
+ * The order matters: every picked source is DECLARED at create even though a
+ * tab may fail to capture, because `BriefRun.declared` is fixed at create and
+ * the gateway reports the shortfall in the report's `gaps` ("2 of 3").
+ * Capturing first and declaring only the survivors would hide it.
  */
 export async function handleBriefStart(
   deps: BriefDeps,
@@ -236,21 +284,35 @@ export async function handleBriefStart(
     return emit(deps, { kind: "failed", reason: "not_paired" });
   }
   const tabs = await deps.listTabs();
-  const picked = req.tabIds
-    .map((id) => tabs.named.find((t) => t.id === id))
-    .filter((t): t is CandidateTab => t !== undefined)
-    .slice(0, BRIEF_CAPS.maxSources);
-  if (picked.length === 0) {
+  const groups = groupPassages(await deps.passages());
+  // Every pick is resolved against state the background already holds — a tab id
+  // against listTabs, a url against the collection — and an unmatched pick is
+  // DROPPED, exactly as an unmatched tabId always was. A url the collection
+  // never held cannot become a source, so the guard in messages.ts is the outer
+  // fence, not the load-bearing one. Same rule C2.5 applies to a supplied itemId.
+  const picked: PickedSource[] = [];
+  for (const pick of req.picks) {
+    if (pick.kind === "tab") {
+      const tab = tabs.named.find((t) => t.id === pick.id);
+      if (tab !== undefined) {
+        picked.push({ kind: "tab", tab });
+      }
+      continue;
+    }
+    const group = groups.find((g) => g.url === groupKey(pick.url));
+    if (group !== undefined) {
+      picked.push({ kind: "passages", group });
+    }
+  }
+  const sources = picked.slice(0, BRIEF_CAPS.maxSources);
+  if (sources.length === 0) {
     return emit(deps, { kind: "failed", reason: "no_sources" });
   }
 
   const created = await deps.client.createBrief(
     conn.origin,
     conn.token,
-    buildCreateBody(
-      req.question,
-      picked.map((t) => ({ url: t.url, title: t.title })),
-    ),
+    buildCreateBody(req.question, sources.map(declare)),
   );
   if (!created.ok) {
     const hint = "hint" in created ? created.hint : undefined;
@@ -267,7 +329,7 @@ export async function handleBriefStart(
     {
       id,
       question: req.question,
-      declared: picked.map((t) => ({ url: t.url, title: t.title })),
+      declared: sources.map(declare),
       phase: { kind: "feeding", received: 0, expected: created.expected },
       expiresAtMs: nowMs + BRIEF_RUN_TTL_MS,
     },
@@ -275,7 +337,7 @@ export async function handleBriefStart(
   );
   emit(deps, { kind: "feeding", id, received: 0, expected: created.expected });
 
-  const fed = await feedAll(deps, conn, id, picked, created.expected);
+  const fed = await feedAll(deps, conn, id, sources, created.expected);
   if (fed.accepted === 0) {
     await putPhase(deps, id, { kind: "failed", reason: "no_sources_captured" });
     return emit(deps, { kind: "failed", id, reason: "no_sources_captured" });
@@ -297,6 +359,12 @@ export async function handleBriefStart(
     sourceCount: fed.accepted,
     truncatedCount: fed.truncated.length,
   });
+  // Cleared HERE, not on the report: this is the moment the text left. Leaving
+  // them would mean the next brief silently re-sends text already sent. A run
+  // that failed before this line keeps everything, because nothing left.
+  if (fed.fedPassageUrls.length > 0) {
+    await deps.forgetPassages(fed.fedPassageUrls).catch(() => undefined);
+  }
   await putPhase(deps, id, { kind: "running" });
   emit(deps, { kind: "running", id });
 
@@ -329,7 +397,7 @@ export async function handleBriefPoll(deps: BriefDeps, id: string): Promise<Brie
     // legitimately showing.
     return { kind: "idle" };
   }
-  return settleRun(deps, conn, id, { accepted: 0, skipped: [], truncated: [] });
+  return settleRun(deps, conn, id, { accepted: 0, skipped: [], truncated: [], fedPassageUrls: [] });
 }
 
 /**
