@@ -46,10 +46,13 @@ export type ComposerModel = {
  * One row of the composer: a page, and which of the two things it offers.
  *
  * `tab` on a passages row is the open tab that page is showing, or null when it
- * has none.
+ * has none. `group` on a TAB row is the collection this page has that the user
+ * switched away from, or null when it has none — it is what the row needs to
+ * offer the way back, and a tab row that never had passages has nothing to
+ * return to.
  */
 export type ComposerRow =
-  | { readonly kind: "tab"; readonly tab: CandidateTab }
+  | { readonly kind: "tab"; readonly tab: CandidateTab; readonly group: PassageGroup | null }
   | {
       readonly kind: "passages";
       readonly group: PassageGroup;
@@ -76,9 +79,15 @@ export type ComposerRow =
  * prevent, arriving through a second door.
  *
  * A row switched to whole-page mode renders as a plain tab row, which is exactly
- * what "use the whole page instead" means. A group in `wholePage` whose tab has
- * since closed falls to neither branch — it has no tab to capture and the user
- * asked not to use its passages — so it appears nowhere until they toggle back.
+ * what "use the whole page instead" means — and that row CARRIES THE CONTROL
+ * BACK, because a switch with no return path would hide the passages the user
+ * collected by hand for the rest of the session with nothing naming them.
+ *
+ * A group in `wholePage` with no named tab is not in whole-page mode in any
+ * sense that means anything: the mode is "capture this tab at start", and there
+ * is no tab. So it renders as its passages row rather than vanishing. The page
+ * prunes such an entry from `wholePage` before it renders, so this is the floor
+ * rather than the usual path.
  */
 export function composerRows(model: {
   readonly named: readonly CandidateTab[];
@@ -97,13 +106,13 @@ export function composerRows(model: {
     seen.add(key);
     const group = byKey.get(key);
     if (group === undefined || whole.has(group.url)) {
-      rows.push({ kind: "tab", tab });
+      rows.push({ kind: "tab", tab, group: group ?? null });
       continue;
     }
     rows.push({ kind: "passages", group, tab });
   }
   for (const group of model.passages) {
-    if (!seen.has(group.url) && !whole.has(group.url)) {
+    if (!seen.has(group.url)) {
       rows.push({ kind: "passages", group, tab: null });
     }
   }
@@ -171,6 +180,14 @@ function tabRow(
   label.appendChild(el("span", row.tab.title, "brief__tab-title"));
   label.appendChild(el("span", row.tab.url, "brief__tab-url"));
   item.appendChild(label);
+
+  // The way BACK, and the reason whole-page mode is a choice rather than a
+  // one-way door: without it the passages the user collected by hand would
+  // disappear from the composer for the rest of the session, with no control
+  // carrying their url and nothing saying they still exist.
+  if (row.group !== null) {
+    item.appendChild(iconButton("brief__mode", "Use its passages instead", { url: row.group.url }));
+  }
   return item;
 }
 

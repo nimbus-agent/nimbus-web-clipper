@@ -452,8 +452,8 @@ describe("collected passages", () => {
     expect($("composer").querySelector(".brief__count")?.textContent).toBe("0 of 20 sources");
   });
 
-  test("switching a row to the whole page moves the pick rather than dropping it", async () => {
-    // The group's page is also open as tab 3, so the whole-page control is offered.
+  /** The group's page is ALSO open as tab 3, so the mode control is offered. */
+  async function loadWithOpenTab(): Promise<void> {
     harness.sendMessage.mockResolvedValue({
       ...TABS,
       named: [...TABS.named, { id: 3, url: "https://example.com/c#live", title: "C page" }],
@@ -465,12 +465,22 @@ describe("collected passages", () => {
     await vi.waitFor(() =>
       expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(3),
     );
+  }
+
+  function clickMode(): void {
+    const button = document.querySelector<HTMLButtonElement>("#composer button.brief__mode");
+    if (button === null) {
+      throw new Error("no mode control on the composer");
+    }
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  test("switching a row to the whole page moves the pick rather than dropping it", async () => {
+    await loadWithOpenTab();
     tick(pickBox("passages:https://example.com/c"), true);
     pickQuestion();
 
-    document
-      .querySelector<HTMLButtonElement>("#composer button.brief__mode")
-      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    clickMode();
 
     // Same page, other mode — and still picked.
     expect(pickBox("tab:3").checked).toBe(true);
@@ -478,6 +488,44 @@ describe("collected passages", () => {
       null,
     );
     expect($("preview-body").textContent).toContain("https://example.com/c#live");
+  });
+
+  test("and switches BACK, with the passages intact", async () => {
+    // The return path. Without it the switch destroys visible work: the tab row
+    // is indistinguishable from a tab that never had passages, and nothing on
+    // the page names their url again.
+    await loadWithOpenTab();
+    tick(pickBox("passages:https://example.com/c"), true);
+    pickQuestion();
+    clickMode();
+    expect(pickBox("tab:3").checked).toBe(true);
+
+    clickMode();
+
+    const back = pickBox("passages:https://example.com/c");
+    expect(back.checked).toBe(true);
+    expect(document.querySelector('#composer input[value="tab:3"]')).toBe(null);
+    expect($("composer").textContent).toContain("2 passages");
+    expect($("preview-body").textContent).toContain("first excerpt");
+  });
+
+  test("a tab closing releases whole-page mode rather than stranding the passages", async () => {
+    // A stale whole-page url with no tab would keep the group out of BOTH render
+    // branches — no row, so no control carrying the url that would clear it.
+    await loadWithOpenTab();
+    clickMode();
+    expect(pickBox("tab:3")).not.toBeNull();
+
+    // Tab 3 has gone; the collection has not.
+    harness.sendMessage.mockResolvedValue({ ...TABS, passages: [GROUP] });
+    window.dispatchEvent(new Event("focus"));
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('#composer input[value="passages:https://example.com/c"]'),
+      ).not.toBeNull(),
+    );
+    expect($("composer").textContent).toContain("2 passages");
   });
 });
 

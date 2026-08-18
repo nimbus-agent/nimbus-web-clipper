@@ -124,11 +124,24 @@ function showPreview(): void {
 /**
  * Draw the composer from current state.
  *
- * Picks whose row has gone are dropped first — a tab closed, a page's passages
+ * Two prunes first, both about not stranding something the user can still see a
+ * reason for.
+ *
+ * A whole-page url with no matching tab is released: the mode means "capture
+ * this tab at start", so without a tab it is not a mode but a stale flag — and
+ * leaving it set would keep that page's passages out of the list with no control
+ * anywhere naming the url that would clear it.
+ *
+ * Then picks whose row has gone are dropped — a tab closed, a page's passages
  * removed — because the cap counter reads `selected.size` and must describe what
  * is on the screen, not what was ticked before the last refresh.
  */
 function paint(): void {
+  for (const url of [...wholePage]) {
+    if (!named.some((t) => groupKey(t.url) === url)) {
+      wholePage.delete(url);
+    }
+  }
   const live = new Set(rows().map(pickId));
   for (const id of [...selected]) {
     if (!live.has(id)) {
@@ -174,8 +187,11 @@ async function loadTabs(): Promise<void> {
  * Switch one row between its passages and the whole page.
  *
  * The pick MOVES rather than being dropped: the user asked for a different mode
- * of the same page, not to unselect it. Offered only where a tab is open, so a
- * url with no matching tab is a no-op rather than a mode with nothing to capture.
+ * of the same page, not to unselect it. Both directions come through here — the
+ * passages row offers "use the whole page instead", and the tab row it becomes
+ * offers "use its passages instead" — so the switch is a choice, not a one-way
+ * door. Offered only where a tab is open, so a url with no matching tab is a
+ * no-op rather than a mode with nothing to capture.
  */
 function toggleWholePage(url: string): void {
   const tab = named.find((t) => groupKey(t.url) === url);
@@ -184,8 +200,10 @@ function toggleWholePage(url: string): void {
     return;
   }
   const asWhole = wholePage.has(url);
-  const from = pickId(asWhole ? { kind: "tab", tab } : { kind: "passages", group, tab });
-  const to = pickId(asWhole ? { kind: "passages", group, tab } : { kind: "tab", tab });
+  const asTab = { kind: "tab", tab, group } as const;
+  const asPassages = { kind: "passages", group, tab } as const;
+  const from = pickId(asWhole ? asTab : asPassages);
+  const to = pickId(asWhole ? asPassages : asTab);
   if (asWhole) {
     wholePage.delete(url);
   } else {

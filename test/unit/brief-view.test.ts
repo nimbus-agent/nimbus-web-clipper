@@ -332,11 +332,33 @@ describe("composer passage rows", () => {
     expect(host.querySelector("input")?.getAttribute("value")).toBe("tab:1");
   });
 
-  it("a whole-page group whose tab has closed renders nowhere", () => {
-    // Neither branch: no tab to capture, and the user asked not to use its
-    // passages. It comes back the moment they toggle the mode off.
+  it("a whole-page group whose tab has closed comes back as a passages row", () => {
+    // Whole-page mode is "capture this tab at start", so with no tab it is not a
+    // mode at all. Rendering nothing would strand the passages: no row, and so
+    // no control carrying the url that would clear the flag.
     const host = render({ passages: [GROUP], wholePage: new Set(["http://h/a"]) });
-    expect(host.querySelectorAll(".brief__tab")).toHaveLength(0);
+    expect(host.querySelectorAll(".brief__tab")).toHaveLength(1);
+    expect(host.querySelector("input")?.getAttribute("value")).toBe("passages:http://h/a");
+    expect(host.querySelector("button.brief__mode")).toBeNull();
+  });
+
+  it("a row in whole-page mode carries the way BACK", () => {
+    // Without this the switch is a one-way door: the tab row is
+    // indistinguishable from a tab that never had passages, and no rendered
+    // control names that url any more.
+    const host = render({
+      named: [{ id: 1, url: "http://h/a", title: "A page" }],
+      passages: [GROUP],
+      wholePage: new Set(["http://h/a"]),
+    });
+    const mode = host.querySelector("button.brief__mode");
+    expect(mode?.getAttribute("data-url")).toBe("http://h/a");
+    expect(mode?.textContent).toBe("Use its passages instead");
+  });
+
+  it("a tab with nothing collected offers no mode control", () => {
+    const host = render({ named: [{ id: 1, url: "http://h/t", title: "T" }] });
+    expect(host.querySelector("button.brief__mode")).toBeNull();
   });
 
   it("each passage is listed with its own remove control", () => {
