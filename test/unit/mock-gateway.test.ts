@@ -6,7 +6,11 @@ import {
   RESOLVE_FIXTURE,
   type Scenario,
 } from "../../scripts/screenshots/gateway-fixtures.ts";
-import { handleRequest } from "../../scripts/screenshots/mock-gateway.ts";
+import {
+  type BriefRuns,
+  handleRequest,
+  newBriefRuns,
+} from "../../scripts/screenshots/mock-gateway.ts";
 
 describe("mock gateway fixtures — locked contract shape", () => {
   test("pair/confirm returns a non-empty token and label", () => {
@@ -80,6 +84,84 @@ describe("mock gateway fixtures — locked contract shape", () => {
     );
     expect(poll.status).toBe(200);
     expect(await poll.json()).toMatchObject({ status: "done" });
+  });
+});
+
+describe("brief run routes — method-checked per action", () => {
+  // One shared `runs` map per test, threaded through every call — the default
+  // parameter on `handleRequest` mints a FRESH one per call, so a run created
+  // in one call is invisible to the next unless the same map is passed along.
+  async function createRun(runs: BriefRuns): Promise<string> {
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/briefs", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ brief: "q", sources: [{ url: "http://h/a", title: "A" }] }),
+      }),
+      {},
+      runs,
+    );
+    const { id } = (await res.json()) as { id: string };
+    return id;
+  }
+
+  test("a GET to .../sources is refused, not answered by the POST default", async () => {
+    const runs = newBriefRuns();
+    const id = await createRun(runs);
+    const res = await handleRequest(
+      new Request(`http://127.0.0.1:8765/v1/briefs/${id}/sources`),
+      {},
+      runs,
+    );
+    expect(res.status).toBe(405);
+  });
+
+  test("a GET to .../run is refused, not the cheerful running default", async () => {
+    const runs = newBriefRuns();
+    const id = await createRun(runs);
+    const res = await handleRequest(
+      new Request(`http://127.0.0.1:8765/v1/briefs/${id}/run`),
+      {},
+      runs,
+    );
+    expect(res.status).toBe(405);
+  });
+
+  test("a GET to .../save is refused, not the cheerful itemId default", async () => {
+    const runs = newBriefRuns();
+    const id = await createRun(runs);
+    const res = await handleRequest(
+      new Request(`http://127.0.0.1:8765/v1/briefs/${id}/save`),
+      {},
+      runs,
+    );
+    expect(res.status).toBe(405);
+  });
+
+  test("a POST to the bare poll route is refused, not answered as done", async () => {
+    const runs = newBriefRuns();
+    const id = await createRun(runs);
+    const res = await handleRequest(
+      new Request(`http://127.0.0.1:8765/v1/briefs/${id}`, { method: "POST" }),
+      {},
+      runs,
+    );
+    expect(res.status).toBe(405);
+  });
+
+  test("the poll route still answers GET as before", async () => {
+    const runs = newBriefRuns();
+    const id = await createRun(runs);
+    const res = await handleRequest(new Request(`http://127.0.0.1:8765/v1/briefs/${id}`), {}, runs);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ status: "done" });
+  });
+
+  test("two runs from one server never share an id", async () => {
+    const runs = newBriefRuns();
+    const first = await createRun(runs);
+    const second = await createRun(runs);
+    expect(first).not.toBe(second);
   });
 });
 

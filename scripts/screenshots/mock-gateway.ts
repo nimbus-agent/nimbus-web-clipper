@@ -57,11 +57,26 @@ function isObject(v: unknown): v is Record<string, unknown> {
  * scope, so two harnesses (or two suites' servers) alive in one process
  * cannot see each other's counts, the same isolation every other per-test
  * fixture in this file gets from being constructed fresh.
+ *
+ * `nextId` is a monotonic counter held alongside the map, not `byId.size` —
+ * this file never deletes a run, so today the two agree, but sizing off the
+ * map would silently start reissuing ids the moment something did.
  */
-export type BriefRuns = Map<string, { expected: number; received: number }>;
+export interface BriefRuns {
+  readonly byId: Map<string, { expected: number; received: number }>;
+  nextId(): string;
+}
 
 export function newBriefRuns(): BriefRuns {
-  return new Map();
+  const byId = new Map<string, { expected: number; received: number }>();
+  let counter = 0;
+  return {
+    byId,
+    nextId: () => {
+      counter += 1;
+      return `brief-${counter}`;
+    },
+  };
 }
 
 /**
@@ -123,30 +138,46 @@ export async function handleRequest(
   if (url.pathname === GATEWAY_PATHS.briefs && req.method === "POST") {
     const body: unknown = await req.json();
     const sources = isObject(body) && Array.isArray(body["sources"]) ? body["sources"] : [];
-    const id = `brief-${runs.size + 1}`;
-    runs.set(id, { expected: sources.length, received: 0 });
+    const id = runs.nextId();
+    runs.byId.set(id, { expected: sources.length, received: 0 });
     return jsonResponse({ id, status: "collecting", expected: sources.length });
   }
   const brief = /^\/v1\/briefs\/([^/]+)(?:\/(sources|run|save))?$/.exec(url.pathname);
   if (brief !== null) {
     const id = brief[1] ?? "";
-    const run = runs.get(id);
+    const run = runs.byId.get(id);
     if (run === undefined) {
       // An id this server never issued. 404 rather than a cheerful default: a
       // fixture that answers for a run it does not have hides a client bug.
       return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
     }
+    // Every action below is method-checked, not just `sources`: a GET to
+    // `.../sources`, or a GET/PUT to `.../run` or `.../save`, is a client bug
+    // exactly as an unknown run id is — the cheerful 200 default two lines
+    // above exists for the base poll route (`GET`, no action), not for these.
     const action = brief[2];
-    if (action === "sources" && req.method === "POST") {
+    if (action === "sources") {
+      if (req.method !== "POST") {
+        return new Response(null, { status: 405 });
+      }
       scenario.onBriefSource?.((await req.json()) as FedBriefSource);
       run.received += 1;
       return jsonResponse({ accepted: true, received: run.received, expected: run.expected });
     }
     if (action === "run") {
+      if (req.method !== "POST") {
+        return new Response(null, { status: 405 });
+      }
       return jsonResponse({ status: "running" });
     }
     if (action === "save") {
+      if (req.method !== "POST") {
+        return new Response(null, { status: 405 });
+      }
       return jsonResponse({ itemId: "item-1" });
+    }
+    if (req.method !== "GET") {
+      return new Response(null, { status: 405 });
     }
     return jsonResponse({ status: "done", report: BRIEF_REPORT });
   }
