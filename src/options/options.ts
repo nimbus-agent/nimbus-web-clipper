@@ -1,4 +1,5 @@
 import { getAmbientHosts, setAmbientHost } from "../background/ambient-prefs.ts";
+import { isIndexSearchEnabled, setIndexSearchEnabled } from "../background/index-pref.ts";
 import { getOrigins, setOrigins } from "../background/origin-store.ts";
 import { isPreviewEnabled, setPreviewEnabled } from "../background/preview-pref.ts";
 import { getAllCommands } from "../browser/commands.ts";
@@ -447,6 +448,34 @@ function onPreviewChange(): Promise<void> {
   return toggle === null ? Promise.resolve() : setPreviewEnabled(toggle.checked);
 }
 
+function indexToggle(): HTMLInputElement | null {
+  const el = document.getElementById("index-toggle");
+  return el instanceof HTMLInputElement ? el : null;
+}
+
+/**
+ * On a failed read we leave the checkbox at its markup default (UNCHECKED),
+ * matching `isIndexSearchEnabled`'s own fail-safe. This is the opposite of
+ * `refreshPreviewToggle` above, deliberately: an unreadable preference must
+ * never present a wider search as switched on.
+ */
+async function refreshIndexToggle(): Promise<void> {
+  const toggle = indexToggle();
+  if (toggle === null) {
+    return;
+  }
+  try {
+    toggle.checked = await isIndexSearchEnabled();
+  } catch {
+    toggle.checked = false;
+  }
+}
+
+function onIndexChange(): Promise<void> {
+  const toggle = indexToggle();
+  return toggle === null ? Promise.resolve() : setIndexSearchEnabled(toggle.checked);
+}
+
 function onAmbientChange(event: Event): Promise<void> {
   const target = event.target;
   if (!(target instanceof HTMLInputElement) || target.dataset["action"] !== "ambient") {
@@ -474,6 +503,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("preview-toggle")?.addEventListener("change", () => {
     void onPreviewChange();
   });
+  document.getElementById("index-toggle")?.addEventListener("change", () => {
+    void onIndexChange();
+  });
   // Opens in a tab of its own — a brief run outlives this page too, and the
   // composer needs the room. Click-driven, deliberately not a `commands` entry.
   document.getElementById("open-brief")?.addEventListener("click", () => {
@@ -488,5 +520,6 @@ document.addEventListener("DOMContentLoaded", () => {
   void refreshSurfaces();
   void refreshShortcuts();
   void refreshPreviewToggle();
+  void refreshIndexToggle();
   void refreshBriefLog();
 });

@@ -43,6 +43,7 @@ const FIXTURE = `
     <span id="trust-origin"></span>
     <span id="trust-hosts"></span>
     <input id="preview-toggle" type="checkbox" checked />
+    <input id="index-toggle" type="checkbox" />
   </section>
 `;
 
@@ -769,6 +770,51 @@ describe("preview toggle", () => {
     }
     await flush();
     expect(harness.storage.get("preview-enabled")).toBe(false);
+  });
+});
+
+describe("index-search toggle", () => {
+  test("reflects the stored preference", async () => {
+    harness = installChromeMock();
+    harness.storage.set("index-search-enabled", true);
+    await bootOptions();
+    const toggle = document.getElementById("index-toggle");
+    expect(toggle instanceof HTMLInputElement && toggle.checked).toBe(true);
+  });
+
+  test("defaults to off when nothing is stored", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    const toggle = document.getElementById("index-toggle");
+    expect(toggle instanceof HTMLInputElement && toggle.checked).toBe(false);
+  });
+
+  test("switching it on persists", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    const toggle = document.getElementById("index-toggle");
+    if (toggle instanceof HTMLInputElement) {
+      toggle.checked = true;
+      toggle.dispatchEvent(new Event("change"));
+    }
+    await flush();
+    expect(harness.storage.get("index-search-enabled")).toBe(true);
+  });
+
+  // The opposite fail-safe from the preview toggle: an unreadable preference
+  // must never present a wider search as switched on.
+  test("falls back to unchecked on a read failure", async () => {
+    harness = installChromeMock();
+    harness.storage.set("index-search-enabled", true);
+    harness.storageGet.mockImplementation(async (key: string) => {
+      if (key === "index-search-enabled") {
+        throw new Error("storage unavailable");
+      }
+      return { [key]: harness.storage.get(key) };
+    });
+    await bootOptions();
+    const toggle = document.getElementById("index-toggle");
+    expect(toggle instanceof HTMLInputElement && toggle.checked).toBe(false);
   });
 });
 
