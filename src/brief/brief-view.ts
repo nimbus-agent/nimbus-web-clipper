@@ -354,11 +354,36 @@ function saveErrorText(reason: string): string {
   return `Couldn't save it: ${reason}.`;
 }
 
+/**
+ * A human label for an index item type.
+ *
+ * NOT a lookup table: the set of connectors grows upstream on its own schedule,
+ * so an unknown type must degrade to something readable rather than to a blank
+ * or a crash. Underscores become spaces and that is the WHOLE rule — a
+ * `slack_message` from a connector released after this build still reads as
+ * "slack message".
+ *
+ * Deliberately no case-splitting and no lower-casing. The gateway's vocabulary
+ * is snake_case: all ~70 entries of the SDK's `KNOWN_ITEM_TYPES` are lowercase
+ * with underscores, because they are the values connectors write to the item
+ * table's `type` column. Splitting on capitals would buy nothing for the types
+ * that exist and would MANGLE an acronym if one ever arrived — `"PR"` becomes
+ * "p r" — which is the display equivalent of the one thing the SDK says
+ * consumers must never do: rewrite a type into something it is not.
+ */
+export function itemTypeLabel(itemType: string): string {
+  return itemType.replace(/_/g, " ").trim();
+}
+
 function renderCitations(item: BriefReportItem): HTMLElement {
   const list = el("ul", undefined, "brief__citations");
   for (const c of item.citations) {
     const li = el("li");
     li.appendChild(el("span", c.title, "brief__cite-title"));
+    if (c.kind === "clip") {
+      const type = c.itemType === undefined ? "" : ` · ${itemTypeLabel(c.itemType)}`;
+      li.appendChild(el("span", `from your index${type}`, "brief__cite-origin"));
+    }
     if (c.quote !== undefined) {
       li.appendChild(el("blockquote", c.quote));
     }

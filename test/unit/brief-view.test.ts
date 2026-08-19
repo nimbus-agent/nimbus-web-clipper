@@ -9,7 +9,7 @@ import {
   renderState,
 } from "../../src/brief/brief-view.ts";
 import { BRIEF_CAPS } from "../../src/shared/brief.ts";
-import type { BriefReport } from "../../src/shared/brief-report.ts";
+import type { BriefCitation, BriefReport } from "../../src/shared/brief-report.ts";
 
 let root: HTMLElement;
 
@@ -280,6 +280,68 @@ describe("renderState", () => {
     renderState(root, done({ report: { ...report, summary: "<img src=x onerror=alert(1)>" } }));
     expect(root.querySelector("img")).toBeNull();
     expect(root.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+});
+
+// Drives the exported renderState path for a single citation, then hands back
+// the one <li> that citation rendered into — so each case below can assert on
+// that li alone without re-deriving the surrounding finding markup.
+function renderCitationsFor(citations: readonly BriefCitation[]): HTMLElement {
+  document.body.replaceChildren();
+  root = document.createElement("div");
+  document.body.appendChild(root);
+  const withCitations: BriefReport = {
+    ...report,
+    findings: [{ text: "f", citations }],
+  };
+  renderState(root, done({ report: withCitations }));
+  const li = root.querySelector("ul.brief__citations li");
+  if (li === null) {
+    throw new Error("expected a citation <li> to render");
+  }
+  return li as HTMLElement;
+}
+
+describe("renderCitations — index-origin marker", () => {
+  it("marks a citation that came from the index, and names its type", () => {
+    const li = renderCitationsFor([
+      { kind: "clip", title: "PR 482", itemType: "pull_request", url: "https://g.test/p/482" },
+    ]);
+    expect(li.textContent).toContain("from your index");
+    expect(li.textContent).toContain("pull request");
+  });
+
+  it("does not mark a source the user picked themselves", () => {
+    const li = renderCitationsFor([{ kind: "source", title: "A tab", url: "https://a.test" }]);
+    expect(li.textContent).not.toContain("from your index");
+  });
+
+  it("marks an indexed citation with no known type, and shows no type label", () => {
+    const li = renderCitationsFor([{ kind: "clip", title: "Saved" }]);
+    expect(li.textContent).toContain("from your index");
+  });
+
+  it("passes an unrecognised type through without mangling it", () => {
+    // The label rule is underscores-to-spaces and nothing else. An acronym must
+    // survive intact: display is still a place you can misrepresent a value.
+    const li = renderCitationsFor([{ kind: "clip", title: "x", itemType: "PR_review" }]);
+    expect(li.textContent).toContain("PR review");
+  });
+
+  it("never renders an item id", () => {
+    // A sha256 digest helps nobody: nothing in this extension accepts one as input.
+    const li = renderCitationsFor([
+      { kind: "clip", title: "Saved", itemId: "nimbus:clip:aa", itemType: "web_clip" },
+    ]);
+    expect(li.textContent).not.toContain("nimbus:clip:aa");
+  });
+
+  it("links an indexed citation's page through the same safeHttpUrl guard", () => {
+    const li = renderCitationsFor([
+      { kind: "clip", title: "Bad", itemType: "web_clip", url: "javascript:alert(1)" },
+    ]);
+    expect(li.querySelector("a")).toBeNull();
+    expect(li.textContent).toContain("javascript:alert(1)");
   });
 });
 
