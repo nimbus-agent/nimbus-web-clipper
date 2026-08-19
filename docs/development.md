@@ -736,7 +736,10 @@ the mock gateway, whose `POST /v1/briefs` now records the `useIndex` a create
 body actually carried and answers the poll route with clip citations only for
 a run that asked for them — the composer, the preview and the citation
 rendering are all client-side, so none of this needs a real gateway index to
-prove.
+prove. If you do run this by hand against a real gateway rather than the mock,
+it must have a **non-empty** index: a `useIndex: true` brief against an empty
+index only exercises the "nothing matched" gap and proves nothing about
+citations.
 
 1. <!-- e2e:index-brief-1 --> Open the brief composer, pick a page, and type a
    question. Before ticking anything, the preview says nothing about the

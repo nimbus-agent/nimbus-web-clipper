@@ -845,7 +845,9 @@ the editor structurally cannot.*
 > exist and, on this evidence, will not. The capability landed in a different and
 > better shape: a staged brief whose sources the client supplies. Recorded the
 > same way **3.4** was recorded as superseded by C1.3's ambient half, rather than
-> silently retagged.
+> silently retagged. **Update (C5.4):** the one piece this correction still
+> called *genuinely unbuilt* — a brief with `useIndex: true` — has since shipped.
+> After C5.4, nothing in 5.1 remains unbuilt.
 > **2.3 "Highlight-stitching" is re-aimed.** Its reframe note already said the
 > collect UI would have to live as a panel lane. A brief's source list is the
 > better home for "assemble several things into one"; the selection half becomes
@@ -916,6 +918,62 @@ the editor structurally cannot.*
 > qualifier above record the other two the design's own *Corrections to the
 > roadmap* lists. Full reasoning:
 > [`docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md`](./docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md).
+
+### C5.4 Briefs over your index · 🟢 · M — ✅ shipped
+> **What** One checkbox in the composer — **Also search what Nimbus has
+> indexed** — lets a brief's gateway search its own index with the question
+> text and cite what it finds, alongside the tabs and passages you picked.
+> **Why it wows** A brief has only ever been built from what you have open
+> right now; everything Nimbus already knows — every page you've clipped —
+> sat one process away and was never consulted. One box lets a brief draw on
+> your own saved context without you going to find and re-open it.
+> **Touches** `src/shared/brief.ts`, `preview.ts`, `messages.ts`,
+> `brief-report.ts`, `brief-log.ts`; `src/background/index-pref.ts` (new),
+> `brief-handlers.ts`, `brief-client.ts`; `src/brief/brief.ts`,
+> `brief-view.ts`; `src/options/options.ts`, `options.html`,
+> `brief-log-view.ts`; `test/e2e/index-brief.e2e.ts`, `mock-gateway.ts` (taught
+> to serve index hits, which it did not before).
+> **Approach** `index-pref.ts` is modelled on `preview-pref.ts` but fails the
+> opposite way — default **off**, fallback **off** — because the safe
+> direction for a control that widens what a run consults is "don't", not
+> "show something nobody asked for". The index is a checkbox, not a source
+> row: the composer's rows are things the client *feeds*; the index is
+> something the gateway supplies. Because the client cannot read the
+> gateway's index in advance, the pre-send preview names the bound it may
+> draw on (up to 8 items) and says plainly it cannot list them and that the
+> question text is what gets searched, rather than guessing at a list the
+> finished report might then contradict — the report is where every item
+> actually used gets named, and an indexed citation carries a visible marker
+> and a type label so it never reads like a tab you chose. `kind: "clip"` is
+> kept on the wire and redocumented as "an item from your index" rather than
+> renamed, because it is persisted in every saved brief upstream; the new
+> `itemType` carries what the item actually is, and only the type is shown —
+> never the item id, which is a hex digest useless to a person.
+> **Done when** Ticking the box before Send is what decides whether the
+> create body carries `useIndex: true`; the preview states the bound and
+> that the question is the text searched; the finished report marks every
+> indexed citation distinctly; the choice persists across sessions and is
+> visible and resettable in Options; and none of this relaxes the
+> at-least-one-pick rule the composer already enforced. ✅
+> **Status** Shipped against today's gateway, whose brief search is scoped to
+> `itemType: "web_clip"` — so today an indexed citation is, in practice, one
+> of your own clips, even though the composer's copy already says "what
+> Nimbus has indexed". That phrasing is written for the wider search staged
+> as `dev/asafgolombek/brief-index-widening` in the Nimbus repo, which is
+> designed but not yet merged; until it lands the phrase is a slight
+> over-claim. **The index cannot be a brief's sole corpus, and this does not
+> change that:** `POST /v1/briefs` 400s on an empty `sources` array
+> regardless of `useIndex`, so an index-only brief — almost exactly what 5.1
+> originally asked for — stays unreachable from the composer; allowing
+> `sources: []` is an upstream validation change with its own consequences
+> and belongs in its own slice, not a clause in this one. **The honest gap
+> this slice discloses rather than closes:** clips are embedded locally, but
+> the search's *query* — your question — is routed through the gateway's
+> ordinary embedding configuration and may leave the machine; the preview
+> says so. This entry is itself a correction: Phase C5 had no brief for this
+> work, only C5.2's note that it was coming, which this entry's update now
+> marks resolved. Full reasoning:
+> [`docs/superpowers/specs/2026-08-19-briefs-over-your-index-design.md`](./docs/superpowers/specs/2026-08-19-briefs-over-your-index-design.md).
 
 ---
 
