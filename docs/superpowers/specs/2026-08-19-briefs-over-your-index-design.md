@@ -100,6 +100,12 @@ Sticky rather than per-run because the choice is a standing preference about you
 corpus, not a per-run consent — the per-run consent is the preview, which restates the
 disclosure every single time regardless of how the pref got there.
 
+**It is also visible and resettable outside the composer.** `preview-pref` is not only a
+popup control — Options stage 4 reads and writes it (`src/options/options.ts:439-447`), so a
+setting you turned on months ago is findable in the place users look for settings. A sticky
+preference whose only surface is the control that set it is one a user cannot audit. The
+index pref gets the same treatment, next to the preview toggle.
+
 ### 4. A checkbox, not a source row
 
 The composer's rows are things the client **feeds**: a tab it captures, a passage group it
@@ -148,6 +154,54 @@ Instead `kind: "clip"` is documented on both sides as *"an item from your index"
 new optional `itemType` carries what it actually is. The client's guard keeps accepting
 exactly `"source" | "clip"`, so a report from an un-upgraded gateway still parses.
 
+### 8. The index cannot be the sole corpus, and this slice does not change that
+
+An earlier draft of this spec claimed a run with `useIndex: true` and zero picked tabs was
+allowed, with only a copy problem to solve. That was wrong, and the contract says so
+plainly:
+
+```ts
+// briefs/brief-validate.ts
+if (!Array.isArray(rawSources) || rawSources.length === 0) {
+  throw new BriefValidationError("sources must be a non-empty array", "sources");
+}
+```
+
+`POST /v1/briefs` **400s** on an empty source list, whatever `useIndex` says. So "ask my
+index alone" — which is, almost exactly, the question box 5.1 originally wanted — is not
+reachable from this slice, and no client-side copy can make it so.
+
+It is deliberately **deferred, not smuggled in**. Allowing `sources: []` when `useIndex` is
+true is an upstream validation change with its own consequences: `declaredCount` feeds the
+"N of M selected sources were never received" gap, the feed stage would have to accept a
+run that never receives a source, and a run whose entire corpus is chosen by a search
+becomes a different consent object from one whose sources the user named. That is a slice,
+not a clause.
+
+**Consequence for this one:** the composer keeps requiring at least one pick, exactly as it
+does today. The index widens what a brief may draw on; it does not replace what you chose.
+
+### 9. The choice is disclosed where it is made, not only where it is sent
+
+The preview always renders before Send — `buildBriefPreview` has no off switch, by the same
+reasoning C4.2 applied to the targeted fetch — so the decision-1 disclosure is guaranteed to
+reach the user before anything leaves. That is necessary and it is not sufficient: by the
+time you are reading a confirmation you have already composed the brief.
+
+So the checkbox carries its own one-line description of what turning it on means, in
+**visible helper text**, not a tooltip. `src/` contains no `title=` attribute anywhere; a
+tooltip would be a new pattern whose content is invisible to touch and to keyboard users,
+for exactly the sentence they most need. The preview keeps the full statement; the checkbox
+gets the short form.
+
+### 10. A citation shows a type, never an item id
+
+An item id is `nimbus:clip:<sha256>` — a hex digest. It is the right key for the gateway and
+useless to a person: nothing in this extension accepts an item id as input, so displaying it
+offers no way to "locate" anything. `itemType` is the part a human can act on, and decision
+5 already shows it. `itemId` stays in the payload for the gateway's benefit and stays out of
+the UI.
+
 ## Shape
 
 | File | Change |
@@ -160,6 +214,7 @@ exactly `"source" | "clip"`, so a report from an un-upgraded gateway still parse
 | `src/brief/brief-view.ts` | The checkbox; the indexed-citation marker in `renderCitations` |
 | `src/brief/brief.ts` | Read the pref on load, write it on toggle, pass it to `brief-start` |
 | `src/shared/preview.ts` | `BriefPreview.indexNotice`; `buildBriefPreview` takes `useIndex` |
+| `src/options/options.ts` + `options.html` | The pref's second surface, beside the preview toggle (decision 3) |
 | `src/options/brief-log-view.ts` | Show that a logged run consulted the index |
 | `src/shared/brief-report.ts` | `isCitation` accepts `itemType` and `itemId` |
 | `src/shared/brief-log.ts` | `BriefLogEntry.usedIndex` / `.indexHits` + guard |
@@ -181,7 +236,8 @@ one boolean and writes one log field.
 | Semantic unavailable | Its own gap line — recall was keyword-only |
 | Pref unreadable | Falls back **off** (decision 3) |
 | Report from an older gateway | No `itemType`; citations render with the index marker and no type label |
-| `useIndex` on, no tabs picked | Allowed — the index is a legitimate sole corpus. The source-count copy must not say "0 sources" as if the run were empty |
+| `useIndex` on, no tabs picked | **Impossible to send** — see decision 8. The composer's existing "at least one pick" behaviour is unchanged and still correct |
+| Empty question | Already blocked twice: `showPreview` (`src/brief/brief.ts:117`) hides the preview when `question === ""`, and the gateway rejects it with 400 `brief must be a non-empty string` |
 
 ## Testing
 
@@ -190,6 +246,12 @@ carrying the flag both ways; `buildBriefPreview` emitting the notice only when o
 exact wording; `isCitation` accepting the new optional fields and still rejecting a bad
 `kind`; `isBriefLogEntry` accepting old entries without the new fields; the pref store's
 default-off and fallback-off.
+
+One case earns its own test because it is a compatibility guarantee rather than a behaviour:
+**a citation whose `itemType` is a value this build has never heard of — `"slack_message"`
+from a connector added to the gateway after this client shipped — must parse and render.**
+`itemType` is an optional string of *any* value, never an enum; connectors land upstream on
+their own schedule, so an enum here would break on somebody else's release.
 
 E2E (`test/e2e/`, against `mock-gateway.ts`) asserts the flag reaches the wire and the
 disclosure is on screen before Send. **`mock-gateway.ts` does not serve index hits today**
@@ -218,6 +280,12 @@ only once the search is actually wider.
   contract change and a composer surface for a choice nobody has asked for.
 - **Open-in-Nimbus on a citation.** Dropped by 4.1; not revived here.
 - **Index search anywhere but briefs.** The panel's related lane has its own path.
+- **An index-only brief.** Blocked upstream by a non-empty `sources` requirement, and worth
+  its own slice rather than a clause in this one — decision 8.
+- **A minimum question length.** A one-character question makes a bad brief with or without
+  the index, so it is not this slice's rule to invent; `MAX_BRIEF_CHARS` exists upstream and
+  no minimum does. If one is wanted it belongs in `brief-validate.ts`, applied to every
+  brief equally.
 
 ## Corrections to the roadmap
 
