@@ -49,10 +49,11 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 ### Added
 
 - **Ask a brief to draw on what you already know.** A research brief was built
-  only from the tabs you picked and the passages you highlighted; the pages you
-  had already clipped sat one process away and were never consulted. Tick **Also
-  search your saved clips** in the composer and the gateway searches them with
-  your question and may draw on up to 8 matching items, cited in the finished
+  only from the tabs you picked and the passages you highlighted; everything
+  Nimbus had already indexed sat one process away and was never consulted. Tick
+  **Also search what Nimbus has indexed** in the composer and the gateway
+  searches it with your question and may draw on up to 8 matching items, cited
+  in the finished
   brief and marked as coming from your index rather than from a tab you chose.
   Off unless you turn it on, and your choice is remembered — it is also in
   Options, with the same one-line description beside it. Because the client

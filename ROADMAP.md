@@ -920,12 +920,12 @@ the editor structurally cannot.*
 > [`docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md`](./docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md).
 
 ### C5.4 Briefs over your index · 🟢 · M — ✅ shipped
-> **What** One checkbox in the composer — **Also search your saved clips**
-> — lets a brief's gateway search its own index with the question
+> **What** One checkbox in the composer — **Also search what Nimbus has
+> indexed** — lets a brief's gateway search its own index with the question
 > text and cite what it finds, alongside the tabs and passages you picked.
 > **Why it wows** A brief has only ever been built from what you have open
-> right now; everything Nimbus already knows — every page you've clipped —
-> sat one process away and was never consulted. One box lets a brief draw on
+> right now; everything Nimbus already knows sat one process away and was
+> never consulted. One box lets a brief draw on
 > your own saved context without you going to find and re-open it.
 > **Touches** `src/shared/brief.ts`, `preview.ts`, `messages.ts`,
 > `brief-report.ts`, `brief-log.ts`; `src/background/index-pref.ts` (new),
@@ -955,18 +955,19 @@ the editor structurally cannot.*
 > indexed citation distinctly; the choice persists across sessions and is
 > visible and resettable in Options; and none of this relaxes the
 > at-least-one-pick rule the composer already enforced. ✅
-> **Status** Shipped against today's gateway, whose brief search is scoped to
-> `itemType: "web_clip"` — so today an indexed citation is, in practice, one
-> of your own clips. **Every user-facing string is deliberately narrow until
-> the upstream widening lands:** the composer checkbox and its hint, the
-> Options toggle and its hint, the pre-send `INDEX_NOTICE`, the egress-log
-> line and the changelog all say *your saved clips*, not "what Nimbus has
-> indexed", because `publish.yml` puts this copy into two public store
-> listings off a `v*` tag with no manual gate and the wider search staged as
-> `dev/asafgolombek/brief-index-widening` in the Nimbus repo is designed but
-> not yet merged. A citation's "from your index" is the one exemption — true
-> both today and after the widening, since a clip is in your index. When that
-> `web_clip` filter goes, those nouns widen with it and nothing else changes.
+> **Status** Shipped in two steps, and the second one is the point. It shipped
+> with every user-facing string deliberately NARROW — *your saved clips* —
+> because the gateway's brief search was still scoped to `itemType:
+> "web_clip"`, and `publish.yml` puts this copy into two public store listings
+> off a `v*` tag with no manual gate, so a claim true only of an unmerged
+> branch would have reached users before the behaviour did. The widening then
+> landed upstream (Nimbus#1253) and the nouns widened with it: the composer
+> checkbox and its hint, the Options toggle and its hint, `INDEX_NOTICE`, the
+> egress-log line, the changelog and the docs. A citation's "from your index"
+> never moved — true on both sides, since a clip is in your index. The rule
+> that produced the narrow phase is the durable part: a client string that
+> describes gateway behaviour states what the SHIPPED gateway does, and
+> `test/unit/preview.test.ts` pins whichever side is currently true.
 > **The index cannot be a brief's sole corpus, and this does not
 > change that:** `POST /v1/briefs` 400s on an empty `sources` array
 > regardless of `useIndex`, so an index-only brief — almost exactly what 5.1

@@ -160,17 +160,20 @@ export const SYNTHESIS_NOTICE =
  * question does not, and a disclosure that mentioned only the corpus would be
  * true and still misleading.
  *
- * "Your saved clips" is DELIBERATELY narrower than "what Nimbus has indexed",
- * and it is the accurate noun today: the gateway's brief search is scoped to
- * `itemType: "web_clip"`, so a clip is the only thing that can come back. The
- * wider search is designed upstream (`dev/asafgolombek/brief-index-widening` in
- * the Nimbus repo) but not merged, and a tag ships this string to two public
- * store listings with no manual gate in between — so the copy states what is
- * true of the shipped gateway, not what is true of a branch. WHEN THAT FILTER
- * GOES, this noun widens; nothing else here changes.
+ * The noun was deliberately narrow — "your saved clips" — while the gateway's
+ * brief search was still scoped to `itemType: "web_clip"`, because `publish.yml`
+ * ships this string to two public store listings off a `v*` tag with no manual
+ * gate in between. That filter is gone (Nimbus#1253), so the noun widened here
+ * to match what the gateway actually searches. Only the noun moved: the bound of
+ * 8, the cannot-be-listed statement and the question-egress statement are the
+ * same words they have always been.
+ *
+ * The rule that produced the narrow phase still stands, and is the one to apply
+ * next time: this string states what is true of the SHIPPED gateway, never what
+ * is true of a branch.
  */
 export const INDEX_NOTICE =
-  "Your gateway will also search your saved clips and may draw on up to 8 items. Which ones cannot be listed before the run — the finished brief names every one it used. Your question is the text that gets searched, and searching may send it to whichever embedding provider your gateway is configured to use.";
+  "Your gateway will also search what it has indexed and may draw on up to 8 items. Which ones cannot be listed before the run — the finished brief names every one it used. Your question is the text that gets searched, and searching may send it to whichever embedding provider your gateway is configured to use.";
 
 /**
  * A brief run, source by source.

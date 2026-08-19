@@ -661,7 +661,7 @@ describe("options.html stages", () => {
   // for the same preference and gets the same disclosure.
   test("the index toggle carries its description in VISIBLE text, not a tooltip", () => {
     expect(html).toContain('id="index-hint"');
-    expect(html).toContain("Adds up to 8 matching items from your saved clips");
+    expect(html).toContain("Adds up to 8 matching items from your index");
     expect(html).toContain("whichever embedding provider your gateway is configured to use");
     // A tooltip is invisible to touch and to keyboard users, for exactly the
     // sentence they most need. src/ contains no title= anywhere; keep it that way.
