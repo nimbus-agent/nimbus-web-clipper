@@ -61,6 +61,12 @@ export function renderBriefLog(root: HTMLElement, entries: readonly BriefLogEntr
     li.appendChild(el("p", new Date(entry.at).toLocaleString(), "brief-log__when"));
     li.appendChild(el("p", entry.question, "brief-log__question"));
     li.appendChild(el("p", describeEntry(entry), "brief-log__what"));
+    // Strict equality: an absent field means "not recorded" (an entry written
+    // before this field existed), which is not the same as "did not happen".
+    // Claiming either way about an old entry would be inventing a fact.
+    if (entry.usedIndex === true) {
+      li.appendChild(el("p", "Also searched what Nimbus has indexed.", "brief-log__index"));
+    }
     if (entry.savedItemId !== undefined) {
       li.appendChild(el("p", "Saved to your index.", "brief-log__saved"));
     }

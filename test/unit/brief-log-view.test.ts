@@ -94,4 +94,40 @@ describe("renderBriefLog", () => {
     expect(root.querySelector("b")).toBeNull();
     expect(root.textContent).toContain("<b>hi</b>");
   });
+
+  it("says when a logged run also searched your index", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: true,
+      },
+    ]);
+    expect(root.textContent?.toLowerCase()).toContain("index");
+  });
+
+  it("says nothing about the index for a run that did not search it", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: false,
+      },
+    ]);
+    expect(root.textContent?.toLowerCase()).not.toContain("index");
+  });
+
+  it("says nothing for an entry written before the field existed", () => {
+    // Absent means "not recorded", which is NOT the same as "did not happen".
+    renderBriefLog(root, [
+      { runId: "r1", at: 1, question: "q", sourceCount: 2, truncatedCount: 0 },
+    ]);
+    expect(root.textContent?.toLowerCase()).not.toContain("index");
+  });
 });
