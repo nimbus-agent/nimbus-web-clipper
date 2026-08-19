@@ -248,14 +248,15 @@ describe("buildBriefPreview with the index option", () => {
     expect((p.indexNotice ?? "").toLowerCase()).not.toContain("stays on your machine");
   });
 
-  // Today's gateway scopes a brief's index search to `itemType: "web_clip"`, so
-  // "your saved clips" is what is actually true and "what Nimbus has indexed"
-  // would be an over-claim shipped to two public store listings by one tag. This
-  // test is the thing that has to change when the upstream widening lands.
-  it("names the SHIPPED corpus — saved clips — not the wider one that is not merged", () => {
+  // The gateway's brief search no longer filters to `itemType: "web_clip"`
+  // (Nimbus#1253), so the notice names the whole index. Its predecessor asserted
+  // the opposite — that the notice said "saved clips" and NOT "has indexed" —
+  // which is what kept the wider claim out of two public store listings while
+  // the widening was still an unmerged branch. Same rule, other side of it now.
+  it("names the corpus the shipped gateway actually searches", () => {
     const p = buildBriefPreview({ question: "q", sources: [SOURCE], useIndex: true });
     const notice = (p.indexNotice ?? "").toLowerCase();
-    expect(notice).toContain("saved clips");
-    expect(notice).not.toContain("has indexed");
+    expect(notice).toContain("has indexed");
+    expect(notice).not.toContain("saved clips");
   });
 });

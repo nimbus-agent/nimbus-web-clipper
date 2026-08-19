@@ -1253,7 +1253,7 @@ pointer, while dropping an unsaved one loses the only record anywhere. It render
 in Options stage 4 and is **not** cleared on unpair — a past egress does not
 un-happen when the pairing changes.
 
-### Also searching your saved clips (C5.4)
+### Also searching what Nimbus has indexed (C5.4)
 
 `useIndex` is one boolean that travels a short, fully-typed path:
 `brief-view.ts`'s checkbox → `index-pref.ts` (`isIndexSearchEnabled` /
@@ -1271,7 +1271,7 @@ searches the index during the run, over a corpus this client cannot read in
 advance — so `buildBriefPreview` cannot name the items the way it names every
 tab and passage. Naming a guess the finished report would then contradict
 would be worse than the alternative: `INDEX_NOTICE` (`shared/preview.ts`)
-states that the gateway will also search your saved clips, that it may draw on
+states that the gateway will also search what it has indexed, that it may draw on
 up to 8 items that cannot be listed before the run, and that the question text
 itself is what gets searched — including that the search may send that text
 to whichever embedding provider the gateway is configured to use. The report
@@ -1289,16 +1289,20 @@ pre-send notice named. Options renders the count beside the marker, and only
 when it was recorded: a run whose report never arrived keeps the marker without
 a count rather than implying zero.
 
-**The user-facing noun is deliberately narrow.** Today's gateway scopes the
-brief search to `itemType: "web_clip"`, so every user-facing string says *your
-saved clips* — the composer checkbox and its hint, the Options toggle and its
-hint, `INDEX_NOTICE`, and the egress-log line. The wider search is designed
-upstream (`dev/asafgolombek/brief-index-widening` in the Nimbus repo) and is
-not merged; `publish.yml` uploads to two public store listings off a `v*` tag
-with no manual gate, so the shipped copy describes the shipped gateway. One
-string is exempt and stays: a citation reads "from your index", which is true
-before and after the widening, because a clip *is* in your index. When the
-`web_clip` filter goes, those nouns widen together.
+**The user-facing noun tracks the shipped gateway, not a branch.** It shipped
+narrow — *your saved clips* — while the gateway still scoped the brief search
+to `itemType: "web_clip"`, because `publish.yml` uploads to two public store
+listings off a `v*` tag with no manual gate, so a claim that is only true of an
+unmerged branch would have reached users before the behaviour did. That filter
+is gone (Nimbus#1253), so the nouns widened together: the composer checkbox and
+its hint, the Options toggle and its hint, `INDEX_NOTICE`, and the egress-log
+line. A citation's "from your index" never moved and never needed to — a clip
+*is* in your index, so it was true on both sides of the change.
+
+The rule outlives this instance: when a client string describes gateway
+behaviour, it states what the shipped gateway does. `test/unit/preview.test.ts`
+pins whichever side of that is currently true, so widening early — or failing
+to widen after the gateway does — fails loudly rather than drifting.
 
 The index widens what a brief may draw on; it does not replace what the user
 chose — `POST /v1/briefs` 400s on an empty `sources` array regardless of

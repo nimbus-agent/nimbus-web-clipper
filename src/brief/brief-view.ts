@@ -322,13 +322,13 @@ export function renderComposer(root: HTMLElement, model: ComposerModel): void {
   indexBox.id = "use-index";
   indexBox.checked = model.useIndex;
   indexLabel.appendChild(indexBox);
-  indexLabel.appendChild(el("span", "Also search your saved clips"));
+  indexLabel.appendChild(el("span", "Also search what Nimbus has indexed"));
   // Visible helper text, never a tooltip: the disclosure that reaches the user at
   // Send arrives after they have composed. This one is at the moment of choosing.
   indexLabel.appendChild(
     el(
       "span",
-      "Adds up to 8 matching items from your saved clips as extra sources. Your question is what gets searched.",
+      "Adds up to 8 matching items from your index as extra sources. Your question is what gets searched.",
       "brief__index-hint",
     ),
   );

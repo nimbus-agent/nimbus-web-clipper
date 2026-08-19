@@ -106,7 +106,7 @@ describe("renderBriefLog", () => {
         usedIndex: true,
       },
     ]);
-    expect(root.textContent?.toLowerCase()).toContain("saved clips");
+    expect(root.textContent?.toLowerCase()).toContain("has indexed");
   });
 
   it("says nothing about the index for a run that did not search it", () => {
@@ -120,7 +120,6 @@ describe("renderBriefLog", () => {
         usedIndex: false,
       },
     ]);
-    expect(root.textContent?.toLowerCase()).not.toContain("saved clips");
     expect(root.textContent?.toLowerCase()).not.toContain("index");
   });
 
@@ -129,7 +128,6 @@ describe("renderBriefLog", () => {
     renderBriefLog(root, [
       { runId: "r1", at: 1, question: "q", sourceCount: 2, truncatedCount: 0 },
     ]);
-    expect(root.textContent?.toLowerCase()).not.toContain("saved clips");
     expect(root.textContent?.toLowerCase()).not.toContain("index");
   });
 
@@ -146,7 +144,7 @@ describe("renderBriefLog", () => {
       },
     ]);
     expect(root.querySelector(".brief-log__index")?.textContent).toBe(
-      "Also searched your saved clips, and drew on 3 of them.",
+      "Also searched what Nimbus has indexed, and drew on 3 items.",
     );
   });
 
@@ -163,7 +161,7 @@ describe("renderBriefLog", () => {
       },
     ]);
     const text = root.querySelector(".brief-log__index")?.textContent;
-    expect(text).toBe("Also searched your saved clips — nothing from them reached the brief.");
+    expect(text).toBe("Also searched what Nimbus has indexed — nothing from it reached the brief.");
     // indexHits counts what the report CITED, not what the gateway's search
     // matched — this client never sees the search's own results, so the zero
     // case must not claim anything about matching.
@@ -185,7 +183,7 @@ describe("renderBriefLog", () => {
       },
     ]);
     expect(root.querySelector(".brief-log__index")?.textContent).toBe(
-      "Also searched your saved clips.",
+      "Also searched what Nimbus has indexed.",
     );
   });
 

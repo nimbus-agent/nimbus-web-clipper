@@ -62,12 +62,12 @@ function describeIndex(entry: BriefLogEntry): string | null {
     return null;
   }
   if (entry.indexHits === undefined) {
-    return "Also searched your saved clips.";
+    return "Also searched what Nimbus has indexed.";
   }
   if (entry.indexHits === 0) {
-    return "Also searched your saved clips — nothing from them reached the brief.";
+    return "Also searched what Nimbus has indexed — nothing from it reached the brief.";
   }
-  return `Also searched your saved clips, and drew on ${entry.indexHits} of them.`;
+  return `Also searched what Nimbus has indexed, and drew on ${entry.indexHits} items.`;
 }
 
 export function renderBriefLog(root: HTMLElement, entries: readonly BriefLogEntry[]): void {
