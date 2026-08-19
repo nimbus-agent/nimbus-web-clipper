@@ -88,7 +88,7 @@ as `@nimbus-dev/sdk@^1.11.1`. The Python binding does **not** mirror brief types
 
 ```ts
 export type WhyChangeSubject = {
-  itemId: string;          // index item primary key, e.g. "github:acme/web#482"
+  itemId: string;          // OPAQUE "<service>:<externalId>" — see below
   entityId: string;        // graph_entity.id for the pr
   repo: string;            // "acme/web"
   number: number | null;
@@ -122,6 +122,29 @@ false line.
 **`query.ref` carries the PR URL on this arm**, with `line: null`. `query` is an
 echo of what was asked, and `agents.impact` sets the precedent for one field
 holding either shape (`query: { fileOrPrUrl }`).
+
+**`itemId` is opaque and must not be parsed.** Item keys are
+`` `${service}:${externalId}` `` (`index/item-key.ts:12`) and the external id is
+connector-defined: `repoFull#N` for GitHub and Bitbucket, but
+`pathWithNamespace!iid` for GitLab merge requests — `gitlab:group/project!482`.
+Publishing a `<service>:<repo>#<number>` grammar would hand consumers the exact
+parse §2 exists to abolish, so the SDK's doc comment says opaque, gives both
+shapes as examples, and says to ask the index. The first draft of this spec got
+that wrong; the final review of the SDK slice caught it.
+
+**The three states of `changeSubject`, decided here so the gateway is not
+written against a guess:**
+
+| State | Means |
+| --- | --- |
+| absent | a `ref`-shaped question — there was no change subject to resolve |
+| `null` | a `prUrl`-shaped question whose subject did **not** resolve (§2.2's `not_indexed` / `ambiguous` / `not_a_pr`), mirroring `subject: null` for an unresolvable `ref` |
+| a value | a `prUrl`-shaped question that resolved |
+
+On the `prUrl` arm `subject` is **always** null. The two are alternatives, never
+both — the type cannot enforce that, so the gateway upholds it. Note
+`JSON.stringify` erases `undefined`, so "absent" is the only wire representation
+an unset field has; that is why the miss arm is `null` rather than omission.
 
 ### 1.2 Gateway params
 
@@ -336,6 +359,10 @@ The type is SDK-owned, so the ordering is forced:
 2. **`Nimbus`** (`dev/asafgolombek/why-from-a-pr`) — bump the dep, then:
    `pr-subject.ts`, the impact fix (failing test first), `why`'s `prUrl` arm,
    the lane refactor, the render branch, `nimbus why <url>` in the CLI, tests.
+   **First edit of that slice, easily missed:** the gateway does not import brief
+   types from the SDK directly — `packages/gateway/src/agents/_lib/findings.ts`
+   re-exports them **by explicit name**. `WhyChangeSubject` has to be added to
+   that list or no gateway code can name the type.
 3. **`nimbus-web-clipper`** (`worktree-c2-4-why-from-a-pr`) — the lane, the
    gate, the guard, tests, `CHANGELOG.md`, and C2.4 in `ROADMAP.md` flips
    🟡 → ✅ with a status note recording what shipped versus what was briefed.
