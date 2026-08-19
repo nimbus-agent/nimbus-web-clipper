@@ -101,15 +101,21 @@ export type BriefSourceDecl = {
  * to capture: `BriefRun.declared` is fixed at create and never grows, and the
  * gateway reports the shortfall in the report's `gaps` ("2 of 3"). Declaring
  * only the survivors would hide it.
+ *
+ * `useIndex` asks the gateway to ALSO search what it has indexed and admit up to
+ * its own `MAX_INDEX_HITS` items as extra citable sources. It is passed through
+ * verbatim — the decision is the user's, taken at the composer and restated in
+ * the preview; this builder does not second-guess it.
  */
 export function buildCreateBody(
   question: string,
   sources: readonly BriefSourceDecl[],
-): { brief: string; sources: BriefSourceDecl[]; useIndex: false } {
+  useIndex: boolean,
+): { brief: string; sources: BriefSourceDecl[]; useIndex: boolean } {
   return {
     brief: question.slice(0, BRIEF_CAPS.maxQuestionChars),
     sources: sources.slice(0, BRIEF_CAPS.maxSources).map((s) => ({ url: s.url, title: s.title })),
-    useIndex: false,
+    useIndex,
   };
 }
 

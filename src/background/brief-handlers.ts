@@ -371,7 +371,7 @@ export async function handleBriefStart(
   const created = await deps.client.createBrief(
     conn.origin,
     conn.token,
-    buildCreateBody(req.question, sources.map(declare)),
+    buildCreateBody(req.question, sources.map(declare), false),
   );
   if (!created.ok) {
     const hint = "hint" in created ? created.hint : undefined;

@@ -117,7 +117,7 @@ function commonError(status: number): BriefError | null {
 export async function createBrief(
   origin: string,
   token: string,
-  body: { brief: string; sources: BriefSourceDecl[]; useIndex: false },
+  body: { brief: string; sources: BriefSourceDecl[]; useIndex: boolean },
   doFetch: FetchLike = fetch,
 ): Promise<
   | { ok: true; id: string; expected: number }
