@@ -9,7 +9,12 @@ export type BriefCitation = {
   readonly kind: "source" | "clip";
   readonly title: string;
   readonly url?: string;
+  /** Present only for a real clip — see the gateway's SourceRef. */
   readonly clipId?: string;
+  /** The index item id for any indexed hit, whatever its type. */
+  readonly itemId?: string;
+  /** The item's type, verbatim. ARBITRARY string — never validated as an enum. */
+  readonly itemType?: string;
   readonly quote?: string;
 };
 
@@ -58,6 +63,8 @@ function isCitation(v: unknown): v is BriefCitation {
     typeof v["title"] === "string" &&
     (v["url"] === undefined || typeof v["url"] === "string") &&
     (v["clipId"] === undefined || typeof v["clipId"] === "string") &&
+    (v["itemId"] === undefined || typeof v["itemId"] === "string") &&
+    (v["itemType"] === undefined || typeof v["itemType"] === "string") &&
     (v["quote"] === undefined || typeof v["quote"] === "string")
   );
 }

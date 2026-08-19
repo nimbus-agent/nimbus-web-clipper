@@ -19,8 +19,53 @@ function report(over: Partial<BriefReport> = {}): BriefReport {
 }
 
 describe("isBriefReport", () => {
+  function reportWithCitation(citation: unknown): BriefReport {
+    return report({ findings: [{ text: "f", citations: [citation as never] }] });
+  }
+
   it("accepts a well-formed local report", () => {
     expect(isBriefReport(report())).toBe(true);
+  });
+
+  it("accepts a citation carrying itemType and itemId", () => {
+    expect(
+      isBriefReport({
+        summary: "s",
+        findings: [
+          {
+            text: "t",
+            citations: [
+              {
+                kind: "clip",
+                title: "PR 482",
+                itemId: "nimbus:pull_request:acme/web/482",
+                itemType: "pull_request",
+              },
+            ],
+          },
+        ],
+        conflicts: [],
+        gaps: [],
+        synthesis: { model: "m", remote: false },
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts an itemType this build has never heard of", () => {
+    // Connectors are added to the gateway on their own schedule. An enum here
+    // would guarantee a break on somebody else's release.
+    const report = reportWithCitation({
+      kind: "clip",
+      title: "standup",
+      itemType: "slack_message",
+    });
+    expect(isBriefReport(report)).toBe(true);
+  });
+
+  it("still rejects a non-string itemType", () => {
+    expect(isBriefReport(reportWithCitation({ kind: "clip", title: "x", itemType: 7 }))).toBe(
+      false,
+    );
   });
 
   it("accepts a remote report carrying a disclosure", () => {
