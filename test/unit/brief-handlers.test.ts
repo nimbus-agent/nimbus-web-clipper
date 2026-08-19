@@ -494,6 +494,23 @@ describe("handleBriefStart with mixed picks", () => {
     expect(forgotten).toEqual(["http://h/b"]);
   });
 
+  it("a forgetPassages dep that throws synchronously does not fail a live run", async () => {
+    // `.catch()` alone only covers a rejected promise. The dep is `async` today
+    // so it cannot throw synchronously in production, but the guarantee — a
+    // storage failure here must never turn a live run into a reported failure
+    // — should hold even for a dep that does.
+    const state = await handleBriefStart(
+      deps({
+        passages: async () => [{ url: "http://h/b", title: "B", text: "one", at: 5 }],
+        forgetPassages: () => {
+          throw new Error("boom");
+        },
+      }),
+      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+    );
+    expect(state.kind).toBe("done");
+  });
+
   it("a passage collected while the run was feeding survives the clear", async () => {
     // The collection is read ONCE, at the top of handleBriefStart, and the feed
     // that follows can take tens of seconds. Anything collected in that window

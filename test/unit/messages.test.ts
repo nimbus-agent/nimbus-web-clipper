@@ -791,6 +791,20 @@ describe("isBriefStartRequest picks", () => {
     expect(isBriefStartRequest({ kind: "brief-start", picks: [{ kind: "tab", id: 1 }] })).toBe(
       false,
     );
+    expect(
+      isBriefStartRequest({
+        ...base,
+        question: "q".repeat(BRIEF_CAPS.maxQuestionChars + 1),
+        picks: [{ kind: "tab", id: 1 }],
+      }),
+    ).toBe(false);
+  });
+
+  // Before `picks`, a request named its tabs as `{tabIds: number[]}`. `picks` is
+  // absent from that shape, so it reads as `undefined` and fails the
+  // `Array.isArray` check — the old shape is rejected, not silently accepted.
+  test("rejects the old {tabIds} shape", () => {
+    expect(isBriefStartRequest({ kind: "brief-start", question: "q", tabIds: [1, 2] })).toBe(false);
   });
 });
 
