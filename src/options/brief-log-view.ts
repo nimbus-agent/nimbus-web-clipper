@@ -65,7 +65,7 @@ export function renderBriefLog(root: HTMLElement, entries: readonly BriefLogEntr
     // before this field existed), which is not the same as "did not happen".
     // Claiming either way about an old entry would be inventing a fact.
     if (entry.usedIndex === true) {
-      li.appendChild(el("p", "Also searched what Nimbus has indexed.", "brief-log__index"));
+      li.appendChild(el("p", "Also searched your saved clips.", "brief-log__index"));
     }
     if (entry.savedItemId !== undefined) {
       li.appendChild(el("p", "Saved to your index.", "brief-log__saved"));

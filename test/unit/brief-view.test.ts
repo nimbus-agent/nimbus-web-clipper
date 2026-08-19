@@ -597,7 +597,10 @@ describe("composer index control", () => {
   it("explains what the control does IN VISIBLE TEXT, not a tooltip", () => {
     const root = renderComposerInto({ useIndex: false });
     const label = root.querySelector(".brief__index");
-    expect(label?.textContent?.toLowerCase()).toContain("indexed");
+    // "saved clips", not "indexed": the shipped gateway scopes a brief's index
+    // search to `itemType: "web_clip"`, so the narrow noun is the true one until
+    // the upstream widening lands. See INDEX_NOTICE's comment in shared/preview.ts.
+    expect(label?.textContent?.toLowerCase()).toContain("saved clips");
     // A tooltip is invisible to touch and to keyboard users, for exactly the
     // sentence they most need. src/ contains no title= anywhere; keep it that way.
     expect(root.querySelector("[title]")).toBeNull();

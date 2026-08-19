@@ -729,7 +729,7 @@ running. Within a minute the alarm should resume the poll and the result should
 still land. Whether Chrome preserves a registered alarm across a genuine eviction
 is Chrome's behaviour, not ours.
 
-## Manual verification — Also search what Nimbus has indexed (C5.4)
+## Manual verification — Also search your saved clips (C5.4)
 
 Prereq: paired. `test/e2e/index-brief.e2e.ts` drives every step below against
 the mock gateway, whose `POST /v1/briefs` now records the `useIndex` a create
@@ -744,7 +744,7 @@ citations.
 1. <!-- e2e:index-brief-1 --> Open the brief composer, pick a page, and type a
    question. Before ticking anything, the preview says nothing about the
    index.
-2. <!-- e2e:index-brief-2 --> Tick **Also search what Nimbus has indexed**.
+2. <!-- e2e:index-brief-2 --> Tick **Also search your saved clips**.
    The preview now names the bound (up to 8 items), says those items cannot
    be listed in advance, and says the question itself is the text that gets
    searched.

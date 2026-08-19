@@ -920,8 +920,8 @@ the editor structurally cannot.*
 > [`docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md`](./docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md).
 
 ### C5.4 Briefs over your index · 🟢 · M — ✅ shipped
-> **What** One checkbox in the composer — **Also search what Nimbus has
-> indexed** — lets a brief's gateway search its own index with the question
+> **What** One checkbox in the composer — **Also search your saved clips**
+> — lets a brief's gateway search its own index with the question
 > text and cite what it finds, alongside the tabs and passages you picked.
 > **Why it wows** A brief has only ever been built from what you have open
 > right now; everything Nimbus already knows — every page you've clipped —
@@ -957,11 +957,17 @@ the editor structurally cannot.*
 > at-least-one-pick rule the composer already enforced. ✅
 > **Status** Shipped against today's gateway, whose brief search is scoped to
 > `itemType: "web_clip"` — so today an indexed citation is, in practice, one
-> of your own clips, even though the composer's copy already says "what
-> Nimbus has indexed". That phrasing is written for the wider search staged
-> as `dev/asafgolombek/brief-index-widening` in the Nimbus repo, which is
-> designed but not yet merged; until it lands the phrase is a slight
-> over-claim. **The index cannot be a brief's sole corpus, and this does not
+> of your own clips. **Every user-facing string is deliberately narrow until
+> the upstream widening lands:** the composer checkbox and its hint, the
+> Options toggle and its hint, the pre-send `INDEX_NOTICE`, the egress-log
+> line and the changelog all say *your saved clips*, not "what Nimbus has
+> indexed", because `publish.yml` puts this copy into two public store
+> listings off a `v*` tag with no manual gate and the wider search staged as
+> `dev/asafgolombek/brief-index-widening` in the Nimbus repo is designed but
+> not yet merged. A citation's "from your index" is the one exemption — true
+> both today and after the widening, since a clip is in your index. When that
+> `web_clip` filter goes, those nouns widen with it and nothing else changes.
+> **The index cannot be a brief's sole corpus, and this does not
 > change that:** `POST /v1/briefs` 400s on an empty `sources` array
 > regardless of `useIndex`, so an index-only brief — almost exactly what 5.1
 > originally asked for — stays unreachable from the composer; allowing

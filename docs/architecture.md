@@ -1253,7 +1253,7 @@ pointer, while dropping an unsaved one loses the only record anywhere. It render
 in Options stage 4 and is **not** cleared on unpair — a past egress does not
 un-happen when the pairing changes.
 
-### Also searching what Nimbus has indexed (C5.4)
+### Also searching your saved clips (C5.4)
 
 `useIndex` is one boolean that travels a short, fully-typed path:
 `brief-view.ts`'s checkbox → `index-pref.ts` (`isIndexSearchEnabled` /
@@ -1267,17 +1267,28 @@ the opposite direction from `preview-pref.ts`, because the fail-safe direction
 for a control that *widens* what a run consults is "don't."
 
 **The disclosure names a bound, not a list.** With the flag on, the gateway
-searches its index during the run, over a corpus this client cannot read in
+searches the index during the run, over a corpus this client cannot read in
 advance — so `buildBriefPreview` cannot name the items the way it names every
 tab and passage. Naming a guess the finished report would then contradict
 would be worse than the alternative: `INDEX_NOTICE` (`shared/preview.ts`)
-states that the gateway will also search its index, that it may draw on up to
-8 items that cannot be listed before the run, and that the question text
+states that the gateway will also search your saved clips, that it may draw on
+up to 8 items that cannot be listed before the run, and that the question text
 itself is what gets searched — including that the search may send that text
 to whichever embedding provider the gateway is configured to use. The report
 that comes back is where enumeration belongs: every item actually used is
 cited, and an indexed citation is visibly marked as such (`renderCitations`)
 rather than reading like a tab the user picked.
+
+**The user-facing noun is deliberately narrow.** Today's gateway scopes the
+brief search to `itemType: "web_clip"`, so every user-facing string says *your
+saved clips* — the composer checkbox and its hint, the Options toggle and its
+hint, `INDEX_NOTICE`, and the egress-log line. The wider search is designed
+upstream (`dev/asafgolombek/brief-index-widening` in the Nimbus repo) and is
+not merged; `publish.yml` uploads to two public store listings off a `v*` tag
+with no manual gate, so the shipped copy describes the shipped gateway. One
+string is exempt and stays: a citation reads "from your index", which is true
+before and after the widening, because a clip *is* in your index. When the
+`web_clip` filter goes, those nouns widen together.
 
 The index widens what a brief may draw on; it does not replace what the user
 chose — `POST /v1/briefs` 400s on an empty `sources` array regardless of

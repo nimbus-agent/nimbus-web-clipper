@@ -106,7 +106,7 @@ describe("renderBriefLog", () => {
         usedIndex: true,
       },
     ]);
-    expect(root.textContent?.toLowerCase()).toContain("index");
+    expect(root.textContent?.toLowerCase()).toContain("saved clips");
   });
 
   it("says nothing about the index for a run that did not search it", () => {
@@ -120,6 +120,7 @@ describe("renderBriefLog", () => {
         usedIndex: false,
       },
     ]);
+    expect(root.textContent?.toLowerCase()).not.toContain("saved clips");
     expect(root.textContent?.toLowerCase()).not.toContain("index");
   });
 
@@ -128,6 +129,7 @@ describe("renderBriefLog", () => {
     renderBriefLog(root, [
       { runId: "r1", at: 1, question: "q", sourceCount: 2, truncatedCount: 0 },
     ]);
+    expect(root.textContent?.toLowerCase()).not.toContain("saved clips");
     expect(root.textContent?.toLowerCase()).not.toContain("index");
   });
 });

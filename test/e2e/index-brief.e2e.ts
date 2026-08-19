@@ -1,6 +1,6 @@
 /**
- * Covers `docs/development.md` → "Manual verification — Also search what
- * Nimbus has indexed (C5.4)", steps 1-5 (ids index-brief-1..5).
+ * Covers `docs/development.md` → "Manual verification — Also search your
+ * saved clips (C5.4)", steps 1-5 (ids index-brief-1..5).
  *
  * Every step is client-side — the composer checkbox, the preview disclosure,
  * and the citation rendering all run in the extension, so this proves the
