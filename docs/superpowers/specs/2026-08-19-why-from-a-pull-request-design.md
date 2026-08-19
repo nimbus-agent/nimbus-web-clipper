@@ -297,6 +297,11 @@ spawned — no `[[filesystem.roots]]`, no checkout, no `git blame` process.
 | `authorship` | **returns nothing.** Line-level blame has no meaning for a whole change |
 | `downstream` | **returns nothing.** It needs a file subject — and the question it answers is the shipped **impact** lane, sitting directly above this one in the same panel |
 
+**"Returns nothing" is not free — it had to be made true.** Both lanes already returned early when `subject` is null, which is exactly the `prUrl` arm, so the first draft of this spec concluded they needed no change. They do: they return early **with a gap note**, not with nothing —
+*"Cannot anchor authorship: no resolvable file/line subject for this ref"* and *"No indexed code symbols for this file — enable `code_index` on the root and sync"* — and `renderGaps` prints every gap unconditionally. A resolved pull-request brief would have ended with two notes phrased for a question the user did not ask, one of them advising a fix that changes nothing on this arm.
+
+`LaneInput` therefore carries an explicit `arm: "ref" | "change"`, set from `isWhyPrInput`, and both lanes stay silent on `"change"`. The arm is **not** inferred from `subject === null`: a `ref` that genuinely fails to resolve has the same null subject and must keep its gap note, which is a real gap in a real index. Suppressing rather than rewording is the point — `GapCategory` means *your index is missing something you could fix*, and on this arm a missing file subject is the shape of the question.
+
 The lanes stop knowing where their PR came from, which is the point: this design
 adds an entry point, not a code path.
 
@@ -327,6 +332,14 @@ with no findings (`if (rows.length === 0) continue`), so `## Authorship` and
 `## Downstream` simply never print on a PR entry. The disclosure above exists
 precisely because that skip is silent — a shorter brief with no explanation is
 the failure mode, not a stray heading.
+
+**The `## Gaps` section is a different mechanism, and it does not skip.** This
+paragraph originally stopped at the sentence above, which was wrong in a way that
+survived three reviews: lane *sections* are skipped when empty, but `renderGaps`
+prints every gap note unconditionally, and the two silent lanes were each pushing
+one. See §3 — they are suppressed on the `"change"` arm, so the disclosure this
+section designs is the last thing in the brief rather than the first of three
+contradictory ones.
 
 ## 5. The client lane (this repo)
 
