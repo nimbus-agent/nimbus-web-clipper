@@ -411,7 +411,14 @@ function renderCitations(item: BriefReportItem): HTMLElement {
     const li = el("li");
     li.appendChild(el("span", c.title, "brief__cite-title"));
     if (c.kind === "clip") {
-      const type = c.itemType === undefined ? "" : ` · ${itemTypeLabel(c.itemType)}`;
+      // The LABEL decides the separator, not the field's presence. `itemType` is
+      // deliberately unvalidated — an arbitrary connector string, never an enum —
+      // so a malformed payload can carry `""` or `"__"`, which `itemTypeLabel`
+      // correctly renders as nothing. Keying the " · " off `itemType !== undefined`
+      // then printed "from your index · " with nothing after it. Fixed here rather
+      // than in the guard: the guard must keep accepting whatever type arrives.
+      const label = c.itemType === undefined ? "" : itemTypeLabel(c.itemType);
+      const type = label === "" ? "" : ` · ${label}`;
       li.appendChild(el("span", `from your index${type}`, "brief__cite-origin"));
     }
     if (c.quote !== undefined) {

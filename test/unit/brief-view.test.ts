@@ -333,6 +333,17 @@ describe("renderCitations — index-origin marker", () => {
     expect(li.textContent).toContain("from your index");
   });
 
+  it("shows no dangling separator when the type is present but renders to nothing", () => {
+    // `itemType` is deliberately unvalidated — any connector string, never an
+    // enum — so a malformed payload really can carry "" or "__", both of which
+    // `itemTypeLabel` correctly reduces to nothing. The separator belongs to the
+    // LABEL, not to the field's presence.
+    for (const itemType of ["", "  ", "__"]) {
+      const li = renderCitationsFor([{ kind: "clip", title: "Saved", itemType }]);
+      expect(li.querySelector(".brief__cite-origin")?.textContent).toBe("from your index");
+    }
+  });
+
   it("passes an unrecognised type through without mangling it", () => {
     // The label rule is underscores-to-spaces and nothing else. An acronym must
     // survive intact: display is still a place you can misrepresent a value.
