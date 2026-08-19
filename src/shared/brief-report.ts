@@ -125,3 +125,49 @@ export function visibleGaps(report: BriefReport): readonly string[] {
 export function quotesWereOmitted(report: BriefReport): boolean {
   return report.gaps.includes(QUOTES_OMITTED_GAP);
 }
+
+/**
+ * One citation's identity, for counting.
+ *
+ * Namespaced by which id it came from, so a title can never collide with an id
+ * and a `clipId` can never collide with an `itemId`. The gateway's own ids are
+ * preferred in the order it assigns them; a `kind: "clip"` citation carrying
+ * NEITHER is still a real hit the run drew on, so it falls back to its own text
+ * rather than being dropped — undercounting an egress record is the one error
+ * this must not make.
+ */
+function citationIdentity(c: BriefCitation): string {
+  if (c.itemId !== undefined) {
+    return `item:${c.itemId}`;
+  }
+  if (c.clipId !== undefined) {
+    return `clip:${c.clipId}`;
+  }
+  return `text:${c.title}\n${c.url ?? ""}`;
+}
+
+/**
+ * How many DISTINCT indexed items a report drew on.
+ *
+ * DISTINCT ITEMS, NOT TOTAL CITATIONS, and the difference is real: one clip
+ * quoted in three findings is three citations and one item. The number this
+ * feeds is the egress log's `indexHits`, which answers "how much of your index
+ * did this run reach" — and a run that reached one clip reached one clip
+ * however many times the model leaned on it. Counting citations instead would
+ * let the record exceed the bound the pre-send notice named (up to 8 items),
+ * which is the one way this number could mislead the person reading it.
+ *
+ * `kind: "clip"` is the wire's name for an indexed hit of any type — see
+ * `BriefCitation` — so it, not `itemType`, is the test.
+ */
+export function countIndexHits(report: BriefReport): number {
+  const seen = new Set<string>();
+  for (const item of [...report.findings, ...report.conflicts]) {
+    for (const c of item.citations) {
+      if (c.kind === "clip") {
+        seen.add(citationIdentity(c));
+      }
+    }
+  }
+  return seen.size;
+}

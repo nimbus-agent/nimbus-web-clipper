@@ -1279,6 +1279,16 @@ that comes back is where enumeration belongs: every item actually used is
 cited, and an indexed citation is visibly marked as such (`renderCitations`)
 rather than reading like a tab the user picked.
 
+**The egress record completes when the report does.** `brief-log.ts`'s entry is
+written when `/run` is accepted, before any report exists, so it carries
+`usedIndex` and nothing about what came back. When the run settles,
+`settleRun` patches it with the synthesis model and `countIndexHits(report)` —
+the number of **distinct** indexed items cited, so a clip quoted in three
+findings counts once and the recorded number can never exceed the bound the
+pre-send notice named. Options renders the count beside the marker, and only
+when it was recorded: a run whose report never arrived keeps the marker without
+a count rather than implying zero.
+
 **The user-facing noun is deliberately narrow.** Today's gateway scopes the
 brief search to `itemType: "web_clip"`, so every user-facing string says *your
 saved clips* — the composer checkbox and its hint, the Options toggle and its

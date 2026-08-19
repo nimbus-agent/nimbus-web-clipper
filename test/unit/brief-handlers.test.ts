@@ -205,7 +205,38 @@ describe("handleBriefStart", () => {
   it("patches the log with the model that actually answered", async () => {
     const d = deps();
     await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
-    expect(d.log.update).toHaveBeenCalledWith("b1", { model: "llama3", remote: false });
+    expect(d.log.update).toHaveBeenCalledWith("b1", {
+      model: "llama3",
+      remote: false,
+      indexHits: 0,
+    });
+  });
+
+  it("patches the log with how many DISTINCT indexed items the report drew on", async () => {
+    // Two items, one of them cited twice: the egress record says 2, not 3.
+    // `indexHits` answers "how much of your index did this run reach", and a
+    // clip leaned on twice is still one clip.
+    const clip = { kind: "clip" as const, title: "A clip", itemId: "i1" };
+    const withHits: BriefReport = {
+      ...REPORT,
+      findings: [
+        { text: "one", citations: [clip, { kind: "source", title: "A tab" }] },
+        { text: "two", citations: [clip, { kind: "clip", title: "Other", itemId: "i2" }] },
+      ],
+    };
+    const d = deps({
+      client: client({
+        getBrief: vi.fn(() =>
+          Promise.resolve({ ok: true, status: "done", report: withHits }),
+        ) as never,
+      }),
+    });
+    await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }], useIndex: true });
+    expect(d.log.update).toHaveBeenCalledWith("b1", {
+      model: "llama3",
+      remote: false,
+      indexHits: 2,
+    });
   });
 
   it("does not log or feed when create is refused", async () => {
@@ -701,7 +732,11 @@ describe("handleBriefPoll", () => {
     (d.log.update as ReturnType<typeof vi.fn>).mockClear();
     const state = await handleBriefPoll(d, "b1");
     expect(state.kind).toBe("done");
-    expect(d.log.update).toHaveBeenCalledWith("b1", { model: "llama3", remote: false });
+    expect(d.log.update).toHaveBeenCalledWith("b1", {
+      model: "llama3",
+      remote: false,
+      indexHits: 0,
+    });
   });
 
   it("stays running while the gateway is still working", async () => {

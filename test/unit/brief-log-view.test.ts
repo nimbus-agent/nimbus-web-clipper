@@ -132,4 +132,72 @@ describe("renderBriefLog", () => {
     expect(root.textContent?.toLowerCase()).not.toContain("saved clips");
     expect(root.textContent?.toLowerCase()).not.toContain("index");
   });
+
+  it("says how many indexed items the run drew on, when that was recorded", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: true,
+        indexHits: 3,
+      },
+    ]);
+    expect(root.querySelector(".brief-log__index")?.textContent).toBe(
+      "Also searched your saved clips, and drew on 3 of them.",
+    );
+  });
+
+  it("says plainly when the search matched nothing, rather than omitting the count", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: true,
+        indexHits: 0,
+      },
+    ]);
+    expect(root.querySelector(".brief-log__index")?.textContent).toBe(
+      "Also searched your saved clips — none of them matched.",
+    );
+  });
+
+  it("still marks the search when no count was recorded — a run whose report never came", () => {
+    // `indexHits` is absent on its own schedule. The marker is what the egress
+    // record is FOR, so it renders without a count rather than inventing one.
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: true,
+        failed: true,
+      },
+    ]);
+    expect(root.querySelector(".brief-log__index")?.textContent).toBe(
+      "Also searched your saved clips.",
+    );
+  });
+
+  it("shows no count for a run that did not search at all, whatever indexHits says", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: false,
+        indexHits: 4,
+      },
+    ]);
+    expect(root.querySelector(".brief-log__index")).toBeNull();
+  });
 });

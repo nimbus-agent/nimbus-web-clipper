@@ -43,7 +43,11 @@ export type BriefLogEntry = {
    * rejected it would destroy the record this module exists to keep.
    */
   readonly usedIndex?: boolean;
-  /** How many indexed items the report drew on. Absent until the report arrives. */
+  /**
+   * How many DISTINCT indexed items the report drew on — one clip cited in three
+   * findings is one. Written by `countIndexHits` when the report arrives, so it
+   * is absent until then and absent forever on a run that failed.
+   */
   readonly indexHits?: number;
 };
 

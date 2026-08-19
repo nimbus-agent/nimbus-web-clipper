@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type BriefReport,
+  countIndexHits,
   isBriefReport,
   QUOTES_OMITTED_GAP,
   quotesWereOmitted,
@@ -136,5 +137,93 @@ describe("quotesWereOmitted", () => {
 
   it("is false for an ordinary report", () => {
     expect(quotesWereOmitted(report())).toBe(false);
+  });
+});
+
+describe("countIndexHits", () => {
+  it("is zero for a report with no indexed citation at all", () => {
+    expect(countIndexHits(report())).toBe(0);
+  });
+
+  it("counts an indexed citation, and ignores the picked sources beside it", () => {
+    const r = report({
+      findings: [
+        {
+          text: "f",
+          citations: [
+            { kind: "source", title: "A tab" },
+            { kind: "clip", title: "A clip", itemId: "i1" },
+          ],
+        },
+      ],
+    });
+    expect(countIndexHits(r)).toBe(1);
+  });
+
+  it("counts DISTINCT items — one clip cited in three findings is one", () => {
+    // The number this feeds is the egress log's "how much of your index did
+    // this run reach". Counting citations instead would say 3, and could climb
+    // past the bound of 8 the pre-send notice named — the one way it misleads.
+    const cite = { kind: "clip" as const, title: "A clip", itemId: "i1" };
+    const r = report({
+      findings: [
+        { text: "f1", citations: [cite] },
+        { text: "f2", citations: [cite, { ...cite, quote: "a different quote" }] },
+      ],
+      conflicts: [{ text: "c", citations: [cite, { kind: "source", title: "A tab" }] }],
+    });
+    expect(countIndexHits(r)).toBe(1);
+  });
+
+  it("counts conflicts as well as findings — both name what the run drew on", () => {
+    const r = report({
+      findings: [{ text: "f", citations: [{ kind: "clip", title: "One", itemId: "i1" }] }],
+      conflicts: [
+        {
+          text: "c",
+          citations: [
+            { kind: "clip", title: "Two", itemId: "i2" },
+            { kind: "clip", title: "Three", itemId: "i3" },
+          ],
+        },
+      ],
+    });
+    expect(countIndexHits(r)).toBe(3);
+  });
+
+  it("falls back to clipId, then to the citation's own text, rather than dropping a hit", () => {
+    const r = report({
+      findings: [
+        {
+          text: "f",
+          citations: [
+            { kind: "clip", title: "By clip id", clipId: "c1" },
+            { kind: "clip", title: "By clip id again", clipId: "c1" },
+            { kind: "clip", title: "No id at all", url: "https://h/x" },
+            { kind: "clip", title: "No id at all", url: "https://h/x" },
+            { kind: "clip", title: "No id at all", url: "https://h/y" },
+          ],
+        },
+      ],
+    });
+    // c1 once, (title, x) once, (title, y) once — an id-less hit is still a hit,
+    // and undercounting an egress record is the error this must not make.
+    expect(countIndexHits(r)).toBe(3);
+  });
+
+  it("never collides an itemId with a clipId, or either with a title", () => {
+    const r = report({
+      findings: [
+        {
+          text: "f",
+          citations: [
+            { kind: "clip", title: "x", itemId: "same" },
+            { kind: "clip", title: "x", clipId: "same" },
+            { kind: "clip", title: "same" },
+          ],
+        },
+      ],
+    });
+    expect(countIndexHits(r)).toBe(3);
   });
 });
