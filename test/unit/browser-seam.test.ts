@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from "vitest";
 import { setBadgeCount } from "../../src/browser/action.ts";
 import { clearAlarm, ensureAlarm, rearmAlarm } from "../../src/browser/alarms.ts";
 import { addCommandListener, getAllCommands } from "../../src/browser/commands.ts";
-import { isFirefoxRuntime } from "../../src/browser/runtime.ts";
+import { onPermissionsAdded } from "../../src/browser/permissions.ts";
+import { addBroadcastListener, isFirefoxRuntime } from "../../src/browser/runtime.ts";
 import { injectPanel, runCapture, showCue } from "../../src/browser/scripting.ts";
 import { storageGet, storageRemove, storageSet } from "../../src/browser/storage.ts";
 import {
@@ -240,6 +241,28 @@ describe("getAllCommands", () => {
   test("an absent chrome.commands API yields an empty list, not a throw", async () => {
     installChromeStub();
     expect(await getAllCommands()).toEqual([]);
+  });
+});
+
+describe("addBroadcastListener", () => {
+  test("delivers a message the worker sends unprompted", async () => {
+    harness = installChromeMock();
+    const seen: unknown[] = [];
+    addBroadcastListener((message) => seen.push(message));
+    await harness.emitMessage({ kind: "brief-state", state: { kind: "feeding" } });
+    expect(seen).toEqual([{ kind: "brief-state", state: { kind: "feeding" } }]);
+  });
+});
+
+describe("onPermissionsAdded", () => {
+  test("fires when a grant lands in another surface", () => {
+    harness = installChromeMock();
+    let calls = 0;
+    onPermissionsAdded(() => {
+      calls += 1;
+    });
+    harness.emitPermissionsAdded();
+    expect(calls).toBe(1);
   });
 });
 

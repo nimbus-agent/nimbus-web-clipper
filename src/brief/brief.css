@@ -43,6 +43,11 @@ body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
   opacity: 0.85;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+  /* Bounded, not truncated: the text is unchanged, only scrollable, so "you can
+     see what you are sending" still holds — same reasoning as `.preview__body`,
+     scaled down for a list that can hold many of these at once. */
+  max-height: 6em;
+  overflow-y: auto;
 }
 .brief__mode, .brief__drop, .brief__drop-row {
   font-size: 12px;

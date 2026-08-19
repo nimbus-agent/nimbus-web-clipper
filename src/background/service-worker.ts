@@ -667,13 +667,24 @@ async function routeBriefMessage(message: BriefMessage): Promise<unknown> {
 }
 
 /**
+ * The collection's two mutations, narrowed off the raw message.
+ *
+ * Just the `kind`: unlike `BriefMessage`'s optional `id`, nothing else here is
+ * read before the real guards (`isPassageDropRequest` / `isPassageClearRequest`)
+ * re-narrow inside the fan-out.
+ */
+type PassageMessage = {
+  readonly kind: "passage-drop" | "passage-clear";
+};
+
+/**
  * Is this one of the collection's two mutations?
  *
  * A prefix check like `isBriefMessage`'s, and for the same reason: the router is
  * at Sonar's cognitive-complexity cap, so these two kinds arrive through ONE
  * branch and are re-narrowed by their real guards inside the fan-out.
  */
-function isPassageMessage(v: unknown): boolean {
+function isPassageMessage(v: unknown): v is PassageMessage {
   if (typeof v !== "object" || v === null) {
     return false;
   }
@@ -688,7 +699,7 @@ function isPassageMessage(v: unknown): boolean {
  * read-modify-write — a menu click collecting a passage and a composer click
  * dropping one can genuinely interleave.
  */
-async function routePassageMessage(message: unknown): Promise<{ ok: boolean }> {
+async function routePassageMessage(message: PassageMessage): Promise<{ ok: boolean }> {
   if (isPassageDropRequest(message)) {
     const { url, at } = message;
     const res = await updatePassages((all) => ({

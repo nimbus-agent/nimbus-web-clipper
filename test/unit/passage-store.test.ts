@@ -83,6 +83,23 @@ describe("passage store", () => {
     expect(res).toEqual({ ok: false, reason: "storage-full" });
   });
 
+  // The lock chain is `chain = next.catch(() => undefined)` precisely so a
+  // failing update cannot wedge it for later callers. `failFirstGet` only fails
+  // once, so the second call here proves the chain kept moving.
+  test("a failed update does not wedge the lock for the next caller", async () => {
+    installChromeStub({ failFirstGet: true });
+    const { getPassages, updatePassages } = await load();
+    const failed = await updatePassages((all: readonly Passage[]) =>
+      addPassage(all, p("http://h/a", "one")),
+    );
+    expect(failed).toEqual({ ok: false, reason: "storage-full" });
+    const res = await updatePassages((all: readonly Passage[]) =>
+      addPassage(all, p("http://h/b", "two", 2)),
+    );
+    expect(res.ok).toBe(true);
+    expect(await getPassages()).toEqual([p("http://h/b", "two", 2)]);
+  });
+
   test("a failed read reaches the user as a toast, not as silence", async () => {
     installChromeStub({ failFirstGet: true });
     const { updatePassages } = await load();
