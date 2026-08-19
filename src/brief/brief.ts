@@ -120,7 +120,10 @@ function showPreview(): void {
   }
   panel.hidden = false;
   const body = root("preview-body");
-  body.replaceChildren(renderPreview(document, buildBriefPreview({ question, sources })));
+  body.replaceChildren(
+    // Task 8 wires the real value from the composer's index checkbox.
+    renderPreview(document, buildBriefPreview({ question, sources, useIndex: false })),
+  );
 }
 
 /**
