@@ -150,7 +150,7 @@ describe("renderBriefLog", () => {
     );
   });
 
-  it("says plainly when the search matched nothing, rather than omitting the count", () => {
+  it("says plainly when nothing from the search reached the brief, rather than omitting the count", () => {
     renderBriefLog(root, [
       {
         runId: "r1",
@@ -162,9 +162,12 @@ describe("renderBriefLog", () => {
         indexHits: 0,
       },
     ]);
-    expect(root.querySelector(".brief-log__index")?.textContent).toBe(
-      "Also searched your saved clips — none of them matched.",
-    );
+    const text = root.querySelector(".brief-log__index")?.textContent;
+    expect(text).toBe("Also searched your saved clips — nothing from them reached the brief.");
+    // indexHits counts what the report CITED, not what the gateway's search
+    // matched — this client never sees the search's own results, so the zero
+    // case must not claim anything about matching.
+    expect(text).not.toContain("matched");
   });
 
   it("still marks the search when no count was recorded — a run whose report never came", () => {

@@ -50,6 +50,12 @@ function describeEntry(entry: BriefLogEntry): string {
  * The count is DISTINCT items, not total citations: `countIndexHits` dedupes a
  * clip quoted in several findings, because the number a person reads here is
  * "how much of your index did this run reach".
+ *
+ * The zero case says "nothing from them reached the brief", not "nothing
+ * matched": the count is of what the finished report cited, not of what the
+ * gateway's search matched, and this client never sees the search's own
+ * results — so "none of them matched" would be a claim about a system this
+ * extension cannot observe.
  */
 function describeIndex(entry: BriefLogEntry): string | null {
   if (entry.usedIndex !== true) {
@@ -59,7 +65,7 @@ function describeIndex(entry: BriefLogEntry): string | null {
     return "Also searched your saved clips.";
   }
   if (entry.indexHits === 0) {
-    return "Also searched your saved clips — none of them matched.";
+    return "Also searched your saved clips — nothing from them reached the brief.";
   }
   return `Also searched your saved clips, and drew on ${entry.indexHits} of them.`;
 }
