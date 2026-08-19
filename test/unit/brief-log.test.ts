@@ -34,6 +34,20 @@ describe("isBriefLogEntry", () => {
   it("rejects a non-boolean remote", () => {
     expect(isBriefLogEntry(entry({ remote: "yes" } as never))).toBe(false);
   });
+
+  it("accepts an entry recording that the index was consulted", () => {
+    expect(isBriefLogEntry(entry({ usedIndex: true }))).toBe(true);
+  });
+
+  it("still accepts an entry written before this field existed", () => {
+    // Old entries are the ONLY evidence their egress happened. They must not
+    // become unreadable because a later build added a field.
+    expect(isBriefLogEntry(entry())).toBe(true);
+  });
+
+  it("rejects a non-boolean usedIndex", () => {
+    expect(isBriefLogEntry(entry({ usedIndex: "yes" } as never))).toBe(false);
+  });
 });
 
 describe("evictLog", () => {

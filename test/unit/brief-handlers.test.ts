@@ -252,6 +252,22 @@ describe("handleBriefStart", () => {
     expect(append.mock.calls[0]?.[0]).toMatchObject({ truncatedCount: 1 });
   });
 
+  it("sends useIndex as the request asked, and records it on the log entry", async () => {
+    const d = deps();
+    await handleBriefStart(d, {
+      ...start,
+      useIndex: true,
+      picks: [{ kind: "tab", id: 1 }],
+    });
+    expect(d.client.createBrief).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ useIndex: true }),
+    );
+    const append = d.log.append as ReturnType<typeof vi.fn>;
+    expect(append.mock.calls[0]?.[0]).toMatchObject({ usedIndex: true });
+  });
+
   it("never puts a source body into the run store", async () => {
     const d = deps();
     await handleBriefStart(d, start);

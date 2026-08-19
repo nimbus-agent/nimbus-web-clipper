@@ -371,7 +371,7 @@ export async function handleBriefStart(
   const created = await deps.client.createBrief(
     conn.origin,
     conn.token,
-    buildCreateBody(req.question, sources.map(declare), false),
+    buildCreateBody(req.question, sources.map(declare), req.useIndex),
   );
   if (!created.ok) {
     const hint = "hint" in created ? created.hint : undefined;
@@ -417,6 +417,7 @@ export async function handleBriefStart(
     question: req.question,
     sourceCount: fed.accepted,
     truncatedCount: fed.truncated.length,
+    usedIndex: req.useIndex,
   });
   // Cleared HERE, not on the report: this is the moment the text left. Leaving
   // them would mean the next brief silently re-sends text already sent. A run
