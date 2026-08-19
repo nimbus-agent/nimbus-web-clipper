@@ -353,10 +353,14 @@ export async function handleBriefStart(
   const claimed = new Set<string>();
   for (const pick of req.picks) {
     const source = resolvePick(pick, tabs.named, groups);
-    if (source === null || claimed.has(pageKey(source))) {
+    if (source === null) {
       continue;
     }
-    claimed.add(pageKey(source));
+    const key = pageKey(source);
+    if (claimed.has(key)) {
+      continue;
+    }
+    claimed.add(key);
     picked.push(source);
   }
   const sources = picked.slice(0, BRIEF_CAPS.maxSources);
@@ -417,8 +421,16 @@ export async function handleBriefStart(
   // Cleared HERE, not on the report: this is the moment the text left. Leaving
   // them would mean the next brief silently re-sends text already sent. A run
   // that failed before this line keeps everything, because nothing left.
+  //
+  // `try`/`catch`, not `.catch()`: a storage failure here must never turn a
+  // live run into a reported failure, and `.catch()` alone only covers a
+  // rejected promise — not a dep that throws synchronously.
   if (fed.fedPassages.length > 0) {
-    await deps.forgetPassages(fed.fedPassages).catch(() => undefined);
+    try {
+      await deps.forgetPassages(fed.fedPassages);
+    } catch {
+      // Swallowed deliberately: see above.
+    }
   }
   await putPhase(deps, id, { kind: "running" });
   emit(deps, { kind: "running", id });
