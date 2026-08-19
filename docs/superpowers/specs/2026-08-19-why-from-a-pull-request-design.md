@@ -186,6 +186,63 @@ without a host table, because the item was indexed under its own `canonicalUrl`
 and the graph entity keys off the item id. It is the same resolution path
 `/v1/items/resolve` already gives this extension.
 
+### 2.1 What URL the resolver receives
+
+**The client does not normalise, deliberately.** `recognise.ts` builds
+`resolveUrl` by substituting the recognised path and then appending everything
+that followed it in the original URL (`recognise.ts:263-266`), so a PR viewed at
+`/pull/482/files?w=1` yields exactly that, not a trimmed `/pull/482`. The
+comment above that line records the reason and it is load-bearing: query
+stripping and path trimming are "work the gateway redoes under different rules —
+and its rules are load-bearing, because `externalIdFor` hashes
+`canonicalizeUrl`'s output". Only *identity* normalisation happens client-side
+(upper-casing a Jira key, so one issue has one `resolveUrl`).
+
+Absorbing sub-tabs is therefore `resolveItemByUrl`'s ladder, unchanged by this
+design: exact key, then the key with query params dropped, then up to
+`RESOLVE_MAX_TRIMMED_SEGMENTS` (3) progressively trimmed trailing segments. A
+`/pull/482/files?w=1` lands on rung 3 after one trim.
+
+Two bounded consequences, stated rather than discovered later:
+
+- **A URL more than three segments deeper than the canonical one misses** — e.g.
+  `/pull/482/commits/<sha>/file/<path>`. It misses the same way for the already
+  shipped `impact` lane and for the panel's own resolve, so this design neither
+  adds nor fixes that; the ladder's depth is the gateway's to change.
+- **`ambiguous` is only reachable after both exact rungs miss.** Trimming must
+  produce a UNIQUE match or `resolveItemByUrl` declines rather than guessing, so
+  ambiguity here means "this PR is not indexed, and trimming found its
+  neighbours". The lane treats it exactly as `not_indexed` — an unindexed PR and
+  an over-trimmed one are the same answer to the user, and guessing between
+  candidates would be worse than declining.
+
+### 2.2 When the subject does not resolve
+
+**A miss produces a brief, not an error** — the precedent is `agents.impact`,
+which on `resolveStartEntity === null` returns a normal brief with
+`startEntityId: null` and whatever gap notes its lanes produced
+(`impact.ts:96-113`). It never fails the run.
+
+`why` follows it: the `prUrl` arm emits a brief whose subject line names the miss
+(§4), with no findings. That has three consequences worth stating:
+
+- **No new `AgentError` member.** The client's `AGENT_ERRORS`
+  (`src/shared/types.ts:478`) is untouched; the lane reaches its ordinary `done`
+  state carrying text that explains the miss.
+- **The panel rarely sees it at all.** Lanes render only under a `resolved` or
+  `chosen` header, so a page that did not resolve offers no lane and instead
+  offers the targeted-sync path (**C3.1**) that already exists for exactly this
+  case. Reaching a lane-time miss requires the index to change between the
+  panel's resolve and the lane's run, or the URL to resolve to an indexed item
+  that is not a pull request (`not_a_pr` — recognition is URL-shaped, the item's
+  type is index-shaped, and they can disagree).
+- **"Indexed but ungraphed" is not a state to design for.** `item-store.ts:152`
+  calls `syncGraphFromIndexedItem` on the same write that indexes the item, and
+  `GRAPH_SYNC_BY_TYPE.pr` dispatches to `syncPrGraph`
+  (`graph-populator.ts:979`), so a `pr` item without its graph entity does not
+  arise from ordinary sync. The resolver still reports it as `not_indexed`
+  rather than asserting it cannot happen.
+
 **`agents.impact` moves onto it too.** Its symbol and topic fallbacks stay for
 non-URL input; only the PR branch is replaced. The defect is confirmed with a
 failing test on a GitLab MR URL before the fix lands — it is a claim about
@@ -235,11 +292,18 @@ solve a copy problem.
 
 Instead `renderWhySubjectLine` (`agents/_lib/render.ts:283`) branches on
 `changeSubject` **before** the existing null check, and names the pull request
-it resolved along with what this entry point cannot answer and where to get it
-(`nimbus why <file>:<line>` for authorship; the impact lane or
-`nimbus impact <url>` for downstream). One render change, no type change — and
+it resolved — repo, number and title — along with what this entry point cannot
+answer and where to get it (`nimbus why <file>:<line>` for authorship; the
+impact lane or `nimbus impact <url>` for downstream). On a resolver miss (§2.2)
+the same line names the miss instead. One render change, no type change — and
 because the panel renders the gateway's text verbatim, the browser inherits the
 disclosure with no client work.
+
+**The empty lane headings need no work.** `renderWhy` already skips any lane
+with no findings (`if (rows.length === 0) continue`), so `## Authorship` and
+`## Downstream` simply never print on a PR entry. The disclosure above exists
+precisely because that skip is silent — a shorter brief with no explanation is
+the failure mode, not a stray heading.
 
 ## 5. The client lane (this repo)
 
@@ -283,12 +347,26 @@ bump blocks on it.
 
 - **SDK** — a type-level test that an old-shaped `WhyBrief` still satisfies the
   new type (the non-breaking claim, enforced rather than asserted).
-- **Gateway** — `pr-subject.test.ts` covering all four URL shapes, a
-  self-hosted host, the GitLab bang key, and each miss arm; the GitLab-MR
-  regression test for `impact`; `why` tests for the `prUrl` arm proving the four
-  lanes answer and blame is never spawned; a render test for the subject line
-  under `changeSubject`; an `agents-rpc.why` test rejecting both-arms and
-  `whyPeek` rejecting `prUrl`.
+- **Gateway** — `pr-subject.test.ts`, which is where the forge-coverage claim
+  gets proven rather than asserted. Because the resolver does not parse, these
+  are layout-*independence* tests: each URL must resolve through the index, not
+  through a pattern.
+  - GitHub `/{owner}/{repo}/pull/N`, plus a GitHub Enterprise host.
+  - GitLab `/{group}/{project}/-/merge_requests/N`, **a nested subgroup path**
+    (`/group/subgroup/project/-/merge_requests/N`), and a self-hosted host — the
+    case that fails three ways today (§2).
+  - Bitbucket **Cloud** `/{workspace}/{repo}/pull-requests/N` and **Server**
+    `/projects/{KEY}/repos/{slug}/pull-requests/N`.
+  - A sub-tab URL (`/pull/N/files?w=1`) resolving through the ladder, and a
+    URL trimmed deeper than `RESOLVE_MAX_TRIMMED_SEGMENTS` missing (§2.1).
+  - Each miss arm: `not_indexed`, `ambiguous`, `not_a_pr`.
+
+  Then: the GitLab-MR regression test for `impact` (written failing, before the
+  fix); `why` tests for the `prUrl` arm proving the four lanes answer, that
+  blame is never spawned, and that a miss returns a brief rather than failing
+  the run; a render test for the subject line under `changeSubject` and under a
+  miss; an `agents-rpc.why` test rejecting a both-arms payload and `whyPeek`
+  rejecting `prUrl`.
 - **Clipper** — `LANE_RULES` gating (the lane is offered on a PR and on no other
   recognised surface), the message guard, `agentParams`, and panel rendering
   under both `resolved` and `chosen`. The e2e checklist gate covers the panel
