@@ -95,7 +95,9 @@ async function loadPage(): Promise<void> {
   vi.resetModules();
   await import("../../src/brief/brief.ts");
   await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "brief-tabs" }));
-  await vi.waitFor(() => expect(document.querySelectorAll("#composer input").length).toBe(2));
+  await vi.waitFor(() =>
+    expect(document.querySelectorAll("#composer .brief__tabs input").length).toBe(2),
+  );
 }
 
 /** Select both tabs and a question — the state from which Send is meaningful. */
@@ -137,7 +139,7 @@ describe("composer", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalled());
-    expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(0);
+    expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(0);
   });
 
   test("a FAILED brief-tabs renders the error, not a claim about the browser", async () => {
@@ -169,7 +171,9 @@ describe("composer", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() =>
-      expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(21),
+      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(
+        21,
+      ),
     );
     for (let i = 1; i <= 20; i += 1) {
       tick(checkbox(i), true);
@@ -378,7 +382,9 @@ describe("collected passages", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() =>
-      expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(3),
+      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(
+        3,
+      ),
     );
   }
 
@@ -508,7 +514,9 @@ describe("collected passages", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() =>
-      expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(3),
+      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(
+        3,
+      ),
     );
   }
 
@@ -601,6 +609,6 @@ describe("re-enumeration", () => {
     harness.emitPermissionsAdded();
 
     await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledTimes(2));
-    expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(2);
+    expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(2);
   });
 });

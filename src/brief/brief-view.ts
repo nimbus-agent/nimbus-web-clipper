@@ -40,6 +40,8 @@ export type ComposerModel = {
   readonly customQuestion?: string;
   /** See `TabCandidates.enumerationFailed` — rendered, not logged. */
   readonly enumerationFailed?: boolean;
+  /** Whether this brief will also search the gateway's index. */
+  readonly useIndex: boolean;
 };
 
 /**
@@ -165,7 +167,12 @@ export function sourceCountText(picked: number): string {
  */
 export function applyPickLimit(root: HTMLElement, picked: number): void {
   const full = picked >= BRIEF_CAPS.maxSources;
-  for (const box of root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')) {
+  // Scoped to the row list: the cap is about declared sources, and the index
+  // checkbox below it is neither declared nor fed, so it must never be disabled
+  // by this.
+  for (const box of root.querySelectorAll<HTMLInputElement>(
+    '.brief__tabs input[type="checkbox"]',
+  )) {
     box.disabled = full && !box.checked;
   }
 }
@@ -304,6 +311,29 @@ export function renderComposer(root: HTMLElement, model: ComposerModel): void {
   // Both kinds count against ONE cap: the gateway's source cap is about sources,
   // and a set of passages is a source.
   root.appendChild(el("p", sourceCountText(model.selected.size), "brief__count"));
+
+  // A checkbox, NOT a row in the list above: the rows are things this client
+  // captures and feeds, and the index is neither — the gateway supplies those
+  // bodies. Putting it in the list would also enrol it in the source cap, which
+  // is about declared sources.
+  const indexLabel = el("label", undefined, "brief__index");
+  const indexBox = document.createElement("input");
+  indexBox.type = "checkbox";
+  indexBox.id = "use-index";
+  indexBox.checked = model.useIndex;
+  indexLabel.appendChild(indexBox);
+  indexLabel.appendChild(el("span", "Also search what Nimbus has indexed"));
+  // Visible helper text, never a tooltip: the disclosure that reaches the user at
+  // Send arrives after they have composed. This one is at the moment of choosing.
+  indexLabel.appendChild(
+    el(
+      "span",
+      "Adds up to 8 matching items from your own index as extra sources. Your question is what gets searched.",
+      "brief__index-hint",
+    ),
+  );
+  root.appendChild(indexLabel);
+
   if (model.passages.length > 0) {
     const clear = el("button", "Clear collected passages", "brief__clear");
     clear.type = "button";

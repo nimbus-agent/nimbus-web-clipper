@@ -54,8 +54,9 @@ describe("renderComposer", () => {
       questions: ["Where do these contradict each other?"],
       selected: new Set(["tab:1"]),
       passages: [],
+      useIndex: false,
     });
-    const boxes = root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    const boxes = root.querySelectorAll<HTMLInputElement>('.brief__tabs input[type="checkbox"]');
     expect(boxes).toHaveLength(2);
     expect(boxes[0]?.checked).toBe(true);
     expect(boxes[1]?.checked).toBe(false);
@@ -68,6 +69,7 @@ describe("renderComposer", () => {
       questions: ["q"],
       selected: new Set(),
       passages: [],
+      useIndex: false,
     });
     expect(root.textContent).toContain("3 open tabs");
     expect(root.textContent).toContain("page access");
@@ -80,6 +82,7 @@ describe("renderComposer", () => {
       questions: ["q"],
       selected: new Set(),
       passages: [],
+      useIndex: false,
     });
     expect(root.textContent).not.toContain("page access");
   });
@@ -92,9 +95,10 @@ describe("renderComposer", () => {
       selected: new Set(),
       passages: [],
       enumerationFailed: true,
+      useIndex: false,
     });
     expect(root.textContent).toContain("Couldn't read your open tabs");
-    expect(root.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+    expect(root.querySelectorAll('.brief__tabs input[type="checkbox"]')).toHaveLength(0);
   });
 
   it("offers the scaffolded questions and a COLLAPSED custom-question control", () => {
@@ -104,6 +108,7 @@ describe("renderComposer", () => {
       questions: ["What breaks if all of these land?"],
       selected: new Set(["tab:1"]),
       passages: [],
+      useIndex: false,
     });
     expect(root.textContent).toContain("What breaks if all of these land?");
     const details = root.querySelector("details");
@@ -127,8 +132,11 @@ describe("renderComposer", () => {
       questions: [],
       selected: new Set(named.slice(0, BRIEF_CAPS.maxSources).map((t) => `tab:${t.id}`)),
       passages: [],
+      useIndex: false,
     });
-    const boxes = [...root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    const boxes = [
+      ...root.querySelectorAll<HTMLInputElement>('.brief__tabs input[type="checkbox"]'),
+    ];
     expect(boxes).toHaveLength(BRIEF_CAPS.maxSources + 1);
     expect(boxes.filter((b) => b.disabled).map((b) => b.value)).toEqual([
       `tab:${BRIEF_CAPS.maxSources + 1}`,
@@ -147,8 +155,11 @@ describe("renderComposer", () => {
       questions: [],
       selected: new Set(["tab:1"]),
       passages: [],
+      useIndex: false,
     });
-    const boxes = [...root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
+    const boxes = [
+      ...root.querySelectorAll<HTMLInputElement>('.brief__tabs input[type="checkbox"]'),
+    ];
     applyPickLimit(root, BRIEF_CAPS.maxSources);
     expect(boxes.filter((b) => b.disabled)).toHaveLength(2);
     applyPickLimit(root, BRIEF_CAPS.maxSources - 1);
@@ -162,6 +173,7 @@ describe("renderComposer", () => {
       questions: ["q"],
       selected: new Set(),
       passages: [],
+      useIndex: false,
     });
     expect(root.querySelector("img")).toBeNull();
     expect(root.textContent).toContain("<img src=x onerror=alert(1)>");
@@ -362,9 +374,15 @@ function render(model: Partial<ComposerModel> = {}): HTMLElement {
     questions: [],
     selected: new Set<string>(),
     passages: [],
+    useIndex: false,
     ...model,
   });
   return host;
+}
+
+/** Alias for `render`, named the way the requirement describes it. */
+function renderComposerInto(model: Partial<ComposerModel> = {}): HTMLElement {
+  return render(model);
 }
 
 describe("composer passage rows", () => {
@@ -380,7 +398,7 @@ describe("composer passage rows", () => {
       named: [{ id: 1, url: "http://h/a#live", title: "A page" }],
       passages: [GROUP],
     });
-    const boxes = [...host.querySelectorAll("input[type=checkbox]")].map((b) =>
+    const boxes = [...host.querySelectorAll(".brief__tabs input[type=checkbox]")].map((b) =>
       b.getAttribute("value"),
     );
     expect(boxes).toEqual(["passages:http://h/a"]);
@@ -400,7 +418,9 @@ describe("composer passage rows", () => {
     });
     expect(host.querySelectorAll(".brief__tab")).toHaveLength(1);
     expect(
-      [...host.querySelectorAll("input[type=checkbox]")].map((b) => b.getAttribute("value")),
+      [...host.querySelectorAll(".brief__tabs input[type=checkbox]")].map((b) =>
+        b.getAttribute("value"),
+      ),
     ).toEqual(["passages:http://h/a"]);
   });
 
@@ -414,7 +434,9 @@ describe("composer passage rows", () => {
       ],
     });
     expect(
-      [...host.querySelectorAll("input[type=checkbox]")].map((b) => b.getAttribute("value")),
+      [...host.querySelectorAll(".brief__tabs input[type=checkbox]")].map((b) =>
+        b.getAttribute("value"),
+      ),
     ).toEqual(["tab:1"]);
   });
 
@@ -540,7 +562,7 @@ describe("composer resilience", () => {
   it("a failed enumeration with nothing collected still says only that", () => {
     const host = render({ enumerationFailed: true });
     expect(host.textContent).toContain("Couldn't read your open tabs");
-    expect(host.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
+    expect(host.querySelectorAll('.brief__tabs input[type="checkbox"]')).toHaveLength(0);
   });
 
   it("redraws the question the user has typed, in an OPEN disclosure", () => {
@@ -556,5 +578,34 @@ describe("composer resilience", () => {
     const host = render();
     expect(host.querySelector<HTMLTextAreaElement>("#custom-question")?.value).toBe("");
     expect(host.querySelector("details")?.open).toBe(false);
+  });
+});
+
+describe("composer index control", () => {
+  it("offers the index control, unchecked by default", () => {
+    const root = renderComposerInto({ useIndex: false });
+    const box = root.querySelector<HTMLInputElement>("#use-index");
+    expect(box).not.toBeNull();
+    expect(box?.checked).toBe(false);
+  });
+
+  it("reflects a preference that is already on", () => {
+    const root = renderComposerInto({ useIndex: true });
+    expect(root.querySelector<HTMLInputElement>("#use-index")?.checked).toBe(true);
+  });
+
+  it("explains what the control does IN VISIBLE TEXT, not a tooltip", () => {
+    const root = renderComposerInto({ useIndex: false });
+    const label = root.querySelector(".brief__index");
+    expect(label?.textContent?.toLowerCase()).toContain("indexed");
+    // A tooltip is invisible to touch and to keyboard users, for exactly the
+    // sentence they most need. src/ contains no title= anywhere; keep it that way.
+    expect(root.querySelector("[title]")).toBeNull();
+  });
+
+  it("does not count the index against the source cap", () => {
+    // The cap is about sources the client declares and FEEDS. The index is neither.
+    const root = renderComposerInto({ useIndex: true, selected: new Set(["tab:1"]) });
+    expect(root.querySelector(".brief__count")?.textContent).toContain("1 of 20");
   });
 });
