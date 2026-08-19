@@ -5,6 +5,7 @@
 import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
+import { safeHttpUrl } from "./safe-url.ts";
 import { isNormalisedTerm } from "./term.ts";
 import {
   AGENT_ERRORS,
@@ -199,12 +200,22 @@ export interface BriefTabsRequest {
 }
 
 /**
+ * One source the composer picked. ONE ordered list rather than `tabIds` plus
+ * `passageUrls`: the order the composer displayed is then the order the gateway
+ * is told, with no merge rule in the handler to get wrong.
+ */
+export type BriefPick =
+  | { readonly kind: "tab"; readonly id: number }
+  | { readonly kind: "passages"; readonly url: string };
+
+/**
  * Start a brief.
  *
- * `tabIds` arrives from an extension page, which is same-origin and not a
+ * `picks` arrives from an extension page, which is same-origin and not a
  * content script — but it is still a message payload, and the worker will
- * `executeScript` into every id in it. So it is narrowed like every other
- * cross-boundary value: integers only, at least one, never more than the
+ * `executeScript` into every tab id in it. So it is narrowed like every other
+ * cross-boundary value: a tab id must be an integer, a passage url must pass
+ * `safeHttpUrl`, and the list is at least one and never more than the
  * gateway's source cap. A forged id cannot widen what the worker may inject into
  * (host permission still gates that), but an unbounded list would let one
  * message fan out into arbitrarily many injections.
@@ -212,7 +223,7 @@ export interface BriefTabsRequest {
 export interface BriefStartRequest {
   readonly kind: "brief-start";
   readonly question: string;
-  readonly tabIds: readonly number[];
+  readonly picks: readonly BriefPick[];
 }
 
 /** Read a brief's current state. Read-only — never invokes. */
@@ -232,6 +243,26 @@ export interface BriefLogRequest {
 
 export interface BriefLogClearRequest {
   readonly kind: "brief-log-clear";
+}
+
+/**
+ * Drop collected passages: one passage when `at` names its capture instant,
+ * otherwise every passage held for that page.
+ *
+ * One message for both because they are one gesture with two scopes, and the
+ * store applies them through the same serialized read-modify-write. `url` is
+ * narrowed by `safeHttpUrl` for the same reason a passage pick is — the same
+ * string reaches the same collection.
+ */
+export interface PassageDropRequest {
+  readonly kind: "passage-drop";
+  readonly url: string;
+  readonly at?: number;
+}
+
+/** Empty the whole collection. Carries nothing: there is nothing to name. */
+export interface PassageClearRequest {
+  readonly kind: "passage-clear";
 }
 
 export type ExtensionRequest =
@@ -256,7 +287,9 @@ export type ExtensionRequest =
   | BriefStateRequest
   | BriefSaveRequest
   | BriefLogRequest
-  | BriefLogClearRequest;
+  | BriefLogClearRequest
+  | PassageDropRequest
+  | PassageClearRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -678,6 +711,22 @@ export function isAgentStateRequest(v: unknown): v is AgentStateRequest {
 const MAX_BRIEF_SOURCES = 20;
 const MAX_BRIEF_QUESTION_CHARS = 4000;
 
+function isBriefPick(v: unknown): v is BriefPick {
+  if (!isObject(v)) {
+    return false;
+  }
+  if (v["kind"] === "tab") {
+    const id = v["id"];
+    return typeof id === "number" && Number.isInteger(id) && id >= 0;
+  }
+  if (v["kind"] === "passages") {
+    // safeHttpUrl, not `typeof === "string"`: the shipped scheme validation
+    // rather than a second, weaker rule beside it.
+    return typeof v["url"] === "string" && safeHttpUrl(v["url"]) !== null;
+  }
+  return false;
+}
+
 export function isBriefStartRequest(v: unknown): v is BriefStartRequest {
   if (!isObject(v) || v["kind"] !== "brief-start") {
     return false;
@@ -689,11 +738,32 @@ export function isBriefStartRequest(v: unknown): v is BriefStartRequest {
   if (question.length > MAX_BRIEF_QUESTION_CHARS) {
     return false;
   }
-  const tabIds = v["tabIds"];
-  if (!Array.isArray(tabIds) || tabIds.length === 0 || tabIds.length > MAX_BRIEF_SOURCES) {
+  const picks = v["picks"];
+  if (!Array.isArray(picks) || picks.length === 0 || picks.length > MAX_BRIEF_SOURCES) {
     return false;
   }
-  return tabIds.every((id) => typeof id === "number" && Number.isInteger(id) && id >= 0);
+  return picks.every(isBriefPick);
+}
+
+/**
+ * `at` is the passage's capture instant, and it is OPTIONAL: absent means "the
+ * whole page". So it is checked as an integer only when present — accepting a
+ * fractional or non-numeric `at` would silently match no passage and read to the
+ * user as a remove that did nothing.
+ */
+export function isPassageDropRequest(v: unknown): v is PassageDropRequest {
+  if (!isObject(v) || v["kind"] !== "passage-drop") {
+    return false;
+  }
+  if (typeof v["url"] !== "string" || safeHttpUrl(v["url"]) === null) {
+    return false;
+  }
+  const at = v["at"];
+  return at === undefined || (typeof at === "number" && Number.isInteger(at));
+}
+
+export function isPassageClearRequest(v: unknown): v is PassageClearRequest {
+  return isObject(v) && v["kind"] === "passage-clear";
 }
 
 /**

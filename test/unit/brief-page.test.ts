@@ -52,14 +52,19 @@ function $(id: string): HTMLElement {
   return node;
 }
 
-function checkbox(tabId: number): HTMLInputElement {
+/** A row's box, found by its PICK ID — `tab:<id>` or `passages:<url>`. */
+function pickBox(id: string): HTMLInputElement {
   const box = document.querySelector<HTMLInputElement>(
-    `#composer input[type="checkbox"][value="${tabId}"]`,
+    `#composer input[type="checkbox"][value="${id}"]`,
   );
   if (box === null) {
-    throw new Error(`no checkbox for tab ${tabId}`);
+    throw new Error(`no checkbox for ${id}`);
   }
   return box;
+}
+
+function checkbox(tabId: number): HTMLInputElement {
+  return pickBox(`tab:${tabId}`);
 }
 
 /**
@@ -134,6 +139,49 @@ describe("composer", () => {
     await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalled());
     expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(0);
   });
+
+  test("a FAILED brief-tabs renders the error, not a claim about the browser", async () => {
+    // The router answers a rejected handler with a BriefState. Read as a tab
+    // answer it is an empty browser, and the composer would then say "No open
+    // tabs on sites you have granted page access to" — which we have no evidence
+    // for. A failed enumeration is not an empty one.
+    harness.sendMessage.mockResolvedValue({ kind: "failed", reason: "server_error" });
+    document.body.innerHTML = FIXTURE;
+    vi.resetModules();
+    await import("../../src/brief/brief.ts");
+    await vi.waitFor(() => expect($("composer").querySelector(".brief__error")).not.toBeNull());
+    expect($("composer").textContent).toContain("Couldn't read your open tabs");
+    expect($("composer").textContent).not.toContain("No open tabs on sites you have granted");
+  });
+
+  test("the twenty-first box refuses the tick instead of buying an invalid_request", async () => {
+    // `isBriefStartRequest` rejects a pick list over the cap WHOLE, so a counter
+    // that keeps climbing ends a finished composition at a bare
+    // `invalid_request`. The tick is refused at the box instead — and this is
+    // the in-place path, which deliberately does not redraw the composer.
+    const many = Array.from({ length: 21 }, (_, i) => ({
+      id: i + 1,
+      url: `https://example.com/t${i}`,
+      title: `T${i}`,
+    }));
+    harness.sendMessage.mockResolvedValue({ ...TABS, named: many });
+    document.body.innerHTML = FIXTURE;
+    vi.resetModules();
+    await import("../../src/brief/brief.ts");
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(21),
+    );
+    for (let i = 1; i <= 20; i += 1) {
+      tick(checkbox(i), true);
+    }
+    expect($("composer").querySelector(".brief__count")?.textContent).toBe("20 of 20 sources");
+    expect(checkbox(21).disabled).toBe(true);
+    expect(checkbox(1).disabled).toBe(false);
+
+    // Trading one source for another still works — the cap is not a lock.
+    tick(checkbox(1), false);
+    expect(checkbox(21).disabled).toBe(false);
+  });
 });
 
 describe("the preview gate", () => {
@@ -177,7 +225,7 @@ describe("the preview gate", () => {
 });
 
 describe("send", () => {
-  test("sends the picked question and tab ids, and renders what comes back", async () => {
+  test("sends the picked question and tab picks, and renders what comes back", async () => {
     await loadPage();
     await compose();
     harness.sendMessage.mockResolvedValueOnce({
@@ -193,7 +241,10 @@ describe("send", () => {
       expect(harness.sendMessage).toHaveBeenCalledWith({
         kind: "brief-start",
         question: "Where do these contradict each other?",
-        tabIds: [1, 2],
+        picks: [
+          { kind: "tab", id: 1 },
+          { kind: "tab", id: 2 },
+        ],
       }),
     );
     await vi.waitFor(() => expect($("state").textContent).not.toBe(""));
@@ -307,6 +358,217 @@ describe("save", () => {
     const calls = harness.sendMessage.mock.calls.length;
     $("state").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(harness.sendMessage.mock.calls.length).toBe(calls);
+  });
+});
+
+describe("collected passages", () => {
+  const GROUP = {
+    url: "https://example.com/c",
+    title: "C page",
+    passages: [
+      { url: "https://example.com/c", title: "C page", text: "first excerpt", at: 100 },
+      { url: "https://example.com/c#x", title: "C page", text: "second excerpt", at: 200 },
+    ],
+  };
+
+  async function loadWithPassages(): Promise<void> {
+    harness.sendMessage.mockResolvedValue({ ...TABS, passages: [GROUP] });
+    document.body.innerHTML = FIXTURE;
+    vi.resetModules();
+    await import("../../src/brief/brief.ts");
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(3),
+    );
+  }
+
+  test("a collected page renders its own row beside the tabs", async () => {
+    await loadWithPassages();
+    expect(pickBox("passages:https://example.com/c").checked).toBe(false);
+    expect($("composer").textContent).toContain("2 passages");
+  });
+
+  test("picking it sends a passages pick, not a tab id", async () => {
+    await loadWithPassages();
+    tick(pickBox("passages:https://example.com/c"), true);
+    pickQuestion();
+    await vi.waitFor(() => expect($("preview").hidden).toBe(false));
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "feeding",
+      id: "b1",
+      received: 0,
+      expected: 1,
+    });
+
+    click("run");
+
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenCalledWith({
+        kind: "brief-start",
+        question: "Where do these contradict each other?",
+        picks: [{ kind: "passages", url: "https://example.com/c" }],
+      }),
+    );
+  });
+
+  test("the preview shows the passage text that will be sent", async () => {
+    await loadWithPassages();
+    tick(pickBox("passages:https://example.com/c"), true);
+    pickQuestion();
+    await vi.waitFor(() => expect($("preview").hidden).toBe(false));
+    const shown = $("preview-body").textContent ?? "";
+    expect(shown).toContain("first excerpt");
+    expect(shown).toContain("second excerpt");
+    expect(shown).toContain("2 passages");
+  });
+
+  test("removing one passage tells the worker WHICH one, then re-reads the store", async () => {
+    await loadWithPassages();
+    const drop = document.querySelector<HTMLButtonElement>("#composer button.brief__drop");
+    drop?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenCalledWith({
+        kind: "passage-drop",
+        url: "https://example.com/c",
+        at: 100,
+      }),
+    );
+    // Re-read rather than patched locally: the store is the authority.
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenLastCalledWith({ kind: "brief-tabs" }),
+    );
+  });
+
+  test("removing the page sends no `at`, and clear-all names nothing", async () => {
+    await loadWithPassages();
+    document
+      .querySelector<HTMLButtonElement>("#composer button.brief__drop-row")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenCalledWith({
+        kind: "passage-drop",
+        url: "https://example.com/c",
+      }),
+    );
+
+    click("clear-passages");
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "passage-clear" }),
+    );
+  });
+
+  test("a question the user typed survives dropping a passage", async () => {
+    // The drop re-reads the store and redraws — the right architecture — but a
+    // redraw that forgot the typed words would make an unrelated click eat them.
+    await loadWithPassages();
+    const custom = document.querySelector<HTMLTextAreaElement>("#custom-question");
+    if (custom === null) {
+      throw new Error("no custom-question box");
+    }
+    custom.value = "What do these have in common?";
+    custom.dispatchEvent(new Event("input", { bubbles: true }));
+    tick(pickBox("passages:https://example.com/c"), true);
+    expect($("preview").hidden).toBe(false);
+
+    document
+      .querySelector<HTMLButtonElement>("#composer button.brief__drop")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenLastCalledWith({ kind: "brief-tabs" }),
+    );
+    const redrawn = document.querySelector<HTMLTextAreaElement>("#custom-question");
+    expect(redrawn?.value).toBe("What do these have in common?");
+    expect($("preview").hidden).toBe(false);
+    expect($("preview-body").textContent).toContain("What do these have in common?");
+  });
+
+  test("ticking a row updates the source counter without redrawing the composer", async () => {
+    await loadWithPassages();
+    const custom = document.querySelector<HTMLTextAreaElement>("#custom-question");
+    custom?.focus();
+    tick(pickBox("passages:https://example.com/c"), true);
+    expect($("composer").querySelector(".brief__count")?.textContent).toBe("1 of 20 sources");
+    // The node the user was in is the SAME node — a tick redraws nothing.
+    expect(document.querySelector("#custom-question")).toBe(custom);
+    tick(pickBox("passages:https://example.com/c"), false);
+    expect($("composer").querySelector(".brief__count")?.textContent).toBe("0 of 20 sources");
+  });
+
+  /** The group's page is ALSO open as tab 3, so the mode control is offered. */
+  async function loadWithOpenTab(): Promise<void> {
+    harness.sendMessage.mockResolvedValue({
+      ...TABS,
+      named: [...TABS.named, { id: 3, url: "https://example.com/c#live", title: "C page" }],
+      passages: [GROUP],
+    });
+    document.body.innerHTML = FIXTURE;
+    vi.resetModules();
+    await import("../../src/brief/brief.ts");
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(3),
+    );
+  }
+
+  function clickMode(): void {
+    const button = document.querySelector<HTMLButtonElement>("#composer button.brief__mode");
+    if (button === null) {
+      throw new Error("no mode control on the composer");
+    }
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  test("switching a row to the whole page moves the pick rather than dropping it", async () => {
+    await loadWithOpenTab();
+    tick(pickBox("passages:https://example.com/c"), true);
+    pickQuestion();
+
+    clickMode();
+
+    // Same page, other mode — and still picked.
+    expect(pickBox("tab:3").checked).toBe(true);
+    expect(document.querySelector('#composer input[value="passages:https://example.com/c"]')).toBe(
+      null,
+    );
+    expect($("preview-body").textContent).toContain("https://example.com/c#live");
+  });
+
+  test("and switches BACK, with the passages intact", async () => {
+    // The return path. Without it the switch destroys visible work: the tab row
+    // is indistinguishable from a tab that never had passages, and nothing on
+    // the page names their url again.
+    await loadWithOpenTab();
+    tick(pickBox("passages:https://example.com/c"), true);
+    pickQuestion();
+    clickMode();
+    expect(pickBox("tab:3").checked).toBe(true);
+
+    clickMode();
+
+    const back = pickBox("passages:https://example.com/c");
+    expect(back.checked).toBe(true);
+    expect(document.querySelector('#composer input[value="tab:3"]')).toBe(null);
+    expect($("composer").textContent).toContain("2 passages");
+    expect($("preview-body").textContent).toContain("first excerpt");
+  });
+
+  test("a tab closing releases whole-page mode rather than stranding the passages", async () => {
+    // A stale whole-page url with no tab would keep the group out of BOTH render
+    // branches — no row, so no control carrying the url that would clear it.
+    await loadWithOpenTab();
+    clickMode();
+    expect(pickBox("tab:3")).not.toBeNull();
+
+    // Tab 3 has gone; the collection has not.
+    harness.sendMessage.mockResolvedValue({ ...TABS, passages: [GROUP] });
+    window.dispatchEvent(new Event("focus"));
+
+    await vi.waitFor(() =>
+      expect(
+        document.querySelector('#composer input[value="passages:https://example.com/c"]'),
+      ).not.toBeNull(),
+    );
+    expect($("composer").textContent).toContain("2 passages");
   });
 });
 

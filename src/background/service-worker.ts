@@ -35,6 +35,8 @@ import {
   isDiscoverRequest,
   isFetchRequest,
   isPairRequest,
+  isPassageClearRequest,
+  isPassageDropRequest,
   isQueueListRequest,
   isQueueRemoveRequest,
   isQueueRetryRequest,
@@ -43,6 +45,7 @@ import {
   isResolveRequest,
   isUnpairRequest,
 } from "../shared/messages.ts";
+import { removeGroup, removePassage } from "../shared/passage.ts";
 import type { AgentError, AgentLane, LaneState, Recognition } from "../shared/types.ts";
 import {
   AGENT_RUN_CACHE_TTL_MS,
@@ -105,6 +108,8 @@ import {
 } from "./handlers.ts";
 import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
+import { collectPassage, type PassageCollectDeps } from "./passage-collect.ts";
+import { getPassages, updatePassages } from "./passage-store.ts";
 import { isPreviewEnabled } from "./preview-pref.ts";
 import { type FlushDeps, flushQueue } from "./queue-flush.ts";
 import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
@@ -481,6 +486,20 @@ const briefDeps: BriefDeps = {
   origins: getOrigins,
   capture: (tabId, expectedUrl) =>
     captureTab({ tabUrl, runCapture }, tabId, "article", expectedUrl),
+  passages: getPassages,
+  // BY IDENTITY, page by page: each fed passage is dropped by the instant it was
+  // captured, through the same `removePassage` the composer's per-passage remove
+  // uses. Dropping the whole group would also destroy anything the user
+  // collected while the run was still feeding, which never left — see
+  // `FedPassages`.
+  forgetPassages: async (fed) => {
+    for (const { url, ats } of fed) {
+      await updatePassages((all) => ({
+        ok: true,
+        all: ats.reduce((rest, at) => removePassage(rest, url, at), all),
+      }));
+    }
+  },
   connection: async () => {
     const conn = await getConnection();
     return conn === null ? null : { origin: conn.origin, token: conn.token };
@@ -647,6 +666,45 @@ async function routeBriefMessage(message: BriefMessage): Promise<unknown> {
   return { kind: "failed", reason: "unknown_brief_message" } satisfies BriefState;
 }
 
+/**
+ * Is this one of the collection's two mutations?
+ *
+ * A prefix check like `isBriefMessage`'s, and for the same reason: the router is
+ * at Sonar's cognitive-complexity cap, so these two kinds arrive through ONE
+ * branch and are re-narrowed by their real guards inside the fan-out.
+ */
+function isPassageMessage(v: unknown): boolean {
+  if (typeof v !== "object" || v === null) {
+    return false;
+  }
+  const kind = (v as { kind?: unknown }).kind;
+  return kind === "passage-drop" || kind === "passage-clear";
+}
+
+/**
+ * Apply a collection mutation and report whether it stuck.
+ *
+ * Every path goes through `updatePassages`, the store's one serialized
+ * read-modify-write — a menu click collecting a passage and a composer click
+ * dropping one can genuinely interleave.
+ */
+async function routePassageMessage(message: unknown): Promise<{ ok: boolean }> {
+  if (isPassageDropRequest(message)) {
+    const { url, at } = message;
+    const res = await updatePassages((all) => ({
+      ok: true,
+      // No `at` means the whole page: the row's own remove, not a passage's.
+      all: at === undefined ? removeGroup(all, url) : removePassage(all, url, at),
+    }));
+    return { ok: res.ok };
+  }
+  if (isPassageClearRequest(message)) {
+    const res = await updatePassages(() => ({ ok: true, all: [] }));
+    return { ok: res.ok };
+  }
+  return { ok: false };
+}
+
 const quickClipDeps: QuickClipDeps = {
   activeTab,
   runCapture,
@@ -666,6 +724,22 @@ const quickClipDeps: QuickClipDeps = {
       state,
       restricted,
     ),
+};
+
+// Reuses the same `tabUrl`/`runCapture` seams `quickClipDeps.runCapture` and
+// `captureTab` above already use, with "selection" and no `expectedUrl` — a
+// menu click has no pinned page to be wrong about.
+const passageCollectDeps: PassageCollectDeps = {
+  capture: (tabId) => captureTab({ tabUrl, runCapture }, tabId, "selection"),
+  update: updatePassages,
+  showFeedback: (tabId, state, restricted) =>
+    showFeedback(
+      { showToast, setBadgeText, restoreBadge: syncQueueState },
+      tabId,
+      state,
+      restricted,
+    ),
+  now: () => Date.now(),
 };
 
 // Menus are re-registered from scratch (removeAll first) so a reload/upgrade can't
@@ -770,6 +844,17 @@ addMenuClickListener((menuItemId, tabId, selectionText) => {
     case "define-selection":
     case "related-to-selection":
       handleSelectionMenu(action, tabId, selectionText);
+      return;
+    case "add-passage":
+      // `tabId` is `number | undefined` here. Early return, never a `!`
+      // (`noNonNullAssertion` is an error in this repo) and never the active tab
+      // as a fallback: a right-click in a non-focused window targets a different
+      // tab than `tabs.query({active})`, and the activeTab grant belongs to the
+      // CLICKED tab — the same reasoning the clip path already documents.
+      if (tabId === undefined) {
+        return;
+      }
+      collectPassage(passageCollectDeps, tabId).catch(() => undefined);
       return;
     default: {
       const unreachable: never = action;
@@ -1042,6 +1127,16 @@ addMessageListener((message, rawRespond, sender) => {
       .then(respond)
       .catch(() => {
         respond({ kind: "failed", reason: "server_error" });
+      });
+    return true;
+  }
+  // ONE branch for the collection's two mutations, same shape and same reason as
+  // the brief branch above.
+  if (isPassageMessage(message)) {
+    routePassageMessage(message)
+      .then(respond)
+      .catch(() => {
+        respond({ ok: false });
       });
     return true;
   }

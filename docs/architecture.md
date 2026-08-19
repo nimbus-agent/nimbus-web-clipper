@@ -1200,12 +1200,35 @@ second. The page never polls and never calls the gateway; it sends a message and
 renders what comes back. Polls honour `pairingGeneration` for the same reason
 agent polls do: a poll that outlives its pairing must write nothing.
 
-**No source text is ever persisted.** `BriefSource.body` is ephemeral by contract
-("never written to disk"), and this client must not hold what the gateway refuses
-to hold. `chrome.storage.local` gets the run record (id, question, declared
-url/title, phase) and the disclosure log, and nothing else — asserted by tests
-that grep the whole store. For the same reason briefs are **never queued**: the
-offline queue persists payloads, and there is nothing here it may persist.
+**No text captured FOR a run is ever persisted.** `BriefSource.body` built from
+an open tab is ephemeral by contract ("never written to disk"), and this client
+must not hold what the gateway refuses to hold. `chrome.storage.local` gets the
+run record (id, question, declared url/title, phase) and the disclosure log —
+asserted by tests that grep the whole store. For the same reason briefs are
+**never queued**: the offline queue persists payloads, and there is nothing
+here it may persist. A passage (below) is the one deliberate exception: it is
+captured *before* any run exists, by the user's own gesture, and must survive
+a closed tab — so it is the one piece of source text this client holds **ahead
+of any send**. The queue's own persisted `body` is text the user already
+committed to sending; a passage is text held before that moment ever arrives.
+
+### Passages: a source collected ahead of any run
+
+A right-click **Add to brief** on a selection stores the text immediately,
+under its own `passages` key in `chrome.storage.local` — separate from the run
+record above, because a passage outlives any single run and is not cleared by
+one. One pure module, [`src/shared/passage.ts`](../src/shared/passage.ts),
+owns every rule (grouping by fragment-stripped URL, stitching with
+`PASSAGE_SEPARATOR`, every cap); [`passage-store.ts`](../src/background/passage-store.ts)
+only persists what that module returns, so it cannot drift from the rules.
+It differs from the offline queue's storage in one deliberate place: a failed
+write **refuses** rather than evicts — the queue drops its oldest entry under
+pressure, but a passage exists in exactly one place and was put there by hand,
+so a refusal the user can act on beats a silent loss. The collect gesture
+itself reuses `captureTab` — the same call the clip path makes — rather than
+the menu click's browser-truncated `selectionText`, so a passage can never be
+a silently short excerpt. Full reasoning:
+[`docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md`](./superpowers/specs/2026-08-18-passages-as-brief-sources-design.md).
 
 ### Why there is a local disclosure log
 

@@ -1,6 +1,7 @@
 // test/unit/preview.test.ts
 import { describe, expect, test } from "vitest";
 import type { ClipPayload } from "../../src/shared/clip.ts";
+import { PASSAGE_SEPARATOR } from "../../src/shared/passage.ts";
 import {
   buildBriefPreview,
   buildClipPreview,
@@ -136,5 +137,77 @@ describe("buildBriefPreview", () => {
     expect(p.synthesisNotice).toBe(SYNTHESIS_NOTICE);
     expect(p.synthesisNotice.toLowerCase()).not.toContain("stays on your machine");
     expect(p.synthesisNotice.toLowerCase()).toContain("local or a remote model");
+  });
+});
+
+describe("buildBriefPreview with passage sources", () => {
+  const question = "What do these disagree about?";
+
+  test("the count names both kinds", () => {
+    const preview = buildBriefPreview({
+      question,
+      sources: [
+        { title: "Whole", url: "http://h/w" },
+        { title: "Excerpts", url: "http://h/e", passages: ["one", "two"] },
+      ],
+    });
+    expect(preview.fields).toEqual([
+      { label: "Question", value: question },
+      { label: "Sources", value: "2 sources — 1 page, 1 set of passages" },
+    ]);
+  });
+
+  test("all pages reads as pages alone, as it did before passages existed", () => {
+    const preview = buildBriefPreview({
+      question,
+      sources: [
+        { title: "A", url: "http://h/a" },
+        { title: "B", url: "http://h/b" },
+      ],
+    });
+    expect(preview.fields[1]).toEqual({ label: "Sources", value: "2 pages" });
+  });
+
+  test("all passages reads as sets of passages alone", () => {
+    const preview = buildBriefPreview({
+      question,
+      sources: [{ title: "A", url: "http://h/a", passages: ["one"] }],
+    });
+    expect(preview.fields[1]).toEqual({ label: "Sources", value: "1 set of passages" });
+  });
+
+  test("a passages row says how many; a page row says the address alone", () => {
+    const preview = buildBriefPreview({
+      question,
+      sources: [
+        { title: "Whole", url: "http://h/w" },
+        { title: "Excerpts", url: "http://h/e", passages: ["one", "two", "three"] },
+      ],
+    });
+    expect(preview.sources).toEqual([
+      { label: "Whole", value: "http://h/w" },
+      { label: "Excerpts", value: "http://h/e — 3 passages" },
+    ]);
+  });
+
+  test("the text of each passage source is carried, in order", () => {
+    const preview = buildBriefPreview({
+      question,
+      sources: [{ title: "E", url: "http://h/e", passages: ["first", "second"] }],
+    });
+    expect(preview.bodies).toEqual([{ label: "E", value: `first${PASSAGE_SEPARATOR}second` }]);
+  });
+
+  test("a page source carries no body — its text does not exist yet", () => {
+    const preview = buildBriefPreview({
+      question,
+      sources: [{ title: "W", url: "http://h/w" }],
+    });
+    expect(preview.bodies).toEqual([]);
+  });
+
+  test("the synthesis notice is unchanged", () => {
+    const preview = buildBriefPreview({ question, sources: [{ title: "W", url: "http://h/w" }] });
+    expect(preview.synthesisNotice).toBe(SYNTHESIS_NOTICE);
   });
 });

@@ -6,7 +6,9 @@ import {
   handleBriefStart,
   handleBriefTabs,
 } from "../../src/background/brief-handlers.ts";
+import { BRIEF_CAPS } from "../../src/shared/brief.ts";
 import type { BriefReport } from "../../src/shared/brief-report.ts";
+import { type Passage, removePassage } from "../../src/shared/passage.ts";
 
 const REPORT: BriefReport = {
   summary: "They disagree about retries.",
@@ -16,11 +18,16 @@ const REPORT: BriefReport = {
   synthesis: { model: "llama3", remote: false },
 };
 
-function capture(url: string, title: string, body = "body text") {
+function capture(url: string, title = "T", body = "body text") {
   return {
     ok: true as const,
     capture: { url, title, body, mode: "article" as const, readableFound: true },
   };
+}
+
+/** One candidate tab, titled `Tab <id>` unless told otherwise. */
+function tab(id: number, url: string, title = `Tab ${id}`) {
+  return { id, url, title };
 }
 
 function client(over: Partial<BriefDeps["client"]> = {}): BriefDeps["client"] {
@@ -52,6 +59,8 @@ function deps(over: Partial<BriefDeps> = {}): BriefDeps {
       Promise.resolve(
         capture(`https://example.com/${tabId === 1 ? "a" : "b"}`, tabId === 1 ? "A" : "B"),
       ),
+    passages: () => Promise.resolve([]),
+    forgetPassages: () => Promise.resolve(),
     connection: () => Promise.resolve({ origin: "http://127.0.0.1:7474", token: "t" }),
     client: client(),
     store: {
@@ -67,7 +76,14 @@ function deps(over: Partial<BriefDeps> = {}): BriefDeps {
   } as unknown as BriefDeps;
 }
 
-const start = { kind: "brief-start" as const, question: "q", tabIds: [1, 2] };
+const start = {
+  kind: "brief-start" as const,
+  question: "q",
+  picks: [
+    { kind: "tab" as const, id: 1 },
+    { kind: "tab" as const, id: 2 },
+  ],
+};
 
 describe("handleBriefTabs", () => {
   it("returns the named tabs, the hidden count and scaffolded questions", async () => {
@@ -85,6 +101,27 @@ describe("handleBriefTabs", () => {
       }),
     );
     expect(out.enumerationFailed).toBe(true);
+  });
+});
+
+describe("handleBriefTabs with a collection", () => {
+  it("returns the passage groups beside the tabs, in one answer", async () => {
+    const res = await handleBriefTabs(
+      deps({
+        listTabs: async () => ({
+          named: [tab(1, "http://h/a")],
+          hiddenCount: 0,
+          enumerationFailed: false,
+        }),
+        passages: async () => [
+          { url: "http://h/b", title: "B", text: "one", at: 5 },
+          { url: "http://h/b#x", title: "B", text: "two", at: 6 },
+        ],
+      }),
+    );
+    expect(res.named).toHaveLength(1);
+    expect(res.passages.map((g) => g.url)).toEqual(["http://h/b"]);
+    expect(res.passages[0]?.passages).toHaveLength(2);
   });
 });
 
@@ -145,7 +182,7 @@ describe("handleBriefStart", () => {
 
   it("writes the log entry when /run is ACCEPTED, before the report arrives", async () => {
     const d = deps();
-    await handleBriefStart(d, { ...start, tabIds: [1] });
+    await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
     const append = d.log.append as ReturnType<typeof vi.fn>;
     expect(append).toHaveBeenCalledTimes(1);
     expect(append.mock.calls[0]?.[0]).toMatchObject({ runId: "b1", sourceCount: 1 });
@@ -159,14 +196,14 @@ describe("handleBriefStart", () => {
         ) as never,
       }),
     });
-    await handleBriefStart(d, { ...start, tabIds: [1] });
+    await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
     expect(d.log.append).toHaveBeenCalledTimes(1);
     expect(d.log.update).toHaveBeenCalledWith("b1", { failed: true });
   });
 
   it("patches the log with the model that actually answered", async () => {
     const d = deps();
-    await handleBriefStart(d, { ...start, tabIds: [1] });
+    await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
     expect(d.log.update).toHaveBeenCalledWith("b1", { model: "llama3", remote: false });
   });
 
@@ -178,7 +215,7 @@ describe("handleBriefStart", () => {
         ) as never,
       }),
     });
-    const state = await handleBriefStart(d, { ...start, tabIds: [1] });
+    const state = await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
     expect(state).toMatchObject({ kind: "failed", hint: "h" });
     expect(d.log.append).not.toHaveBeenCalled();
     expect(d.client.feedBriefSource).not.toHaveBeenCalled();
@@ -186,7 +223,7 @@ describe("handleBriefStart", () => {
 
   it("fails closed with no connection, without touching the client", async () => {
     const d = deps({ connection: () => Promise.resolve(null) });
-    const state = await handleBriefStart(d, { ...start, tabIds: [1] });
+    const state = await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
     expect(state).toMatchObject({ kind: "failed", reason: "not_paired" });
     expect(d.client.createBrief).not.toHaveBeenCalled();
   });
@@ -194,7 +231,13 @@ describe("handleBriefStart", () => {
   it("captures only the tabs asked for, and only ones the tab list named", async () => {
     const cap = vi.fn(() => Promise.resolve(capture("https://example.com/a", "A")));
     const d = deps({ capture: cap as never });
-    await handleBriefStart(d, { ...start, tabIds: [1, 999] });
+    await handleBriefStart(d, {
+      ...start,
+      picks: [
+        { kind: "tab", id: 1 },
+        { kind: "tab", id: 999 },
+      ],
+    });
     expect(cap).toHaveBeenCalledTimes(1);
     expect(cap).toHaveBeenCalledWith(1, "https://example.com/a");
   });
@@ -203,7 +246,7 @@ describe("handleBriefStart", () => {
     const d = deps({
       capture: () => Promise.resolve(capture("https://example.com/a", "A", "y".repeat(300 * 1024))),
     });
-    await handleBriefStart(d, { ...start, tabIds: [1] });
+    await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
     const append = d.log.append as ReturnType<typeof vi.fn>;
     expect(append.mock.calls[0]?.[0]).toMatchObject({ truncatedCount: 1 });
   });
@@ -217,10 +260,369 @@ describe("handleBriefStart", () => {
   });
 });
 
+describe("handleBriefStart with mixed picks", () => {
+  it("declares every picked url exactly once, in picks order", async () => {
+    const created: unknown[] = [];
+    const store = {
+      get: vi.fn(() => Promise.resolve(null)),
+      put: vi.fn(() => Promise.resolve()),
+    } as unknown as BriefDeps["store"];
+    await handleBriefStart(
+      deps({
+        store,
+        listTabs: async () => ({
+          named: [tab(1, "http://h/a")],
+          hiddenCount: 0,
+          enumerationFailed: false,
+        }),
+        passages: async () => [{ url: "http://h/b", title: "B", text: "one", at: 5 }],
+        client: {
+          ...client(),
+          createBrief: async (_o, _t, body) => {
+            created.push(body);
+            return { ok: true, id: "r1", expected: 2 };
+          },
+        },
+      }),
+      {
+        kind: "brief-start",
+        question: "q",
+        picks: [
+          { kind: "passages", url: "http://h/b" },
+          { kind: "tab", id: 1 },
+        ],
+      },
+    );
+    expect(created).toEqual([
+      {
+        brief: "q",
+        sources: [
+          { url: "http://h/b", title: "B" },
+          { url: "http://h/a", title: "Tab 1" },
+        ],
+        useIndex: false,
+      },
+    ]);
+    // The STORED run must declare exactly what the gateway was told. Both come
+    // from `declare()`, and this is the assertion that keeps them from drifting:
+    // the stored `declared` is what a resumed poll reports the run as being about.
+    const put = vi.mocked(store.put).mock.calls[0]?.[0];
+    expect(put?.declared).toEqual((created[0] as { sources: unknown }).sources);
+  });
+
+  it("never captures for a passage source, and feeds its stitched body", async () => {
+    const captured: number[] = [];
+    const fed: { url: string; body: string; capturedAt: number }[] = [];
+    await handleBriefStart(
+      deps({
+        passages: async () => [
+          { url: "http://h/b", title: "B", text: "one", at: 900 },
+          { url: "http://h/b", title: "B", text: "two", at: 100 },
+        ],
+        capture: async (tabId) => {
+          captured.push(tabId);
+          return { ok: true, capture: capture("http://h/a").capture };
+        },
+        client: {
+          ...client(),
+          feedBriefSource: async (_o, _t, _id, body) => {
+            fed.push({ url: body.url, body: body.body, capturedAt: body.capturedAt });
+            return { ok: true, received: fed.length, expected: 1 };
+          },
+        },
+      }),
+      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+    );
+    expect(captured).toEqual([]);
+    expect(fed).toEqual([{ url: "http://h/b", body: "one\n\n[...]\n\ntwo", capturedAt: 100 }]);
+  });
+
+  it("a pick naming a url the collection does not hold is dropped, and the run proceeds", async () => {
+    const created: unknown[] = [];
+    const state = await handleBriefStart(
+      deps({
+        listTabs: async () => ({
+          named: [tab(1, "http://h/a")],
+          hiddenCount: 0,
+          enumerationFailed: false,
+        }),
+        passages: async () => [],
+        client: {
+          ...client(),
+          createBrief: async (_o, _t, body) => {
+            created.push(body);
+            return { ok: true, id: "r1", expected: 1 };
+          },
+        },
+      }),
+      {
+        kind: "brief-start",
+        question: "q",
+        picks: [
+          { kind: "passages", url: "http://h/gone" },
+          { kind: "tab", id: 1 },
+        ],
+      },
+    );
+    expect(state.kind).not.toBe("failed");
+    // DROPPED, not silently turned into a source: "did not fail" alone would
+    // pass either way.
+    expect(created).toEqual([
+      { brief: "q", sources: [{ url: "http://h/a", title: "Tab 1" }], useIndex: false },
+    ]);
+  });
+
+  it("declares one page ONCE when a tab pick and a passage pick both name it", async () => {
+    // The composer renders one row per page key, but the composer is UI. The
+    // guard checks shape, not uniqueness, so the invariant "a url is declared
+    // exactly once, in exactly one mode" is enforced HERE — at the layer that
+    // declares.
+    const created: unknown[] = [];
+    await handleBriefStart(
+      deps({
+        listTabs: async () => ({
+          named: [tab(1, "http://h/a#live")],
+          hiddenCount: 0,
+          enumerationFailed: false,
+        }),
+        passages: async () => [{ url: "http://h/a", title: "A", text: "one", at: 5 }],
+        client: {
+          ...client(),
+          createBrief: async (_o, _t, body) => {
+            created.push(body);
+            return { ok: true, id: "r1", expected: 1 };
+          },
+        },
+      }),
+      {
+        kind: "brief-start",
+        question: "q",
+        picks: [
+          { kind: "passages", url: "http://h/a" },
+          { kind: "tab", id: 1 },
+        ],
+      },
+    );
+    // First pick wins — the order the composer displayed is the order it meant.
+    expect(created).toEqual([
+      { brief: "q", sources: [{ url: "http://h/a", title: "A" }], useIndex: false },
+    ]);
+  });
+
+  it("two passage picks differing only by fragment are one source", async () => {
+    const created: unknown[] = [];
+    await handleBriefStart(
+      deps({
+        listTabs: async () => ({ named: [], hiddenCount: 0, enumerationFailed: false }),
+        passages: async () => [{ url: "http://h/a", title: "A", text: "one", at: 5 }],
+        client: {
+          ...client(),
+          createBrief: async (_o, _t, body) => {
+            created.push(body);
+            return { ok: true, id: "r1", expected: 1 };
+          },
+        },
+      }),
+      {
+        kind: "brief-start",
+        question: "q",
+        picks: [
+          { kind: "passages", url: "http://h/a" },
+          { kind: "passages", url: "http://h/a#x" },
+        ],
+      },
+    );
+    expect(created).toEqual([
+      { brief: "q", sources: [{ url: "http://h/a", title: "A" }], useIndex: false },
+    ]);
+  });
+
+  it("two tabs showing the same page declare it once", async () => {
+    const created: unknown[] = [];
+    await handleBriefStart(
+      deps({
+        listTabs: async () => ({
+          named: [tab(1, "http://h/a#one"), tab(2, "http://h/a#two")],
+          hiddenCount: 0,
+          enumerationFailed: false,
+        }),
+        passages: async () => [],
+        client: {
+          ...client(),
+          createBrief: async (_o, _t, body) => {
+            created.push(body);
+            return { ok: true, id: "r1", expected: 1 };
+          },
+        },
+      }),
+      {
+        kind: "brief-start",
+        question: "q",
+        picks: [
+          { kind: "tab", id: 1 },
+          { kind: "tab", id: 2 },
+        ],
+      },
+    );
+    expect(created).toEqual([
+      { brief: "q", sources: [{ url: "http://h/a#one", title: "Tab 1" }], useIndex: false },
+    ]);
+  });
+
+  it("picks that match nothing at all fail as no_sources", async () => {
+    const state = await handleBriefStart(
+      deps({
+        listTabs: async () => ({ named: [], hiddenCount: 0, enumerationFailed: false }),
+        passages: async () => [],
+      }),
+      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/gone" }] },
+    );
+    expect(state).toEqual({ kind: "failed", reason: "no_sources" });
+  });
+
+  it("a fed passage group is forgotten once /run is accepted", async () => {
+    const forgotten: string[] = [];
+    await handleBriefStart(
+      deps({
+        passages: async () => [{ url: "http://h/b", title: "B", text: "one", at: 5 }],
+        forgetPassages: async (fed) => {
+          forgotten.push(...fed.map((f) => f.url));
+        },
+      }),
+      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+    );
+    expect(forgotten).toEqual(["http://h/b"]);
+  });
+
+  it("a passage collected while the run was feeding survives the clear", async () => {
+    // The collection is read ONCE, at the top of handleBriefStart, and the feed
+    // that follows can take tens of seconds. Anything collected in that window
+    // never reached the gateway, so clearing it would be silent, unrecoverable
+    // loss of text the user made by hand — decision 8's refuse-never-evict and
+    // decision 9's "clear what left", both at once.
+    let all: readonly Passage[] = [{ url: "http://h/b", title: "B", text: "one", at: 5 }];
+    const late = { url: "http://h/b", title: "B", text: "two", at: 9 };
+    await handleBriefStart(
+      deps({
+        passages: async () => all,
+        // The service worker's wiring, verbatim: remove by identity.
+        forgetPassages: async (fed) => {
+          for (const { url, ats } of fed) {
+            all = ats.reduce((rest, at) => removePassage(rest, url, at), all);
+          }
+        },
+        client: client({
+          feedBriefSource: (async () => {
+            // The user highlights one more paragraph mid-feed.
+            all = [...all, late];
+            return { ok: true, received: 1, expected: 1 };
+          }) as never,
+        }),
+      }),
+      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+    );
+    expect(all).toEqual([late]);
+  });
+
+  it("a run that fails before /run forgets nothing", async () => {
+    const forgotten: string[] = [];
+    await handleBriefStart(
+      deps({
+        passages: async () => [{ url: "http://h/b", title: "B", text: "one", at: 5 }],
+        forgetPassages: async (fed) => {
+          forgotten.push(...fed.map((f) => f.url));
+        },
+        client: client({
+          runBrief: (async () => ({ ok: false, reason: "server_error" })) as never,
+        }),
+      }),
+      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+    );
+    expect(forgotten).toEqual([]);
+  });
+
+  it("a group skipped for run_capacity keeps its passages", async () => {
+    const forgotten: string[] = [];
+    await handleBriefStart(
+      deps({
+        passages: async () => [
+          { url: "http://h/b", title: "B", text: "one", at: 5 },
+          { url: "http://h/c", title: "C", text: "two", at: 6 },
+        ],
+        forgetPassages: async (fed) => {
+          forgotten.push(...fed.map((f) => f.url));
+        },
+        client: client({
+          feedBriefSource: (async (_o: string, _t: string, _id: string, body: { url: string }) =>
+            body.url === "http://h/b"
+              ? { ok: true, received: 1, expected: 2 }
+              : { ok: false, reason: "refused", detail: "run_capacity" }) as never,
+        }),
+      }),
+      {
+        kind: "brief-start",
+        question: "q",
+        picks: [
+          { kind: "passages", url: "http://h/b" },
+          { kind: "passages", url: "http://h/c" },
+        ],
+      },
+    );
+    expect(forgotten).toEqual(["http://h/b"]);
+  });
+
+  it("a truncated stitched body keeps the whole group, and still reports the cut", async () => {
+    // `buildSourceBody` cuts at the extraction cap. If a stitched body is cut,
+    // the trailing passage never reached the gateway — so "clear what left"
+    // says keep every one of them. Driven through an OVERSIZED stored group
+    // rather than a mocked `buildSourceBody`, because `addPassage` refuses to
+    // build one: `isPassage` bounds a stored passage's shape, not its size, so
+    // a corrupted, hand-edited or migrated store can still yield this.
+    const forgotten: string[] = [];
+    const state = await handleBriefStart(
+      deps({
+        passages: async () => [
+          { url: "http://h/b", title: "B", text: "x".repeat(BRIEF_CAPS.extractionCapBytes), at: 5 },
+          { url: "http://h/b", title: "B", text: "the tail that never left", at: 6 },
+        ],
+        forgetPassages: async (fed) => {
+          forgotten.push(...fed.map((f) => f.url));
+        },
+      }),
+      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+    );
+    expect(forgotten).toEqual([]);
+    // Reporting is unchanged: the cut is still named to the user.
+    expect(state.kind === "done" && state.truncated).toEqual(["B"]);
+  });
+
+  it("a tab picked in whole-page mode keeps that page's passages", async () => {
+    // The rule is CLEAR WHAT LEFT. In whole-page mode the page left, not the
+    // passages — and whole-page is a choice about one question, not a statement
+    // about the collection.
+    const forgotten: string[] = [];
+    await handleBriefStart(
+      deps({
+        listTabs: async () => ({
+          named: [tab(1, "http://h/b")],
+          hiddenCount: 0,
+          enumerationFailed: false,
+        }),
+        passages: async () => [{ url: "http://h/b", title: "B", text: "one", at: 5 }],
+        forgetPassages: async (fed) => {
+          forgotten.push(...fed.map((f) => f.url));
+        },
+      }),
+      { kind: "brief-start", question: "q", picks: [{ kind: "tab", id: 1 }] },
+    );
+    expect(forgotten).toEqual([]);
+  });
+});
+
 describe("handleBriefPoll", () => {
   it("settles a finished run and patches the log with the model", async () => {
     const d = deps();
-    await handleBriefStart(d, { ...start, tabIds: [1] });
+    await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
     (d.log.update as ReturnType<typeof vi.fn>).mockClear();
     const state = await handleBriefPoll(d, "b1");
     expect(state.kind).toBe("done");
@@ -233,7 +635,7 @@ describe("handleBriefPoll", () => {
         getBrief: vi.fn(() => Promise.resolve({ ok: true, status: "running" })) as never,
       }),
     });
-    await handleBriefStart(d, { ...start, tabIds: [1] });
+    await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
     expect(await handleBriefPoll(d, "b1")).toEqual({ kind: "running", id: "b1" });
   });
 
@@ -253,7 +655,7 @@ describe("handleBriefPoll", () => {
 describe("handleBriefSave", () => {
   it("returns done with the item id and patches the log", async () => {
     const d = deps();
-    await handleBriefStart(d, { ...start, tabIds: [1] });
+    await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
     const state = await handleBriefSave(d, "b1");
     expect(state).toMatchObject({ kind: "done", savedItemId: "i1" });
     expect(d.log.update).toHaveBeenCalledWith("b1", { savedItemId: "i1" });
@@ -265,7 +667,7 @@ describe("handleBriefSave", () => {
         saveBrief: vi.fn(() => Promise.resolve({ ok: false, reason: "expired" })) as never,
       }),
     });
-    await handleBriefStart(d, { ...start, tabIds: [1] });
+    await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
     const state = await handleBriefSave(d, "b1");
     expect(state).toEqual({ kind: "save-failed", id: "b1", reason: "expired" });
   });

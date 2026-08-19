@@ -77,6 +77,7 @@ describe("renderPreview — brief", () => {
       { label: "Fix the thing", value: "https://github.com/acme/web/pull/1" },
       { label: "Also fix the thing", value: "https://github.com/acme/web/pull/2" },
     ],
+    bodies: [],
     synthesisNotice: "Local or remote, depending on configuration.",
   };
 
@@ -106,5 +107,37 @@ describe("renderPreview — brief", () => {
     });
     expect(frag.querySelector("img")).toBeNull();
     expect(frag.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+});
+
+describe("renderPreview with passage bodies", () => {
+  test("renders each passage body under a disclosure, labelled by its source", () => {
+    const frag = renderPreview(document, {
+      fields: [{ label: "Question", value: "q" }],
+      sources: [{ label: "E", value: "http://h/e — 2 passages" }],
+      bodies: [{ label: "E", value: "first\n\n[...]\n\nsecond" }],
+      synthesisNotice: "notice",
+    });
+    const host = document.createElement("div");
+    host.append(frag);
+    const details = host.querySelectorAll("details.preview__passages");
+    expect(details).toHaveLength(1);
+    expect(details[0]?.querySelector("summary")?.textContent).toBe("E");
+    // textContent, never innerHTML: passage text is page content.
+    expect(details[0]?.querySelector(".preview__body")?.textContent).toBe(
+      "first\n\n[...]\n\nsecond",
+    );
+  });
+
+  test("a brief with no passage bodies renders no disclosure at all", () => {
+    const frag = renderPreview(document, {
+      fields: [],
+      sources: [{ label: "W", value: "http://h/w" }],
+      bodies: [],
+      synthesisNotice: "notice",
+    });
+    const host = document.createElement("div");
+    host.append(frag);
+    expect(host.querySelector("details")).toBeNull();
   });
 });

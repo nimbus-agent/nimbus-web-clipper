@@ -4,6 +4,7 @@
 // requests they describe: both are built from exactly the data the caller is
 // about to send, not from a second description of it.
 import type { ClipPayload } from "./clip.ts";
+import { joinPassages } from "./passage.ts";
 import type { FetchTarget } from "./types.ts";
 
 /** How much body text the preview shows. The FULL body is still what is sent. */
@@ -81,11 +82,47 @@ export function buildFetchPreview(target: FetchTarget): FetchPreview {
   };
 }
 
+export interface BriefPreviewSource {
+  readonly title: string;
+  readonly url: string;
+  /**
+   * Present ONLY for a passage source, and then the passage texts in collection
+   * order. Its presence is the marker that this source is an excerpt set — the
+   * renderer needs no second flag.
+   */
+  readonly passages?: readonly string[];
+}
+
 export interface BriefPreview {
   readonly fields: readonly PreviewField[];
   /** One row per source: `label` is the title, `value` the address. */
   readonly sources: readonly PreviewField[];
+  /**
+   * One row per PASSAGE source: the exact body that source will send.
+   *
+   * Only a passage source can have one. A page's text is captured during the
+   * run, so at preview time it does not exist and claiming otherwise would be
+   * an invention; a passage was captured when the user highlighted it, so here —
+   * uniquely — the preview can show the bytes rather than describe them.
+   */
+  readonly bodies: readonly PreviewField[];
   readonly synthesisNotice: string;
+}
+
+function sourcesSummary(sources: readonly BriefPreviewSource[]): string {
+  const sets = sources.filter((s) => s.passages !== undefined).length;
+  const pages = sources.length - sets;
+  const pagePart = `${pages} ${pages === 1 ? "page" : "pages"}`;
+  const setPart = `${sets} ${sets === 1 ? "set of passages" : "sets of passages"}`;
+  if (sets === 0) {
+    return pagePart;
+  }
+  if (pages === 0) {
+    return setPart;
+  }
+  // Both kinds present: lead with the total, because that is the number the cap
+  // is about, then break it down so neither kind is implied to be the other.
+  return `${sources.length} sources — ${pagePart}, ${setPart}`;
 }
 
 /**
@@ -114,20 +151,32 @@ export const SYNTHESIS_NOTICE =
  * Unlike the clip preview there is no off switch, the same reasoning C4.2
  * applied to the targeted fetch: this is a larger egress than a fetch, not a
  * smaller one.
+ *
+ * A passage source's body is joined by `joinPassages` — the SAME function
+ * `stitch` calls to build the body that is sent — so the text shown is the text
+ * sent, and cannot drift from it.
  */
 export function buildBriefPreview(input: {
   question: string;
-  sources: readonly { url: string; title: string }[];
+  sources: readonly BriefPreviewSource[];
 }): BriefPreview {
   return {
     fields: [
       { label: "Question", value: input.question },
-      {
-        label: "Sources",
-        value: `${input.sources.length} ${input.sources.length === 1 ? "page" : "pages"}`,
-      },
+      { label: "Sources", value: sourcesSummary(input.sources) },
     ],
-    sources: input.sources.map((s) => ({ label: s.title, value: s.url })),
+    sources: input.sources.map((s) => ({
+      label: s.title,
+      value:
+        s.passages === undefined
+          ? s.url
+          : `${s.url} — ${s.passages.length} ${s.passages.length === 1 ? "passage" : "passages"}`,
+    })),
+    bodies: input.sources
+      .filter(
+        (s): s is BriefPreviewSource & { passages: readonly string[] } => s.passages !== undefined,
+      )
+      .map((s) => ({ label: s.title, value: joinPassages(s.passages) })),
     synthesisNotice: SYNTHESIS_NOTICE,
   };
 }

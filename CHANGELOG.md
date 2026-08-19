@@ -48,6 +48,15 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **Highlight the parts that matter, not the whole page.** Select text on any
+  page and right-click → **Add to brief**. The text is captured the moment you
+  highlight it, so it's still there even if you close the tab. Highlight
+  several passages, on one page or several, and they show up in the brief
+  composer as sources you can pick — a page you highlighted three times counts
+  as one source holding all three, in the order you collected them. The
+  pre-send preview shows the exact text that will be sent, and sending a brief
+  removes the passages it used from your collection (a run that fails, or a
+  source you switch back to the whole page, keeps them).
 - **Ask one question across several tabs you have open.** A new research-brief
   page lets you pick the pages you have open, choose a question Nimbus suggests
   from what those pages are, and get back a brief with findings, the places your

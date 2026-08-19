@@ -24,6 +24,37 @@ body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
   overflow-wrap: anywhere;
 }
 
+/* A passages row carries a count between its title and its url, so it takes a
+   third grid row. A plain tab row keeps the two-row template above. */
+.brief__tab--passages label { grid-template-areas: "box title" ". count" ". url"; }
+.brief__tab-count { grid-area: count; font-size: 12px; opacity: 0.75; }
+.brief__tab--passages { padding: 4px 0 8px; border-bottom: 1px solid rgba(127,127,127,0.2); }
+
+.brief__passages { list-style: none; margin: 4px 0 0 24px; padding: 0; }
+.brief__passages > li {
+  display: flex;
+  gap: 8px;
+  align-items: start;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.brief__passage-text {
+  flex: 1;
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.brief__mode, .brief__drop, .brief__drop-row {
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.brief__mode { margin-left: 24px; }
+.brief__drop-row { margin: 6px 0 0 24px; }
+.brief__count { font-size: 13px; opacity: 0.8; margin: 8px 0 0; }
+.brief__clear { margin-top: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+
 .brief__questions { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
 .brief__question { padding: 6px 12px; cursor: pointer; border-radius: 999px; }
 .brief__custom { margin-top: 12px; }
@@ -51,4 +82,18 @@ body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
 .preview__value { overflow-wrap: anywhere; }
 .preview__sources { margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(127,127,127,0.25); }
 .preview__note { font-size: 12px; opacity: 0.8; margin: 8px 0 0; }
+/* The per-source passage bodies. `pre-wrap` is load-bearing, not cosmetic: the
+   texts are joined with PASSAGE_SEPARATOR's newlines, and collapsing them would
+   run several excerpts together into one line with an inline [...] — a consent
+   surface that no longer shows where one excerpt ends and the next begins. */
+.preview__passages { margin-top: 8px; font-size: 13px; }
+.preview__passages summary { cursor: pointer; opacity: 0.85; }
+.preview__body {
+  margin-top: 6px;
+  max-height: 12em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  opacity: 0.9;
+}
 #run { margin-top: 12px; padding: 8px 16px; cursor: pointer; }
