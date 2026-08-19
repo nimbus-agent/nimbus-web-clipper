@@ -1253,6 +1253,59 @@ pointer, while dropping an unsaved one loses the only record anywhere. It render
 in Options stage 4 and is **not** cleared on unpair — a past egress does not
 un-happen when the pairing changes.
 
+### Also searching your saved clips (C5.4)
+
+`useIndex` is one boolean that travels a short, fully-typed path:
+`brief-view.ts`'s checkbox → `index-pref.ts` (`isIndexSearchEnabled` /
+`setIndexSearchEnabled`, read on load, written on toggle) → the `useIndex`
+field on the `brief-start` message (`messages.ts`) → `buildCreateBody`'s third
+parameter (`shared/brief.ts`), which puts it on the `POST /v1/briefs` body. No
+step in between reinterprets it; the pref store is the only place it can turn
+itself off, and it does that by never turning on in the first place —
+`index-pref.ts` defaults **off** and falls back **off** on a read failure,
+the opposite direction from `preview-pref.ts`, because the fail-safe direction
+for a control that *widens* what a run consults is "don't."
+
+**The disclosure names a bound, not a list.** With the flag on, the gateway
+searches the index during the run, over a corpus this client cannot read in
+advance — so `buildBriefPreview` cannot name the items the way it names every
+tab and passage. Naming a guess the finished report would then contradict
+would be worse than the alternative: `INDEX_NOTICE` (`shared/preview.ts`)
+states that the gateway will also search your saved clips, that it may draw on
+up to 8 items that cannot be listed before the run, and that the question text
+itself is what gets searched — including that the search may send that text
+to whichever embedding provider the gateway is configured to use. The report
+that comes back is where enumeration belongs: every item actually used is
+cited, and an indexed citation is visibly marked as such (`renderCitations`)
+rather than reading like a tab the user picked.
+
+**The egress record completes when the report does.** `brief-log.ts`'s entry is
+written when `/run` is accepted, before any report exists, so it carries
+`usedIndex` and nothing about what came back. When the run settles,
+`settleRun` patches it with the synthesis model and `countIndexHits(report)` —
+the number of **distinct** indexed items cited, so a clip quoted in three
+findings counts once and the recorded number can never exceed the bound the
+pre-send notice named. Options renders the count beside the marker, and only
+when it was recorded: a run whose report never arrived keeps the marker without
+a count rather than implying zero.
+
+**The user-facing noun is deliberately narrow.** Today's gateway scopes the
+brief search to `itemType: "web_clip"`, so every user-facing string says *your
+saved clips* — the composer checkbox and its hint, the Options toggle and its
+hint, `INDEX_NOTICE`, and the egress-log line. The wider search is designed
+upstream (`dev/asafgolombek/brief-index-widening` in the Nimbus repo) and is
+not merged; `publish.yml` uploads to two public store listings off a `v*` tag
+with no manual gate, so the shipped copy describes the shipped gateway. One
+string is exempt and stays: a citation reads "from your index", which is true
+before and after the widening, because a clip *is* in your index. When the
+`web_clip` filter goes, those nouns widen together.
+
+The index widens what a brief may draw on; it does not replace what the user
+chose — `POST /v1/briefs` 400s on an empty `sources` array regardless of
+`useIndex`, so a brief cannot be built from the index alone, and the composer
+still requires at least one picked tab or passage. Full reasoning:
+[`docs/superpowers/specs/2026-08-19-briefs-over-your-index-design.md`](./superpowers/specs/2026-08-19-briefs-over-your-index-design.md).
+
 ### What the client cannot promise
 
 It cannot say synthesis stays on your machine. `createBriefLlm` resolves

@@ -115,18 +115,24 @@ describe("buildSourceBody", () => {
 });
 
 describe("buildCreateBody", () => {
-  it("declares every source and pins useIndex false for this slice", () => {
-    const body = buildCreateBody("Why?", [
-      { url: "https://example.com/1", title: "One" },
-      { url: "https://example.com/2", title: "Two" },
-    ]);
-    expect(body.brief).toBe("Why?");
+  it("carries useIndex as given, both ways", () => {
+    const sources = [{ url: "http://h/a", title: "A" }];
+    expect(buildCreateBody("q", sources, false).useIndex).toBe(false);
+    expect(buildCreateBody("q", sources, true).useIndex).toBe(true);
+  });
+
+  it("still declares every source and caps the question, whatever useIndex says", () => {
+    const sources = [
+      { url: "http://h/a", title: "A" },
+      { url: "http://h/b", title: "B" },
+    ];
+    const body = buildCreateBody("x".repeat(5000), sources, true);
     expect(body.sources).toHaveLength(2);
-    expect(body.useIndex).toBe(false);
+    expect(body.brief.length).toBe(BRIEF_CAPS.maxQuestionChars);
   });
 
   it("cuts an over-long question to the gateway's character cap", () => {
-    const body = buildCreateBody("q".repeat(BRIEF_CAPS.maxQuestionChars + 10), []);
+    const body = buildCreateBody("q".repeat(BRIEF_CAPS.maxQuestionChars + 10), [], false);
     expect(body.brief.length).toBe(BRIEF_CAPS.maxQuestionChars);
   });
 
@@ -135,6 +141,6 @@ describe("buildCreateBody", () => {
       url: `https://example.com/${i}`,
       title: `T${i}`,
     }));
-    expect(buildCreateBody("q", sources).sources).toHaveLength(BRIEF_CAPS.maxSources);
+    expect(buildCreateBody("q", sources, false).sources).toHaveLength(BRIEF_CAPS.maxSources);
   });
 });

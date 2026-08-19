@@ -106,6 +106,12 @@ export interface BriefPreview {
    * uniquely — the preview can show the bytes rather than describe them.
    */
   readonly bodies: readonly PreviewField[];
+  /**
+   * Present ONLY when the run will search the index. Its presence is the marker
+   * that this preview covers a wider reach than the sources listed above it —
+   * the renderer needs no second flag.
+   */
+  readonly indexNotice?: string;
   readonly synthesisNotice: string;
 }
 
@@ -140,6 +146,33 @@ export const SYNTHESIS_NOTICE =
   "Your gateway will read these pages and answer with a local or a remote model, depending on how it is configured. The finished brief names which one it used.";
 
 /**
+ * What the user is told when a brief will also search the gateway's index.
+ *
+ * Three true statements, and no fourth. The client CANNOT name the items in
+ * advance — the search runs gateway-side, during the run, over a corpus this
+ * extension has no read access to — so it names the BOUND and says plainly that
+ * the members cannot be listed, rather than showing a guess that the finished
+ * report would then contradict.
+ *
+ * The last sentence is the one that costs something to admit. Clips are embedded
+ * locally, but the search QUERY goes through the gateway's ordinary embedding
+ * configuration, which may be remote. So the corpus can stay put while the
+ * question does not, and a disclosure that mentioned only the corpus would be
+ * true and still misleading.
+ *
+ * "Your saved clips" is DELIBERATELY narrower than "what Nimbus has indexed",
+ * and it is the accurate noun today: the gateway's brief search is scoped to
+ * `itemType: "web_clip"`, so a clip is the only thing that can come back. The
+ * wider search is designed upstream (`dev/asafgolombek/brief-index-widening` in
+ * the Nimbus repo) but not merged, and a tag ships this string to two public
+ * store listings with no manual gate in between — so the copy states what is
+ * true of the shipped gateway, not what is true of a branch. WHEN THAT FILTER
+ * GOES, this noun widens; nothing else here changes.
+ */
+export const INDEX_NOTICE =
+  "Your gateway will also search your saved clips and may draw on up to 8 items. Which ones cannot be listed before the run — the finished brief names every one it used. Your question is the text that gets searched, and searching may send it to whichever embedding provider your gateway is configured to use.";
+
+/**
  * A brief run, source by source.
  *
  * Same construction rule as {@link buildClipPreview}: fields are listed
@@ -159,6 +192,7 @@ export const SYNTHESIS_NOTICE =
 export function buildBriefPreview(input: {
   question: string;
   sources: readonly BriefPreviewSource[];
+  useIndex: boolean;
 }): BriefPreview {
   return {
     fields: [
@@ -177,6 +211,7 @@ export function buildBriefPreview(input: {
         (s): s is BriefPreviewSource & { passages: readonly string[] } => s.passages !== undefined,
       )
       .map((s) => ({ label: s.title, value: joinPassages(s.passages) })),
+    ...(input.useIndex ? { indexNotice: INDEX_NOTICE } : {}),
     synthesisNotice: SYNTHESIS_NOTICE,
   };
 }

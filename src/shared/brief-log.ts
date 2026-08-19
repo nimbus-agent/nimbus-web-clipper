@@ -35,6 +35,20 @@ export type BriefLogEntry = {
   readonly failed?: boolean;
   /** A pointer that may dangle — see `evictLog`. */
   readonly savedItemId?: string;
+  /**
+   * Whether this run also searched the gateway's index.
+   *
+   * Optional so entries written before this field remain valid — an old entry is
+   * the only evidence anywhere that its egress happened, and a guard that
+   * rejected it would destroy the record this module exists to keep.
+   */
+  readonly usedIndex?: boolean;
+  /**
+   * How many DISTINCT indexed items the report drew on — one clip cited in three
+   * findings is one. Written by `countIndexHits` when the report arrives, so it
+   * is absent until then and absent forever on a run that failed.
+   */
+  readonly indexHits?: number;
 };
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -52,7 +66,9 @@ export function isBriefLogEntry(v: unknown): v is BriefLogEntry {
     (v["model"] === undefined || typeof v["model"] === "string") &&
     (v["remote"] === undefined || typeof v["remote"] === "boolean") &&
     (v["failed"] === undefined || typeof v["failed"] === "boolean") &&
-    (v["savedItemId"] === undefined || typeof v["savedItemId"] === "string")
+    (v["savedItemId"] === undefined || typeof v["savedItemId"] === "string") &&
+    (v["usedIndex"] === undefined || typeof v["usedIndex"] === "boolean") &&
+    (v["indexHits"] === undefined || typeof v["indexHits"] === "number")
   );
 }
 

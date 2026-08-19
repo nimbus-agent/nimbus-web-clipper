@@ -11,7 +11,9 @@ import {
   BRIEF_REPORT,
   CLIP_INGEST,
   FETCH_FIXTURE,
+  type FedBriefCreate,
   type FedBriefSource,
+  INDEX_BRIEF_REPORT,
   PAIR_CONFIRM,
   RELATED,
   RESOLVE_FIXTURE,
@@ -63,12 +65,12 @@ function isObject(v: unknown): v is Record<string, unknown> {
  * map would silently start reissuing ids the moment something did.
  */
 export interface BriefRuns {
-  readonly byId: Map<string, { expected: number; received: number }>;
+  readonly byId: Map<string, { expected: number; received: number; useIndex: boolean }>;
   nextId(): string;
 }
 
 export function newBriefRuns(): BriefRuns {
-  const byId = new Map<string, { expected: number; received: number }>();
+  const byId = new Map<string, { expected: number; received: number; useIndex: boolean }>();
   let counter = 0;
   return {
     byId,
@@ -138,8 +140,10 @@ export async function handleRequest(
   if (url.pathname === GATEWAY_PATHS.briefs && req.method === "POST") {
     const body: unknown = await req.json();
     const sources = isObject(body) && Array.isArray(body["sources"]) ? body["sources"] : [];
+    const useIndex = isObject(body) && body["useIndex"] === true;
+    scenario.onBriefCreate?.((isObject(body) ? body : {}) as FedBriefCreate);
     const id = runs.nextId();
-    runs.byId.set(id, { expected: sources.length, received: 0 });
+    runs.byId.set(id, { expected: sources.length, received: 0, useIndex });
     return jsonResponse({ id, status: "collecting", expected: sources.length });
   }
   const brief = /^\/v1\/briefs\/([^/]+)(?:\/(sources|run|save))?$/.exec(url.pathname);
@@ -179,7 +183,12 @@ export async function handleRequest(
     if (req.method !== "GET") {
       return new Response(null, { status: 405 });
     }
-    return jsonResponse({ status: "done", report: BRIEF_REPORT });
+    // Only a run that asked to search the index ever gets clip citations back
+    // — a run that did not must see none at all, the same as the real gateway.
+    return jsonResponse({
+      status: "done",
+      report: run.useIndex ? INDEX_BRIEF_REPORT : BRIEF_REPORT,
+    });
   }
   if (req.method !== "POST") {
     return new Response(null, { status: 405 });

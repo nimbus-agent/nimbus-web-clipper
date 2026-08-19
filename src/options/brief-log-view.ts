@@ -38,6 +38,38 @@ function describeEntry(entry: BriefLogEntry): string {
     : `${pages} were sent${shortened} and answered on your machine by ${entry.model}.`;
 }
 
+/**
+ * The index line, when there is one.
+ *
+ * Two independent absences, and neither is allowed to become a claim. Strict
+ * equality on `usedIndex`: an absent field means "not recorded" (an entry
+ * written before the field existed), which is not the same as "did not happen".
+ * `indexHits` is absent on its own schedule — a run whose report never arrived
+ * searched the index and has no count — so the marker still renders without it.
+ *
+ * The count is DISTINCT items, not total citations: `countIndexHits` dedupes a
+ * clip quoted in several findings, because the number a person reads here is
+ * "how much of your index did this run reach".
+ *
+ * The zero case says "nothing from them reached the brief", not "nothing
+ * matched": the count is of what the finished report cited, not of what the
+ * gateway's search matched, and this client never sees the search's own
+ * results — so "none of them matched" would be a claim about a system this
+ * extension cannot observe.
+ */
+function describeIndex(entry: BriefLogEntry): string | null {
+  if (entry.usedIndex !== true) {
+    return null;
+  }
+  if (entry.indexHits === undefined) {
+    return "Also searched your saved clips.";
+  }
+  if (entry.indexHits === 0) {
+    return "Also searched your saved clips — nothing from them reached the brief.";
+  }
+  return `Also searched your saved clips, and drew on ${entry.indexHits} of them.`;
+}
+
 export function renderBriefLog(root: HTMLElement, entries: readonly BriefLogEntry[]): void {
   root.replaceChildren();
   root.appendChild(el("h3", "Research briefs you have run", "stage__sub"));
@@ -61,6 +93,10 @@ export function renderBriefLog(root: HTMLElement, entries: readonly BriefLogEntr
     li.appendChild(el("p", new Date(entry.at).toLocaleString(), "brief-log__when"));
     li.appendChild(el("p", entry.question, "brief-log__question"));
     li.appendChild(el("p", describeEntry(entry), "brief-log__what"));
+    const indexLine = describeIndex(entry);
+    if (indexLine !== null) {
+      li.appendChild(el("p", indexLine, "brief-log__index"));
+    }
     if (entry.savedItemId !== undefined) {
       li.appendChild(el("p", "Saved to your index.", "brief-log__saved"));
     }

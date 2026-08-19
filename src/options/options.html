@@ -69,6 +69,18 @@
             Show me the payload before sending, when I clip from the toolbar
           </label>
         </p>
+        <p class="options__toggle">
+          <label for="index-toggle">
+            <input id="index-toggle" type="checkbox" />
+            Let a research brief also search your saved clips
+          </label>
+          <!-- The same sentence the composer shows beside its own checkbox, and for
+               the same reason: this toggle widens what a brief consults, so the one
+               line explaining it must be visible text. Never a tooltip attribute —
+               there are none anywhere in src/, and a tooltip is invisible to touch
+               and to keyboard users, who are exactly who most needs this sentence. -->
+          <span id="index-hint" class="options__hint">Adds up to 8 matching items from your saved clips as extra sources. Your question is what gets searched, and searching may send it to whichever embedding provider your gateway is configured to use.</span>
+        </p>
         <section id="brief-log"></section>
         <p><strong>The secret stays secret.</strong> Your pairing token lives in extension storage, is never shown on this page, never written to a log, and never placed in any web page.</p>
         <p><strong>You can check all of this.</strong> The extension is MIT-licensed, has no runtime dependencies, and its build is reproducible from source.</p>

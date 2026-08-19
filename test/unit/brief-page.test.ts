@@ -95,7 +95,9 @@ async function loadPage(): Promise<void> {
   vi.resetModules();
   await import("../../src/brief/brief.ts");
   await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "brief-tabs" }));
-  await vi.waitFor(() => expect(document.querySelectorAll("#composer input").length).toBe(2));
+  await vi.waitFor(() =>
+    expect(document.querySelectorAll("#composer .brief__tabs input").length).toBe(2),
+  );
 }
 
 /** Select both tabs and a question — the state from which Send is meaningful. */
@@ -137,7 +139,7 @@ describe("composer", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalled());
-    expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(0);
+    expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(0);
   });
 
   test("a FAILED brief-tabs renders the error, not a claim about the browser", async () => {
@@ -169,7 +171,9 @@ describe("composer", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() =>
-      expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(21),
+      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(
+        21,
+      ),
     );
     for (let i = 1; i <= 20; i += 1) {
       tick(checkbox(i), true);
@@ -245,9 +249,54 @@ describe("send", () => {
           { kind: "tab", id: 1 },
           { kind: "tab", id: 2 },
         ],
+        useIndex: false,
       }),
     );
     await vi.waitFor(() => expect($("state").textContent).not.toBe(""));
+  });
+
+  // The ticked path had no unit coverage at all: every assertion was on
+  // `useIndex: false`, so deleting the `target.id === "use-index"` early return
+  // in brief.ts let the box fall through to the generic pick branch — `selected`
+  // gains the checkbox's default value "on", the source count is wrong, and
+  // `useIndex` stays false forever — with the whole unit suite still green.
+  test("ticking the index box sends useIndex, and does NOT enrol it as a source", async () => {
+    await loadPage();
+    await compose();
+    const box = document.querySelector<HTMLInputElement>("#use-index");
+    expect(box).not.toBeNull();
+    if (box !== null) {
+      tick(box, true);
+    }
+
+    // The index is not a source: it is the gateway's own corpus, not something
+    // this client declares and feeds, so the cap counter must not move.
+    await vi.waitFor(() =>
+      expect(document.querySelector(".brief__count")?.textContent).toContain("2 of 20"),
+    );
+
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "feeding",
+      id: "b1",
+      received: 0,
+      expected: 2,
+    });
+
+    click("run");
+
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenCalledWith({
+        kind: "brief-start",
+        question: "Where do these contradict each other?",
+        // Exactly the two tabs — no third pick built from the checkbox's own
+        // value, which is what a fall-through to the generic branch produces.
+        picks: [
+          { kind: "tab", id: 1 },
+          { kind: "tab", id: 2 },
+        ],
+        useIndex: true,
+      }),
+    );
   });
 
   test("an answer without a kind is not rendered as state", async () => {
@@ -377,7 +426,9 @@ describe("collected passages", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() =>
-      expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(3),
+      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(
+        3,
+      ),
     );
   }
 
@@ -406,6 +457,7 @@ describe("collected passages", () => {
         kind: "brief-start",
         question: "Where do these contradict each other?",
         picks: [{ kind: "passages", url: "https://example.com/c" }],
+        useIndex: false,
       }),
     );
   });
@@ -506,7 +558,9 @@ describe("collected passages", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() =>
-      expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(3),
+      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(
+        3,
+      ),
     );
   }
 
@@ -599,6 +653,6 @@ describe("re-enumeration", () => {
     harness.emitPermissionsAdded();
 
     await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledTimes(2));
-    expect(document.querySelectorAll("#composer input[type=checkbox]").length).toBe(2);
+    expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(2);
   });
 });

@@ -61,6 +61,12 @@ export function renderPreview(doc: Document, preview: AnyPreview): DocumentFragm
       details.append(summary, text);
       frag.append(details);
     }
+    if (preview.indexNotice !== undefined) {
+      const indexNote = doc.createElement("p");
+      indexNote.className = "preview__note";
+      indexNote.textContent = preview.indexNotice;
+      frag.append(indexNote);
+    }
     const notice = doc.createElement("p");
     notice.className = "preview__note";
     notice.textContent = preview.synthesisNotice;

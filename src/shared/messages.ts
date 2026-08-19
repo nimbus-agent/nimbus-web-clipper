@@ -224,6 +224,12 @@ export interface BriefStartRequest {
   readonly kind: "brief-start";
   readonly question: string;
   readonly picks: readonly BriefPick[];
+  /**
+   * Ask the gateway to ALSO search its index. Required, not optional: it arrives
+   * from a page script like every other field here, and an absent boolean would
+   * default silently — the one thing a control over egress must never do.
+   */
+  readonly useIndex: boolean;
 }
 
 /** Read a brief's current state. Read-only — never invokes. */
@@ -740,6 +746,9 @@ export function isBriefStartRequest(v: unknown): v is BriefStartRequest {
   }
   const picks = v["picks"];
   if (!Array.isArray(picks) || picks.length === 0 || picks.length > MAX_BRIEF_SOURCES) {
+    return false;
+  }
+  if (typeof v["useIndex"] !== "boolean") {
     return false;
   }
   return picks.every(isBriefPick);

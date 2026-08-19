@@ -94,4 +94,113 @@ describe("renderBriefLog", () => {
     expect(root.querySelector("b")).toBeNull();
     expect(root.textContent).toContain("<b>hi</b>");
   });
+
+  it("says when a logged run also searched your index", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: true,
+      },
+    ]);
+    expect(root.textContent?.toLowerCase()).toContain("saved clips");
+  });
+
+  it("says nothing about the index for a run that did not search it", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: false,
+      },
+    ]);
+    expect(root.textContent?.toLowerCase()).not.toContain("saved clips");
+    expect(root.textContent?.toLowerCase()).not.toContain("index");
+  });
+
+  it("says nothing for an entry written before the field existed", () => {
+    // Absent means "not recorded", which is NOT the same as "did not happen".
+    renderBriefLog(root, [
+      { runId: "r1", at: 1, question: "q", sourceCount: 2, truncatedCount: 0 },
+    ]);
+    expect(root.textContent?.toLowerCase()).not.toContain("saved clips");
+    expect(root.textContent?.toLowerCase()).not.toContain("index");
+  });
+
+  it("says how many indexed items the run drew on, when that was recorded", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: true,
+        indexHits: 3,
+      },
+    ]);
+    expect(root.querySelector(".brief-log__index")?.textContent).toBe(
+      "Also searched your saved clips, and drew on 3 of them.",
+    );
+  });
+
+  it("says plainly when nothing from the search reached the brief, rather than omitting the count", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: true,
+        indexHits: 0,
+      },
+    ]);
+    const text = root.querySelector(".brief-log__index")?.textContent;
+    expect(text).toBe("Also searched your saved clips — nothing from them reached the brief.");
+    // indexHits counts what the report CITED, not what the gateway's search
+    // matched — this client never sees the search's own results, so the zero
+    // case must not claim anything about matching.
+    expect(text).not.toContain("matched");
+  });
+
+  it("still marks the search when no count was recorded — a run whose report never came", () => {
+    // `indexHits` is absent on its own schedule. The marker is what the egress
+    // record is FOR, so it renders without a count rather than inventing one.
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: true,
+        failed: true,
+      },
+    ]);
+    expect(root.querySelector(".brief-log__index")?.textContent).toBe(
+      "Also searched your saved clips.",
+    );
+  });
+
+  it("shows no count for a run that did not search at all, whatever indexHits says", () => {
+    renderBriefLog(root, [
+      {
+        runId: "r1",
+        at: 1,
+        question: "q",
+        sourceCount: 2,
+        truncatedCount: 0,
+        usedIndex: false,
+        indexHits: 4,
+      },
+    ]);
+    expect(root.querySelector(".brief-log__index")).toBeNull();
+  });
 });

@@ -43,6 +43,7 @@ const FIXTURE = `
     <span id="trust-origin"></span>
     <span id="trust-hosts"></span>
     <input id="preview-toggle" type="checkbox" checked />
+    <input id="index-toggle" type="checkbox" />
   </section>
 `;
 
@@ -651,6 +652,21 @@ describe("options.html stages", () => {
   test("the manual gateway URL field survives — discovery never removes it", () => {
     expect(html).toContain('id="origin"');
   });
+
+  // The index toggle is an EGRESS control: ticking it lets a brief's question
+  // reach the gateway's embedding provider, which may be remote. Stage 4 opens
+  // with "One destination... no cloud service and no analytics", so the toggle
+  // cannot sit two paragraphs below that with a bare label. The composer already
+  // carries this sentence beside its own checkbox; Options is the second surface
+  // for the same preference and gets the same disclosure.
+  test("the index toggle carries its description in VISIBLE text, not a tooltip", () => {
+    expect(html).toContain('id="index-hint"');
+    expect(html).toContain("Adds up to 8 matching items from your saved clips");
+    expect(html).toContain("whichever embedding provider your gateway is configured to use");
+    // A tooltip is invisible to touch and to keyboard users, for exactly the
+    // sentence they most need. src/ contains no title= anywhere; keep it that way.
+    expect(html).not.toContain("title=");
+  });
 });
 
 describe("trust panel content (#trust-origin / #trust-hosts)", () => {
@@ -769,6 +785,51 @@ describe("preview toggle", () => {
     }
     await flush();
     expect(harness.storage.get("preview-enabled")).toBe(false);
+  });
+});
+
+describe("index-search toggle", () => {
+  test("reflects the stored preference", async () => {
+    harness = installChromeMock();
+    harness.storage.set("index-search-enabled", true);
+    await bootOptions();
+    const toggle = document.getElementById("index-toggle");
+    expect(toggle instanceof HTMLInputElement && toggle.checked).toBe(true);
+  });
+
+  test("defaults to off when nothing is stored", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    const toggle = document.getElementById("index-toggle");
+    expect(toggle instanceof HTMLInputElement && toggle.checked).toBe(false);
+  });
+
+  test("switching it on persists", async () => {
+    harness = installChromeMock();
+    await bootOptions();
+    const toggle = document.getElementById("index-toggle");
+    if (toggle instanceof HTMLInputElement) {
+      toggle.checked = true;
+      toggle.dispatchEvent(new Event("change"));
+    }
+    await flush();
+    expect(harness.storage.get("index-search-enabled")).toBe(true);
+  });
+
+  // The opposite fail-safe from the preview toggle: an unreadable preference
+  // must never present a wider search as switched on.
+  test("falls back to unchecked on a read failure", async () => {
+    harness = installChromeMock();
+    harness.storage.set("index-search-enabled", true);
+    harness.storageGet.mockImplementation(async (key: string) => {
+      if (key === "index-search-enabled") {
+        throw new Error("storage unavailable");
+      }
+      return { [key]: harness.storage.get(key) };
+    });
+    await bootOptions();
+    const toggle = document.getElementById("index-toggle");
+    expect(toggle instanceof HTMLInputElement && toggle.checked).toBe(false);
   });
 });
 

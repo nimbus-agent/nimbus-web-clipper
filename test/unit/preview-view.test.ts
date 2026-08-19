@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 // test/unit/preview-view.test.ts
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import type { BriefPreview, ClipPreview, FetchPreview } from "../../src/shared/preview.ts";
+import { buildBriefPreview } from "../../src/shared/preview.ts";
 import { renderPreview } from "../../src/shared/preview-view.ts";
 
 const clip: ClipPreview = {
@@ -139,5 +140,22 @@ describe("renderPreview with passage bodies", () => {
     const host = document.createElement("div");
     host.append(frag);
     expect(host.querySelector("details")).toBeNull();
+  });
+});
+
+describe("renderPreview — index notice", () => {
+  const SOURCE = { title: "Whole", url: "http://h/w" };
+
+  it("renders the index notice only when the preview carries one", () => {
+    const withIndex = renderPreview(
+      document,
+      buildBriefPreview({ question: "q", sources: [SOURCE], useIndex: true }),
+    );
+    const without = renderPreview(
+      document,
+      buildBriefPreview({ question: "q", sources: [SOURCE], useIndex: false }),
+    );
+    expect(withIndex.textContent).toContain("up to 8 items");
+    expect(without.textContent).not.toContain("up to 8 items");
   });
 });

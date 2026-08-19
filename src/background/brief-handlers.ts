@@ -9,7 +9,7 @@
 import type { CandidateTab, TabCandidates } from "../browser/tabs.ts";
 import { BRIEF_CAPS, buildCreateBody, buildSourceBody, suggestQuestions } from "../shared/brief.ts";
 import type { BriefLogEntry } from "../shared/brief-log.ts";
-import type { BriefReport } from "../shared/brief-report.ts";
+import { type BriefReport, countIndexHits } from "../shared/brief-report.ts";
 import type { BriefPick, BriefStartRequest } from "../shared/messages.ts";
 import type { Passage, PassageGroup } from "../shared/passage.ts";
 import { groupCapturedAt, groupKey, groupPassages, stitch } from "../shared/passage.ts";
@@ -302,9 +302,14 @@ async function settleRun(
   // arm with a union-typed discriminant, which does not narrow away cleanly.
   if (res.status === "done") {
     const report = res.report;
+    // The egress record is completed here, at the one moment it can be: the
+    // count of indexed items is a property of the REPORT, and the entry was
+    // written back when `/run` was accepted, long before one existed.
+    // `countIndexHits` counts DISTINCT items, not citations — see its comment.
     await deps.log.update(id, {
       model: report.synthesis.model,
       remote: report.synthesis.remote,
+      indexHits: countIndexHits(report),
     });
     await putPhase(deps, id, { kind: "done", report });
     return emit(deps, {
@@ -371,7 +376,7 @@ export async function handleBriefStart(
   const created = await deps.client.createBrief(
     conn.origin,
     conn.token,
-    buildCreateBody(req.question, sources.map(declare)),
+    buildCreateBody(req.question, sources.map(declare), req.useIndex),
   );
   if (!created.ok) {
     const hint = "hint" in created ? created.hint : undefined;
@@ -417,6 +422,7 @@ export async function handleBriefStart(
     question: req.question,
     sourceCount: fed.accepted,
     truncatedCount: fed.truncated.length,
+    usedIndex: req.useIndex,
   });
   // Cleared HERE, not on the report: this is the moment the text left. Leaving
   // them would mean the next brief silently re-sends text already sent. A run

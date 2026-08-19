@@ -9,6 +9,7 @@
 // `chrome.runtime.sendMessage` here would take `unknown`, which is how a
 // breaking change to `BriefStartRequest` once got past the compiler.
 import type { BriefState } from "../background/brief-handlers.ts";
+import { isIndexSearchEnabled, setIndexSearchEnabled } from "../background/index-pref.ts";
 import { onPermissionsAdded } from "../browser/permissions.ts";
 import { addBroadcastListener, sendMessage } from "../browser/runtime.ts";
 import type { CandidateTab } from "../browser/tabs.ts";
@@ -38,6 +39,9 @@ let hiddenCount = 0;
 let questions: readonly string[] = [];
 let enumerationFailed = false;
 let question = "";
+/** Whether this brief will also search the gateway's index — the sticky
+ *  preference, read at start-up and written back on every toggle. */
+let useIndex = false;
 /**
  * What is in the custom-question box, kept apart from `question`.
  *
@@ -120,7 +124,7 @@ function showPreview(): void {
   }
   panel.hidden = false;
   const body = root("preview-body");
-  body.replaceChildren(renderPreview(document, buildBriefPreview({ question, sources })));
+  body.replaceChildren(renderPreview(document, buildBriefPreview({ question, sources, useIndex })));
 }
 
 /**
@@ -159,6 +163,7 @@ function paint(): void {
     wholePage,
     customQuestion,
     enumerationFailed,
+    useIndex,
   });
   showPreview();
 }
@@ -272,6 +277,12 @@ function onButtonClick(target: HTMLButtonElement): void {
 
 root("composer").addEventListener("click", (ev) => {
   const target = ev.target;
+  if (target instanceof HTMLInputElement && target.id === "use-index") {
+    useIndex = target.checked;
+    void setIndexSearchEnabled(useIndex);
+    showPreview();
+    return;
+  }
   if (target instanceof HTMLInputElement && target.type === "checkbox") {
     // The box's value IS the pick id — no lookup, and nothing to parse.
     if (target.checked) {
@@ -310,7 +321,12 @@ root("composer").addEventListener("input", (ev) => {
 });
 
 root("run").addEventListener("click", () => {
-  void sendMessage({ kind: "brief-start", question, picks: pickedRows().map(pickFor) })
+  void sendMessage({
+    kind: "brief-start",
+    question,
+    picks: pickedRows().map(pickFor),
+    useIndex,
+  })
     .then((res: unknown) => {
       if (typeof res === "object" && res !== null && "kind" in res) {
         show(res as BriefState);
@@ -363,4 +379,13 @@ window.addEventListener("focus", () => {
   void loadTabs().catch(() => undefined);
 });
 
-void loadTabs().catch(() => undefined);
+async function start(): Promise<void> {
+  try {
+    useIndex = await isIndexSearchEnabled();
+  } catch {
+    useIndex = false; // fail off — same rule as the store itself
+  }
+  await loadTabs();
+}
+
+void start().catch(() => undefined);

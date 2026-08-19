@@ -31,6 +31,9 @@ code { font-family: ui-monospace, monospace; padding: 1px 4px; border-radius: 4p
 /* The preview off switch. Its label wraps the checkbox, so the box and its
    words share one hit target — the same arrangement .surfaces__ambient uses. */
 .options__toggle label { display: inline-flex; align-items: baseline; gap: 6px; }
+/* The one-line description that belongs to a toggle. Visible text, matching
+   .brief__index-hint in the composer — never a tooltip. */
+.options__hint { display: block; margin-top: 4px; font-size: 12px; opacity: 0.75; }
 .stage[data-state="locked"] { opacity: 0.45; }
 .stage[data-state="locked"] button,
 .stage[data-state="locked"] input,

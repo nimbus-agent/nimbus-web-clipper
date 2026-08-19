@@ -40,6 +40,8 @@ export type ComposerModel = {
   readonly customQuestion?: string;
   /** See `TabCandidates.enumerationFailed` — rendered, not logged. */
   readonly enumerationFailed?: boolean;
+  /** Whether this brief will also search the gateway's index. */
+  readonly useIndex: boolean;
 };
 
 /**
@@ -165,7 +167,12 @@ export function sourceCountText(picked: number): string {
  */
 export function applyPickLimit(root: HTMLElement, picked: number): void {
   const full = picked >= BRIEF_CAPS.maxSources;
-  for (const box of root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')) {
+  // Scoped to the row list: the cap is about declared sources, and the index
+  // checkbox below it is neither declared nor fed, so it must never be disabled
+  // by this.
+  for (const box of root.querySelectorAll<HTMLInputElement>(
+    '.brief__tabs input[type="checkbox"]',
+  )) {
     box.disabled = full && !box.checked;
   }
 }
@@ -304,6 +311,29 @@ export function renderComposer(root: HTMLElement, model: ComposerModel): void {
   // Both kinds count against ONE cap: the gateway's source cap is about sources,
   // and a set of passages is a source.
   root.appendChild(el("p", sourceCountText(model.selected.size), "brief__count"));
+
+  // A checkbox, NOT a row in the list above: the rows are things this client
+  // captures and feeds, and the index is neither — the gateway supplies those
+  // bodies. Putting it in the list would also enrol it in the source cap, which
+  // is about declared sources.
+  const indexLabel = el("label", undefined, "brief__index");
+  const indexBox = document.createElement("input");
+  indexBox.type = "checkbox";
+  indexBox.id = "use-index";
+  indexBox.checked = model.useIndex;
+  indexLabel.appendChild(indexBox);
+  indexLabel.appendChild(el("span", "Also search your saved clips"));
+  // Visible helper text, never a tooltip: the disclosure that reaches the user at
+  // Send arrives after they have composed. This one is at the moment of choosing.
+  indexLabel.appendChild(
+    el(
+      "span",
+      "Adds up to 8 matching items from your saved clips as extra sources. Your question is what gets searched.",
+      "brief__index-hint",
+    ),
+  );
+  root.appendChild(indexLabel);
+
   if (model.passages.length > 0) {
     const clear = el("button", "Clear collected passages", "brief__clear");
     clear.type = "button";
@@ -354,11 +384,43 @@ function saveErrorText(reason: string): string {
   return `Couldn't save it: ${reason}.`;
 }
 
+/**
+ * A human label for an index item type.
+ *
+ * NOT a lookup table: the set of connectors grows upstream on its own schedule,
+ * so an unknown type must degrade to something readable rather than to a blank
+ * or a crash. Underscores become spaces and that is the WHOLE rule — a
+ * `slack_message` from a connector released after this build still reads as
+ * "slack message".
+ *
+ * Deliberately no case-splitting and no lower-casing. The gateway's vocabulary
+ * is snake_case: all ~70 entries of the SDK's `KNOWN_ITEM_TYPES` are lowercase
+ * with underscores, because they are the values connectors write to the item
+ * table's `type` column. Splitting on capitals would buy nothing for the types
+ * that exist and would MANGLE an acronym if one ever arrived — `"PR"` becomes
+ * "p r" — which is the display equivalent of the one thing the SDK says
+ * consumers must never do: rewrite a type into something it is not.
+ */
+export function itemTypeLabel(itemType: string): string {
+  return itemType.replace(/_/g, " ").trim();
+}
+
 function renderCitations(item: BriefReportItem): HTMLElement {
   const list = el("ul", undefined, "brief__citations");
   for (const c of item.citations) {
     const li = el("li");
     li.appendChild(el("span", c.title, "brief__cite-title"));
+    if (c.kind === "clip") {
+      // The LABEL decides the separator, not the field's presence. `itemType` is
+      // deliberately unvalidated — an arbitrary connector string, never an enum —
+      // so a malformed payload can carry `""` or `"__"`, which `itemTypeLabel`
+      // correctly renders as nothing. Keying the " · " off `itemType !== undefined`
+      // then printed "from your index · " with nothing after it. Fixed here rather
+      // than in the guard: the guard must keep accepting whatever type arrives.
+      const label = c.itemType === undefined ? "" : itemTypeLabel(c.itemType);
+      const type = label === "" ? "" : ` · ${label}`;
+      li.appendChild(el("span", `from your index${type}`, "brief__cite-origin"));
+    }
     if (c.quote !== undefined) {
       li.appendChild(el("blockquote", c.quote));
     }

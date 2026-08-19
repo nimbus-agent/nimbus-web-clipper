@@ -48,6 +48,20 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **Ask a brief to draw on what you already know.** A research brief was built
+  only from the tabs you picked and the passages you highlighted; the pages you
+  had already clipped sat one process away and were never consulted. Tick **Also
+  search your saved clips** in the composer and the gateway searches them with
+  your question and may draw on up to 8 matching items, cited in the finished
+  brief and marked as coming from your index rather than from a tab you chose.
+  Off unless you turn it on, and your choice is remembered — it is also in
+  Options, with the same one-line description beside it. Because the client
+  cannot know which items the gateway will find, the pre-send preview names the
+  bound rather than pretending to list them, and says plainly that your question
+  is the text being searched — and that searching may send it to whichever
+  embedding provider your gateway is configured to use. Today the gateway's
+  brief search covers your saved web clips only; the wording will widen when the
+  search does.
 - **Highlight the parts that matter, not the whole page.** Select text on any
   page and right-click → **Add to brief**. The text is captured the moment you
   highlight it, so it's still there even if you close the tab. Highlight

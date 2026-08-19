@@ -1,5 +1,5 @@
 // test/unit/preview.test.ts
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import type { ClipPayload } from "../../src/shared/clip.ts";
 import { PASSAGE_SEPARATOR } from "../../src/shared/passage.ts";
 import {
@@ -104,6 +104,7 @@ describe("buildBriefPreview", () => {
       { url: "https://github.com/acme/web/pull/1", title: "Fix the thing" },
       { url: "https://github.com/acme/web/pull/2", title: "Also fix the thing" },
     ],
+    useIndex: false,
   };
 
   test("names the question and the source count", () => {
@@ -128,7 +129,7 @@ describe("buildBriefPreview", () => {
     if (only === undefined) {
       throw new Error("fixture");
     }
-    const p = buildBriefPreview({ question: "q", sources: [only] });
+    const p = buildBriefPreview({ question: "q", sources: [only], useIndex: false });
     expect(p.fields[1]).toEqual({ label: "Sources", value: "1 page" });
   });
 
@@ -150,6 +151,7 @@ describe("buildBriefPreview with passage sources", () => {
         { title: "Whole", url: "http://h/w" },
         { title: "Excerpts", url: "http://h/e", passages: ["one", "two"] },
       ],
+      useIndex: false,
     });
     expect(preview.fields).toEqual([
       { label: "Question", value: question },
@@ -164,6 +166,7 @@ describe("buildBriefPreview with passage sources", () => {
         { title: "A", url: "http://h/a" },
         { title: "B", url: "http://h/b" },
       ],
+      useIndex: false,
     });
     expect(preview.fields[1]).toEqual({ label: "Sources", value: "2 pages" });
   });
@@ -172,6 +175,7 @@ describe("buildBriefPreview with passage sources", () => {
     const preview = buildBriefPreview({
       question,
       sources: [{ title: "A", url: "http://h/a", passages: ["one"] }],
+      useIndex: false,
     });
     expect(preview.fields[1]).toEqual({ label: "Sources", value: "1 set of passages" });
   });
@@ -183,6 +187,7 @@ describe("buildBriefPreview with passage sources", () => {
         { title: "Whole", url: "http://h/w" },
         { title: "Excerpts", url: "http://h/e", passages: ["one", "two", "three"] },
       ],
+      useIndex: false,
     });
     expect(preview.sources).toEqual([
       { label: "Whole", value: "http://h/w" },
@@ -194,6 +199,7 @@ describe("buildBriefPreview with passage sources", () => {
     const preview = buildBriefPreview({
       question,
       sources: [{ title: "E", url: "http://h/e", passages: ["first", "second"] }],
+      useIndex: false,
     });
     expect(preview.bodies).toEqual([{ label: "E", value: `first${PASSAGE_SEPARATOR}second` }]);
   });
@@ -202,12 +208,54 @@ describe("buildBriefPreview with passage sources", () => {
     const preview = buildBriefPreview({
       question,
       sources: [{ title: "W", url: "http://h/w" }],
+      useIndex: false,
     });
     expect(preview.bodies).toEqual([]);
   });
 
   test("the synthesis notice is unchanged", () => {
-    const preview = buildBriefPreview({ question, sources: [{ title: "W", url: "http://h/w" }] });
+    const preview = buildBriefPreview({
+      question,
+      sources: [{ title: "W", url: "http://h/w" }],
+      useIndex: false,
+    });
     expect(preview.synthesisNotice).toBe(SYNTHESIS_NOTICE);
+  });
+});
+
+describe("buildBriefPreview with the index option", () => {
+  const SOURCE = { title: "Whole", url: "http://h/w" };
+
+  it("says nothing about the index when the index is not searched", () => {
+    const p = buildBriefPreview({ question: "q", sources: [SOURCE], useIndex: false });
+    expect(p.indexNotice).toBeUndefined();
+  });
+
+  it("states the bound, the un-nameability, and that the QUESTION is what is searched", () => {
+    const p = buildBriefPreview({ question: "q", sources: [SOURCE], useIndex: true });
+    const notice = p.indexNotice ?? "";
+    // The bound is named: "a count is not consent" cuts both ways — when the
+    // members cannot be listed, the number that CAN be stated must be.
+    expect(notice).toContain("8");
+    // The un-nameability is stated, not glossed.
+    expect(notice.toLowerCase()).toContain("cannot be listed");
+    // The one thing that may leave even though the clips do not.
+    expect(notice.toLowerCase()).toContain("question");
+  });
+
+  it("never claims the indexed items stay local, because the client cannot know", () => {
+    const p = buildBriefPreview({ question: "q", sources: [SOURCE], useIndex: true });
+    expect((p.indexNotice ?? "").toLowerCase()).not.toContain("stays on your machine");
+  });
+
+  // Today's gateway scopes a brief's index search to `itemType: "web_clip"`, so
+  // "your saved clips" is what is actually true and "what Nimbus has indexed"
+  // would be an over-claim shipped to two public store listings by one tag. This
+  // test is the thing that has to change when the upstream widening lands.
+  it("names the SHIPPED corpus — saved clips — not the wider one that is not merged", () => {
+    const p = buildBriefPreview({ question: "q", sources: [SOURCE], useIndex: true });
+    const notice = (p.indexNotice ?? "").toLowerCase();
+    expect(notice).toContain("saved clips");
+    expect(notice).not.toContain("has indexed");
   });
 });
