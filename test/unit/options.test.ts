@@ -652,6 +652,21 @@ describe("options.html stages", () => {
   test("the manual gateway URL field survives — discovery never removes it", () => {
     expect(html).toContain('id="origin"');
   });
+
+  // The index toggle is an EGRESS control: ticking it lets a brief's question
+  // reach the gateway's embedding provider, which may be remote. Stage 4 opens
+  // with "One destination... no cloud service and no analytics", so the toggle
+  // cannot sit two paragraphs below that with a bare label. The composer already
+  // carries this sentence beside its own checkbox; Options is the second surface
+  // for the same preference and gets the same disclosure.
+  test("the index toggle carries its description in VISIBLE text, not a tooltip", () => {
+    expect(html).toContain('id="index-hint"');
+    expect(html).toContain("Adds up to 8 matching items from your saved clips");
+    expect(html).toContain("whichever embedding provider your gateway is configured to use");
+    // A tooltip is invisible to touch and to keyboard users, for exactly the
+    // sentence they most need. src/ contains no title= anywhere; keep it that way.
+    expect(html).not.toContain("title=");
+  });
 });
 
 describe("trust panel content (#trust-origin / #trust-hosts)", () => {
