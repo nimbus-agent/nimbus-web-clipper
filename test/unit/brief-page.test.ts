@@ -255,6 +255,50 @@ describe("send", () => {
     await vi.waitFor(() => expect($("state").textContent).not.toBe(""));
   });
 
+  // The ticked path had no unit coverage at all: every assertion was on
+  // `useIndex: false`, so deleting the `target.id === "use-index"` early return
+  // in brief.ts let the box fall through to the generic pick branch — `selected`
+  // gains the checkbox's default value "on", the source count is wrong, and
+  // `useIndex` stays false forever — with the whole unit suite still green.
+  test("ticking the index box sends useIndex, and does NOT enrol it as a source", async () => {
+    await loadPage();
+    await compose();
+    const box = document.querySelector<HTMLInputElement>("#use-index");
+    expect(box).not.toBeNull();
+    if (box !== null) {
+      tick(box, true);
+    }
+
+    // The index is not a source: it is the gateway's own corpus, not something
+    // this client declares and feeds, so the cap counter must not move.
+    await vi.waitFor(() =>
+      expect(document.querySelector(".brief__count")?.textContent).toContain("2 of 20"),
+    );
+
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "feeding",
+      id: "b1",
+      received: 0,
+      expected: 2,
+    });
+
+    click("run");
+
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenCalledWith({
+        kind: "brief-start",
+        question: "Where do these contradict each other?",
+        // Exactly the two tabs — no third pick built from the checkbox's own
+        // value, which is what a fall-through to the generic branch produces.
+        picks: [
+          { kind: "tab", id: 1 },
+          { kind: "tab", id: 2 },
+        ],
+        useIndex: true,
+      }),
+    );
+  });
+
   test("an answer without a kind is not rendered as state", async () => {
     await loadPage();
     await compose();
