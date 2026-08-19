@@ -16,6 +16,18 @@ export function addMessageListener(
   );
 }
 
+/**
+ * Listen for a broadcast the worker sends unprompted — not a reply to a
+ * `sendMessage` call. Page-shaped, unlike `addMessageListener` above: no
+ * `respond` callback and no return value, because a page listening for a
+ * broadcast needs neither the async-response protocol nor a sender tab id.
+ */
+export function addBroadcastListener(fn: (message: unknown) => void): void {
+  chrome.runtime.onMessage.addListener((message) => {
+    fn(message);
+  });
+}
+
 export function addInstalledListener(fn: () => void): void {
   chrome.runtime.onInstalled.addListener(() => fn());
 }

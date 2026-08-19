@@ -9,7 +9,8 @@
 // `chrome.runtime.sendMessage` here would take `unknown`, which is how a
 // breaking change to `BriefStartRequest` once got past the compiler.
 import type { BriefState } from "../background/brief-handlers.ts";
-import { sendMessage } from "../browser/runtime.ts";
+import { onPermissionsAdded } from "../browser/permissions.ts";
+import { addBroadcastListener, sendMessage } from "../browser/runtime.ts";
 import type { CandidateTab } from "../browser/tabs.ts";
 import type { BriefPick, PassageClearRequest, PassageDropRequest } from "../shared/messages.ts";
 import { groupKey, type PassageGroup } from "../shared/passage.ts";
@@ -343,7 +344,7 @@ root("state").addEventListener("click", (ev) => {
     });
 });
 
-chrome.runtime.onMessage.addListener((msg: unknown) => {
+addBroadcastListener((msg: unknown) => {
   if (
     typeof msg === "object" &&
     msg !== null &&
@@ -355,7 +356,7 @@ chrome.runtime.onMessage.addListener((msg: unknown) => {
 
 // Returning from Options must not need a manual reload — the grant may have
 // added tabs this composer could not name a moment ago.
-chrome.permissions.onAdded.addListener(() => {
+onPermissionsAdded(() => {
   void loadTabs().catch(() => undefined);
 });
 window.addEventListener("focus", () => {

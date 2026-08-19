@@ -24,3 +24,10 @@ export async function removeOrigin(pattern: string): Promise<boolean> {
     return false;
   }
 }
+
+/** Fires whenever a permission grant lands — from Options, or from any other
+ *  surface that can request one. Carries nothing: a listener that cares which
+ *  origin re-checks with `hasOrigin`. */
+export function onPermissionsAdded(fn: () => void): void {
+  chrome.permissions.onAdded.addListener(() => fn());
+}
