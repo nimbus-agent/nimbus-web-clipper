@@ -729,6 +729,35 @@ running. Within a minute the alarm should resume the poll and the result should
 still land. Whether Chrome preserves a registered alarm across a genuine eviction
 is Chrome's behaviour, not ours.
 
+## Manual verification — Also search what Nimbus has indexed (C5.4)
+
+Prereq: paired. `test/e2e/index-brief.e2e.ts` drives every step below against
+the mock gateway, whose `POST /v1/briefs` now records the `useIndex` a create
+body actually carried and answers the poll route with clip citations only for
+a run that asked for them — the composer, the preview and the citation
+rendering are all client-side, so none of this needs a real gateway index to
+prove.
+
+1. <!-- e2e:index-brief-1 --> Open the brief composer, pick a page, and type a
+   question. Before ticking anything, the preview says nothing about the
+   index.
+2. <!-- e2e:index-brief-2 --> Tick **Also search what Nimbus has indexed**.
+   The preview now names the bound (up to 8 items), says those items cannot
+   be listed in advance, and says the question itself is the text that gets
+   searched.
+3. <!-- e2e:index-brief-3 --> Send. The request the gateway receives carries
+   `useIndex: true`.
+4. <!-- e2e:index-brief-4 --> The finished report marks every indexed
+   citation "from your index" with a readable type label — including one
+   from a connector type this client's code has never heard of — and no raw
+   item id appears anywhere on the page.
+5. <!-- e2e:index-brief-5 --> Reopen the brief composer: the checkbox is
+   still ticked. The preference is sticky.
+6. Untick the box and send a second brief: the finished report carries no
+   clip citations at all. **(not yet automated by the e2e above — it proves
+   the `useIndex: true` path end to end; the `false` path is covered instead
+   by `test/unit/brief.test.ts` and the mock's own default fixture.)**
+
 ## Manual verification — Passages as brief sources
 
 Prereq: paired. `test/e2e/passages.e2e.ts` seeds the collection through the

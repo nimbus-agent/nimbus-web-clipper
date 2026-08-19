@@ -182,6 +182,52 @@ export const BRIEF_REPORT = {
 } as const;
 
 /**
+ * The done report for a run that asked to also search the index (`useIndex:
+ * true` on create) — same shape as {@link BRIEF_REPORT} plus one more finding
+ * whose citations are indexed hits, not sources the caller declared.
+ *
+ * Two different `itemType` values, deliberately: `web_clip` is a type this
+ * client's `itemTypeLabel` (`src/brief/brief-view.ts`) has always rendered,
+ * and `slack_message` is one it has never heard of — connectors ship on the
+ * gateway's own schedule, so the label function degrades ANY snake_case type
+ * to spaced words rather than special-casing a known list, and this fixture
+ * is what an e2e can hold that claim against. Only the `web_clip` citation
+ * carries a `clipId`: the wire contract reserves that field for a citation
+ * that is also an ingested clip, and a Slack message is not one.
+ */
+export const INDEX_BRIEF_REPORT = {
+  summary: "Both sources describe the same change, and your index adds more.",
+  findings: [
+    {
+      text: "The sources agree on the approach.",
+      citations: [{ kind: "source", url: "", title: "Source 1" }],
+    },
+    {
+      text: "Your index has related material on this too.",
+      citations: [
+        {
+          kind: "clip",
+          title: "Local-first sync notes",
+          url: "https://example.com/notes",
+          clipId: "clip_idx_001",
+          itemId: "item_idx_001",
+          itemType: "web_clip",
+        },
+        {
+          kind: "clip",
+          title: "#eng-platform — deploy freeze thread",
+          itemId: "item_idx_002",
+          itemType: "slack_message",
+        },
+      ],
+    },
+  ],
+  conflicts: [],
+  gaps: [],
+  synthesis: { remote: false, model: "local-fixture" },
+} as const;
+
+/**
  * Per-test overrides for the mock. Every field is optional and falls back to the
  * canned fixture, so the screenshot script needs no scenario at all.
  *
@@ -232,4 +278,17 @@ export interface Scenario {
   /** Called with every `POST /v1/briefs/{id}/sources` body — the assertion no
    *  unit test can make: what a feed actually put on the wire. */
   readonly onBriefSource?: (source: FedBriefSource) => void;
+  /** Called with every `POST /v1/briefs` (create) body — the assertion no unit
+   *  test can make: whether `useIndex` actually left the browser, rather than
+   *  the client's own idea of what it sent. */
+  readonly onBriefCreate?: (body: FedBriefCreate) => void;
+}
+
+/** One create body `POST /v1/briefs` received — the wire shape, unknown
+ *  `sources` entries included, since this fixture cares only about `useIndex`
+ *  actually arriving, not about re-validating the source declarations. */
+export interface FedBriefCreate {
+  readonly brief?: unknown;
+  readonly sources?: unknown;
+  readonly useIndex?: unknown;
 }
