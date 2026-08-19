@@ -678,6 +678,7 @@ describe("isBriefStartRequest", () => {
           { kind: "tab", id: 1 },
           { kind: "tab", id: 2 },
         ],
+        useIndex: false,
       }),
     ).toBe(true);
   });
@@ -711,6 +712,24 @@ describe("isBriefStartRequest", () => {
     expect(isBriefStartRequest("brief-start")).toBe(false);
   });
 
+  it("accepts a brief-start carrying useIndex", () => {
+    expect(
+      isBriefStartRequest({
+        kind: "brief-start",
+        question: "q",
+        picks: [{ kind: "tab", id: 1 }],
+        useIndex: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a brief-start whose useIndex is missing or not a boolean", () => {
+    const base = { kind: "brief-start", question: "q", picks: [{ kind: "tab", id: 1 }] };
+    expect(isBriefStartRequest(base)).toBe(false);
+    expect(isBriefStartRequest({ ...base, useIndex: "true" })).toBe(false);
+    expect(isBriefStartRequest({ ...base, useIndex: 1 })).toBe(false);
+  });
+
   it("the guard's caps match shared/brief.ts, which is the source of truth", () => {
     // Two literals for one rule drift silently; this is the assertion that stops
     // it. The guard cannot import BRIEF_CAPS without dragging types.ts into the
@@ -724,12 +743,15 @@ describe("isBriefStartRequest", () => {
       id: 1,
     }));
     expect(isBriefStartRequest({ kind: "brief-start", question: "q", picks: tooMany })).toBe(false);
-    expect(isBriefStartRequest({ kind: "brief-start", question: "q", picks: atCap })).toBe(true);
+    expect(
+      isBriefStartRequest({ kind: "brief-start", question: "q", picks: atCap, useIndex: false }),
+    ).toBe(true);
     expect(
       isBriefStartRequest({
         kind: "brief-start",
         question: "q".repeat(BRIEF_CAPS.maxQuestionChars),
         picks: [{ kind: "tab", id: 1 }],
+        useIndex: false,
       }),
     ).toBe(true);
     expect(
@@ -743,7 +765,7 @@ describe("isBriefStartRequest", () => {
 });
 
 describe("isBriefStartRequest picks", () => {
-  const base = { kind: "brief-start", question: "q" };
+  const base = { kind: "brief-start", question: "q", useIndex: false };
 
   test("accepts a mixed, ordered pick list", () => {
     expect(

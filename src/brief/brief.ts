@@ -310,7 +310,13 @@ root("composer").addEventListener("input", (ev) => {
 });
 
 root("run").addEventListener("click", () => {
-  void sendMessage({ kind: "brief-start", question, picks: pickedRows().map(pickFor) })
+  // Parked at false; a later task wires the composer's real index-search choice.
+  void sendMessage({
+    kind: "brief-start",
+    question,
+    picks: pickedRows().map(pickFor),
+    useIndex: false,
+  })
     .then((res: unknown) => {
       if (typeof res === "object" && res !== null && "kind" in res) {
         show(res as BriefState);

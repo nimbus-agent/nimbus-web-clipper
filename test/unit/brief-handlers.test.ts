@@ -83,6 +83,7 @@ const start = {
     { kind: "tab" as const, id: 1 },
     { kind: "tab" as const, id: 2 },
   ],
+  useIndex: false,
 };
 
 describe("handleBriefTabs", () => {
@@ -287,6 +288,7 @@ describe("handleBriefStart with mixed picks", () => {
       {
         kind: "brief-start",
         question: "q",
+        useIndex: false,
         picks: [
           { kind: "passages", url: "http://h/b" },
           { kind: "tab", id: 1 },
@@ -331,7 +333,12 @@ describe("handleBriefStart with mixed picks", () => {
           },
         },
       }),
-      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+      {
+        kind: "brief-start",
+        question: "q",
+        useIndex: false,
+        picks: [{ kind: "passages", url: "http://h/b" }],
+      },
     );
     expect(captured).toEqual([]);
     expect(fed).toEqual([{ url: "http://h/b", body: "one\n\n[...]\n\ntwo", capturedAt: 100 }]);
@@ -358,6 +365,7 @@ describe("handleBriefStart with mixed picks", () => {
       {
         kind: "brief-start",
         question: "q",
+        useIndex: false,
         picks: [
           { kind: "passages", url: "http://h/gone" },
           { kind: "tab", id: 1 },
@@ -397,6 +405,7 @@ describe("handleBriefStart with mixed picks", () => {
       {
         kind: "brief-start",
         question: "q",
+        useIndex: false,
         picks: [
           { kind: "passages", url: "http://h/a" },
           { kind: "tab", id: 1 },
@@ -426,6 +435,7 @@ describe("handleBriefStart with mixed picks", () => {
       {
         kind: "brief-start",
         question: "q",
+        useIndex: false,
         picks: [
           { kind: "passages", url: "http://h/a" },
           { kind: "passages", url: "http://h/a#x" },
@@ -458,6 +468,7 @@ describe("handleBriefStart with mixed picks", () => {
       {
         kind: "brief-start",
         question: "q",
+        useIndex: false,
         picks: [
           { kind: "tab", id: 1 },
           { kind: "tab", id: 2 },
@@ -475,7 +486,12 @@ describe("handleBriefStart with mixed picks", () => {
         listTabs: async () => ({ named: [], hiddenCount: 0, enumerationFailed: false }),
         passages: async () => [],
       }),
-      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/gone" }] },
+      {
+        kind: "brief-start",
+        question: "q",
+        useIndex: false,
+        picks: [{ kind: "passages", url: "http://h/gone" }],
+      },
     );
     expect(state).toEqual({ kind: "failed", reason: "no_sources" });
   });
@@ -489,7 +505,12 @@ describe("handleBriefStart with mixed picks", () => {
           forgotten.push(...fed.map((f) => f.url));
         },
       }),
-      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+      {
+        kind: "brief-start",
+        question: "q",
+        useIndex: false,
+        picks: [{ kind: "passages", url: "http://h/b" }],
+      },
     );
     expect(forgotten).toEqual(["http://h/b"]);
   });
@@ -506,7 +527,12 @@ describe("handleBriefStart with mixed picks", () => {
           throw new Error("boom");
         },
       }),
-      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+      {
+        kind: "brief-start",
+        question: "q",
+        useIndex: false,
+        picks: [{ kind: "passages", url: "http://h/b" }],
+      },
     );
     expect(state.kind).toBe("done");
   });
@@ -536,7 +562,12 @@ describe("handleBriefStart with mixed picks", () => {
           }) as never,
         }),
       }),
-      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+      {
+        kind: "brief-start",
+        question: "q",
+        useIndex: false,
+        picks: [{ kind: "passages", url: "http://h/b" }],
+      },
     );
     expect(all).toEqual([late]);
   });
@@ -553,7 +584,12 @@ describe("handleBriefStart with mixed picks", () => {
           runBrief: (async () => ({ ok: false, reason: "server_error" })) as never,
         }),
       }),
-      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+      {
+        kind: "brief-start",
+        question: "q",
+        useIndex: false,
+        picks: [{ kind: "passages", url: "http://h/b" }],
+      },
     );
     expect(forgotten).toEqual([]);
   });
@@ -579,6 +615,7 @@ describe("handleBriefStart with mixed picks", () => {
       {
         kind: "brief-start",
         question: "q",
+        useIndex: false,
         picks: [
           { kind: "passages", url: "http://h/b" },
           { kind: "passages", url: "http://h/c" },
@@ -606,7 +643,12 @@ describe("handleBriefStart with mixed picks", () => {
           forgotten.push(...fed.map((f) => f.url));
         },
       }),
-      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+      {
+        kind: "brief-start",
+        question: "q",
+        useIndex: false,
+        picks: [{ kind: "passages", url: "http://h/b" }],
+      },
     );
     expect(forgotten).toEqual([]);
     // Reporting is unchanged: the cut is still named to the user.
@@ -630,7 +672,7 @@ describe("handleBriefStart with mixed picks", () => {
           forgotten.push(...fed.map((f) => f.url));
         },
       }),
-      { kind: "brief-start", question: "q", picks: [{ kind: "tab", id: 1 }] },
+      { kind: "brief-start", question: "q", useIndex: false, picks: [{ kind: "tab", id: 1 }] },
     );
     expect(forgotten).toEqual([]);
   });

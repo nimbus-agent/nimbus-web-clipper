@@ -245,6 +245,7 @@ describe("send", () => {
           { kind: "tab", id: 1 },
           { kind: "tab", id: 2 },
         ],
+        useIndex: false,
       }),
     );
     await vi.waitFor(() => expect($("state").textContent).not.toBe(""));
@@ -406,6 +407,7 @@ describe("collected passages", () => {
         kind: "brief-start",
         question: "Where do these contradict each other?",
         picks: [{ kind: "passages", url: "https://example.com/c" }],
+        useIndex: false,
       }),
     );
   });
