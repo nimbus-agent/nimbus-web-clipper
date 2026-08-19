@@ -6,6 +6,7 @@ import {
   handleBriefStart,
   handleBriefTabs,
 } from "../../src/background/brief-handlers.ts";
+import { BRIEF_CAPS } from "../../src/shared/brief.ts";
 import type { BriefReport } from "../../src/shared/brief-report.ts";
 import { type Passage, removePassage } from "../../src/shared/passage.ts";
 
@@ -568,6 +569,31 @@ describe("handleBriefStart with mixed picks", () => {
       },
     );
     expect(forgotten).toEqual(["http://h/b"]);
+  });
+
+  it("a truncated stitched body keeps the whole group, and still reports the cut", async () => {
+    // `buildSourceBody` cuts at the extraction cap. If a stitched body is cut,
+    // the trailing passage never reached the gateway — so "clear what left"
+    // says keep every one of them. Driven through an OVERSIZED stored group
+    // rather than a mocked `buildSourceBody`, because `addPassage` refuses to
+    // build one: `isPassage` bounds a stored passage's shape, not its size, so
+    // a corrupted, hand-edited or migrated store can still yield this.
+    const forgotten: string[] = [];
+    const state = await handleBriefStart(
+      deps({
+        passages: async () => [
+          { url: "http://h/b", title: "B", text: "x".repeat(BRIEF_CAPS.extractionCapBytes), at: 5 },
+          { url: "http://h/b", title: "B", text: "the tail that never left", at: 6 },
+        ],
+        forgetPassages: async (fed) => {
+          forgotten.push(...fed.map((f) => f.url));
+        },
+      }),
+      { kind: "brief-start", question: "q", picks: [{ kind: "passages", url: "http://h/b" }] },
+    );
+    expect(forgotten).toEqual([]);
+    // Reporting is unchanged: the cut is still named to the user.
+    expect(state.kind === "done" && state.truncated).toEqual(["B"]);
   });
 
   it("a tab picked in whole-page mode keeps that page's passages", async () => {

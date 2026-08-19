@@ -244,9 +244,17 @@ async function feedAll(
       if (body.truncated) {
         truncated.push(declared.title);
       }
-      if (source.kind === "passages") {
+      if (source.kind === "passages" && !body.truncated) {
         // What was STITCHED, captured at the moment the feed was accepted — not
         // the page, whose collection may have grown since the read.
+        //
+        // `!body.truncated` because a cut body means part of the group never
+        // left, and "clear what left" has exactly one reading for that: keep it
+        // all. `addPassage` refuses any add that would push a page's stitched
+        // body past the same cap, so a collection THIS client built cannot get
+        // here — but `isPassage` bounds a stored passage's shape, not its size,
+        // so a corrupted, hand-edited or migrated store still can. The cut is
+        // still reported above; only the forgetting is withheld.
         fedPassages.push({
           url: declared.url,
           ats: source.group.passages.map((p) => p.at),

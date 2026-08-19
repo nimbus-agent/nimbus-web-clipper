@@ -3,6 +3,7 @@ interface StubOptions {
   tab?: { id?: number; url?: string; title?: string };
   executeResults?: Array<{ result?: unknown }>;
   failFirstSet?: boolean;
+  failFirstGet?: boolean;
 }
 
 /** Install a minimal fake `chrome` on globalThis; returns the backing storage map. */
@@ -18,10 +19,17 @@ export function installChromeStub(opts: StubOptions = {}): {
   const badgeTexts: string[] = [];
   const liveAlarms = new Map<string, unknown>();
   let failsLeft = opts.failFirstSet ? 1 : 0;
+  let getFailsLeft = opts.failFirstGet ? 1 : 0;
   const fake = {
     storage: {
       local: {
-        get: async (key: string) => ({ [key]: storage.get(key) }),
+        get: async (key: string) => {
+          if (getFailsLeft > 0) {
+            getFailsLeft--;
+            throw new Error("storage read failed");
+          }
+          return { [key]: storage.get(key) };
+        },
         set: async (items: Record<string, unknown>) => {
           if (failsLeft > 0) {
             failsLeft--;

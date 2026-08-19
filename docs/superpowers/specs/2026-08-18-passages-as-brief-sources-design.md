@@ -286,7 +286,7 @@ neither describes an assembled excerpt set, so it needs an answer, not an assump
 
 ## Shape
 
-```
+```text
 src/shared/passage.ts             NEW  pure: the collection's rules
 src/background/passage-store.ts   NEW  chrome.storage.local persistence
 src/background/passage-collect.ts NEW  the collect action, injected deps

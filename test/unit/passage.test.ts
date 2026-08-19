@@ -165,6 +165,41 @@ describe("addPassage", () => {
     expect(addPassage(full, p("http://h/0", "another", 99)).ok).toBe(true);
   });
 
+  // `at` is the ONLY per-passage identity `removePassage`/`forgetPassages` match
+  // on. Two collects on one page inside one millisecond would collide, and a
+  // removal could then drop the wrong passage — including one that never left.
+  test("a colliding `at` is bumped past the group's newest, and both survive", () => {
+    const res = addPassage([p("http://h/a", "one", 5)], p("http://h/a", "two", 5));
+    expect(res.ok && res.all.map((x) => [x.text, x.at])).toEqual([
+      ["one", 5],
+      ["two", 6],
+    ]);
+  });
+
+  test("the bump clears the group's newest, not merely the passage it collided with", () => {
+    const held = [p("http://h/a", "one", 5), p("http://h/a", "two", 9)];
+    const res = addPassage(held, p("http://h/a", "three", 5));
+    expect(res.ok && res.all[2]?.at).toBe(10);
+  });
+
+  test("a bumped passage is removable by its own `at`, and only it", () => {
+    const res = addPassage([p("http://h/a", "one", 5)], p("http://h/a", "two", 5));
+    const all = res.ok ? res.all : [];
+    expect(removePassage(all, "http://h/a", 6).map((x) => x.text)).toEqual(["one"]);
+    expect(removePassage(all, "http://h/a", 5).map((x) => x.text)).toEqual(["two"]);
+  });
+
+  test("the bump is per page — the same instant on another page is left alone", () => {
+    const res = addPassage([p("http://h/a", "one", 5)], p("http://h/b", "two", 5));
+    expect(res.ok && res.all.map((x) => x.at)).toEqual([5, 5]);
+  });
+
+  test("a bump cannot overstate freshness: the group's oldest is unchanged", () => {
+    const res = addPassage([p("http://h/a", "one", 5)], p("http://h/a", "two", 5));
+    const group = groupPassages(res.ok ? res.all : [])[0];
+    expect(groupCapturedAt(group as never)).toBe(5);
+  });
+
   test("a refusal never mutates the input", () => {
     const before = [p("http://h/a", "same")];
     addPassage(before, p("http://h/a", "same", 2));
@@ -202,6 +237,14 @@ describe("isPassage", () => {
     ["a numeric title", { url: "u", title: 2, text: "x", at: 1 }],
     ["a missing text", { url: "u", title: "T", at: 1 }],
     ["a string at", { url: "u", title: "T", text: "x", at: "1" }],
+    // A stored NaN reaches `capturedAt` through `groupCapturedAt`, and
+    // `JSON.stringify(NaN)` is `null` — the gateway would be told the text has
+    // no capture time. A fractional `at` fails differently and more quietly:
+    // `isPassageDropRequest` accepts only an integer, so it could never be
+    // removed from the composer.
+    ["a NaN at", { url: "u", title: "T", text: "x", at: Number.NaN }],
+    ["an infinite at", { url: "u", title: "T", text: "x", at: Number.POSITIVE_INFINITY }],
+    ["a fractional at", { url: "u", title: "T", text: "x", at: 1.5 }],
   ])("rejects %s", (_label, value) => {
     expect(isPassage(value)).toBe(false);
   });

@@ -30,7 +30,18 @@ export function updatePassages(
   mutator: (all: readonly Passage[]) => PassageUpdate,
 ): Promise<PassageUpdate> {
   const next = chain.then(async (): Promise<PassageUpdate> => {
-    const current = await getPassages();
+    let current: readonly Passage[];
+    try {
+      current = await getPassages();
+    } catch {
+      // A READ failure refuses exactly as a write failure does. Outside a try it
+      // REJECTED instead, and `collectPassage` has no try of its own, so the
+      // context-menu caller's `.catch(() => undefined)` swallowed it: the user
+      // right-clicked and nothing happened at all — no toast, no badge. Kept
+      // separate from the write's try so the mutator is still called outside
+      // both. Intentionally not logged (`noConsole`).
+      return { ok: false, reason: "storage-full" };
+    }
     const desired = mutator(current);
     if (!desired.ok) {
       return desired;

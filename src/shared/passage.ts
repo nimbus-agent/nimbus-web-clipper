@@ -8,7 +8,13 @@ export type Passage = {
   readonly url: string;
   readonly title: string;
   readonly text: string;
-  /** When this passage was captured — the collect gesture, not the run. */
+  /**
+   * When this passage was captured — the collect gesture, not the run.
+   *
+   * Also this passage's identity within its page: `removePassage` and the
+   * background's `forgetPassages` match on `(page key, at)`, so `addPassage`
+   * keeps it unique per page (see there).
+   */
   readonly at: number;
 };
 
@@ -124,6 +130,18 @@ export function groupCapturedAt(group: PassageGroup): number {
  * right for a page the client extracted on the user's behalf, and wrong for text
  * the user selected by hand — there the honest move is to refuse now, while they
  * are standing there, rather than to cut it silently later.
+ *
+ * It is also where `at` is made UNIQUE PER PAGE. `at` is the only per-passage
+ * identity `removePassage` and `forgetPassages` match on, and two collects on
+ * one page inside a single millisecond would otherwise share one — a removal
+ * could then drop the wrong passage, including one that never left. A collision
+ * is advanced to one millisecond past that page's newest.
+ *
+ * The semantics stay honest: `at` is still the capture instant, and a bump only
+ * happens when a passage of that page already claims that instant — so the
+ * group's OLDEST, which is what `groupCapturedAt` reports, never moves. A
+ * millisecond of forward drift on a non-oldest passage cannot overstate the
+ * freshness of anything a reader sees.
  */
 export function addPassage(all: readonly Passage[], next: Passage): PassageUpdate {
   const key = groupKey(next.url);
@@ -141,7 +159,11 @@ export function addPassage(all: readonly Passage[], next: Passage): PassageUpdat
       return { ok: false, reason: "collection-full" };
     }
   }
-  return { ok: true, all: [...all, next] };
+  const taken = same.some((passage) => passage.at === next.at);
+  const at = taken
+    ? same.reduce((newest, passage) => Math.max(newest, passage.at), next.at) + 1
+    : next.at;
+  return { ok: true, all: [...all, at === next.at ? next : { ...next, at }] };
 }
 
 /** Drop one passage, identified by its page and its capture instant. */
@@ -171,6 +193,11 @@ export function isPassage(v: unknown): v is Passage {
     typeof o["url"] === "string" &&
     typeof o["title"] === "string" &&
     typeof o["text"] === "string" &&
-    typeof o["at"] === "number"
+    // An INTEGER, not merely a number: `NaN` would flow through
+    // `groupCapturedAt` into `capturedAt`, and `JSON.stringify(NaN)` is `null`,
+    // so the gateway would be told the text has no capture time. A fractional
+    // `at` fails more quietly — `isPassageDropRequest` accepts only an integer,
+    // so such a passage could never be removed from the composer.
+    Number.isInteger(o["at"])
   );
 }
