@@ -154,9 +154,13 @@ A ladder, each rung a named outcome:
 6. Otherwise → `resolved`, carrying the absolute href.
 
 **What it deliberately does not do:** strip fragments, tracking parameters or
-trailing slashes, lower-case anything, or follow redirects. Rungs 2–5 only ever
-*reject* or *absolutise*; a canonical that survives is forwarded byte-for-byte
-as the page declared it. Two unit tests pin this as a negative (below).
+trailing slashes, or follow redirects. Rungs 2–5 only ever *reject* or
+*absolutise*: the path, query and fragment of a surviving canonical are
+forwarded exactly as declared. The scheme and host come back case-normalised,
+because that is what `new URL()` does to any input it parses — it is not a
+dedup rule this module chose, and it is the one difference between "what the
+page wrote" and "what we send". Two unit tests pin the rest as a negative
+(below).
 
 On anything other than `resolved`, the caller sends **no `canonicalUrl` at
 all**, and the gateway falls back to `canonicalizeUrl(input.url)` — the address
