@@ -659,11 +659,11 @@ need a browser-viable shape first; see C2.4.*
 > the adapter rather than routing around it. Four of the six lanes (pull
 > request, ticket, discussion, driver) answer unchanged on this arm; two do
 > not — `authorship` (line-level, and a whole change has no line) and
-> `downstream` (the question the shipped **impact** lane, directly above this
-> one in the same panel, already answers). The gateway's own subject line
-> names both silences rather than the brief quietly coming back shorter, and
-> that disclosure is registered against upstream invariant **I31** so an LLM
-> rewrite of this brief cannot silently drop it.
+> `downstream` (the question the shipped **impact** lane already answers). The
+> gateway's own subject line names both silences rather than the brief
+> quietly coming back shorter, and that disclosure is registered against
+> upstream invariant **I31** so an LLM rewrite of this brief cannot silently
+> drop it.
 > The work also fixed a live defect in the already-shipped **impact** lane
 > found on the way: `agents.impact` resolved a PR URL by reconstructing an
 > identity — a GitHub-shaped regex, a hostname-to-service guess, and a

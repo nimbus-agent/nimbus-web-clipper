@@ -295,7 +295,7 @@ spawned — no `[[filesystem.roots]]`, no checkout, no `git blame` process.
 | `discussion` | works via the PR; commit-message threads still need the `merged_as` SHA, which the graph holds when the connector recorded a merge |
 | `driver` | works, keyed off `occurredAt` (the PR's timestamp instead of blame's author time) for its 48h window |
 | `authorship` | **returns nothing.** Line-level blame has no meaning for a whole change |
-| `downstream` | **returns nothing.** It needs a file subject — and the question it answers is the shipped **impact** lane, sitting directly above this one in the same panel |
+| `downstream` | **returns nothing.** It needs a file subject — and the question it answers is the shipped **impact** lane's, elsewhere in the same panel |
 
 **"Returns nothing" is not free — it had to be made true.** Both lanes already returned early when `subject` is null, which is exactly the `prUrl` arm, so the first draft of this spec concluded they needed no change. They do: they return early **with a gap note**, not with nothing —
 *"Cannot anchor authorship: no resolvable file/line subject for this ref"* and *"No indexed code symbols for this file — enable `code_index` on the root and sync"* — and `renderGaps` prints every gap unconditionally. A resolved pull-request brief would have ended with two notes phrased for a question the user did not ask, one of them advising a fix that changes nothing on this arm.
