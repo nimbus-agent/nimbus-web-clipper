@@ -285,8 +285,9 @@ in "Working…" long enough to make a manual pass flaky.
 
 1. **Expand a lane on a resolved PR:** open a GitHub PR the gateway resolves
    (e.g. via the mock gateway's `/sample`, or a real recognised, indexed PR)
-   and press `Alt+Shift+R`. → Below Related, two collapsed lanes read *"What
-   breaks if it lands"* and *"Who should review it"*. Expand one. → It shows
+   and press `Alt+Shift+R`. → Below Related, three collapsed lanes read *"What
+   breaks if it lands"*, *"Who should review it"* and *"Why does this change
+   exist"*. Expand one. → It shows
    "Working…" briefly, then the brief as plain text (no bold, no links, no
    headings — even if the brief contains something that looks like markup).
    Collapse and re-expand it → the same brief reappears with no second
@@ -439,8 +440,8 @@ mock's fixed brief cannot produce.
 3. <!-- e2e:service-lanes-3 --> Close and reopen the panel, then re-expand the
    same lane. The stored brief replays; no second run starts.
 4. <!-- e2e:service-lanes-4 --> Open the panel on a pull request. Related,
-   *What breaks if it lands* and *Who should review it* are present; none of
-   the three service lanes are.
+   *What breaks if it lands*, *Who should review it* and *Why does this
+   change exist* are present; none of the three service lanes are.
 5. **(not yet automated — the ambient cue's silence on a dashboard is decided
    by a 600ms in-worker debounce with no outbound request behind it for a HOME
    page, so nothing this harness's mock can hold open or count makes the

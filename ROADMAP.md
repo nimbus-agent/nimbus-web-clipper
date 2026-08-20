@@ -481,11 +481,10 @@ is worthless without this — and half of C1 is buildable today.*
 > made a right-click on it silently clip instead of opening the panel. See
 > [`docs/architecture.md`](./docs/architecture.md#a-second-way-into-the-panel-phase-c15).
 
-## Phase C2 — Run the agents from the page 🟢/🟡
+## Phase C2 — Run the agents from the page 🟢
 
-*Theme: the payoff. Two questions on a code-review page, answered by agents
-that already exist, without leaving the tab — a third ("why") turned out to
-need a browser-viable shape first; see C2.4.*
+*Theme: the payoff. Three questions on a code-review page, answered by agents
+that already exist, without leaving the tab.*
 
 ### C2.1 The code-review lanes — impact · expert · 🟢 · L — ✅ shipped (two lanes, not three)
 > **What** On a resolved pull request: *what breaks if it lands*
@@ -681,7 +680,26 @@ need a browser-viable shape first; see C2.4.*
 > pull request, without requiring the browser to have a local checkout of
 > anything. ✅ — the lane gates exactly as `impact`/`expert` do
 > (`LANE_RULES.why`, `surfaces: ["pr"]`) and appears under both the
-> `resolved` and `chosen` headers.
+> `resolved` and `chosen` headers. **Appearing under `chosen` is not the same
+> as answering about the item picked there** — see the known gap below;
+> correct that claim if you are about to repeat it.
+> **Known gap, recorded rather than fixed here.** `agentParams` sends
+> `{ prUrl: resolved.resolveUrl }` — the **page's** URL, never the candidate a
+> `chosen` header names — so on that header the gateway re-resolves the same
+> page URL through `resolveItemByUrl` and, if it was ambiguous, resolves
+> ambiguous again; `why` then returns its miss brief under a header naming the
+> item the user just picked. That is the exact failure **C2.5** says it fixed,
+> reappearing one layer down. Inherited, not introduced here — `impact` sends
+> the same param through the same resolver since Nimbus#1260, so this is not
+> this slice's to fix. `ResolveCandidate.url` (`src/shared/types.ts:199`)
+> already carries the picked candidate's own URL; a future slice can send that
+> instead of the page URL for both URL-parametrised lanes (`impact`, `why`).
+> **Also: this lane needs gateway 2.8.0** (Nimbus#1260) for `why`'s `{ prUrl }`
+> arm. A pre-2.8.0 gateway 400s the invoke, and `invokeAgent`
+> (`gateway-client.ts`) has no 400 branch — it falls through to
+> `server_error`, so the panel offers a Re-run that can never succeed.
+> Recorded, not re-plumbed; mapping 400 to its own lane state is a larger
+> change and a follow-up alongside the one above.
 
 ### C2.5 The lanes on a candidate you picked · 🟢 · S — ✅ shipped
 > **Status** Shipped, together with the glossary lane C2.3 deferred and 4.2, as

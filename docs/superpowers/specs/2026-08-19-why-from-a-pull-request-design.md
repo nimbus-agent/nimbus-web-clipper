@@ -6,6 +6,10 @@
 > the shape is decided in the Nimbus and nimbus-sdk repos, not here. This
 > document is the whole cross-repo design; each upstream repo carries its own
 > slice.
+>
+> **Shipped as designed.** Both are now contracted and released:
+> `@nimbus-dev/sdk@1.18.0` carries `WhyChangeSubject`, and gateway **2.8.0**
+> (Nimbus#1260) carries `why`'s `{ prUrl }` arm.
 
 ## The gap this closes
 
@@ -252,11 +256,15 @@ which on `resolveStartEntity === null` returns a normal brief with
 - **No new `AgentError` member.** The client's `AGENT_ERRORS`
   (`src/shared/types.ts:478`) is untouched; the lane reaches its ordinary `done`
   state carrying text that explains the miss.
-- **The panel rarely sees it at all.** Lanes render only under a `resolved` or
-  `chosen` header, so a page that did not resolve offers no lane and instead
-  offers the targeted-sync path (**C3.1**) that already exists for exactly this
-  case. Reaching a lane-time miss requires the index to change between the
-  panel's resolve and the lane's run, or the URL to resolve to an indexed item
+- **The panel sees it every time a `chosen` header is on screen — not rarely.**
+  Lanes render only under a `resolved` or `chosen` header, so a page that never
+  resolved offers no lane and instead offers the targeted-sync path (**C3.1**).
+  But `chosen` is not the safe case that framing implies: `agentParams` sends
+  the page's URL, never the picked candidate's own (§5), so the gateway
+  re-resolves the same page and, since it was ambiguous, resolves ambiguous
+  again — landing here. That makes every ambiguous-then-picked page hit this
+  route, on top of the two genuinely rare ones: the index changing between the
+  panel's resolve and the lane's run, or the URL resolving to an indexed item
   that is not a pull request (`not_a_pr` — recognition is URL-shaped, the item's
   type is index-shaped, and they can disagree).
 - **"Indexed but ungraphed" is not a state to design for.** `item-store.ts:152`
@@ -321,11 +329,18 @@ solve a copy problem.
 Instead `renderWhySubjectLine` (`agents/_lib/render.ts:283`) branches on
 `changeSubject` **before** the existing null check, and names the pull request
 it resolved — repo, number and title — along with what this entry point cannot
-answer and where to get it (`nimbus why <file>:<line>` for authorship; the
-impact lane or `nimbus impact <url>` for downstream). On a resolver miss (§2.2)
-the same line names the miss instead. One render change, no type change — and
-because the panel renders the gateway's text verbatim, the browser inherits the
-disclosure with no client work.
+answer and where to get it (`nimbus why <file>:<line>` for authorship;
+`nimbus impact <url>` for downstream). What shipped
+(`brief-disclosures.ts:281`) names only the CLI command, not "the impact lane"
+— an observation worth recording, not a defect to compensate for here: a
+browser user reading this brief is pointed at a terminal for a question the
+impact lane two rows up in the same panel already answers. Fixing that is
+upstream's copy to change; a Global Constraint on this repo's own slice (§5)
+already rules out adding client-side copy to paper over gateway text, and the
+same reasoning applies to fixing gateway text from the client. On a resolver
+miss (§2.2) the same line names the miss instead. One render change, no type
+change — and because the panel renders the gateway's text verbatim, the
+browser inherits the disclosure with no client work.
 
 **The empty lane headings need no work.** `renderWhy` already skips any lane
 with no findings (`if (rows.length === 0) continue`), so `## Authorship` and
@@ -355,9 +370,17 @@ Entirely on paths **C2.5** already paved:
 - `src/panel/` — no new renderer. The `done` arm is `brief: string`, rendered
   with `textContent` as the other lanes are.
 
-It appears under both the `resolved` and the `chosen` header, so a candidate
-picked on an ambiguous page offers it too — the C2.5 rule that a user's answer
-is not thrown away one control later.
+It appears under both the `resolved` and the `chosen` header — but appearing is
+not answering correctly. `agentParams` sends `{ prUrl: resolved.resolveUrl }`,
+the **page's** URL, never the picked candidate's own; on a `chosen` header the
+gateway re-resolves that same page URL and, if it was ambiguous, resolves
+ambiguous again, so `why` returns its §2.2 miss brief under a header naming the
+item the user just picked. That is inherited from `impact`, which sends the
+same param through the same resolver (§2, this same slice's `resolvePrSubject`
+fix) — not a defect this slice introduces, and not this slice's to fix. See
+ROADMAP.md's C2.4 entry for the recorded follow-up: `ResolveCandidate.url`
+(`src/shared/types.ts:199`) already carries the picked candidate's own URL, for
+a future slice to send instead of the page URL on both URL-parametrised lanes.
 
 **Lane title:** *Why does this change exist* — the roadmap's own words, and the
 question the panel is answering.
