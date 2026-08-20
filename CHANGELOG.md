@@ -10,6 +10,15 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Fixed
 
+- **A page could decide which of your clips it overwrote.** The address a page
+  declares as its canonical one was forwarded to Nimbus exactly as written, and
+  Nimbus files a clip under that address — so a page declaring a relative
+  address (`/blog`) could collide with an unrelated site that declared the same
+  one, and a site declaring its homepage as the canonical address for every page
+  made each clip from that site overwrite the last. Both silently destroyed the
+  earlier clip. A declared address is now resolved against the page and refused
+  when it would file the clip somewhere it does not belong, and the pre-send
+  preview says when that happened and why.
 - **Related items showed you the title twice.** Every related result's preview
   line was an extract of its own title, printed directly beneath that title, so
   the lane repeated itself instead of telling you anything about the item. It now

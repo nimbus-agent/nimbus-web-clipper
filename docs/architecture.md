@@ -246,7 +246,7 @@ quick-clip route (context menu / `Alt+Shift+C` hotkey). Both build the same
 gesture (popup button │ context menu │ hotkey)
       │
       ▼
-capture-in-page.ts  ──►  CaptureResult { url, canonicalUrl?, title, mode, body, readableFound }
+capture-in-page.ts  ──►  CaptureResult { url, canonicalUrl?, canonicalRejected?, title, mode, body, readableFound }
       │                    (Readability, or fallback.ts bookmark)
       ▼
 handleClip(deps)  ──►  clip.ts builds ClipPayload  ──►  postClip → gateway POST /v1/clips
@@ -258,6 +258,14 @@ handleClip(deps)  ──►  clip.ts builds ClipPayload  ──►  postClip →
       ▼
 syncQueueState()  → repaint toolbar badge; arm/clear the flush alarm
 ```
+
+`canonicalUrl` is present only when the page declared a `<link rel="canonical">`
+and [`resolveCanonical`](../src/shared/canonical.ts) accepted it; `canonicalRejected`
+is set instead — never both — when it refused the declaration (cross-origin,
+a site-wide collapse to the homepage, an unparseable value, or a non-web
+scheme). Either way `canonicalRejected` never reaches the gateway: `ClipPayload`
+has no such field, it exists purely so the pre-send preview can say the
+declaration was overridden, and why.
 
 The gateway's status codes are mapped to a small, closed set of typed reasons in
 [`gateway-client.ts`](../src/background/gateway-client.ts): `unreachable`,
