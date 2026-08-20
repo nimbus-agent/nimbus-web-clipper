@@ -630,7 +630,19 @@ async function resolveForAgent(
  * defaults and re-reads its config per call, so a client-side knob would only
  * be a second place for the same number to disagree.
  */
-function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }): unknown {
+/** The param shapes `agentParams` actually produces — one per lane family
+ *  (service, term, and the three item-scope shapes below). Giving the
+ *  function this as an explicit return type, instead of `unknown`, is what
+ *  makes the switch's exhaustiveness a compile error rather than a runtime
+ *  backstop: see the comment on the switch below. */
+type AgentParams =
+  | { service: string }
+  | { term: string }
+  | { fileOrPrUrl: string }
+  | { prUrl: string }
+  | { topicOrFile: string };
+
+function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }): AgentParams {
   if (resolved.scope === "service") {
     return { service: resolved.service };
   }
@@ -649,6 +661,14 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
   // `AGENT_LANES` would compile, render and invoke while silently sent
   // `expert`'s params. This branch is the proof: `why` would have shipped that
   // exact bug had its own case been forgotten here.
+  //
+  // There is deliberately no `default` arm. `AgentParams` above does not
+  // include `undefined`, so if a case is ever missing, control falling off
+  // the end of this switch is a compile error (TS2366: "Function lacks
+  // ending return statement…") rather than a runtime `never` assertion — the
+  // exhaustiveness check now lives in the return type, not in a statement
+  // here. Do not "helpfully" add a `default:` back; that would silence the
+  // exact error this is for.
   switch (lane) {
     case "impact":
       return { fileOrPrUrl: resolved.resolveUrl };
@@ -671,16 +691,9 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
       // four. They are grouped into `expert`'s case rather than given their
       // own dead-and-uncoverable ones, because the value they'd need if one
       // ever did land here is the same one `expert` returns. This grouping
-      // does not weaken the exhaustiveness proof below: a real fifth
-      // item-scope lane still needs its own case, or its name — not one of
-      // these five — reaches `default` and fails `lane satisfies never`.
-      return { topicOrFile: resolved.item.title };
-    default:
-      // Exhaustiveness backstop: every `AgentLane` member is handled above, so
-      // `lane` here is narrowed to `never`. A new lane added to `AGENT_LANES`
-      // without a case above fails to compile on this line instead of
-      // silently falling through to `expert`'s params.
-      lane satisfies never;
+      // does not weaken the exhaustiveness proof above: a real fifth
+      // item-scope lane still needs its own case, or its name is left
+      // unhandled and the switch stops being exhaustive.
       return { topicOrFile: resolved.item.title };
   }
 }
