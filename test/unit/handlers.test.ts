@@ -881,6 +881,34 @@ describe("handleAgentRun", () => {
     expect(seen[1]).toEqual({ agent: "expert", params: { topicOrFile: "Cache it" } });
   });
 
+  it("the why lane is asked with the page's PR URL, not the item title", async () => {
+    // Same URL impact receives. Sending `topicOrFile` here would be the
+    // wrong-question-wrong-input bug LANE_RULES exists to prevent, one layer down.
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+          seen.push({ agent, params });
+          return { ok: true as const, runId: "r1" };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "why", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+
+    expect(seen[0]).toEqual({
+      agent: "why",
+      params: { prUrl: "https://github.com/a/b/pull/1" },
+    });
+  });
+
   it("does not re-invoke when a cached done run exists", async () => {
     let called = false;
     const res = await handleAgentRun(

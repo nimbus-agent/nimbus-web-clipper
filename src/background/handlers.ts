@@ -622,8 +622,9 @@ async function resolveForAgent(
  * The gateway validates this body verbatim, so each agent gets exactly what it
  * accepts: `impact` takes the page's PR URL, `expert` free text to match against
  * indexed titles (the repo name would parse too, but answers a broader
- * question — the same people for every PR in the repo), and the three service
- * lanes take the connector id alone.
+ * question — the same people for every PR in the repo), `why` the same page PR
+ * URL as `impact` under the param name its `prUrl` arm declares, and the three
+ * service lanes take the connector id alone.
  *
  * No `sinceMs`, `minConfidence` or `limit` is sent. The gateway owns those
  * defaults and re-reads its config per call, so a client-side knob would only
@@ -640,9 +641,17 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
     // a second place for the same number to disagree.
     return { term: resolved.term };
   }
-  return lane === "impact"
-    ? { fileOrPrUrl: resolved.resolveUrl }
-    : { topicOrFile: resolved.item.title };
+  if (lane === "impact") {
+    return { fileOrPrUrl: resolved.resolveUrl };
+  }
+  // The same URL `impact` gets, under the param name `agents.why`'s prUrl arm
+  // declares. NOT the item title: `why` resolves the URL through the index
+  // itself, and a title would be a different question answered from an input the
+  // agent does not accept.
+  if (lane === "why") {
+    return { prUrl: resolved.resolveUrl };
+  }
+  return { topicOrFile: resolved.item.title };
 }
 
 /** The cache key for a lane: the item, the service, or the term it is about. */
