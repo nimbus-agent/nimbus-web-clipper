@@ -3,6 +3,7 @@
 // Pure and shared so the two previews cannot drift from each other or from the
 // requests they describe: both are built from exactly the data the caller is
 // about to send, not from a second description of it.
+import type { CanonicalRejection } from "./canonical.ts";
 import type { ClipPayload } from "./clip.ts";
 import { joinPassages } from "./passage.ts";
 import type { FetchTarget } from "./types.ts";
@@ -28,6 +29,30 @@ export interface FetchPreview {
 }
 
 /**
+ * One sentence per rejection reason. A single generic string cannot describe
+ * four different situations without being wrong in three of them.
+ *
+ * A `Record` keyed by the union is the exhaustiveness check: adding a reason to
+ * `CanonicalRejection` without adding a sentence here is a type error. That is
+ * deliberately NOT a `satisfies never` backstop in a switch — a backstop is two
+ * permanently-uncovered lines against the coverage gate.
+ *
+ * "the address above" refers to the URL row, which is always rendered directly
+ * before this one and IS the identity the clip will take once the declared
+ * canonical is refused. Naming it rather than repeating its value keeps the
+ * preview from showing the same URL twice.
+ */
+const CANONICAL_NOTICE: Record<CanonicalRejection, string> = {
+  "cross-origin":
+    "This page asked to be saved under another site's address; Nimbus ignored that and used the address above.",
+  "root-collapse":
+    "This page asked to be saved as the site's homepage, which would overwrite your other clips from it; Nimbus used the address above instead.",
+  unparseable: "This page's canonical address wasn't a usable URL; Nimbus used the address above.",
+  "bad-scheme":
+    "This page's canonical address wasn't a web address; Nimbus used the address above.",
+};
+
+/**
  * The clip payload, field by field.
  *
  * FIELDS ARE LISTED EXPLICITLY, never derived by iterating the object's keys.
@@ -41,13 +66,25 @@ export interface FetchPreview {
  * because the user is agreeing to send the whole body. A preview that quietly
  * described only the part it showed would understate what leaves.
  */
-export function buildClipPreview(payload: ClipPayload): ClipPreview {
+export function buildClipPreview(
+  payload: ClipPayload,
+  canonicalRejected?: CanonicalRejection,
+): ClipPreview {
   const fields: PreviewField[] = [
     { label: "Title", value: payload.title },
     { label: "URL", value: payload.url },
   ];
   if (payload.canonicalUrl !== undefined) {
     fields.push({ label: "Canonical URL", value: payload.canonicalUrl });
+  }
+  // Guarded on `canonicalUrl` being absent, not just on a rejection being
+  // passed: every `CANONICAL_NOTICE` sentence ends with "used the address
+  // above", which is only true while this row sits directly beneath `URL`
+  // with nothing in between. Callers today never pass both a canonicalUrl and
+  // a rejection, but that is a fact about the callers — this keeps the
+  // function correct even if that stopped holding.
+  if (canonicalRejected !== undefined && payload.canonicalUrl === undefined) {
+    fields.push({ label: "Note", value: CANONICAL_NOTICE[canonicalRejected] });
   }
   fields.push(
     { label: "Mode", value: payload.mode },

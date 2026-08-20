@@ -1,3 +1,4 @@
+import { isCanonicalRejection } from "../shared/canonical.ts";
 import { PANEL_HOST_ID, PANEL_SELECTION_HOOK, type PanelSelection } from "../shared/panel-host.ts";
 import type { CaptureResult, CueState, ToastState } from "../shared/types.ts";
 
@@ -9,6 +10,7 @@ function isCaptureResult(v: unknown): v is CaptureResult {
   return (
     typeof o["url"] === "string" &&
     (o["canonicalUrl"] === undefined || typeof o["canonicalUrl"] === "string") &&
+    (o["canonicalRejected"] === undefined || isCanonicalRejection(o["canonicalRejected"])) &&
     typeof o["title"] === "string" &&
     (o["mode"] === "article" || o["mode"] === "selection") &&
     typeof o["body"] === "string" &&

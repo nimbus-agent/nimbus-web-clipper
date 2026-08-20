@@ -113,6 +113,54 @@ describe("isClipRequest", () => {
       isClipRequest({ kind: "clip", capture: { ...capture, canonicalUrl: 123 }, tags: [] }),
     ).toBe(false);
   });
+  test("a capture carrying a canonical rejection still round-trips the guard", () => {
+    expect(
+      isClipRequest({
+        kind: "clip",
+        capture: {
+          url: "https://example.com/blog/post-5",
+          title: "Post 5",
+          mode: "article",
+          body: "text",
+          readableFound: true,
+          canonicalRejected: "root-collapse",
+        },
+        tags: [],
+      }),
+    ).toBe(true);
+  });
+  test("a non-string canonicalRejected is refused", () => {
+    expect(
+      isClipRequest({
+        kind: "clip",
+        capture: {
+          url: "https://example.com/p",
+          title: "P",
+          mode: "article",
+          body: "text",
+          readableFound: true,
+          canonicalRejected: 7,
+        },
+        tags: [],
+      }),
+    ).toBe(false);
+  });
+  test("a string canonicalRejected that isn't a valid reason is refused", () => {
+    expect(
+      isClipRequest({
+        kind: "clip",
+        capture: {
+          url: "https://example.com/p",
+          title: "P",
+          mode: "article",
+          body: "text",
+          readableFound: true,
+          canonicalRejected: "nonsense",
+        },
+        tags: [],
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("isRelatedRequest", () => {

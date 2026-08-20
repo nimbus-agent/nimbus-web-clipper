@@ -75,7 +75,10 @@ function showPreview(capture: CaptureResult, tags: string[]): void {
   }
   pending = { capture, tags };
   body.replaceChildren(
-    renderPreview(document, buildClipPreview(buildClipPayload(capture, tags, Date.now()))),
+    renderPreview(
+      document,
+      buildClipPreview(buildClipPayload(capture, tags, Date.now()), capture.canonicalRejected),
+    ),
   );
   section.hidden = false;
   setComposerEnabled(false);

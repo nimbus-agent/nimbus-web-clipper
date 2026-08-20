@@ -13,6 +13,7 @@ import {
   FETCH_FIXTURE,
   type FedBriefCreate,
   type FedBriefSource,
+  type FedClip,
   INDEX_BRIEF_REPORT,
   PAIR_CONFIRM,
   RELATED,
@@ -22,12 +23,27 @@ import {
 
 export const DEFAULT_PORT = 8765;
 
-const SAMPLE_PAGE = `<!doctype html>
+/**
+ * `canonicalHref` is parametric so the "good" and "bad" sample pages below
+ * cannot drift from each other in anything but the one line that matters.
+ *
+ * The default page's declaration is deliberately **relative** (`/sample`),
+ * not an absolute `http://127.0.0.1/sample` pinned to port 80. The mock
+ * listens on an ephemeral port, so a port-80 declaration is cross-origin to
+ * whatever port the mock actually bound — after Task 1's `resolveCanonical`
+ * that is a REJECTION, not the resolved value every e2e spec that touches
+ * this page expects. A relative href instead resolves correctly against
+ * whatever port the mock lands on, and it is what exercises the
+ * absolutise-against-the-page-URL path — the exact bug this slice exists to
+ * fix — on every run rather than a rejection nothing asserts on.
+ */
+function samplePage(canonicalHref: string): string {
+  return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>Designing local-first software</title>
-  <link rel="canonical" href="http://127.0.0.1/sample" />
+  <link rel="canonical" href="${canonicalHref}" />
 </head>
 <body style="max-width:680px;margin:40px auto;font:16px/1.6 system-ui,sans-serif">
   <h1>Designing local-first software</h1>
@@ -39,6 +55,19 @@ const SAMPLE_PAGE = `<!doctype html>
 </body>
 </html>
 `;
+}
+
+const SAMPLE_PAGE = samplePage("/sample");
+
+/**
+ * Same body, a canonical declared for a different origin entirely —
+ * `resolveCanonical` refuses this as `cross-origin`. Exists so
+ * `test/e2e/canonical.e2e.ts` can assert the refusal path against a real
+ * page in a real browser, the one thing the unit tests (which drive
+ * `capture-in-page.ts`/`panel-in-page.ts` through jsdom, not a live DOM) do
+ * not cover.
+ */
+const SAMPLE_PAGE_BAD_CANONICAL = samplePage("https://elsewhere.example/stolen");
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -110,6 +139,12 @@ export async function handleRequest(
   }
   if (req.method === "GET" && url.pathname === "/sample") {
     return new Response(SAMPLE_PAGE, {
+      status: 200,
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+  if (req.method === "GET" && url.pathname === "/sample-bad-canonical") {
+    return new Response(SAMPLE_PAGE_BAD_CANONICAL, {
       status: 200,
       headers: { "content-type": "text/html; charset=utf-8" },
     });
@@ -210,8 +245,13 @@ export async function handleRequest(
   switch (url.pathname) {
     case GATEWAY_PATHS.pairConfirm:
       return jsonResponse(PAIR_CONFIRM);
-    case GATEWAY_PATHS.ingest:
+    case GATEWAY_PATHS.ingest: {
+      if (scenario.onClipIngest !== undefined) {
+        const body: unknown = await req.json();
+        scenario.onClipIngest((isObject(body) ? body : {}) as FedClip);
+      }
       return jsonResponse(scenario.ingest ?? CLIP_INGEST);
+    }
     case GATEWAY_PATHS.related:
       return jsonResponse(scenario.related ?? RELATED);
     case GATEWAY_PATHS.itemsFetch:

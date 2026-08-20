@@ -77,7 +77,10 @@ export async function handleCapture(
   if (!enabled) {
     return { kind: "capture", ok: true, capture: out.capture, preview: null };
   }
-  const preview = buildClipPreview(buildClipPayload(out.capture, [], deps.now()));
+  const preview = buildClipPreview(
+    buildClipPayload(out.capture, [], deps.now()),
+    out.capture.canonicalRejected,
+  );
   return { kind: "capture", ok: true, capture: out.capture, preview };
 }
 

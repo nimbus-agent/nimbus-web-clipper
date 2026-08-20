@@ -260,3 +260,34 @@ describe("buildBriefPreview with the index option", () => {
     expect(notice).not.toContain("saved clips");
   });
 });
+
+describe("buildClipPreview — an ignored canonical URL", () => {
+  const { canonicalUrl: _none, ...noCanonical } = payload;
+
+  test("names the reason right after the URL it fell back to", () => {
+    const fields = buildClipPreview(noCanonical as ClipPayload, "cross-origin").fields;
+    expect(fields.map((f) => f.label)).toEqual(["Title", "URL", "Note", "Mode", "Tags"]);
+    expect(fields[2]?.value).toContain("another site's address");
+  });
+
+  test.each([
+    ["cross-origin", "another site's address"],
+    ["root-collapse", "homepage"],
+    ["unparseable", "wasn't a usable URL"],
+    ["bad-scheme", "wasn't a web address"],
+  ] as const)("%s gets its own sentence", (reason, fragment) => {
+    const fields = buildClipPreview(noCanonical as ClipPayload, reason).fields;
+    const note = fields.find((f) => f.label === "Note");
+    expect(note?.value).toContain(fragment);
+  });
+
+  test("no rejection means no Note row", () => {
+    expect(buildClipPreview(payload).fields.map((f) => f.label)).toEqual([
+      "Title",
+      "URL",
+      "Canonical URL",
+      "Mode",
+      "Tags",
+    ]);
+  });
+});

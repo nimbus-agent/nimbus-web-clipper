@@ -617,8 +617,11 @@ Prereq: paired, gateway running, a resolved GitHub pull request available.
 
 ## Manual verification — Capture as the last resort (C3.2)
 
-Prereq: paired, gateway running. `capture-in-page.ts` is not unit-testable, the
-same as the popup/options DOM and the SW glue.
+Prereq: paired, gateway running. `capture-in-page.ts` — like the popup/options
+DOM and the SW glue — IS unit-tested through jsdom (`test/unit/capture-in-page.test.ts`,
+`popup.test.ts`, `options.test.ts`, `service-worker.test.ts`). What this
+checklist covers is what jsdom cannot: the real browser, the real injected
+bundle, and the real extension plumbing.
 
 1. <!-- e2e:capture-1 --> On a real page Nimbus does not recognise (an
    internal wiki, a vendor console), open the panel. It offers to capture the
@@ -678,6 +681,25 @@ same as the popup/options DOM and the SW glue.
    nothing the mock gateway can hold open makes it observable; it would need
    a deliberate delay hook inside `capture-in-page.ts`/`capture-tab.ts`
    itself, not the mock)**
+9. <!-- e2e:canonical-1 --> On a page whose `<link rel="canonical">` points at
+   another origin (or edit one in via devtools), open the popup and clip. The
+   preview shows no **Canonical URL** row and a **Note** saying the
+   declaration was ignored; the clip is filed under the address bar URL.
+   **[The e2e drives this through the panel's last-resort capture offer
+   (same entry point as step 1), not the popup — the two share the exact
+   same preview machinery (`shared/preview.ts`/`preview-view.ts`), so a
+   rejected declaration renders identically either way.]**
+10. <!-- e2e:canonical-2 --> Set the page's canonical to `/some/path` in
+    devtools and clip: the preview's **Canonical URL** row shows the full
+    `https://host/some/path`, not `/some/path`. **[Same substitution as
+    above: driven through the panel's capture offer.]**
+11. Open the panel on the same page as either step above — its related lookup
+    uses the same resolved value, so it must not disagree about which page
+    you are on. **(not yet automated — no suite cross-checks the panel's
+    related request against the capture preview's resolved canonical on one
+    live page; `test/unit/panel-in-page.test.ts` covers the panel's own
+    resolution in isolation, and `test/e2e/canonical.e2e.ts` only exercises
+    the capture preview)**
 
 ## Manual verification — Research briefs
 

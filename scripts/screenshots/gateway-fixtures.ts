@@ -282,6 +282,19 @@ export interface Scenario {
    *  test can make: whether `useIndex` actually left the browser, rather than
    *  the client's own idea of what it sent. */
   readonly onBriefCreate?: (body: FedBriefCreate) => void;
+  /** Called with every `POST /v1/clips` body — the assertion no unit test and
+   *  no preview check can make: whether `canonicalUrl` actually left the
+   *  browser. A regression could hide the preview's Canonical URL row while
+   *  still putting the refused address on the wire, where it decides identity. */
+  readonly onClipIngest?: (body: FedClip) => void;
+}
+
+/** One `POST /v1/clips` body received, as it arrived. Only the field whose
+ *  presence is the whole point is named; the rest of the clip is not this
+ *  fixture's business. */
+export interface FedClip {
+  readonly url?: unknown;
+  readonly canonicalUrl?: unknown;
 }
 
 /** One create body `POST /v1/briefs` received — the wire shape, unknown

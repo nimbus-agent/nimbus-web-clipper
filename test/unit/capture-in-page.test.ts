@@ -68,8 +68,14 @@ function addOgDescription(content: string): void {
 }
 
 function addCanonicalLink(href: string): void {
+  addLink("canonical", href);
+}
+
+/** Same, but with the `rel` spelled explicitly — for the token-list and
+ *  casing variants HTML allows and an exact-match selector would drop. */
+function addLink(rel: string, href: string): void {
   const link = document.createElement("link");
-  link.setAttribute("rel", "canonical");
+  link.setAttribute("rel", rel);
   link.setAttribute("href", href);
   document.head.appendChild(link);
 }
@@ -87,6 +93,10 @@ beforeEach(() => {
   document.body.innerHTML = "";
   document.title = "";
   window.getSelection()?.removeAllRanges();
+  // Reset the page path back to the jsdom default root before every test — a
+  // few canonical tests below push a non-root path to exercise root-collapse,
+  // and without this every test that follows would silently inherit it.
+  window.history.pushState({}, "", "/");
 });
 
 describe("__nimbusCapture registration", () => {
@@ -108,12 +118,84 @@ describe("article mode", () => {
     expect(result.url).toBe("http://localhost:3000/");
   });
 
-  test("includes canonicalUrl when a <link rel=canonical> is present", () => {
+  test("a blank href does not shadow a valid declaration further down the head", () => {
+    // The bug this guards: `[href]` is satisfied by href="", so taking
+    // querySelector's first hit blindly threw away the real canonical below it
+    // and the page was filed under the address bar instead.
     setArticleDocument();
-    addCanonicalLink("https://example.com/canonical-article");
+    addLink("canonical", "");
+    addCanonicalLink("http://localhost:3000/the-real-one");
     const result = getCapture()("article");
 
-    expect(result.canonicalUrl).toBe("https://example.com/canonical-article");
+    expect(result.canonicalUrl).toBe("http://localhost:3000/the-real-one");
+  });
+
+  test("a whitespace-only href is treated as blank, not as a relative URL", () => {
+    setArticleDocument();
+    addLink("canonical", "   ");
+    addCanonicalLink("http://localhost:3000/the-real-one");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBe("http://localhost:3000/the-real-one");
+  });
+
+  test('rel="alternate canonical" is a canonical declaration', () => {
+    // `rel` is a space-separated token list; an exact-match selector ignores
+    // a perfectly valid declaration that carries a second keyword.
+    setArticleDocument();
+    addLink("alternate canonical", "http://localhost:3000/tokenised");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBe("http://localhost:3000/tokenised");
+  });
+
+  test("the rel keyword is matched case-insensitively, as HTML defines it", () => {
+    // DOCUMENTS INTENT; does not guard the regression. jsdom matches `rel`
+    // values case-insensitively on its own, so this passes with or without the
+    // `i` flag in the selector. A real browser does NOT — CSS attribute values
+    // are case-sensitive by default — so the guard that matters here is the
+    // Chromium e2e, not this test. Kept because it states the contract.
+    setArticleDocument();
+    addLink("Canonical", "http://localhost:3000/upper");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBe("http://localhost:3000/upper");
+  });
+
+  test("includes canonicalUrl when a <link rel=canonical> is present", () => {
+    setArticleDocument();
+    addCanonicalLink("http://localhost:3000/canonical-article");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBe("http://localhost:3000/canonical-article");
+  });
+
+  test("a cross-origin canonical is rejected — canonicalUrl absent, canonicalRejected is cross-origin", () => {
+    setArticleDocument();
+    addCanonicalLink("https://elsewhere.example/stolen");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBeUndefined();
+    expect(result.canonicalRejected).toBe("cross-origin");
+  });
+
+  test("a relative canonical is absolutised against the page URL", () => {
+    setArticleDocument();
+    addCanonicalLink("/article/5");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBe("http://localhost:3000/article/5");
+    expect(result.canonicalRejected).toBeUndefined();
+  });
+
+  test("a root-collapse canonical is rejected when the page is not at the root", () => {
+    window.history.pushState({}, "", "/article/5");
+    setArticleDocument();
+    addCanonicalLink("http://localhost:3000/");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBeUndefined();
+    expect(result.canonicalRejected).toBe("root-collapse");
   });
 
   test("omits canonicalUrl when no <link rel=canonical> is present", () => {
@@ -182,10 +264,10 @@ describe("fallback (no readable article)", () => {
 
   test("canonicalUrl is still surfaced on a fallback capture", () => {
     setSparseDocument();
-    addCanonicalLink("https://example.com/sparse");
+    addCanonicalLink("http://localhost:3000/sparse");
     const result = getCapture()("article");
 
-    expect(result.canonicalUrl).toBe("https://example.com/sparse");
+    expect(result.canonicalUrl).toBe("http://localhost:3000/sparse");
     expect(result.readableFound).toBe(false);
   });
 });
@@ -245,7 +327,7 @@ describe("selection mode", () => {
 
   test("includes canonicalUrl in selection mode as well", () => {
     setArticleDocument();
-    addCanonicalLink("https://example.com/selection-canonical");
+    addCanonicalLink("http://localhost:3000/selection-canonical");
     const heading = document.querySelector("h1");
     if (heading === null) {
       throw new Error("test setup: expected an h1 in the document");
@@ -254,6 +336,6 @@ describe("selection mode", () => {
 
     const result = getCapture()("selection");
 
-    expect(result.canonicalUrl).toBe("https://example.com/selection-canonical");
+    expect(result.canonicalUrl).toBe("http://localhost:3000/selection-canonical");
   });
 });
