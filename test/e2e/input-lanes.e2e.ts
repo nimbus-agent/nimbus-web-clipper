@@ -135,7 +135,7 @@ test("Define in Nimbus opens a closed panel with the glossary lane already answe
     // only withholds it on a product dashboard) — its own absence would be the
     // wrong claim to make here.
     await expect(page.locator('[data-lane="related"]')).toHaveCount(1);
-    for (const lane of ["impact", "expert", "catchup", "decisions", "ownership"]) {
+    for (const lane of ["impact", "expert", "why", "catchup", "decisions", "ownership"]) {
       await expect(page.locator(`[data-lane="${lane}"]`)).toHaveCount(0);
     }
   } finally {

@@ -1629,12 +1629,13 @@ describe("panel-in-page agent lanes", () => {
     (body.querySelectorAll("button.nimbus-related__candidate")[1] as HTMLButtonElement).click();
     await flush();
 
-    // After the pick: the header names the chosen candidate, and the two
+    // After the pick: the header names the chosen candidate, and the three
     // pull-request lanes are offered against it.
     expect(body.textContent).toContain("Two");
     expect(body.querySelectorAll("button.nimbus-related__candidate")).toHaveLength(0);
     expect(body.querySelector('details[data-lane="impact"]')).not.toBeNull();
     expect(body.querySelector('details[data-lane="expert"]')).not.toBeNull();
+    expect(body.querySelector('details[data-lane="why"]')).not.toBeNull();
     // Still no glossary lane: nothing has selected a term.
     expect(body.querySelector('details[data-lane="glossary"]')).toBeNull();
     // Rendering lanes is not asking anything of them — a lane invokes on its

@@ -881,9 +881,14 @@ describe("handleAgentRun", () => {
     expect(seen[1]).toEqual({ agent: "expert", params: { topicOrFile: "Cache it" } });
   });
 
-  it("the why lane is asked with the page's PR URL, not the item title", async () => {
+  it("the why lane is asked with the page's PR URL, not the item title, and unnormalised", async () => {
     // Same URL impact receives. Sending `topicOrFile` here would be the
-    // wrong-question-wrong-input bug LANE_RULES exists to prevent, one layer down.
+    // wrong-question-wrong-input bug LANE_RULES exists to prevent, one layer
+    // down. The sub-tab segment and query string are deliberate, not
+    // incidental: `resolveUrl` must arrive at the gateway byte-identical to
+    // what recognise() produced (spec §2.1) — a pageUrl that already happened
+    // to be canonical would let a trimming or query-stripping implementation
+    // pass this test by accident.
     const seen: Array<{ agent: string; params: unknown }> = [];
     await handleAgentRun(
       {
@@ -900,12 +905,16 @@ describe("handleAgentRun", () => {
         getRun: async () => null,
         putRun: async () => undefined,
       },
-      { kind: "agent-run", lane: "why", pageUrl: "https://github.com/a/b/pull/1" },
+      {
+        kind: "agent-run",
+        lane: "why",
+        pageUrl: "https://github.com/a/b/pull/1/files?w=1",
+      },
     );
 
     expect(seen[0]).toEqual({
       agent: "why",
-      params: { prUrl: "https://github.com/a/b/pull/1" },
+      params: { prUrl: "https://github.com/a/b/pull/1/files?w=1" },
     });
   });
 
