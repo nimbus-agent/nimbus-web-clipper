@@ -110,10 +110,10 @@ describe("article mode", () => {
 
   test("includes canonicalUrl when a <link rel=canonical> is present", () => {
     setArticleDocument();
-    addCanonicalLink("https://example.com/canonical-article");
+    addCanonicalLink("http://localhost:3000/canonical-article");
     const result = getCapture()("article");
 
-    expect(result.canonicalUrl).toBe("https://example.com/canonical-article");
+    expect(result.canonicalUrl).toBe("http://localhost:3000/canonical-article");
   });
 
   test("omits canonicalUrl when no <link rel=canonical> is present", () => {
@@ -182,10 +182,10 @@ describe("fallback (no readable article)", () => {
 
   test("canonicalUrl is still surfaced on a fallback capture", () => {
     setSparseDocument();
-    addCanonicalLink("https://example.com/sparse");
+    addCanonicalLink("http://localhost:3000/sparse");
     const result = getCapture()("article");
 
-    expect(result.canonicalUrl).toBe("https://example.com/sparse");
+    expect(result.canonicalUrl).toBe("http://localhost:3000/sparse");
     expect(result.readableFound).toBe(false);
   });
 });
@@ -245,7 +245,7 @@ describe("selection mode", () => {
 
   test("includes canonicalUrl in selection mode as well", () => {
     setArticleDocument();
-    addCanonicalLink("https://example.com/selection-canonical");
+    addCanonicalLink("http://localhost:3000/selection-canonical");
     const heading = document.querySelector("h1");
     if (heading === null) {
       throw new Error("test setup: expected an h1 in the document");
@@ -254,6 +254,6 @@ describe("selection mode", () => {
 
     const result = getCapture()("selection");
 
-    expect(result.canonicalUrl).toBe("https://example.com/selection-canonical");
+    expect(result.canonicalUrl).toBe("http://localhost:3000/selection-canonical");
   });
 });

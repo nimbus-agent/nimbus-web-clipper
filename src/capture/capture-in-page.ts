@@ -1,5 +1,6 @@
 // src/capture/capture-in-page.ts
 import { Readability } from "@mozilla/readability";
+import { CANONICAL_LINK_SELECTOR, resolveCanonical } from "../shared/canonical.ts";
 import type { CaptureResult } from "../shared/types.ts";
 import { fallbackBody } from "./fallback.ts";
 
@@ -9,16 +10,19 @@ function metaDescription(doc: Document): string | undefined {
   return content !== undefined && content.trim() !== "" ? content : undefined;
 }
 
-function canonicalUrl(doc: Document): string | undefined {
-  const href = doc.querySelector('link[rel="canonical"]')?.getAttribute("href") ?? undefined;
-  return href !== undefined && href !== "" ? href : undefined;
-}
-
 function capture(mode: string): CaptureResult {
   const url = location.href;
   const title = document.title;
-  const canonical = canonicalUrl(document);
-  const canonicalPart = canonical !== undefined ? { canonicalUrl: canonical } : {};
+  const canonical = resolveCanonical(
+    document.querySelector(CANONICAL_LINK_SELECTOR)?.getAttribute("href") ?? undefined,
+    location.href,
+  );
+  const canonicalPart =
+    canonical.kind === "resolved"
+      ? { canonicalUrl: canonical.url }
+      : canonical.kind === "rejected"
+        ? { canonicalRejected: canonical.reason }
+        : {};
 
   if (mode === "selection") {
     const body = (window.getSelection()?.toString() ?? "").trim();

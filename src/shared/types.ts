@@ -1,6 +1,16 @@
+import type { CanonicalRejection } from "./canonical.ts";
+
 export interface CaptureResult {
   readonly url: string;
   readonly canonicalUrl?: string;
+  /**
+   * Set INSTEAD of `canonicalUrl` when the page declared one and it was
+   * refused — see `resolveCanonical`. Carried so the pre-send preview can say
+   * that we overrode the page's own declaration, rather than doing it silently.
+   * Never sent to the gateway; `ClipPayload` is the wire shape and does not
+   * have this field.
+   */
+  readonly canonicalRejected?: CanonicalRejection;
   readonly title: string;
   readonly mode: "article" | "selection";
   readonly body: string;

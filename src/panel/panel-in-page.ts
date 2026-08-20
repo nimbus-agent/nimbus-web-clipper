@@ -3,6 +3,7 @@
 // panel. Mounts a Shadow-DOM overlay (inlined styles — no web_accessible_resources),
 // reads the page context, asks the SW for related items, and renders them.
 import { sendMessage } from "../browser/runtime.ts";
+import { CANONICAL_LINK_SELECTOR, resolveCanonical } from "../shared/canonical.ts";
 import { isCapturedCopy } from "../shared/capture-offer.ts";
 import {
   type ClipResponse,
@@ -358,12 +359,17 @@ interface NimbusHost extends HTMLElement {
 }
 
 function readContext(): { title: string; canonicalUrl?: string; selection: string } {
-  const canonical =
-    document.querySelector('link[rel="canonical"]')?.getAttribute("href") ?? undefined;
+  // The SAME selector and the SAME judgement the capture path makes. Two
+  // independent readings of link[rel=canonical] is how the panel's idea of the
+  // page and the clip's identity drift apart.
+  const canonical = resolveCanonical(
+    document.querySelector(CANONICAL_LINK_SELECTOR)?.getAttribute("href") ?? undefined,
+    location.href,
+  );
   const selection = window.getSelection()?.toString() ?? "";
   return {
     title: document.title,
-    ...(canonical !== undefined && canonical !== "" ? { canonicalUrl: canonical } : {}),
+    ...(canonical.kind === "resolved" ? { canonicalUrl: canonical.url } : {}),
     selection,
   };
 }

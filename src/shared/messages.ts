@@ -453,6 +453,7 @@ function isCaptureResult(v: unknown): v is CaptureResult {
     isObject(v) &&
     typeof v["url"] === "string" &&
     (v["canonicalUrl"] === undefined || typeof v["canonicalUrl"] === "string") &&
+    (v["canonicalRejected"] === undefined || typeof v["canonicalRejected"] === "string") &&
     typeof v["title"] === "string" &&
     (v["mode"] === "article" || v["mode"] === "selection") &&
     typeof v["body"] === "string" &&

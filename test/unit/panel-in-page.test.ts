@@ -261,7 +261,7 @@ describe("panel-in-page readContext()", () => {
     document.title = "My Page";
     const link = document.createElement("link");
     link.rel = "canonical";
-    link.href = "https://example.com/canon";
+    link.href = "http://localhost:3000/canon";
     document.head.append(link);
 
     const p = document.createElement("p");
@@ -280,7 +280,7 @@ describe("panel-in-page readContext()", () => {
     expect(harness.sendMessage).toHaveBeenCalledWith({
       kind: "related",
       title: "My Page",
-      canonicalUrl: "https://example.com/canon",
+      canonicalUrl: "http://localhost:3000/canon",
       selection: "selected text",
     });
   });

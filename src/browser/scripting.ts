@@ -9,6 +9,7 @@ function isCaptureResult(v: unknown): v is CaptureResult {
   return (
     typeof o["url"] === "string" &&
     (o["canonicalUrl"] === undefined || typeof o["canonicalUrl"] === "string") &&
+    (o["canonicalRejected"] === undefined || typeof o["canonicalRejected"] === "string") &&
     typeof o["title"] === "string" &&
     (o["mode"] === "article" || o["mode"] === "selection") &&
     typeof o["body"] === "string" &&
