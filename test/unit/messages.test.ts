@@ -428,9 +428,9 @@ describe("agent-lane guards", () => {
     );
   });
   test("isAgentRunRequest rejects an unknown lane", () => {
-    expect(isAgentRunRequest({ kind: "agent-run", lane: "why", pageUrl: "https://x/y" })).toBe(
-      false,
-    );
+    expect(
+      isAgentRunRequest({ kind: "agent-run", lane: "not-a-lane", pageUrl: "https://x/y" }),
+    ).toBe(false);
   });
   test("isAgentRunRequest rejects a missing pageUrl", () => {
     expect(isAgentRunRequest({ kind: "agent-run", lane: "expert" })).toBe(false);
@@ -442,9 +442,9 @@ describe("agent-lane guards", () => {
     ).toBe(true);
   });
   test("isAgentStateRequest rejects an unknown lane", () => {
-    expect(isAgentStateRequest({ kind: "agent-state", lane: "why", pageUrl: "https://x/y" })).toBe(
-      false,
-    );
+    expect(
+      isAgentStateRequest({ kind: "agent-state", lane: "not-a-lane", pageUrl: "https://x/y" }),
+    ).toBe(false);
   });
 
   describe("the optional lane inputs", () => {
@@ -512,7 +512,11 @@ describe("agent-lane guards", () => {
 
     it("rejects an unknown lane or an unknown state kind", () => {
       expect(
-        isAgentStateResponse({ kind: "agent-state", lane: "why", state: { kind: "collapsed" } }),
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "not-a-lane",
+          state: { kind: "collapsed" },
+        }),
       ).toBe(false);
       expect(
         isAgentStateResponse({

@@ -2828,7 +2828,7 @@ describe("the dashboard panel", () => {
 
   it("still shows related and the item lanes on a pull request", async () => {
     const root = await mountPanelWithResolve(PR_RESOLVE);
-    expect(laneIds(root)).toEqual(["related", "impact", "expert"]);
+    expect(laneIds(root)).toEqual(["related", "impact", "expert", "why"]);
   });
 });
 

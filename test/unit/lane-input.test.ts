@@ -53,7 +53,7 @@ describe("termStateFrom", () => {
 
 describe("lanesFor — page lanes", () => {
   it("offers the pull-request lanes on a resolved pull request", () => {
-    expect(lanesFor(ctx())).toEqual(["impact", "expert"]);
+    expect(lanesFor(ctx())).toEqual(["impact", "expert", "why"]);
   });
 
   it("offers the service lanes on a dashboard", () => {
@@ -84,7 +84,7 @@ describe("lanesFor — the term lane", () => {
   });
 
   it("leads the lanes once a term arrives", () => {
-    expect(lanesFor(ctx({ term }))).toEqual(["glossary", "impact", "expert"]);
+    expect(lanesFor(ctx({ term }))).toEqual(["glossary", "impact", "expert", "why"]);
   });
 
   // The decision this slice turns on: glossary's input is not the page, so no
