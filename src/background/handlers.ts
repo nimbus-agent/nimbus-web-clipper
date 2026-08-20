@@ -659,17 +659,21 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
       // an input the agent does not accept.
       return { prUrl: resolved.resolveUrl };
     case "expert":
-      return { topicOrFile: resolved.item.title };
     case "glossary":
     case "catchup":
     case "decisions":
     case "ownership":
-      // Unreachable: `LANE_RULES[lane].input` routes `glossary` to
-      // `resolveTermLane` (scope `"term"`) and the three service lanes to the
-      // `kind === "home"` branch (scope `"service"`) above, in `resolveForAgent`
-      // — `resolveForAgent` never returns `scope: "item"` for any of these
-      // four. Listed here explicitly, not folded into `default`, so they
-      // cannot silently absorb a real fourth item lane's case below.
+      // `glossary`, `catchup`, `decisions` and `ownership` are unreachable
+      // here: `LANE_RULES[lane].input` routes `glossary` to `resolveTermLane`
+      // (scope `"term"`) and the three service lanes to the `kind === "home"`
+      // branch (scope `"service"`) above, in `resolveForAgent` —
+      // `resolveForAgent` never returns `scope: "item"` for any of these
+      // four. They are grouped into `expert`'s case rather than given their
+      // own dead-and-uncoverable ones, because the value they'd need if one
+      // ever did land here is the same one `expert` returns. This grouping
+      // does not weaken the exhaustiveness proof below: a real fifth
+      // item-scope lane still needs its own case, or its name — not one of
+      // these five — reaches `default` and fails `lane satisfies never`.
       return { topicOrFile: resolved.item.title };
     default:
       // Exhaustiveness backstop: every `AgentLane` member is handled above, so
