@@ -68,8 +68,14 @@ function addOgDescription(content: string): void {
 }
 
 function addCanonicalLink(href: string): void {
+  addLink("canonical", href);
+}
+
+/** Same, but with the `rel` spelled explicitly — for the token-list and
+ *  casing variants HTML allows and an exact-match selector would drop. */
+function addLink(rel: string, href: string): void {
   const link = document.createElement("link");
-  link.setAttribute("rel", "canonical");
+  link.setAttribute("rel", rel);
   link.setAttribute("href", href);
   document.head.appendChild(link);
 }
@@ -110,6 +116,50 @@ describe("article mode", () => {
     expect(result.title.length).toBeGreaterThan(0);
     expect(result.body).toContain("local-first index");
     expect(result.url).toBe("http://localhost:3000/");
+  });
+
+  test("a blank href does not shadow a valid declaration further down the head", () => {
+    // The bug this guards: `[href]` is satisfied by href="", so taking
+    // querySelector's first hit blindly threw away the real canonical below it
+    // and the page was filed under the address bar instead.
+    setArticleDocument();
+    addLink("canonical", "");
+    addCanonicalLink("http://localhost:3000/the-real-one");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBe("http://localhost:3000/the-real-one");
+  });
+
+  test("a whitespace-only href is treated as blank, not as a relative URL", () => {
+    setArticleDocument();
+    addLink("canonical", "   ");
+    addCanonicalLink("http://localhost:3000/the-real-one");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBe("http://localhost:3000/the-real-one");
+  });
+
+  test('rel="alternate canonical" is a canonical declaration', () => {
+    // `rel` is a space-separated token list; an exact-match selector ignores
+    // a perfectly valid declaration that carries a second keyword.
+    setArticleDocument();
+    addLink("alternate canonical", "http://localhost:3000/tokenised");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBe("http://localhost:3000/tokenised");
+  });
+
+  test("the rel keyword is matched case-insensitively, as HTML defines it", () => {
+    // DOCUMENTS INTENT; does not guard the regression. jsdom matches `rel`
+    // values case-insensitively on its own, so this passes with or without the
+    // `i` flag in the selector. A real browser does NOT — CSS attribute values
+    // are case-sensitive by default — so the guard that matters here is the
+    // Chromium e2e, not this test. Kept because it states the contract.
+    setArticleDocument();
+    addLink("Canonical", "http://localhost:3000/upper");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBe("http://localhost:3000/upper");
   });
 
   test("includes canonicalUrl when a <link rel=canonical> is present", () => {

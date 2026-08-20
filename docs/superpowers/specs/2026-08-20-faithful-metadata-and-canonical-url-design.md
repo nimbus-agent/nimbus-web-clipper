@@ -39,9 +39,12 @@ const externalId = `clip:${sha256(canonical)}`;   // selection mode also hashes 
 const id = itemPrimaryKey("nimbus", externalId);
 ```
 
-Nothing else enters the hash. **Whatever this client sends as `canonicalUrl`
-decides which item the clip _is_** — dedup, re-clip-as-update, and
-resolve-by-URL all turn on it.
+So an `article` clip's identity is the canonical URL **alone**; a `selection`
+clip's is that URL plus a hash of the selected body, which is what lets two
+selections from one page be two items. Nothing else enters either — not the
+title, not the tags, not the metadata. **Whatever this client sends as
+`canonicalUrl` decides which item the clip _is_** — dedup, re-clip-as-update,
+and resolve-by-URL all turn on it.
 
 What this client sends (`src/capture/capture-in-page.ts:12`) is the raw
 `link[rel="canonical"]` href, forwarded with no validation beyond "not empty":
@@ -362,10 +365,20 @@ must each match their case is exactly the kind of mapping that rots silently.
 `leadImage` gets its own cases: a CDN-hosted image on a foreign origin is
 **kept** (the rung-4 exemption), a `data:` URL is not.
 
-`capture-in-page.ts` and `panel-in-page.ts` remain the injected layer that unit
-tests cannot reach. They get a `docs/development.md` checklist entry; before
-falling back to that, S1 should establish whether the #60 e2e harness can carry
-a canonical fixture, which would be materially stronger than a manual step.
+`capture-in-page.ts` and `panel-in-page.ts` **are** reachable by unit tests —
+`test/unit/capture-in-page.test.ts` and `test/unit/panel-in-page.test.ts` drive
+both through jsdom, and that is where each rejection reason and the absolutise
+path are covered at the call site. (An earlier draft of this spec claimed the
+opposite, and `docs/development.md` claimed it too; both were wrong, and the
+claim is corrected in the same slice. Believing it would mean writing a manual
+checklist where a unit test would do.)
+
+What jsdom genuinely cannot give is a real page in a real Chromium running the
+real built extension: the injected bundle, the extension plumbing, and
+browser-accurate CSS selector semantics. That is the e2e harness's job — S1
+should establish whether the #60 harness can carry a canonical fixture, which
+is materially stronger than a manual step — with a `docs/development.md`
+checklist entry for whatever remains.
 
 Gate notes carried from previous runs: the Nimbus slice needs
 `bun run lint:markdown` over its docs before CI will go green, and the clipper's

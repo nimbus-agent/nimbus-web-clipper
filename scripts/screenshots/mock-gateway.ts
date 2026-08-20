@@ -13,6 +13,7 @@ import {
   FETCH_FIXTURE,
   type FedBriefCreate,
   type FedBriefSource,
+  type FedClip,
   INDEX_BRIEF_REPORT,
   PAIR_CONFIRM,
   RELATED,
@@ -244,8 +245,13 @@ export async function handleRequest(
   switch (url.pathname) {
     case GATEWAY_PATHS.pairConfirm:
       return jsonResponse(PAIR_CONFIRM);
-    case GATEWAY_PATHS.ingest:
+    case GATEWAY_PATHS.ingest: {
+      if (scenario.onClipIngest !== undefined) {
+        const body: unknown = await req.json();
+        scenario.onClipIngest((isObject(body) ? body : {}) as FedClip);
+      }
       return jsonResponse(scenario.ingest ?? CLIP_INGEST);
+    }
     case GATEWAY_PATHS.related:
       return jsonResponse(scenario.related ?? RELATED);
     case GATEWAY_PATHS.itemsFetch:

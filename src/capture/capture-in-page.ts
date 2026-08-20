@@ -1,6 +1,6 @@
 // src/capture/capture-in-page.ts
 import { Readability } from "@mozilla/readability";
-import { CANONICAL_LINK_SELECTOR, resolveCanonical } from "../shared/canonical.ts";
+import { declaredCanonicalHref, resolveCanonical } from "../shared/canonical.ts";
 import type { CaptureResult } from "../shared/types.ts";
 import { fallbackBody } from "./fallback.ts";
 
@@ -13,10 +13,7 @@ function metaDescription(doc: Document): string | undefined {
 function capture(mode: string): CaptureResult {
   const url = location.href;
   const title = document.title;
-  const canonical = resolveCanonical(
-    document.querySelector(CANONICAL_LINK_SELECTOR)?.getAttribute("href") ?? undefined,
-    url,
-  );
+  const canonical = resolveCanonical(declaredCanonicalHref(document), url);
   const canonicalPart =
     canonical.kind === "resolved"
       ? { canonicalUrl: canonical.url }

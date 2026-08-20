@@ -26,19 +26,49 @@
 // against a page opened from disk.
 
 /**
- * The selector both injected scripts use to find the declaration.
+ * The selector both injected scripts use to find candidate declarations.
  *
- * It lives here, next to the judgement, so the two call sites cannot drift —
- * which is the same failure this module exists to end. `[href]` is load-bearing
- * rather than decorative: `querySelector` returns the FIRST match, so a
- * malformed `<link rel="canonical">` with no href would otherwise shadow a
- * valid declaration further down the head. Requiring the attribute skips it.
+ * Three details are load-bearing, and each of them was a real miss:
  *
- * A page with several well-formed canonical links is misconfigured and has no
- * right answer; first-wins is as defensible as any other rule, and it is what
- * `querySelector` gives us.
+ * - **`~=`, not `=`.** `rel` is a space-separated token list, so
+ *   `rel="alternate canonical"` is a canonical declaration and an exact-match
+ *   selector silently ignores it.
+ * - **The `i` flag.** HTML matches `rel` keywords ASCII-case-insensitively, so
+ *   `rel="Canonical"` is equally valid. CSS attribute VALUES are case-sensitive
+ *   by default, so without `i` a real browser drops it. (jsdom happens to be
+ *   lenient here, which is exactly why this needs saying — a test-only check
+ *   would not have caught it.)
+ * - **`[href]`** skips a malformed `<link rel="canonical">` carrying no href at
+ *   all, which would otherwise shadow a valid declaration further down the head.
  */
-export const CANONICAL_LINK_SELECTOR = 'link[rel="canonical"][href]';
+export const CANONICAL_LINK_SELECTOR = 'link[rel~="canonical" i][href]';
+
+/**
+ * The first USABLE canonical declaration in a document, or `undefined`.
+ *
+ * `[href]` in the selector only proves the attribute is present — `href=""`
+ * satisfies it. An empty declaration is not a declaration, and taking the
+ * first match blindly would let one shadow a valid canonical later in the
+ * head, losing it entirely. So this scans for the first candidate whose href
+ * is not blank rather than trusting `querySelector`'s first hit.
+ *
+ * Several well-formed canonical links on one page is a misconfiguration with
+ * no right answer; first-usable-wins is as defensible as any other rule.
+ *
+ * Lives here, beside the judgement, so the two injected call sites read the
+ * DOM the same way — two independent readings drifting apart is the failure
+ * this module exists to end. It takes the document as an argument rather than
+ * touching a global, so it stays a pure function of its input.
+ */
+export function declaredCanonicalHref(doc: Document): string | undefined {
+  for (const link of doc.querySelectorAll(CANONICAL_LINK_SELECTOR)) {
+    const href = link.getAttribute("href");
+    if (href !== null && href.trim() !== "") {
+      return href;
+    }
+  }
+  return undefined;
+}
 
 /**
  * The one source of truth for the rejection reasons. `CanonicalRejection` and

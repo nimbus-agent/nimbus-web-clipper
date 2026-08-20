@@ -14,6 +14,7 @@
  */
 import { expect, type Page, test } from "@playwright/test";
 import { launchExtension } from "../../scripts/e2e/launch.ts";
+import type { FedClip } from "../../scripts/screenshots/gateway-fixtures.ts";
 import { togglePanel } from "./helpers.ts";
 
 export const COVERS = ["canonical-1", "canonical-2"] as const;
@@ -58,7 +59,12 @@ test("a relative canonical is absolutised into the clip preview", async () => {
 });
 
 test("a cross-origin canonical is refused, not forwarded, and the preview says so", async () => {
-  const h = await launchExtension();
+  // `sent` is the half of this test's own title that the preview cannot prove.
+  // A regression could hide the Canonical URL row and still put the refused
+  // address on the wire, where it is what decides the clip's identity — so the
+  // assertion has to be made against the body the gateway actually received.
+  const sent: FedClip[] = [];
+  const h = await launchExtension({ scenario: { onClipIngest: (b) => sent.push(b) } });
   try {
     const page = await h.context.newPage();
     const url = `${h.origin}/sample-bad-canonical`;
@@ -79,6 +85,14 @@ test("a cross-origin canonical is refused, not forwarded, and the preview says s
     const note = previewRow(page, "Note");
     await expect(note).toBeVisible();
     await expect(note.locator(".preview__value")).toContainText("another site's address");
+
+    // ...and now the wire itself. Send, then assert on what arrived: the clip
+    // is filed under the address bar, and `canonicalUrl` is ABSENT — not
+    // empty, not the refused address.
+    await page.locator(".nimbus-related__fetch-send").click();
+    await expect.poll(() => sent.length).toBe(1);
+    expect(sent[0]?.url).toBe(url);
+    expect(sent[0]).not.toHaveProperty("canonicalUrl");
   } finally {
     await h.close();
   }

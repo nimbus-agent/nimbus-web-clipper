@@ -3,7 +3,7 @@
 // panel. Mounts a Shadow-DOM overlay (inlined styles — no web_accessible_resources),
 // reads the page context, asks the SW for related items, and renders them.
 import { sendMessage } from "../browser/runtime.ts";
-import { CANONICAL_LINK_SELECTOR, resolveCanonical } from "../shared/canonical.ts";
+import { declaredCanonicalHref, resolveCanonical } from "../shared/canonical.ts";
 import { isCapturedCopy } from "../shared/capture-offer.ts";
 import {
   type ClipResponse,
@@ -359,7 +359,8 @@ interface NimbusHost extends HTMLElement {
 }
 
 function readContext(): { title: string; canonicalUrl?: string; selection: string } {
-  // The SAME selector and the SAME judgement the capture path makes, so that
+  // The SAME reading of the DOM and the SAME judgement the capture path makes,
+  // so that
   // WHEN a canonical is accepted, the panel's related-items query names the
   // same address the clip will be filed under. That guarantee is one-sided:
   // on a rejection the clip still gets an identity (ClipPayload.url is the
@@ -367,10 +368,7 @@ function readContext(): { title: string; canonicalUrl?: string; selection: strin
   // at all, so the query below goes out with title and selection and no URL
   // context. Sending `location.href` as a fallback there is a deliberate open
   // question for the repo owner, not something this reads decides on its own.
-  const canonical = resolveCanonical(
-    document.querySelector(CANONICAL_LINK_SELECTOR)?.getAttribute("href") ?? undefined,
-    location.href,
-  );
+  const canonical = resolveCanonical(declaredCanonicalHref(document), location.href);
   const selection = window.getSelection()?.toString() ?? "";
   return {
     title: document.title,
