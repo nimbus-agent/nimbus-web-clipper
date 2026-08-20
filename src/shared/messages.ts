@@ -2,6 +2,7 @@
 // background service worker via chrome.runtime messaging. External data crossing
 // the messaging boundary is `unknown` until narrowed by a guard here — never `any`.
 
+import { isCanonicalRejection } from "./canonical.ts";
 import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
@@ -453,7 +454,7 @@ function isCaptureResult(v: unknown): v is CaptureResult {
     isObject(v) &&
     typeof v["url"] === "string" &&
     (v["canonicalUrl"] === undefined || typeof v["canonicalUrl"] === "string") &&
-    (v["canonicalRejected"] === undefined || typeof v["canonicalRejected"] === "string") &&
+    (v["canonicalRejected"] === undefined || isCanonicalRejection(v["canonicalRejected"])) &&
     typeof v["title"] === "string" &&
     (v["mode"] === "article" || v["mode"] === "selection") &&
     typeof v["body"] === "string" &&

@@ -40,7 +40,25 @@
  */
 export const CANONICAL_LINK_SELECTOR = 'link[rel="canonical"][href]';
 
-export type CanonicalRejection = "unparseable" | "bad-scheme" | "cross-origin" | "root-collapse";
+/**
+ * The one source of truth for the rejection reasons. `CanonicalRejection` and
+ * `isCanonicalRejection` are both derived from this array rather than each
+ * hand-listing the four strings, so a variant added here cannot leave either
+ * of them stale.
+ */
+const CANONICAL_REJECTIONS = [
+  "unparseable",
+  "bad-scheme",
+  "cross-origin",
+  "root-collapse",
+] as const;
+
+export type CanonicalRejection = (typeof CANONICAL_REJECTIONS)[number];
+
+/** Type predicate for a rejection reason — sound against the closed union above. */
+export function isCanonicalRejection(v: unknown): v is CanonicalRejection {
+  return typeof v === "string" && (CANONICAL_REJECTIONS as readonly string[]).includes(v);
+}
 
 export type CanonicalResult =
   | { readonly kind: "none" }
@@ -99,6 +117,18 @@ export function resolveCanonical(declared: string | undefined, pageUrl: string):
   // site-wide canonical that does is the misconfiguration that makes every clip
   // from the site overwrite the same row. `URL` normalises an empty path to
   // "/", so this one comparison covers both spellings.
+  //
+  // RESIDUAL: this compares `pathname` only. A page at `https://site.com/?p=123`
+  // has `pathname === "/"`, so a site-wide `<link rel="canonical"
+  // href="https://site.com/">` is ACCEPTED and every such page still collapses
+  // onto one item — on exactly the legacy-CMS shape (`?p=`, `?page_id=`,
+  // `index.php?id=`) where a hardcoded site-wide canonical is most likely. This
+  // stays as-is on purpose: requiring an empty `page.search` too would reject
+  // the very common "homepage reached with `?utm_source=`" case and show a
+  // false "would overwrite your other clips" notice for a page that really is
+  // the homepage. Telling a tracking parameter apart from a routing parameter
+  // client-side would BE canonicalisation, which this module is forbidden from
+  // doing — see `src/shared/recognise.ts:253`.
   if (canonical.pathname === "/" && page.pathname !== "/") {
     return { kind: "rejected", reason: "root-collapse", declared };
   }

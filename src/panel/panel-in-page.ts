@@ -359,9 +359,14 @@ interface NimbusHost extends HTMLElement {
 }
 
 function readContext(): { title: string; canonicalUrl?: string; selection: string } {
-  // The SAME selector and the SAME judgement the capture path makes. Two
-  // independent readings of link[rel=canonical] is how the panel's idea of the
-  // page and the clip's identity drift apart.
+  // The SAME selector and the SAME judgement the capture path makes, so that
+  // WHEN a canonical is accepted, the panel's related-items query names the
+  // same address the clip will be filed under. That guarantee is one-sided:
+  // on a rejection the clip still gets an identity (ClipPayload.url is the
+  // address bar), but `RelatedQuery` (shared/related.ts) has no `url` field
+  // at all, so the query below goes out with title and selection and no URL
+  // context. Sending `location.href` as a fallback there is a deliberate open
+  // question for the repo owner, not something this reads decides on its own.
   const canonical = resolveCanonical(
     document.querySelector(CANONICAL_LINK_SELECTOR)?.getAttribute("href") ?? undefined,
     location.href,

@@ -15,7 +15,7 @@ function capture(mode: string): CaptureResult {
   const title = document.title;
   const canonical = resolveCanonical(
     document.querySelector(CANONICAL_LINK_SELECTOR)?.getAttribute("href") ?? undefined,
-    location.href,
+    url,
   );
   const canonicalPart =
     canonical.kind === "resolved"

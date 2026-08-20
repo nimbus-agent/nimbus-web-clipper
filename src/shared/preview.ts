@@ -77,7 +77,13 @@ export function buildClipPreview(
   if (payload.canonicalUrl !== undefined) {
     fields.push({ label: "Canonical URL", value: payload.canonicalUrl });
   }
-  if (canonicalRejected !== undefined) {
+  // Guarded on `canonicalUrl` being absent, not just on a rejection being
+  // passed: every `CANONICAL_NOTICE` sentence ends with "used the address
+  // above", which is only true while this row sits directly beneath `URL`
+  // with nothing in between. Callers today never pass both a canonicalUrl and
+  // a rejection, but that is a fact about the callers — this keeps the
+  // function correct even if that stopped holding.
+  if (canonicalRejected !== undefined && payload.canonicalUrl === undefined) {
     fields.push({ label: "Note", value: CANONICAL_NOTICE[canonicalRejected] });
   }
   fields.push(

@@ -55,7 +55,11 @@ describe("resolveCanonical — same-site rules", () => {
   });
 
   test("an https page downgrading to http is rejected", () => {
-    expect(resolveCanonical("http://example.com/blog/post-5", PAGE).kind).toBe("rejected");
+    expect(resolveCanonical("http://example.com/blog/post-5", PAGE)).toEqual({
+      kind: "rejected",
+      reason: "cross-origin",
+      declared: "http://example.com/blog/post-5",
+    });
   });
 
   test("an http page upgrading to https is ACCEPTED", () => {

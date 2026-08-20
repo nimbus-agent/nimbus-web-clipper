@@ -145,6 +145,22 @@ describe("isClipRequest", () => {
       }),
     ).toBe(false);
   });
+  test("a string canonicalRejected that isn't a valid reason is refused", () => {
+    expect(
+      isClipRequest({
+        kind: "clip",
+        capture: {
+          url: "https://example.com/p",
+          title: "P",
+          mode: "article",
+          body: "text",
+          readableFound: true,
+          canonicalRejected: "nonsense",
+        },
+        tags: [],
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("isRelatedRequest", () => {
