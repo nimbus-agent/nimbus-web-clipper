@@ -43,8 +43,12 @@ export interface FetchPreview {
  * preview from showing the same URL twice.
  */
 const CANONICAL_NOTICE: Record<CanonicalRejection, string> = {
+  credentials:
+    "This page's canonical address carried a username and password; Nimbus ignored it and used the address above.",
   "cross-origin":
     "This page asked to be saved under another site's address; Nimbus ignored that and used the address above.",
+  downgrade:
+    "This page asked to be saved under an insecure version of its own address; Nimbus ignored that and used the address above.",
   "root-collapse":
     "This page asked to be saved as the site's homepage, which would overwrite your other clips from it; Nimbus used the address above instead.",
   unparseable: "This page's canonical address wasn't a usable URL; Nimbus used the address above.",

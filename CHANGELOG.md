@@ -10,6 +10,17 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Fixed
 
+- **Two refusals of a page's canonical address said the wrong thing, and one
+  put credentials in front of you.** When a page declared an insecure `http`
+  address as the canonical form of its own `https` page, Nimbus refused it —
+  correctly — but told you the page "asked to be saved under another site's
+  address", when the site was identical. That refusal now says what actually
+  happened. And a canonical address carrying a username and password
+  (`https://user:pass@example.com/...`) was accepted as-is: the credentials
+  went into the address the clip was filed under and were shown back to you in
+  the pre-send preview. Such an address is now refused, and the clip is filed
+  under the address bar instead.
+
 - **A page could decide which of your clips it overwrote.** The address a page
   declares as its canonical one was forwarded to Nimbus exactly as written, and
   Nimbus files a clip under that address — so a page declaring a relative

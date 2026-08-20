@@ -54,11 +54,30 @@ describe("resolveCanonical — same-site rules", () => {
     });
   });
 
-  test("an https page downgrading to http is rejected", () => {
+  test("an https page downgrading to http is rejected AS a downgrade", () => {
+    // Not "cross-origin": the host is identical, and telling the reader their
+    // page asked to be saved under another site's address would be false.
     expect(resolveCanonical("http://example.com/blog/post-5", PAGE)).toEqual({
       kind: "rejected",
-      reason: "cross-origin",
+      reason: "downgrade",
       declared: "http://example.com/blog/post-5",
+    });
+  });
+
+  test("a downgrade across the www boundary is still a downgrade", () => {
+    // `www` is stripped before the hosts are compared, so this is the same
+    // site over the wrong scheme — not a different one.
+    expect(resolveCanonical("http://www.example.com/a", PAGE).kind).toBe("rejected");
+    expect(resolveCanonical("http://www.example.com/a", PAGE)).toMatchObject({
+      reason: "downgrade",
+    });
+  });
+
+  test("a DIFFERENT host over http is cross-origin, not a downgrade", () => {
+    // The two reasons must not collapse into each other: the scheme is wrong
+    // here too, but the host being different is the more important truth.
+    expect(resolveCanonical("http://elsewhere.test/a", PAGE)).toMatchObject({
+      reason: "cross-origin",
     });
   });
 
@@ -130,6 +149,53 @@ describe("resolveCanonical — schemes and junk", () => {
       reason: "unparseable",
       declared: "http://[not a url",
     });
+  });
+});
+
+describe("resolveCanonical — credentials in the declaration", () => {
+  test("userinfo is refused rather than stripped", () => {
+    // Refused, not sanitised: this module only ever rejects or absolutises.
+    // Rewriting a declaration would be canonicalisation, and the credentials
+    // would otherwise be hashed into the clip's identity AND rendered in the
+    // pre-send preview verbatim.
+    const declared = "https://user:pass@example.com/b";
+    expect(resolveCanonical(declared, PAGE)).toEqual({
+      kind: "rejected",
+      reason: "credentials",
+      declared,
+    });
+  });
+
+  test("a username with no password is still credentials", () => {
+    expect(resolveCanonical("https://user@example.com/b", PAGE)).toMatchObject({
+      reason: "credentials",
+    });
+  });
+
+  test("a password with no username is still credentials", () => {
+    expect(resolveCanonical("https://:pass@example.com/b", PAGE)).toMatchObject({
+      reason: "credentials",
+    });
+  });
+
+  test("credentials are caught before the host is even considered", () => {
+    // A cross-origin URL carrying userinfo reports credentials, so the reason
+    // names the sharper problem rather than whichever rung happened to fire.
+    expect(resolveCanonical("https://user:pass@elsewhere.test/b", PAGE)).toMatchObject({
+      reason: "credentials",
+    });
+  });
+
+  test('an "@" in the PATH is ordinary and still resolves', () => {
+    // The case a naive `declared.includes("@")` check would break. Handles,
+    // scoped npm-ish paths and email-shaped slugs all put @ in a path.
+    const declared = "https://example.com/users/@alice";
+    expect(resolveCanonical(declared, PAGE)).toEqual({ kind: "resolved", url: declared });
+  });
+
+  test('an "@" in the QUERY is ordinary and still resolves', () => {
+    const declared = "https://example.com/search?q=a@b.test";
+    expect(resolveCanonical(declared, PAGE)).toEqual({ kind: "resolved", url: declared });
   });
 });
 

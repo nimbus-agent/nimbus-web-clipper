@@ -73,13 +73,16 @@ export function declaredCanonicalHref(doc: Document): string | undefined {
 /**
  * The one source of truth for the rejection reasons. `CanonicalRejection` and
  * `isCanonicalRejection` are both derived from this array rather than each
- * hand-listing the four strings, so a variant added here cannot leave either
- * of them stale.
+ * hand-listing the strings, so a variant added here cannot leave either of them
+ * stale — and `preview.ts`'s notice table is a `Record` over the union, so
+ * adding one without writing its user-facing sentence is a compile error.
  */
 const CANONICAL_REJECTIONS = [
   "unparseable",
   "bad-scheme",
+  "credentials",
   "cross-origin",
+  "downgrade",
   "root-collapse",
 ] as const;
 
@@ -110,19 +113,32 @@ function bareHost(hostname: string): string {
   return hostname.startsWith("www.") && rest.includes(".") ? rest : hostname;
 }
 
-/** Same port, same-or-upgraded scheme, same host modulo one `www.` label. */
-function sameSite(canonical: URL, page: URL): boolean {
+/**
+ * How the declared canonical relates to the page: the same site, the same site
+ * over an insecure scheme, or somewhere else entirely.
+ *
+ * Three-way rather than a boolean because the caller has to tell the user WHY,
+ * and "another site's address" is simply false for a same-host downgrade — a
+ * well-known SEO misconfiguration, so real readers meet it. The refusal is the
+ * same either way; only the reason and its sentence differ.
+ *
+ * Only `http:`/`https:` reach here — the scheme rung runs first.
+ */
+function siteRelation(canonical: URL, page: URL): "same" | "downgrade" | "different" {
   if (canonical.port !== page.port) {
-    return false;
+    return "different";
   }
-  // An https page declaring an http canonical is a downgrade and is refused.
-  // The opposite is the correct declaration during an HTTPS migration, and
-  // refusing it would give one page two identities depending on which scheme
-  // the reader happened to arrive on.
-  const schemeOk =
-    canonical.protocol === page.protocol ||
-    (page.protocol === "http:" && canonical.protocol === "https:");
-  return schemeOk && bareHost(canonical.hostname) === bareHost(page.hostname);
+  if (bareHost(canonical.hostname) !== bareHost(page.hostname)) {
+    return "different";
+  }
+  if (canonical.protocol === page.protocol) {
+    return "same";
+  }
+  // An http page declaring an https canonical is the correct declaration
+  // during a migration; refusing it would give one page two identities
+  // depending on which scheme the reader happened to arrive on. The reverse —
+  // same host, same port, https page pointing at http — is a downgrade.
+  return page.protocol === "http:" && canonical.protocol === "https:" ? "same" : "downgrade";
 }
 
 export function resolveCanonical(declared: string | undefined, pageUrl: string): CanonicalResult {
@@ -140,7 +156,25 @@ export function resolveCanonical(declared: string | undefined, pageUrl: string):
   if (canonical.protocol !== "http:" && canonical.protocol !== "https:") {
     return { kind: "rejected", reason: "bad-scheme", declared };
   }
-  if (!sameSite(canonical, page)) {
+  // Userinfo is REFUSED rather than stripped. Stripping would mean rewriting
+  // what the page declared, and this module only ever rejects or absolutises —
+  // the moment it starts editing a declaration it is canonicalising, which is
+  // the gateway's job (`src/shared/recognise.ts:253`). Refusing costs nothing:
+  // the clip falls back to the address bar like any other rejection, and a
+  // credentials-shaped string stays out of both the identity hash and the
+  // pre-send preview, where it would otherwise be rendered verbatim.
+  //
+  // Reading `username`/`password` off the parsed URL, rather than looking for
+  // an "@" in the raw string, is what keeps `https://host/a@b` — an "@" in the
+  // PATH, which is perfectly ordinary — resolving normally.
+  if (canonical.username !== "" || canonical.password !== "") {
+    return { kind: "rejected", reason: "credentials", declared };
+  }
+  const relation = siteRelation(canonical, page);
+  if (relation === "downgrade") {
+    return { kind: "rejected", reason: "downgrade", declared };
+  }
+  if (relation === "different") {
     return { kind: "rejected", reason: "cross-origin", declared };
   }
   // A real article never legitimately canonicalises to the homepage; a
