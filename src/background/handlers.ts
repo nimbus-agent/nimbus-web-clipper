@@ -641,17 +641,44 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
     // a second place for the same number to disagree.
     return { term: resolved.term };
   }
-  if (lane === "impact") {
-    return { fileOrPrUrl: resolved.resolveUrl };
+  // `resolved.scope === "item"` from here — one of the three page lanes gated
+  // to a `pr` surface (`LANE_RULES`). Switched exhaustively over `lane` rather
+  // than if/return-falling-through-to-`expert`: the previous shape's fallthrough
+  // handed `expert`'s `topicOrFile` to whatever lane wasn't `impact` or `why`,
+  // which was correct only by coincidence — a fourth item-scope lane added to
+  // `AGENT_LANES` would compile, render and invoke while silently sent
+  // `expert`'s params. This branch is the proof: `why` would have shipped that
+  // exact bug had its own case been forgotten here.
+  switch (lane) {
+    case "impact":
+      return { fileOrPrUrl: resolved.resolveUrl };
+    case "why":
+      // The same URL `impact` gets, under the param name `agents.why`'s prUrl
+      // arm declares. NOT the item title: `why` resolves the URL through the
+      // index itself, and a title would be a different question answered from
+      // an input the agent does not accept.
+      return { prUrl: resolved.resolveUrl };
+    case "expert":
+      return { topicOrFile: resolved.item.title };
+    case "glossary":
+    case "catchup":
+    case "decisions":
+    case "ownership":
+      // Unreachable: `LANE_RULES[lane].input` routes `glossary` to
+      // `resolveTermLane` (scope `"term"`) and the three service lanes to the
+      // `kind === "home"` branch (scope `"service"`) above, in `resolveForAgent`
+      // — `resolveForAgent` never returns `scope: "item"` for any of these
+      // four. Listed here explicitly, not folded into `default`, so they
+      // cannot silently absorb a real fourth item lane's case below.
+      return { topicOrFile: resolved.item.title };
+    default:
+      // Exhaustiveness backstop: every `AgentLane` member is handled above, so
+      // `lane` here is narrowed to `never`. A new lane added to `AGENT_LANES`
+      // without a case above fails to compile on this line instead of
+      // silently falling through to `expert`'s params.
+      lane satisfies never;
+      return { topicOrFile: resolved.item.title };
   }
-  // The same URL `impact` gets, under the param name `agents.why`'s prUrl arm
-  // declares. NOT the item title: `why` resolves the URL through the index
-  // itself, and a title would be a different question answered from an input the
-  // agent does not accept.
-  if (lane === "why") {
-    return { prUrl: resolved.resolveUrl };
-  }
-  return { topicOrFile: resolved.item.title };
 }
 
 /** The cache key for a lane: the item, the service, or the term it is about. */
