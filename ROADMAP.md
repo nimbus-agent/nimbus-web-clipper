@@ -629,7 +629,7 @@ need a browser-viable shape first; see C2.4.*
 > unit suite green. The plan's manual dev-load pass (`docs/development.md`) is
 > still outstanding — and now also covers the glossary lane's two menu entries.
 
-### C2.4 A browser-viable "why" · 🟡 · M
+### C2.4 A browser-viable "why" · 🟢 · M — ✅ shipped
 > **What** Answer *why does this change exist* from the browser, without
 > `agents.why`'s local-checkout requirement. Two directions worth spiking
 > before committing to either: (a) a PR-shaped variant of `why` the gateway
@@ -646,9 +646,42 @@ need a browser-viable shape first; see C2.4.*
 > **Depends** A gateway-side decision on which direction (a)/(b) above — or a
 > third — is worth building. **Propose there first**, same as C2.1 originally
 > needed an HTTP agents surface at all.
+> **Status** **Neither briefed direction shipped.** Reading the upstream
+> source (`agents.why`, `packages/gateway/src/agents/why.ts`) showed the
+> premise underneath both was wrong: four of `why`'s six lanes already
+> discard the file and ask `findPrForSha` for the pull request it belongs to.
+> Blame was never their subject — it is the *adapter* that gets from "a file
+> line" to "the pull request that changed it", and a caller that already has
+> the pull request does not need the adapter. So (a)'s diff-hunk checkout and
+> (b)'s recast question were both solving a problem `why` didn't actually
+> have. What shipped instead: the gateway gave `agents.why` a second, explicit
+> entry point, `{ prUrl }`, alongside the existing `{ ref, line? }` — removing
+> the adapter rather than routing around it. Four of the six lanes (pull
+> request, ticket, discussion, driver) answer unchanged on this arm; two do
+> not — `authorship` (line-level, and a whole change has no line) and
+> `downstream` (the question the shipped **impact** lane, directly above this
+> one in the same panel, already answers). The gateway's own subject line
+> names both silences rather than the brief quietly coming back shorter, and
+> that disclosure is registered against upstream invariant **I31** so an LLM
+> rewrite of this brief cannot silently drop it.
+> The work also fixed a live defect in the already-shipped **impact** lane
+> found on the way: `agents.impact` resolved a PR URL by reconstructing an
+> identity — a GitHub-shaped regex, a hostname-to-service guess, and a
+> hash-keyed external id — and failed three independent ways on GitLab (its
+> merge-request path doesn't match the regex, and its entities are keyed with
+> `!` rather than `#` even when it does), on every self-hosted forge (the
+> hostname guess matches no connector), and then fell through to a title
+> scan that returned *something*, so the lane looked like it worked while
+> silently missing coverage. Both agents now share one parse-free resolver
+> that asks the index — `resolvePrSubject`, keyed off the same
+> `resolveItemByUrl` path this extension's own resolve already uses — correct
+> for every forge and every self-hosted instance without a host table.
+> Full design: `docs/superpowers/specs/2026-08-19-why-from-a-pull-request-design.md`.
 > **Done when** A lane answers "why does this change exist" for a resolved
 > pull request, without requiring the browser to have a local checkout of
-> anything.
+> anything. ✅ — the lane gates exactly as `impact`/`expert` do
+> (`LANE_RULES.why`, `surfaces: ["pr"]`) and appears under both the
+> `resolved` and `chosen` headers.
 
 ### C2.5 The lanes on a candidate you picked · 🟢 · S — ✅ shipped
 > **Status** Shipped, together with the glossary lane C2.3 deferred and 4.2, as

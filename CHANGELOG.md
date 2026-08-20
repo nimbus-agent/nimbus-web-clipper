@@ -48,6 +48,16 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **Why does this change exist — the third review question.** A resolved pull
+  request offered *what breaks if it lands* and *who should review it*; the
+  question that comes before both was missing, because answering it needed a
+  local checkout of the repo. It no longer does. The lane appears on pull
+  requests alongside the other two and answers from what Nimbus has indexed —
+  the pull request itself, the ticket it references, the discussion around it,
+  and what was happening when it was opened. Two of the answer's parts stay
+  silent on a pull request — line-level authorship, and downstream impact, which
+  is the lane sitting directly above — and the answer says so itself rather than
+  quietly coming back shorter.
 - **Ask a brief to draw on what you already know.** A research brief was built
   only from the tabs you picked and the passages you highlighted; everything
   Nimbus had already indexed sat one process away and was never consulted. Tick
