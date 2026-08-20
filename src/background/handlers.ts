@@ -622,14 +622,27 @@ async function resolveForAgent(
  * The gateway validates this body verbatim, so each agent gets exactly what it
  * accepts: `impact` takes the page's PR URL, `expert` free text to match against
  * indexed titles (the repo name would parse too, but answers a broader
- * question — the same people for every PR in the repo), and the three service
- * lanes take the connector id alone.
+ * question — the same people for every PR in the repo), `why` the same page PR
+ * URL as `impact` under the param name its `prUrl` arm declares, and the three
+ * service lanes take the connector id alone.
  *
  * No `sinceMs`, `minConfidence` or `limit` is sent. The gateway owns those
  * defaults and re-reads its config per call, so a client-side knob would only
  * be a second place for the same number to disagree.
  */
-function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }): unknown {
+/** The param shapes `agentParams` actually produces — one per lane family
+ *  (service, term, and the three item-scope shapes below). Giving the
+ *  function this as an explicit return type, instead of `unknown`, is what
+ *  makes the switch's exhaustiveness a compile error rather than a runtime
+ *  backstop: see the comment on the switch below. */
+type AgentParams =
+  | { service: string }
+  | { term: string }
+  | { fileOrPrUrl: string }
+  | { prUrl: string }
+  | { topicOrFile: string };
+
+function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }): AgentParams {
   if (resolved.scope === "service") {
     return { service: resolved.service };
   }
@@ -640,9 +653,49 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
     // a second place for the same number to disagree.
     return { term: resolved.term };
   }
-  return lane === "impact"
-    ? { fileOrPrUrl: resolved.resolveUrl }
-    : { topicOrFile: resolved.item.title };
+  // `resolved.scope === "item"` from here — one of the three page lanes gated
+  // to a `pr` surface (`LANE_RULES`). Switched exhaustively over `lane` rather
+  // than if/return-falling-through-to-`expert`: the previous shape's fallthrough
+  // handed `expert`'s `topicOrFile` to whatever lane wasn't `impact` or `why`,
+  // which was correct only by coincidence — a fourth item-scope lane added to
+  // `AGENT_LANES` would compile, render and invoke while silently sent
+  // `expert`'s params. This branch is the proof: `why` would have shipped that
+  // exact bug had its own case been forgotten here.
+  //
+  // There is deliberately no `default` arm. `AgentParams` above does not
+  // include `undefined`, so if a case is ever missing, control falling off
+  // the end of this switch is a compile error (TS2366: "Function lacks
+  // ending return statement…") rather than a runtime `never` assertion — the
+  // exhaustiveness check now lives in the return type, not in a statement
+  // here. Do not "helpfully" add a `default:` back; that would silence the
+  // exact error this is for.
+  switch (lane) {
+    case "impact":
+      return { fileOrPrUrl: resolved.resolveUrl };
+    case "why":
+      // The same URL `impact` gets, under the param name `agents.why`'s prUrl
+      // arm declares. NOT the item title: `why` resolves the URL through the
+      // index itself, and a title would be a different question answered from
+      // an input the agent does not accept.
+      return { prUrl: resolved.resolveUrl };
+    case "expert":
+    case "glossary":
+    case "catchup":
+    case "decisions":
+    case "ownership":
+      // `glossary`, `catchup`, `decisions` and `ownership` are unreachable
+      // here: `LANE_RULES[lane].input` routes `glossary` to `resolveTermLane`
+      // (scope `"term"`) and the three service lanes to the `kind === "home"`
+      // branch (scope `"service"`) above, in `resolveForAgent` —
+      // `resolveForAgent` never returns `scope: "item"` for any of these
+      // four. They are grouped into `expert`'s case rather than given their
+      // own dead-and-uncoverable ones, because the value they'd need if one
+      // ever did land here is the same one `expert` returns. This grouping
+      // does not weaken the exhaustiveness proof above: a real fifth
+      // item-scope lane still needs its own case, or its name is left
+      // unhandled and the switch stops being exhaustive.
+      return { topicOrFile: resolved.item.title };
+  }
 }
 
 /** The cache key for a lane: the item, the service, or the term it is about. */

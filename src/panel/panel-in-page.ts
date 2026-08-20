@@ -129,7 +129,7 @@ const FETCH_MESSAGES: Record<string, string> = {
 };
 
 /**
- * The two C2 agent lanes' summary labels — each phrased as the question its
+ * The C2 agent lanes' summary labels — each phrased as the question its
  * agent answers, matching the design spec's own naming
  * (docs/superpowers/specs/2026-08-10-c2-agent-lanes-design.md).
  *
@@ -150,6 +150,7 @@ const LANE_TITLES: Record<AgentLane, string> = {
   glossary: "Definition",
   impact: "What breaks if it lands",
   expert: "Who should review it",
+  why: "Why does this change exist",
   catchup: "What happened while I was away",
   decisions: "What got decided",
   ownership: "Who owns what",
@@ -706,6 +707,7 @@ function createPanel(body: HTMLElement): {
     glossary: { kind: "collapsed" },
     impact: { kind: "collapsed" },
     expert: { kind: "collapsed" },
+    why: { kind: "collapsed" },
     catchup: { kind: "collapsed" },
     decisions: { kind: "collapsed" },
     ownership: { kind: "collapsed" },
@@ -716,6 +718,7 @@ function createPanel(body: HTMLElement): {
     glossary: false,
     impact: false,
     expert: false,
+    why: false,
     catchup: false,
     decisions: false,
     ownership: false,

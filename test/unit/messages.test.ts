@@ -29,6 +29,7 @@ import {
   isResolveResponse,
   isUnpairRequest,
 } from "../../src/shared/messages.ts";
+import { AGENT_LANES } from "../../src/shared/types.ts";
 
 describe("isPingMessage", () => {
   test("accepts a well-formed ping", () => {
@@ -428,12 +429,22 @@ describe("agent-lane guards", () => {
     );
   });
   test("isAgentRunRequest rejects an unknown lane", () => {
-    expect(isAgentRunRequest({ kind: "agent-run", lane: "why", pageUrl: "https://x/y" })).toBe(
-      false,
-    );
+    expect(
+      isAgentRunRequest({ kind: "agent-run", lane: "not-a-lane", pageUrl: "https://x/y" }),
+    ).toBe(false);
   });
   test("isAgentRunRequest rejects a missing pageUrl", () => {
     expect(isAgentRunRequest({ kind: "agent-run", lane: "expert" })).toBe(false);
+  });
+  // The guard reads `AGENT_LANES` at runtime rather than a hand-rolled list
+  // (see `isAgentLane`, messages.ts), so it widens automatically the moment a
+  // lane is added to that table — this pins the property, rather than one
+  // member's name, so the next lane's fixture cannot rot silently the way
+  // `"why"` briefly did as this suite's stand-in for an UNKNOWN lane.
+  test("isAgentRunRequest accepts every AGENT_LANES member", () => {
+    for (const lane of AGENT_LANES) {
+      expect(isAgentRunRequest({ kind: "agent-run", lane, pageUrl: "https://x/y" })).toBe(true);
+    }
   });
 
   test("isAgentStateRequest accepts a well-formed request", () => {
@@ -442,9 +453,14 @@ describe("agent-lane guards", () => {
     ).toBe(true);
   });
   test("isAgentStateRequest rejects an unknown lane", () => {
-    expect(isAgentStateRequest({ kind: "agent-state", lane: "why", pageUrl: "https://x/y" })).toBe(
-      false,
-    );
+    expect(
+      isAgentStateRequest({ kind: "agent-state", lane: "not-a-lane", pageUrl: "https://x/y" }),
+    ).toBe(false);
+  });
+  test("isAgentStateRequest accepts every AGENT_LANES member", () => {
+    for (const lane of AGENT_LANES) {
+      expect(isAgentStateRequest({ kind: "agent-state", lane, pageUrl: "https://x/y" })).toBe(true);
+    }
   });
 
   describe("the optional lane inputs", () => {
@@ -512,7 +528,11 @@ describe("agent-lane guards", () => {
 
     it("rejects an unknown lane or an unknown state kind", () => {
       expect(
-        isAgentStateResponse({ kind: "agent-state", lane: "why", state: { kind: "collapsed" } }),
+        isAgentStateResponse({
+          kind: "agent-state",
+          lane: "not-a-lane",
+          state: { kind: "collapsed" },
+        }),
       ).toBe(false);
       expect(
         isAgentStateResponse({

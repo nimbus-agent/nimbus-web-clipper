@@ -332,9 +332,10 @@ export type FetchError =
  * `POST /v1/agents/{agent}` — so these must be spelled exactly as upstream's
  * handler keys. Order here is render order, and `catchup` is declared first
  * AMONG THE HOME LANES — not first overall — because it is the question a
- * dashboard exists to answer.
- *
- * `why` is deliberately ABSENT — see the existing note above.
+ * dashboard exists to answer. `why` is declared LAST among the pull-request
+ * lanes — appended after `impact` and `expert` rather than leading them,
+ * because reordering the two shipped lanes would change what every existing
+ * user sees, which this lane's addition has no mandate to do.
  *
  * `preflight`, `premortem`, `whyPeek` and `negotiate` are absent because
  * upstream excludes them from the HTTP surface entirely
@@ -352,6 +353,7 @@ export const AGENT_LANES = [
   "glossary",
   "impact",
   "expert",
+  "why",
   "catchup",
   "decisions",
   "ownership",
@@ -403,6 +405,10 @@ export const LANE_RULES: Record<AgentLane, LaneRule> = {
   glossary: { input: "term" },
   impact: { input: "page", surfaces: ["pr"] },
   expert: { input: "page", surfaces: ["pr"] },
+  // The third review question, and gated identically: `agents.why`'s prUrl arm
+  // answers about a change under review, which is a question only a pull request
+  // page can pose.
+  why: { input: "page", surfaces: ["pr"] },
   // Service-scoped: these answer about a whole connector, so they belong on the
   // one page whose scope is the connector. On an item page they would repeat
   // the same answer for every item on that host.

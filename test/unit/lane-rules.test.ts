@@ -43,6 +43,19 @@ describe("LANE_RULES", () => {
       expect(AGENT_LANES.filter((lane) => laneBelongsOnSurface(lane, kind))).toEqual([]);
     }
   });
+
+  it("offers why on a pull request and nowhere else", () => {
+    for (const kind of ALL_KINDS) {
+      expect(laneBelongsOnSurface("why", kind)).toBe(kind === "pr");
+    }
+  });
+
+  it("gates why exactly as the other two review lanes are gated", () => {
+    // Not a tautology: it pins that a future edit widening `why`'s surfaces has to
+    // widen impact's and expert's too, or explain why the three diverged.
+    expect(LANE_RULES.why).toEqual(LANE_RULES.impact);
+    expect(LANE_RULES.why).toEqual(LANE_RULES.expert);
+  });
 });
 
 describe("service lanes", () => {

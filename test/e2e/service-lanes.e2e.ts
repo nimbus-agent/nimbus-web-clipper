@@ -4,7 +4,7 @@
  * COVERS steps 1-4 (ids service-lanes-1..4): the dashboard header names the
  * surface and the scope; a service lane runs to a brief and is never empty;
  * closing and reopening the panel replays the stored brief without a second
- * invoke; and a resolved pull request shows the two ITEM lanes with none of
+ * invoke; and a resolved pull request shows the three ITEM lanes with none of
  * the three service lanes.
  *
  * Step 5 (no ambient cue on the dashboard) is NOT covered here, and that is a
@@ -155,12 +155,13 @@ test("a resolved pull request shows the item lanes, never the service lanes", as
     const url = await gotoRecognisedPage(page, h.origin, "/acme/web/pull/482");
     await togglePanel(h.sw, url);
 
-    // service-lanes-4: Related and the two page (item) lanes are present;
+    // service-lanes-4: Related and the three page (item) lanes are present;
     // none of the three service lanes are — the surface gate (`LANE_RULES`,
     // shared/types.ts) is exclusive, not additive.
     await expect(page.locator('[data-lane="related"]')).toHaveCount(1);
     await expect(page.locator('[data-lane="impact"]')).toHaveCount(1);
     await expect(page.locator('[data-lane="expert"]')).toHaveCount(1);
+    await expect(page.locator('[data-lane="why"]')).toHaveCount(1);
     await expect(page.locator('[data-lane="catchup"]')).toHaveCount(0);
     await expect(page.locator('[data-lane="decisions"]')).toHaveCount(0);
     await expect(page.locator('[data-lane="ownership"]')).toHaveCount(0);

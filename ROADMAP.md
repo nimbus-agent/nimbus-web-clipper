@@ -481,11 +481,10 @@ is worthless without this — and half of C1 is buildable today.*
 > made a right-click on it silently clip instead of opening the panel. See
 > [`docs/architecture.md`](./docs/architecture.md#a-second-way-into-the-panel-phase-c15).
 
-## Phase C2 — Run the agents from the page 🟢/🟡
+## Phase C2 — Run the agents from the page 🟢
 
-*Theme: the payoff. Two questions on a code-review page, answered by agents
-that already exist, without leaving the tab — a third ("why") turned out to
-need a browser-viable shape first; see C2.4.*
+*Theme: the payoff. Three questions on a code-review page, answered by agents
+that already exist, without leaving the tab.*
 
 ### C2.1 The code-review lanes — impact · expert · 🟢 · L — ✅ shipped (two lanes, not three)
 > **What** On a resolved pull request: *what breaks if it lands*
@@ -629,7 +628,7 @@ need a browser-viable shape first; see C2.4.*
 > unit suite green. The plan's manual dev-load pass (`docs/development.md`) is
 > still outstanding — and now also covers the glossary lane's two menu entries.
 
-### C2.4 A browser-viable "why" · 🟡 · M
+### C2.4 A browser-viable "why" · 🟢 · M — ✅ shipped
 > **What** Answer *why does this change exist* from the browser, without
 > `agents.why`'s local-checkout requirement. Two directions worth spiking
 > before committing to either: (a) a PR-shaped variant of `why` the gateway
@@ -646,9 +645,61 @@ need a browser-viable shape first; see C2.4.*
 > **Depends** A gateway-side decision on which direction (a)/(b) above — or a
 > third — is worth building. **Propose there first**, same as C2.1 originally
 > needed an HTTP agents surface at all.
+> **Status** **Neither briefed direction shipped.** Reading the upstream
+> source (`agents.why`, `packages/gateway/src/agents/why.ts`) showed the
+> premise underneath both was wrong: four of `why`'s six lanes already
+> discard the file and ask `findPrForSha` for the pull request it belongs to.
+> Blame was never their subject — it is the *adapter* that gets from "a file
+> line" to "the pull request that changed it", and a caller that already has
+> the pull request does not need the adapter. So (a)'s diff-hunk checkout and
+> (b)'s recast question were both solving a problem `why` didn't actually
+> have. What shipped instead: the gateway gave `agents.why` a second, explicit
+> entry point, `{ prUrl }`, alongside the existing `{ ref, line? }` — removing
+> the adapter rather than routing around it. Four of the six lanes (pull
+> request, ticket, discussion, driver) answer unchanged on this arm; two do
+> not — `authorship` (line-level, and a whole change has no line) and
+> `downstream` (the question the shipped **impact** lane already answers). The
+> gateway's own subject line names both silences rather than the brief
+> quietly coming back shorter, and that disclosure is registered against
+> upstream invariant **I31** so an LLM rewrite of this brief cannot silently
+> drop it.
+> The work also fixed a live defect in the already-shipped **impact** lane
+> found on the way: `agents.impact` resolved a PR URL by reconstructing an
+> identity — a GitHub-shaped regex, a hostname-to-service guess, and a
+> hash-keyed external id — and failed three independent ways on GitLab (its
+> merge-request path doesn't match the regex, and its entities are keyed with
+> `!` rather than `#` even when it does), on every self-hosted forge (the
+> hostname guess matches no connector), and then fell through to a title
+> scan that returned *something*, so the lane looked like it worked while
+> silently missing coverage. Both agents now share one parse-free resolver
+> that asks the index — `resolvePrSubject`, keyed off the same
+> `resolveItemByUrl` path this extension's own resolve already uses — correct
+> for every forge and every self-hosted instance without a host table.
+> Full design: `docs/superpowers/specs/2026-08-19-why-from-a-pull-request-design.md`.
 > **Done when** A lane answers "why does this change exist" for a resolved
 > pull request, without requiring the browser to have a local checkout of
-> anything.
+> anything. ✅ — the lane gates exactly as `impact`/`expert` do
+> (`LANE_RULES.why`, `surfaces: ["pr"]`) and appears under both the
+> `resolved` and `chosen` headers. **Appearing under `chosen` is not the same
+> as answering about the item picked there** — see the known gap below;
+> correct that claim if you are about to repeat it.
+> **Known gap, recorded rather than fixed here.** `agentParams` sends
+> `{ prUrl: resolved.resolveUrl }` — the **page's** URL, never the candidate a
+> `chosen` header names — so on that header the gateway re-resolves the same
+> page URL through `resolveItemByUrl` and, if it was ambiguous, resolves
+> ambiguous again; `why` then returns its miss brief under a header naming the
+> item the user just picked. That is the exact failure **C2.5** says it fixed,
+> reappearing one layer down. Inherited, not introduced here — `impact` sends
+> the same param through the same resolver since Nimbus#1260, so this is not
+> this slice's to fix. `ResolveCandidate.url` (`src/shared/types.ts:199`)
+> already carries the picked candidate's own URL; a future slice can send that
+> instead of the page URL for both URL-parametrised lanes (`impact`, `why`).
+> **Also: this lane needs gateway 2.8.0** (Nimbus#1260) for `why`'s `{ prUrl }`
+> arm. A pre-2.8.0 gateway 400s the invoke, and `invokeAgent`
+> (`gateway-client.ts`) has no 400 branch — it falls through to
+> `server_error`, so the panel offers a Re-run that can never succeed.
+> Recorded, not re-plumbed; mapping 400 to its own lane state is a larger
+> change and a follow-up alongside the one above.
 
 ### C2.5 The lanes on a candidate you picked · 🟢 · S — ✅ shipped
 > **Status** Shipped, together with the glossary lane C2.3 deferred and 4.2, as
@@ -694,6 +745,13 @@ need a browser-viable shape first; see C2.4.*
 > **Done when** Picking a candidate on an ambiguous page offers both lanes, and
 > each answers about *that* item — never a re-resolve, and never a refusal
 > contradicting the header above it.
+> **Correction (C2.4):** that bar holds for `expert`, which is asked with the
+> picked item's own title. It does **not** hold for the URL-parametrised lanes:
+> `impact` and `why` are both asked with the *page's* `resolveUrl`, so the
+> gateway re-resolves it and an ambiguous page answers with a miss under a header
+> naming the item the user just picked — the exact refusal this bar forbids. See
+> C2.4's **Known gap**; the fix is to send `ResolveCandidate.url` for those two
+> lanes, and it is not done.
 
 ## Phase C3 — On a miss, sync — don't scrape 🟡
 

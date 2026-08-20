@@ -809,12 +809,13 @@ one bad entry from deleting the rest.
 
 ## The agent lanes (Phase C2.1 / C2.3)
 
-On a resolved page (the `resolved` header state) the panel offers two collapsed
-lanes below Related — *what breaks if it lands* (`agents.impact`) and
-*who should review it* (`agents.expert`) — each answered by an agent that
-already exists behind the gateway. C2.3 added a second class of lane, gated on
-a different page kind and skipping resolve entirely — see "Item lanes vs.
-service lanes" below. Two routes, shared by both classes:
+On a resolved page (the `resolved` header state) the panel offers three
+collapsed lanes below Related — *what breaks if it lands* (`agents.impact`),
+*who should review it* (`agents.expert`) and *why does this change exist*
+(`agents.why`) — each answered by an agent that already exists behind the
+gateway. C2.3 added a second class of lane, gated on a different page kind and
+skipping resolve entirely — see "Item lanes vs. service lanes" below. Two
+routes, shared by both classes:
 
 ```
 POST /v1/agents/{agent}        202 { runId }            · 404 unknown agent · 429 busy (Retry-After)
@@ -838,9 +839,10 @@ own header with a refusal it could never retry past. Deferred as ROADMAP
 **C2.5**, which is where the picked id gets carried through the message.
 
 `impact` receives `recognition.resolveUrl` as
-`fileOrPrUrl`; `expert` receives the resolved item's `title` as `topicOrFile` —
-both request bodies pass through to the gateway's validator verbatim, so the
-client sends exactly the shape each agent's own scope expects, no more.
+`fileOrPrUrl`; `expert` receives the resolved item's `title` as `topicOrFile`;
+`why` receives the same `recognition.resolveUrl` as `prUrl` — all three request
+bodies pass through to the gateway's validator verbatim, so the client sends
+exactly the shape each agent's own scope expects, no more.
 
 - **404 and 410 on the poll route collapse into one `stale` state.** Upstream
   distinguishes "unknown, possibly lost to a gateway restart" from "known, but
@@ -927,7 +929,7 @@ because the two arms are exclusive and each carries something the other must not
 have:
 
 - `{input: "page", surfaces}` — the lane's whole input comes from the page, so it
-  declares which `SurfaceKind`s it belongs on. `impact` and `expert` are
+  declares which `SurfaceKind`s it belongs on. `impact`, `expert` and `why` are
   `["pr"]`; `catchup`, `decisions` and `ownership` are `["home"]` — see the next
   section for what `"home"` is and why those three could not simply join the
   other two.
@@ -1068,11 +1070,11 @@ Full reasoning:
 
 ### Item lanes vs. service lanes (Phase C2.3)
 
-`impact` and `expert` answer about *this pull request* — a resolved item, keyed
-by the gateway's item id. `catchup`, `decisions` and `ownership` answer about
-*the whole connector* — everything indexed from one service, e.g. all of
-GitHub. That is a coarser scope than any item page can honestly claim, so it
-needed a page whose scope actually matches: the product's own dashboard,
+`impact`, `expert` and `why` answer about *this pull request* — a resolved
+item, keyed by the gateway's item id. `catchup`, `decisions` and `ownership`
+answer about *the whole connector* — everything indexed from one service, e.g.
+all of GitHub. That is a coarser scope than any item page can honestly claim,
+so it needed a page whose scope actually matches: the product's own dashboard,
 recognised as `SurfaceKind: "home"` (GitHub root; GitLab root or `/dashboard`;
 Bitbucket `/dashboard/*`; Jira Cloud `/jira/your-work` and Server
 `/secure/Dashboard.jspa`; Jenkins instance root, past any configured path
