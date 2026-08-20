@@ -87,6 +87,10 @@ beforeEach(() => {
   document.body.innerHTML = "";
   document.title = "";
   window.getSelection()?.removeAllRanges();
+  // Reset the page path back to the jsdom default root before every test — a
+  // few canonical tests below push a non-root path to exercise root-collapse,
+  // and without this every test that follows would silently inherit it.
+  window.history.pushState({}, "", "/");
 });
 
 describe("__nimbusCapture registration", () => {
@@ -114,6 +118,34 @@ describe("article mode", () => {
     const result = getCapture()("article");
 
     expect(result.canonicalUrl).toBe("http://localhost:3000/canonical-article");
+  });
+
+  test("a cross-origin canonical is rejected — canonicalUrl absent, canonicalRejected is cross-origin", () => {
+    setArticleDocument();
+    addCanonicalLink("https://elsewhere.example/stolen");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBeUndefined();
+    expect(result.canonicalRejected).toBe("cross-origin");
+  });
+
+  test("a relative canonical is absolutised against the page URL", () => {
+    setArticleDocument();
+    addCanonicalLink("/article/5");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBe("http://localhost:3000/article/5");
+    expect(result.canonicalRejected).toBeUndefined();
+  });
+
+  test("a root-collapse canonical is rejected when the page is not at the root", () => {
+    window.history.pushState({}, "", "/article/5");
+    setArticleDocument();
+    addCanonicalLink("http://localhost:3000/");
+    const result = getCapture()("article");
+
+    expect(result.canonicalUrl).toBeUndefined();
+    expect(result.canonicalRejected).toBe("root-collapse");
   });
 
   test("omits canonicalUrl when no <link rel=canonical> is present", () => {

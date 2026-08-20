@@ -297,6 +297,24 @@ describe("panel-in-page readContext()", () => {
       selection: "",
     });
   });
+
+  test("omits canonicalUrl when the declaration is cross-origin", async () => {
+    document.title = "My Page";
+    const link = document.createElement("link");
+    link.rel = "canonical";
+    link.href = "https://elsewhere.example/stolen";
+    document.head.append(link);
+
+    harness.sendMessage.mockResolvedValue({ kind: "related", ok: true, items: [] });
+
+    await loadPanel();
+
+    expect(harness.sendMessage).toHaveBeenCalledWith({
+      kind: "related",
+      title: "My Page",
+      selection: "",
+    });
+  });
 });
 
 describe("panel-in-page query()", () => {
