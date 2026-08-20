@@ -617,8 +617,11 @@ Prereq: paired, gateway running, a resolved GitHub pull request available.
 
 ## Manual verification — Capture as the last resort (C3.2)
 
-Prereq: paired, gateway running. `capture-in-page.ts` is not unit-testable, the
-same as the popup/options DOM and the SW glue.
+Prereq: paired, gateway running. `capture-in-page.ts` — like the popup/options
+DOM and the SW glue — IS unit-tested through jsdom (`test/unit/capture-in-page.test.ts`,
+`popup.test.ts`, `options.test.ts`, `service-worker.test.ts`). What this
+checklist covers is what jsdom cannot: the real browser, the real injected
+bundle, and the real extension plumbing.
 
 1. <!-- e2e:capture-1 --> On a real page Nimbus does not recognise (an
    internal wiki, a vendor console), open the panel. It offers to capture the
