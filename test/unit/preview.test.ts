@@ -275,10 +275,37 @@ describe("buildClipPreview — an ignored canonical URL", () => {
     ["root-collapse", "homepage"],
     ["unparseable", "wasn't a usable URL"],
     ["bad-scheme", "wasn't a web address"],
+    ["credentials", "username and password"],
+    ["downgrade", "insecure version of its own address"],
   ] as const)("%s gets its own sentence", (reason, fragment) => {
     const fields = buildClipPreview(noCanonical as ClipPayload, reason).fields;
     const note = fields.find((f) => f.label === "Note");
     expect(note?.value).toContain(fragment);
+  });
+
+  test("every reason has a distinct sentence, and every sentence points at the URL row", () => {
+    // The table is a Record over the union, so a MISSING reason is a compile
+    // error. What the type cannot catch is two reasons sharing one sentence —
+    // which would quietly tell a reader the wrong thing — or a sentence that
+    // stops pointing at the row it says to look at.
+    const reasons = [
+      "cross-origin",
+      "root-collapse",
+      "unparseable",
+      "bad-scheme",
+      "credentials",
+      "downgrade",
+    ] as const;
+    const sentences = reasons.map((r) => {
+      const note = buildClipPreview(noCanonical as ClipPayload, r).fields.find(
+        (f) => f.label === "Note",
+      );
+      return note?.value ?? "";
+    });
+    expect(new Set(sentences).size).toBe(reasons.length);
+    for (const sentence of sentences) {
+      expect(sentence).toContain("the address above");
+    }
   });
 
   test("no rejection means no Note row", () => {

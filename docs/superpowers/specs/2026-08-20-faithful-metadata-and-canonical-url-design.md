@@ -102,7 +102,9 @@ One pure function, one place, both callers.
 export type CanonicalRejection =
   | "unparseable"
   | "bad-scheme"
+  | "credentials"
   | "cross-origin"
+  | "downgrade"
   | "root-collapse";
 
 export type CanonicalResult =
@@ -125,13 +127,29 @@ A ladder, each rung a named outcome:
    throw → `rejected: "unparseable"`.
 3. **Scheme must be `http:` or `https:`** → else `rejected: "bad-scheme"`, so a
    `javascript:` or `data:` canonical never reaches the wire.
-4. **Same site, or `rejected: "cross-origin"`.** Not a bare origin equality —
+4. **No userinfo** → else `rejected: "credentials"`. A canonical carrying
+   `user:pass@` is **refused, not sanitised**: stripping it would mean rewriting
+   what the page declared, and this module only ever rejects or absolutises —
+   editing a declaration is canonicalisation, which belongs to the gateway.
+   Refusing costs nothing, since the clip falls back to the address bar as it
+   does for any other rejection, and it keeps a credentials-shaped string out of
+   both the identity hash and the pre-send preview, where it would otherwise be
+   rendered verbatim. The check reads `username`/`password` off the parsed URL
+   rather than looking for an `@` in the raw string, so `https://host/users/@alice`
+   — an `@` in the path, which is ordinary — still resolves.
+5. **Same site, or `rejected: "cross-origin"` / `"downgrade"`.** Not a bare origin equality —
    origin comparison is the right instinct and wrong in two specific ways, so
    the rung is three checks:
    - **Port must match**, always.
    - **Scheme must match, or be an upgrade.** An `https` page canonicalising to
-     `http` on the same host is rejected: a downgrade is not something a page
-     should be able to do to your index. The opposite direction is *accepted* —
+     `http` on the same host is rejected — but as **`"downgrade"`, not
+     `"cross-origin"`**. The refusal is the same; the reason is not, and the
+     difference is user-visible: the host is *identical*, so telling the reader
+     their page "asked to be saved under another site's address" would be
+     false, and an https-page-declaring-http-canonical is a well-known SEO
+     misconfiguration that real readers will meet. A downgrade is not something
+     a page should be able to do to your index. The opposite direction is
+     *accepted* —
      an `http` page declaring an `https` canonical is the correct declaration
      during an HTTPS migration, and rejecting it would give one page two
      identities depending on which scheme the user happened to arrive on.
@@ -150,14 +168,14 @@ A ladder, each rung a named outcome:
    produces two items. Unlike a general registrable-domain comparison it needs
    no public-suffix list: `www` is one well-known label, not a guess about where
    a domain becomes registrable.
-5. **Root-collapse guard** — the resolved path is `/` (or empty) while the
+6. **Root-collapse guard** — the resolved path is `/` (or empty) while the
    page's own path is not → `rejected: "root-collapse"`. A real article never
    legitimately canonicalises to the homepage. A root canonical **on** the root
    page is correct and is kept.
-6. Otherwise → `resolved`, carrying the absolute href.
+7. Otherwise → `resolved`, carrying the absolute href.
 
 **What it deliberately does not do:** strip fragments, tracking parameters or
-trailing slashes, or follow redirects. Rungs 2–5 only ever *reject* or
+trailing slashes, strip userinfo, or follow redirects. Rungs 2–6 only ever *reject* or
 *absolutise*: the path, query and fragment of a surviving canonical are
 forwarded exactly as declared. The scheme and host come back case-normalised,
 because that is what `new URL()` does to any input it parses — it is not a
