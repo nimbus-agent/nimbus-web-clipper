@@ -745,6 +745,13 @@ that already exist, without leaving the tab.*
 > **Done when** Picking a candidate on an ambiguous page offers both lanes, and
 > each answers about *that* item — never a re-resolve, and never a refusal
 > contradicting the header above it.
+> **Correction (C2.4):** that bar holds for `expert`, which is asked with the
+> picked item's own title. It does **not** hold for the URL-parametrised lanes:
+> `impact` and `why` are both asked with the *page's* `resolveUrl`, so the
+> gateway re-resolves it and an ambiguous page answers with a miss under a header
+> naming the item the user just picked — the exact refusal this bar forbids. See
+> C2.4's **Known gap**; the fix is to send `ResolveCandidate.url` for those two
+> lanes, and it is not done.
 
 ## Phase C3 — On a miss, sync — don't scrape 🟡
 
