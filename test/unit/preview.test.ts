@@ -318,3 +318,70 @@ describe("buildClipPreview — an ignored canonical URL", () => {
     ]);
   });
 });
+
+describe("buildClipPreview — the source metadata rows", () => {
+  const source = {
+    author: "Ada Lovelace",
+    publishedAt: Date.parse("2024-03-11T09:30:00Z"),
+    siteName: "Example Journal",
+    lang: "en-GB",
+    leadImage: "https://cdn.example.net/hero.jpg",
+  };
+
+  test("every source field the payload carries gets a row", () => {
+    const preview = buildClipPreview({ ...payload, source });
+    expect(preview.fields.map((f) => f.label)).toEqual([
+      "Title",
+      "URL",
+      "Canonical URL",
+      "Mode",
+      "Tags",
+      "Author",
+      "Published",
+      "Site",
+      "Language",
+      "Lead image",
+    ]);
+  });
+
+  test("shows the real values, with the date as a plain calendar day", () => {
+    const byLabel = new Map(
+      buildClipPreview({ ...payload, source }).fields.map((f) => [f.label, f.value]),
+    );
+    expect(byLabel.get("Author")).toBe("Ada Lovelace");
+    expect(byLabel.get("Published")).toBe("2024-03-11");
+    expect(byLabel.get("Site")).toBe("Example Journal");
+    expect(byLabel.get("Language")).toBe("en-GB");
+    expect(byLabel.get("Lead image")).toBe("https://cdn.example.net/hero.jpg");
+  });
+
+  test("a field the page did not expose gets no row", () => {
+    const labels = buildClipPreview({ ...payload, source: { author: "Ada Lovelace" } }).fields.map(
+      (f) => f.label,
+    );
+    expect(labels).toContain("Author");
+    expect(labels).not.toContain("Published");
+    expect(labels).not.toContain("Lead image");
+  });
+
+  test("a payload with no source renders exactly the rows it always did", () => {
+    expect(buildClipPreview(payload).fields.map((f) => f.label)).toEqual([
+      "Title",
+      "URL",
+      "Canonical URL",
+      "Mode",
+      "Tags",
+    ]);
+  });
+
+  // Every CANONICAL_NOTICE sentence ends "used the address above", which is
+  // only true while the Note row sits directly beneath URL. The source rows
+  // append at the END for exactly that reason — this is the fence.
+  test("source rows never come between URL and the canonical note", () => {
+    const { canonicalUrl: _omitted, ...rest } = payload;
+    const labels = buildClipPreview({ ...rest, source } as ClipPayload, "cross-origin").fields.map(
+      (f) => f.label,
+    );
+    expect(labels.indexOf("Note")).toBe(labels.indexOf("URL") + 1);
+  });
+});

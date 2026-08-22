@@ -96,6 +96,43 @@ export function buildClipPreview(
     // and the same reasoning already governs the shortcuts readout's "Not set".
     { label: "Tags", value: payload.tags.length === 0 ? "none" : payload.tags.join(", ") },
   );
+  // Appended AFTER Tags, never between URL and Note: every CANONICAL_NOTICE
+  // sentence ends "used the address above", which is only true while the Note
+  // row sits directly beneath URL.
+  //
+  // These rows are NOT optional. 1.3's promise is that nothing leaves without
+  // the user seeing it, and `source` is new on the wire — Language included,
+  // which the design's row list forgot. A field on the request with no row
+  // here voids the promise.
+  //
+  // Listed one by one, like every other field in this function: see the
+  // docblock. Iterating `Object.keys(source)` would render whatever a future
+  // caller happened to put there.
+  const source = payload.source;
+  if (source !== undefined) {
+    if (source.author !== undefined) {
+      fields.push({ label: "Author", value: source.author });
+    }
+    if (source.publishedAt !== undefined) {
+      // A calendar day, not a relative age: `formatAge` would render an
+      // ordinary archive article as "2,000 days ago", which answers a question
+      // nobody asked of a publication date. Locale-free, so what a test asserts
+      // is what every reader sees.
+      fields.push({
+        label: "Published",
+        value: new Date(source.publishedAt).toISOString().slice(0, 10),
+      });
+    }
+    if (source.siteName !== undefined) {
+      fields.push({ label: "Site", value: source.siteName });
+    }
+    if (source.lang !== undefined) {
+      fields.push({ label: "Language", value: source.lang });
+    }
+    if (source.leadImage !== undefined) {
+      fields.push({ label: "Lead image", value: source.leadImage });
+    }
+  }
   const truncated = payload.body.length > EXCERPT_CHARS;
   return {
     fields,
