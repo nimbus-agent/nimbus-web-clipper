@@ -108,6 +108,24 @@ describe("isClipRequest", () => {
     expect(isClipRequest({ kind: "clip", tags: [] })).toBe(false);
     expect(isClipRequest("clip")).toBe(false);
   });
+  test("accepts a capture carrying source", () => {
+    const source = { author: "Ada", publishedAt: 1_710_149_400_000 };
+    expect(isClipRequest({ kind: "clip", capture: { ...capture, source }, tags: [] })).toBe(true);
+  });
+  // Deliberately shallow: buildClipSource rebuilds this object from the five
+  // known fields before anything is sent, so failing the whole capture over a
+  // malformed byline would cost the user the clip for nothing.
+  test("accepts a capture whose source has an odd member", () => {
+    const source = { author: 42, junk: "x" };
+    expect(isClipRequest({ kind: "clip", capture: { ...capture, source }, tags: [] })).toBe(true);
+  });
+  test("rejects a source that is not an object at all", () => {
+    for (const source of ["Ada", 42, null, ["Ada"]]) {
+      expect(isClipRequest({ kind: "clip", capture: { ...capture, source }, tags: [] })).toBe(
+        false,
+      );
+    }
+  });
   test("rejects a capture whose optional canonicalUrl is present but not a string", () => {
     expect(
       isClipRequest({ kind: "clip", capture: { ...capture, canonicalUrl: 123 }, tags: [] }),

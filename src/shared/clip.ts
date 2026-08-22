@@ -73,6 +73,30 @@ function safeLeadImage(v: unknown): string | undefined {
 }
 
 /**
+ * The one rung all three cross-boundary guards apply to `source` — the two
+ * `isCaptureResult` copies (`messages.ts`, `browser/scripting.ts`) and
+ * `isClipPayload` (`queue.ts`).
+ *
+ * It checks the SHAPE and nothing else, on purpose. Members are not inspected
+ * because `buildClipSource` rebuilds the object from the five known fields
+ * regardless, so rejecting a malformed byline earlier buys nothing and costs
+ * the user a clip — the same trade `validateClipSource` makes upstream. At the
+ * queue that reasoning is not merely consistent but load-bearing:
+ * `clip-queue-store.ts` reads the queue as `value.filter(isQueuedClip)`, so a
+ * rejection there discards the whole clip someone saved offline rather than
+ * the offending field.
+ *
+ * Arrays are refused as well as null, which the modules' own local `isObject`
+ * helpers do not do — an array is not a `source`, whatever `typeof` says.
+ *
+ * Lives here, beside `buildClipSource`, so the rung and the rebuild that
+ * justifies it cannot drift apart.
+ */
+export function isSourceShape(v: unknown): boolean {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
  * Builds a NEW `ClipSource` from the five known fields.
  *
  * It must never return the caller's object, spread it, or delete keys from it.

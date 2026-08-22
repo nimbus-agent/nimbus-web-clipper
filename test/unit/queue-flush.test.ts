@@ -45,6 +45,28 @@ describe("flushQueue", () => {
     expect(s.current()).toHaveLength(1);
   });
 
+  // The easy miss: a queued clip is re-validated on flush, so a guard that
+  // does not know about `source` drops the metadata of every clip captured
+  // offline — silently, and only offline, which is the worst way to find a bug.
+  test("a clip queued offline keeps its source metadata when it flushes", async () => {
+    const base = entry("a");
+    const source = { author: "Ada Lovelace", publishedAt: 1_710_149_400_000 };
+    const s = store([{ ...base, payload: { ...base.payload, source } }]);
+    const posted: ClipPayload[] = [];
+    const out = await flushQueue({
+      getConnection: async () => conn,
+      getQueue: s.getQueue,
+      updateQueue: s.updateQueue,
+      ...noPause,
+      postClip: async (_origin, _token, payload) => {
+        posted.push(payload);
+        return { ok: true, status: "created" };
+      },
+    });
+    expect(out).toEqual({ remaining: 0 });
+    expect(posted[0]?.source).toEqual(source);
+  });
+
   test("success drains every entry", async () => {
     const s = store([entry("a"), entry("b")]);
     const out = await flushQueue({

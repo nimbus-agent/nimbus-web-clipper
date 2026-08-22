@@ -54,6 +54,30 @@ describe("runCapture", () => {
     installChromeStub({ executeResults: [{ result: undefined }] });
     await expect(runCapture(7, "article")).rejects.toThrow();
   });
+  test("carries source across the injection boundary", async () => {
+    const capture = {
+      url: "https://ex.com/p",
+      title: "P",
+      mode: "article",
+      body: "b",
+      readableFound: true,
+      source: { author: "Ada Lovelace", publishedAt: 1_710_149_400_000 },
+    };
+    installChromeStub({ executeResults: [{ result: capture }] });
+    expect((await runCapture(7, "article")).source).toEqual(capture.source);
+  });
+  test("rejects a source that is not an object at all", async () => {
+    const capture = {
+      url: "https://ex.com/p",
+      title: "P",
+      mode: "article",
+      body: "b",
+      readableFound: true,
+      source: "Ada Lovelace",
+    };
+    installChromeStub({ executeResults: [{ result: capture }] });
+    await expect(runCapture(7, "article")).rejects.toThrow();
+  });
 });
 
 describe("injectPanel", () => {

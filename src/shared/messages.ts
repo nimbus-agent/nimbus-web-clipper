@@ -3,6 +3,7 @@
 // the messaging boundary is `unknown` until narrowed by a guard here — never `any`.
 
 import { isCanonicalRejection } from "./canonical.ts";
+import { isSourceShape } from "./clip.ts";
 import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
@@ -455,6 +456,14 @@ function isCaptureResult(v: unknown): v is CaptureResult {
     typeof v["url"] === "string" &&
     (v["canonicalUrl"] === undefined || typeof v["canonicalUrl"] === "string") &&
     (v["canonicalRejected"] === undefined || isCanonicalRejection(v["canonicalRejected"])) &&
+    // Deliberately shallow. This value comes from a script running IN THE
+    // PAGE, and `buildClipSource` rebuilds it from the five known fields
+    // before anything is sent — so a malformed member is dropped there rather
+    // than costing the user the whole capture here, which is the same trade
+    // the gateway's own validator makes. What this rung IS for is refusing a
+    // `source` that is not an object at all: that is caller error rather than
+    // a page being creative.
+    (v["source"] === undefined || isSourceShape(v["source"])) &&
     typeof v["title"] === "string" &&
     (v["mode"] === "article" || v["mode"] === "selection") &&
     typeof v["body"] === "string" &&

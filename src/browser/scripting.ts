@@ -1,4 +1,5 @@
 import { isCanonicalRejection } from "../shared/canonical.ts";
+import { isSourceShape } from "../shared/clip.ts";
 import { PANEL_HOST_ID, PANEL_SELECTION_HOOK, type PanelSelection } from "../shared/panel-host.ts";
 import type { CaptureResult, CueState, ToastState } from "../shared/types.ts";
 
@@ -11,6 +12,8 @@ function isCaptureResult(v: unknown): v is CaptureResult {
     typeof o["url"] === "string" &&
     (o["canonicalUrl"] === undefined || typeof o["canonicalUrl"] === "string") &&
     (o["canonicalRejected"] === undefined || isCanonicalRejection(o["canonicalRejected"])) &&
+    // Shallow for the reason given in messages.ts's isCaptureResult.
+    (o["source"] === undefined || isSourceShape(o["source"])) &&
     typeof o["title"] === "string" &&
     (o["mode"] === "article" || o["mode"] === "selection") &&
     typeof o["body"] === "string" &&
