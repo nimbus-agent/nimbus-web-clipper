@@ -68,8 +68,20 @@ function epochMs(v: unknown): number | undefined {
  * what we put in the user's index, not about the extension's own DOM.
  */
 function safeLeadImage(v: unknown): string | undefined {
+  // Bounded FIRST so a 60 KB string is never handed to the URL parser at all.
   const bounded = boundedExact(v, SOURCE_LEAD_IMAGE_MAX);
-  return bounded === undefined ? undefined : (safeHttpUrl(bounded) ?? undefined);
+  if (bounded === undefined) {
+    return undefined;
+  }
+  const safe = safeHttpUrl(bounded);
+  // ...and bounded AGAIN, because `href` is the NORMALISED form and can be far
+  // longer than what went in: the parser percent-encodes spaces and non-ASCII,
+  // so a raw 2048-character URL full of spaces comes back at over 4000. The
+  // gateway bounds what it RECEIVES and DROPS an over-long leadImage rather
+  // than truncating it, so measuring only the raw string would send a value
+  // the gateway silently discards while the preview showed it — the exact
+  // preview-lie these caps exist to prevent.
+  return safe === null || safe.length > SOURCE_LEAD_IMAGE_MAX ? undefined : safe;
 }
 
 /**

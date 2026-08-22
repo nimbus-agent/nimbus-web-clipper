@@ -127,6 +127,22 @@ describe("buildClipSource", () => {
     expect(buildClipSource({ leadImage: "/img/hero.jpg" })).toBeUndefined();
   });
 
+  // The raw string is under the cap; the parsed href is not, because the URL
+  // parser percent-encodes each space. The gateway DROPS an over-long
+  // leadImage rather than truncating it, so bounding only the raw value would
+  // send something the gateway discards while the preview showed it.
+  test("drops a lead image that only exceeds the cap once normalised", () => {
+    const raw = `https://example.com/${"a b ".repeat(500)}`;
+    expect(raw.length).toBeLessThan(2048);
+    expect(new URL(raw).href.length).toBeGreaterThan(2048);
+    expect(buildClipSource({ leadImage: raw })).toBeUndefined();
+  });
+
+  test("keeps a lead image whose normalised form still fits", () => {
+    const raw = `https://example.com/${"a".repeat(2000)}`;
+    expect(buildClipSource({ leadImage: raw })?.leadImage).toBe(raw);
+  });
+
   test("keeps an absolute http(s) lead image on any origin", () => {
     expect(buildClipSource({ leadImage: "https://images.unsplash.com/p.jpg" })).toEqual({
       leadImage: "https://images.unsplash.com/p.jpg",
