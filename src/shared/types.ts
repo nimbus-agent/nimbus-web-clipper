@@ -1,5 +1,30 @@
 import type { CanonicalRejection } from "./canonical.ts";
 
+/**
+ * The page's own account of itself, as sent in `POST /v1/clips`'s `source`
+ * object. The shape is the GATEWAY's — `ClipSource` in
+ * `packages/gateway/src/clips/clip-ingest.ts`, shipped in gateway 2.12.0 — and
+ * the two must not drift. An older gateway accepts the clip and drops this
+ * silently; there is no error to detect it by.
+ *
+ * `publishedAt` is epoch ms, normalised HERE rather than upstream: the page
+ * hands over whatever string it put in `article:published_time`, and parsing
+ * arbitrary date formats belongs where the messy input is, not on a locked
+ * contract. See `parsePublishedAt`.
+ */
+export interface ClipSource {
+  readonly author?: string;
+  readonly publishedAt?: number;
+  readonly siteName?: string;
+  readonly lang?: string;
+  /**
+   * Absolutised and scheme-checked, never origin-checked — see `safeHttpUrl`.
+   * The gateway stores it unvalidated on purpose, so any consumer that RENDERS
+   * it owes it a scheme check of its own.
+   */
+  readonly leadImage?: string;
+}
+
 export interface CaptureResult {
   readonly url: string;
   readonly canonicalUrl?: string;
@@ -11,6 +36,14 @@ export interface CaptureResult {
    * have this field.
    */
   readonly canonicalRejected?: CanonicalRejection;
+  /**
+   * PAGE-CONTROLLED and unbounded at this point — it comes back from a script
+   * running in the page, and a hostile page can overwrite `__nimbusCapture`
+   * and return anything. `buildClipPayload` rebuilds it from the five known
+   * fields under the gateway's own caps before anything is sent, previewed or
+   * queued; nothing may forward this object as it stands.
+   */
+  readonly source?: ClipSource;
   readonly title: string;
   readonly mode: "article" | "selection";
   readonly body: string;
