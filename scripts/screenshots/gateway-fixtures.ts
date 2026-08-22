@@ -295,6 +295,7 @@ export interface Scenario {
 export interface FedClip {
   readonly url?: unknown;
   readonly canonicalUrl?: unknown;
+  readonly source?: unknown;
 }
 
 /** One create body `POST /v1/briefs` received — the wire shape, unknown

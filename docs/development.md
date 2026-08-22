@@ -700,6 +700,15 @@ bundle, and the real extension plumbing.
     live page; `test/unit/panel-in-page.test.ts` covers the panel's own
     resolution in isolation, and `test/e2e/canonical.e2e.ts` only exercises
     the capture preview)**
+12. <!-- e2e:metadata-1 --> On a page carrying `<meta name="author">`,
+    `og:site_name`, `article:published_time`, `og:image` and an `<html lang>`,
+    clip it: the preview lists **Author**, **Published** (as a calendar day),
+    **Site**, **Language** and **Lead image**, with a relative image
+    absolutised against the page's own origin — and the body the gateway
+    receives carries the same five under `source`. Needs **gateway 2.12.0** or
+    later for them to be stored; an older gateway accepts the clip and drops
+    them with no error. **[Same substitution as steps 9–10: driven through the
+    panel's capture offer, which shares `shared/preview.ts` with the popup.]**
 
 ## Manual verification — Research briefs
 
