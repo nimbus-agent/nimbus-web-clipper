@@ -68,6 +68,17 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **A clip is now a record you can cite.** Every clip carried the page's text
+  and its address and nothing else — the byline, the publication date, the
+  publication's name, the language and the article's lead image were all sitting
+  in the page and all thrown away, so a saved article could not be attributed or
+  dated without opening the original again. Nimbus now keeps them, taking
+  Readability's reading where it has one and the page's own tags where it does
+  not, on selections and hard pages too. Everything kept appears in the pre-send
+  preview before anything leaves; a lead image hosted on a CDN is kept, while one
+  declared as a `data:` or `javascript:` address is refused. Requires **gateway
+  2.12.0** or later (Nimbus#1288) — an older gateway accepts the clip and stores
+  no metadata, with no error to tell you so.
 - **Why does this change exist — the third review question.** A resolved pull
   request offered *what breaks if it lands* and *who should review it*; the
   question that comes before both was missing, because answering it needed a

@@ -19,7 +19,10 @@ The gateway surface is shipped and versioned. Build against it; don't change its
 shape here.
 
 - `POST /v1/clips` — ingest a clip. `Authorization: Bearer <paired token>`.
-  Body: `{ url, canonicalUrl?, title, mode: "article"|"selection", body, tags?, capturedAt }`.
+  Body: `{ url, canonicalUrl?, title, mode: "article"|"selection", body, tags?,
+  capturedAt, source? }` — `source` is
+  `{ author?, publishedAt?, siteName?, lang?, leadImage? }` and needs **gateway
+  2.12.0** or later; an older gateway accepts the clip and drops it silently.
   Returns `{ id, status: "created"|"updated" }`.
 - `POST /v1/clips/pair/confirm` — redeem a 6-digit pairing code. Body `{ code }`.
   Returns `{ token, label }` (or 403 fail-closed when no pairing window is open).
