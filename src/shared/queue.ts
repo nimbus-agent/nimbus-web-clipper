@@ -1,7 +1,7 @@
 // The offline retry queue's data model and pure operations. Every op is a
 // QueuedClip[] -> QueuedClip[] transform so it composes as a mutator passed to the
 // serialized updateQueue in clip-queue-store (each write applies to fresh state).
-import type { ClipPayload } from "./clip.ts";
+import { type ClipPayload, isSourceShape } from "./clip.ts";
 import type { ClipError } from "./types.ts";
 
 export interface QueuedClip {
@@ -64,7 +64,12 @@ function isClipPayload(v: unknown): v is ClipPayload {
     typeof v["body"] === "string" &&
     Array.isArray(v["tags"]) &&
     v["tags"].every((t) => typeof t === "string") &&
-    typeof v["capturedAt"] === "number"
+    typeof v["capturedAt"] === "number" &&
+    // Shallow, and here that is load-bearing rather than merely consistent:
+    // `clip-queue-store.ts` reads the queue as `value.filter(isQueuedClip)`, so
+    // a rung that rejected an off-shape MEMBER would not drop the field — it
+    // would discard the whole clip the user saved while offline.
+    (v["source"] === undefined || isSourceShape(v["source"]))
   );
 }
 

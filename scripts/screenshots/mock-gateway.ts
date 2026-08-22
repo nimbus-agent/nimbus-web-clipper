@@ -36,6 +36,10 @@ export const DEFAULT_PORT = 8765;
  * whatever port the mock lands on, and it is what exercises the
  * absolutise-against-the-page-URL path — the exact bug this slice exists to
  * fix — on every run rather than a rejection nothing asserts on.
+ *
+ * The same reasoning governs `og:image` below: it is relative for the same
+ * ephemeral-port reason, and it is what gives `test/e2e/metadata.e2e.ts` an
+ * absolutise path to assert on in a real browser.
  */
 function samplePage(canonicalHref: string): string {
   return `<!doctype html>
@@ -44,6 +48,10 @@ function samplePage(canonicalHref: string): string {
   <meta charset="utf-8" />
   <title>Designing local-first software</title>
   <link rel="canonical" href="${canonicalHref}" />
+  <meta name="author" content="Ada Lovelace" />
+  <meta property="og:site_name" content="Example Journal" />
+  <meta property="article:published_time" content="2024-03-11T09:30:00Z" />
+  <meta property="og:image" content="/img/hero.jpg" />
 </head>
 <body style="max-width:680px;margin:40px auto;font:16px/1.6 system-ui,sans-serif">
   <h1>Designing local-first software</h1>

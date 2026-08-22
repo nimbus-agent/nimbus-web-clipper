@@ -246,8 +246,8 @@ quick-clip route (context menu / `Alt+Shift+C` hotkey). Both build the same
 gesture (popup button │ context menu │ hotkey)
       │
       ▼
-capture-in-page.ts  ──►  CaptureResult { url, canonicalUrl?, canonicalRejected?, title, mode, body, readableFound }
-      │                    (Readability, or fallback.ts bookmark)
+capture-in-page.ts  ──►  CaptureResult { url, canonicalUrl?, canonicalRejected?, source?, title, mode, body, readableFound }
+      │                    (Readability, or fallback.ts bookmark; page-meta.ts for source)
       ▼
 handleClip(deps)  ──►  clip.ts builds ClipPayload  ──►  postClip → gateway POST /v1/clips
       │
@@ -266,6 +266,20 @@ a site-wide collapse to the homepage, an unparseable value, or a non-web
 scheme). Either way `canonicalRejected` never reaches the gateway: `ClipPayload`
 has no such field, it exists purely so the pre-send preview can say the
 declaration was overridden, and why.
+
+`source` is the page's own account of itself — author, publish date, site name,
+language, lead image — read by [`page-meta.ts`](../src/capture/page-meta.ts) and
+merged under Readability's own reading on the article path. It is the only field
+on `CaptureResult` that is **page-controlled and unbounded**:
+[`buildClipPayload`](../src/shared/clip.ts) rebuilds it from the five known
+fields under the gateway's own caps (`buildClipSource`), and nothing forwards the
+object the page returned. That is the client half of the gateway's **I32** rule,
+and it is why the `source` rung in all three cross-boundary guards
+(`isSourceShape`) is deliberately shallow: a malformed byline is dropped during
+the rebuild rather than costing the user the whole capture — and at the offline
+queue, where `clip-queue-store.ts` reads with `value.filter(isQueuedClip)`, a
+per-member rejection would discard the entire clip rather than the field.
+`source` needs **gateway 2.12.0**; older gateways drop it with no error.
 
 The gateway's status codes are mapped to a small, closed set of typed reasons in
 [`gateway-client.ts`](../src/background/gateway-client.ts): `unreachable`,

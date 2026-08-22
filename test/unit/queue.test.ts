@@ -77,4 +77,20 @@ describe("isQueuedClip", () => {
     expect(isQueuedClip({ payload: entry("a").payload, attempts: 0 })).toBe(false);
     expect(isQueuedClip(null)).toBe(false);
   });
+  test("accepts a payload carrying source", () => {
+    const e = entry("a");
+    expect(isQueuedClip({ ...e, payload: { ...e.payload, source: { author: "Ada" } } })).toBe(true);
+  });
+  // Shallow on purpose, and here that is load-bearing rather than merely
+  // consistent: clip-queue-store.ts reads the queue as
+  // `value.filter(isQueuedClip)`, so rejecting an off-shape MEMBER would not
+  // drop the field — it would discard the whole clip the user saved offline.
+  test("keeps a payload whose source has an odd member", () => {
+    const e = entry("a");
+    expect(isQueuedClip({ ...e, payload: { ...e.payload, source: { author: 42 } } })).toBe(true);
+  });
+  test("rejects a source that is not an object at all", () => {
+    const e = entry("a");
+    expect(isQueuedClip({ ...e, payload: { ...e.payload, source: "Ada" } })).toBe(false);
+  });
 });

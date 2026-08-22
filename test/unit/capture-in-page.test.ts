@@ -339,3 +339,103 @@ describe("selection mode", () => {
     expect(result.canonicalUrl).toBe("http://localhost:3000/selection-canonical");
   });
 });
+
+/** A `<meta>` carrying either spelling of the key — `name` for `author`,
+ *  `property` for the OpenGraph and `article:*` tags. */
+function addMeta(attr: "name" | "property", key: string, content: string): void {
+  const meta = document.createElement("meta");
+  meta.setAttribute(attr, key);
+  meta.setAttribute("content", content);
+  document.head.appendChild(meta);
+}
+
+/** Readability reads JSON-LD internally, which is how the article path gets
+ *  metadata a page never wrote into a `<meta>` tag. */
+function addJsonLd(value: unknown): void {
+  const script = document.createElement("script");
+  script.setAttribute("type", "application/ld+json");
+  script.textContent = JSON.stringify(value);
+  document.head.appendChild(script);
+}
+
+describe("source metadata", () => {
+  test("the article path prefers Readability's reading over the meta tag", () => {
+    setArticleDocument();
+    addMeta("name", "author", "Meta Tag Author");
+    addJsonLd({
+      "@context": "https://schema.org",
+      "@type": "Article",
+      headline: "How Nimbus Captures Pages",
+      author: { "@type": "Person", name: "Ada Lovelace" },
+    });
+
+    expect(getCapture()("article").source?.author).toBe("Ada Lovelace");
+  });
+
+  test("the meta tag fills a gap Readability leaves", () => {
+    setArticleDocument();
+    addMeta("property", "og:site_name", "Example Journal");
+    addMeta("property", "og:image", "/img/hero.jpg");
+
+    const source = getCapture()("article").source;
+
+    expect(source?.siteName).toBe("Example Journal");
+    expect(source?.leadImage).toBe("http://localhost:3000/img/hero.jpg");
+  });
+
+  test("the selection path carries page metadata", () => {
+    setArticleDocument();
+    addMeta("name", "author", "Ada Lovelace");
+    const heading = document.querySelector("h1");
+    if (heading === null) {
+      throw new Error("test setup: expected an h1 in the document");
+    }
+    selectText(heading);
+
+    const result = getCapture()("selection");
+
+    expect(result.mode).toBe("selection");
+    expect(result.source?.author).toBe("Ada Lovelace");
+  });
+
+  test("the fallback path carries page metadata", () => {
+    setSparseDocument();
+    addMeta("name", "author", "Ada Lovelace");
+
+    const result = getCapture()("article");
+
+    expect(result.readableFound).toBe(false);
+    expect(result.source?.author).toBe("Ada Lovelace");
+  });
+
+  // Pins the MEASURED behaviour of @mozilla/readability 0.6.0 rather than the
+  // hoped-for one: on a page it cannot read, `parse()` returns null outright
+  // and its JSON-LD reading goes with it. So the fallback path's metadata comes
+  // from readPageMeta alone, and a reader who assumes JSON-LD is covered here
+  // has this test to correct them. If an upgrade starts returning metadata for
+  // unreadable pages, this failing is the signal to widen the claim — not a
+  // regression.
+  test("on a page Readability cannot read at all, JSON-LD is NOT picked up", () => {
+    setSparseDocument();
+    addJsonLd({
+      "@context": "https://schema.org",
+      "@type": "Article",
+      headline: "Sparse Page",
+      author: { "@type": "Person", name: "Ada Lovelace" },
+    });
+
+    const result = getCapture()("article");
+
+    expect(result.readableFound).toBe(false);
+    expect(result.source?.author).toBeUndefined();
+  });
+
+  // Absent, not an empty object: `{}` on the wire is noise the gateway would
+  // have to strip, and buildClipSource returns undefined for it anyway.
+  test("a page exposing nothing carries no source at all", () => {
+    setSparseDocument();
+    document.documentElement.removeAttribute("lang");
+
+    expect(getCapture()("article").source).toBeUndefined();
+  });
+});

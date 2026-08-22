@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { buildClipPayload, parseTags } from "../../src/shared/clip.ts";
-import type { CaptureResult } from "../../src/shared/types.ts";
+import { buildClipPayload, buildClipSource, parseTags } from "../../src/shared/clip.ts";
+import type { CaptureResult, ClipSource } from "../../src/shared/types.ts";
 
 describe("parseTags", () => {
   test("splits on commas, trims, drops empties, dedupes case-sensitively", () => {
@@ -39,5 +39,121 @@ describe("buildClipPayload", () => {
     const out = buildClipPayload({ ...cap, canonicalUrl: "https://ex.com/p?x" }, [], 1);
     expect(out.canonicalUrl).toBe("https://ex.com/p?x");
     expect("canonicalUrl" in buildClipPayload(cap, [], 1)).toBe(false);
+  });
+
+  test("threads a sanitised source onto the payload", () => {
+    expect(buildClipPayload({ ...cap, source: { author: "Ada" } }, [], 1).source).toEqual({
+      author: "Ada",
+    });
+  });
+
+  test("a capture with no source produces a payload with no source key", () => {
+    expect("source" in buildClipPayload(cap, [], 1)).toBe(false);
+  });
+
+  test("the page's object never reaches the payload", () => {
+    const source = { author: "Ada", junk: "x" } as unknown as ClipSource;
+    const out = buildClipPayload({ ...cap, source }, [], 1);
+    expect(out.source).not.toBe(source);
+    expect(out.source).toEqual({ author: "Ada" });
+  });
+});
+
+describe("buildClipSource", () => {
+  test("keeps the five known fields", () => {
+    expect(
+      buildClipSource({
+        author: "Ada Lovelace",
+        publishedAt: 1_710_149_400_000,
+        siteName: "Example Journal",
+        lang: "en-GB",
+        leadImage: "https://cdn.example.net/hero.jpg",
+      }),
+    ).toEqual({
+      author: "Ada Lovelace",
+      publishedAt: 1_710_149_400_000,
+      siteName: "Example Journal",
+      lang: "en-GB",
+      leadImage: "https://cdn.example.net/hero.jpg",
+    });
+  });
+
+  // The whole point of this function: an extra key cannot ride along. A page
+  // that put 60 KB under `source.junk` would otherwise push the item toward
+  // the gateway's 64 KB metadata ceiling and make its own clip un-ingestable.
+  test("drops any key that is not one of the five", () => {
+    const built = buildClipSource({ author: "Ada", junk: "x".repeat(60_000) });
+    expect(built).toEqual({ author: "Ada" });
+    expect(Object.keys(built ?? {})).toEqual(["author"]);
+  });
+
+  test("returns a NEW object, never the caller's", () => {
+    const raw = { author: "Ada" };
+    expect(buildClipSource(raw)).not.toBe(raw);
+  });
+
+  test("truncates prose at 200 and drops over-long structured values", () => {
+    const built = buildClipSource({
+      author: "a".repeat(500),
+      siteName: "s".repeat(500),
+      lang: "x".repeat(21),
+      leadImage: `https://example.com/${"p".repeat(2100)}`,
+    });
+    expect(built?.author).toHaveLength(200);
+    expect(built?.siteName).toHaveLength(200);
+    expect(built?.lang).toBeUndefined();
+    expect(built?.leadImage).toBeUndefined();
+  });
+
+  test("drops wrong-typed members instead of failing the whole clip", () => {
+    expect(buildClipSource({ author: 42, siteName: "Example Journal" })).toEqual({
+      siteName: "Example Journal",
+    });
+  });
+
+  test("drops a non-integer or out-of-range publishedAt", () => {
+    expect(buildClipSource({ publishedAt: 1.5 })).toBeUndefined();
+    expect(buildClipSource({ publishedAt: Number.NaN })).toBeUndefined();
+    expect(buildClipSource({ publishedAt: 8_640_000_000_000_001 })).toBeUndefined();
+  });
+
+  // page-meta.ts scheme-checks what IT reads, but this function's input is
+  // whatever __nimbusCapture returned — and a page can overwrite that global.
+  // A length check alone would forward a javascript: URL into the index, which
+  // the gateway stores unvalidated by design.
+  test("drops a lead image that is not an http(s) URL, however short", () => {
+    expect(buildClipSource({ leadImage: "javascript:alert(1)" })).toBeUndefined();
+    expect(buildClipSource({ leadImage: "data:image/png;base64,AAAA" })).toBeUndefined();
+    expect(buildClipSource({ leadImage: "/img/hero.jpg" })).toBeUndefined();
+  });
+
+  // The raw string is under the cap; the parsed href is not, because the URL
+  // parser percent-encodes each space. The gateway DROPS an over-long
+  // leadImage rather than truncating it, so bounding only the raw value would
+  // send something the gateway discards while the preview showed it.
+  test("drops a lead image that only exceeds the cap once normalised", () => {
+    const raw = `https://example.com/${"a b ".repeat(500)}`;
+    expect(raw.length).toBeLessThan(2048);
+    expect(new URL(raw).href.length).toBeGreaterThan(2048);
+    expect(buildClipSource({ leadImage: raw })).toBeUndefined();
+  });
+
+  test("keeps a lead image whose normalised form still fits", () => {
+    const raw = `https://example.com/${"a".repeat(2000)}`;
+    expect(buildClipSource({ leadImage: raw })?.leadImage).toBe(raw);
+  });
+
+  test("keeps an absolute http(s) lead image on any origin", () => {
+    expect(buildClipSource({ leadImage: "https://images.unsplash.com/p.jpg" })).toEqual({
+      leadImage: "https://images.unsplash.com/p.jpg",
+    });
+  });
+
+  test("undefined, a non-object and an empty result all yield undefined", () => {
+    expect(buildClipSource(undefined)).toBeUndefined();
+    expect(buildClipSource("nope")).toBeUndefined();
+    expect(buildClipSource(null)).toBeUndefined();
+    expect(buildClipSource([])).toBeUndefined();
+    expect(buildClipSource({})).toBeUndefined();
   });
 });

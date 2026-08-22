@@ -1192,6 +1192,16 @@ endpoint.*
 > **Reframe** Higher priority. The canonical URL is now the *resolution key* the
 > whole client turns on (**C1.1**/**C1.2**) — getting it right on redirecting,
 > tracking-parameter-laden and self-hosted URLs is load-bearing, not cosmetic.
+> **Status** ✅ shipped across three slices, two repos — **S1** the canonical
+> resolver (#67, #68), **S2** the `source` passthrough upstream (Nimbus#1288,
+> released in gateway 2.12.0), **S3** extraction and threading. The brief's
+> "preserve key figures/images references" is met by `leadImage` alone; inline
+> figures are deferred, because `body` is plain `textContent` by contract and
+> preserving them means redesigning body extraction — its own feature, with its
+> own body-cap and embedding consequences. JSON-LD reaches the client only via
+> Readability, which returns nothing at all on a page it cannot read, so hard
+> pages get `<meta>` tags only. See
+> [`docs/superpowers/specs/2026-08-20-faithful-metadata-and-canonical-url-design.md`](./docs/superpowers/specs/2026-08-20-faithful-metadata-and-canonical-url-design.md).
 
 ### 2.6 Hard-page robustness · 🟢 · M
 > **What** Reliable capture on SPAs, infinite-scroll, and lazy-rendered content.
