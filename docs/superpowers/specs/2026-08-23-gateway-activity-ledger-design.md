@@ -114,25 +114,27 @@ on it.
 
 Add `egress` to `API_SCOPES` (`clips/api-scopes.ts:11`). It stays out of
 `LEGACY_SCOPES`, matching that module's stated rule that a migration grants no
-new capability. The consequence is real and must be designed for, not
-discovered: **an already-paired user has to re-pair to see their ledger.**
+new capability. So every already-paired browser hits 403 here first, and the
+client must say what to do about it.
 
-Two things about that re-pair, because they bound how smooth it can be made.
-**It cannot happen inside the extension alone.** Minting is fail-closed (I30) —
-the owner opens a pairing window with `nimbus clip pair` on the gateway, and the
-scopes are fixed when that window opens. An "upgrade permissions" button that
-grants itself a scope is precisely what I30 exists to prevent, so the flow will
-always route through the CLI.
+**Correction (2026-08-23): what to do about it is not re-pairing.** An earlier
+revision of this section claimed an already-paired user has to pair again. That
+is wrong. `nimbus clip scopes <label> --set <scopes>` grants a scope to an
+existing paired client in place — `clip.scopes` returns `{ updated, scopes }`
+and fails only when no client carries that label
+(`packages/cli/src/commands/clip.ts:99`). The token is untouched; nothing is
+re-minted. This also means the design's onboarding cost is far smaller than
+stated: one command on the gateway, no re-pair, and no cached agent answers
+cleared.
 
-**But it is already an in-place upgrade, not a teardown.** `handlePair`
-overwrites the connection only on a confirmed new token, and a failed attempt
-(wrong code, expired window) leaves the working connection untouched by design
-(`handlers.ts:115`). The one real cost is that a confirmed re-pair clears cached
-agent answers, best-effort, because a cached brief belongs to the gateway that
-produced it (`handlers.ts:127`). So what this design adds is the *prompt*, not
-the plumbing: an "Enable Activity" affordance that names the missing scope, tells
-the user which command to run, and drops them on the code field with the origin
-pre-filled.
+It still cannot happen inside the extension alone, and that part was right:
+minting and scope grants are the owner's, fail-closed (I30), so the flow always
+routes through the CLI. What the client owes the user is therefore the exact
+command — and it already has the machinery. `src/shared/scope-command.ts`'s
+`scopeCommand(gap)` builds `nimbus clip scopes <label> --set <every scope the
+token should end up with>`, because `--set` REPLACES rather than appends, and
+refuses to render anything when the gateway-supplied label or scope names are not
+shell-safe. Both views in this design use it; neither writes its own copy.
 
 Four bearer reads under that scope, following the `GET /v1/items/resolve`
 precedent — an entry in the read-route auth table
@@ -271,12 +273,13 @@ rather than as the whole record.
 
 The client already maps 403 → `insufficient_scope` (with a `scopeGap` detail)
 and 404 → too-old-gateway for `resolve`/`fetch`/`agents`. The Activity page
-reuses both, so U1's re-pair cost is paid by existing plumbing:
+reuses both, so U1's scope cost is paid by existing plumbing:
 
 - **No route (404)** — "your gateway does not offer this yet", never an empty
   list. The client gates on the 404, not on a parsed version string.
-- **No `egress` scope (403)** — "re-pair to grant Activity access", naming the
-  missing scope from `scopeGap`.
+- **No `egress` scope (403)** — the built `nimbus clip scopes` command from
+  `scopeCommand(gap)`, or generic "run `nimbus clip status`" guidance when that
+  refuses. Never an instruction to re-pair.
 - **Not paired** — the page says so and links to Options.
 
 Four rules this design is actually about:

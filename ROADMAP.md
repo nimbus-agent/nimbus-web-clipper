@@ -843,8 +843,9 @@ grow a second half to match.*
 > `source_type='http'` row each. Three corrections to this brief follow from
 > reading the rows themselves. **The dependency is narrower than "a read
 > surface":** `egress.list`/`head`/`verify`/`proveWindow` already exist as IPC
-> verbs — what is missing is an HTTP route over them, plus an `egress` scope,
-> which means an already-paired user must re-pair. **The done-when is not
+> verbs — what is missing is an HTTP route over them, plus an `egress` scope
+> (granted to an existing pairing with `nimbus clip scopes`, so no re-pair).
+> **The done-when is not
 > reachable from today's rows:** a fetch row carries no item identity ("for
 > which page") and is appended *before* the fetch, so it records authorization
 > rather than outcome ("how it ended") — both are proposed upstream, outcome as
