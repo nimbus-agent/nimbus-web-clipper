@@ -117,25 +117,88 @@ Add `egress` to `API_SCOPES` (`clips/api-scopes.ts:11`). It stays out of
 new capability. The consequence is real and must be designed for, not
 discovered: **an already-paired user has to re-pair to see their ledger.**
 
+Two things about that re-pair, because they bound how smooth it can be made.
+**It cannot happen inside the extension alone.** Minting is fail-closed (I30) —
+the owner opens a pairing window with `nimbus clip pair` on the gateway, and the
+scopes are fixed when that window opens. An "upgrade permissions" button that
+grants itself a scope is precisely what I30 exists to prevent, so the flow will
+always route through the CLI.
+
+**But it is already an in-place upgrade, not a teardown.** `handlePair`
+overwrites the connection only on a confirmed new token, and a failed attempt
+(wrong code, expired window) leaves the working connection untouched by design
+(`handlers.ts:115`). The one real cost is that a confirmed re-pair clears cached
+agent answers, best-effort, because a cached brief belongs to the gateway that
+produced it (`handlers.ts:127`). So what this design adds is the *prompt*, not
+the plumbing: an "Enable Activity" affordance that names the missing scope, tells
+the user which command to run, and drops them on the code field with the origin
+pre-filled.
+
 Four bearer reads under that scope, following the `GET /v1/items/resolve`
 precedent — an entry in the read-route auth table
 (`ipc/http-route-auth.ts:22,72`), and no egress row of their own:
 
 | Route | Over | Returns |
 | --- | --- | --- |
-| `GET /v1/egress` | `listEgress` | rows in a window (`since`/`until`/`limit`, existing 1000 default / 5000 ceiling) |
+| `GET /v1/egress` | `listEgress` | a page of rows **plus the window's counted totals** — see below |
 | `GET /v1/egress/head` | `egressHead` | head hash + count |
 | `GET /v1/egress/verify` | `verifyEgressChain` | chain-intact verdict |
 | `GET /v1/egress/prove` | `proveWindow` + `signWindowDigest` | rows, digest, `sigB64`, `pubkeyB64`, truncation flags |
 
+**Ordering and totals are part of the ask, not an implementation detail.**
+`listEgress` orders `id ASC` and caps at 1000 rows by default with no offset or
+cursor (`egress/egress-verify.ts:187`). A view that leads with recent activity
+and reads that route over a wide window therefore gets the **oldest** thousand
+rows while presenting them as the newest, and a count derived from that page
+under-reports. Upstream has already been bitten by exactly this: `proveWindow`
+returns `rowsTotal` and `rowsTruncated` so that "the page no longer PRETENDS to
+be the window", and `countOutboundEgress` exists because deriving the count from
+a page "drops the MOST RECENT rows while doing it" — its own doc calls that "the
+worst possible direction" for a primitive whose job is to state how much left the
+machine.
+
+So `GET /v1/egress` must return `{ rows, rowsTotal, rowsTruncated }` mirroring
+`proveWindow`, and must support **newest-first ordering with a cursor**, so the
+Activity page can page backwards through a long ledger without inventing its own
+windowing by timestamp (which cannot page within a same-timestamp burst). This is
+a shape upstream already settled once; the ask is to apply it to the new route
+rather than to invent it.
+
 **`prove` is the contested one and the proposal must argue it rather than bundle
 it.** `signWindowDigest` (`egress/egress-sign.ts:43`) signs with the Vault share
 keypair, so exposing it over HTTP hands a pairing-token holder a narrow signing
-oracle over ledger-derived digests. Two things make the case defensible: the
-digest is deterministic over ledger content the same caller can already read, and
-all four verbs are already LAN-allowlisted, so this is a transport change rather
-than a new class of exposure. If upstream declines it, the client degrades by
-losing *Export proof* and nothing else.
+oracle. How narrow is worth stating precisely, because it is the question the
+upstream reviewer will ask:
+
+- **The caller cannot choose the signed bytes.** The signed message is the
+  BLAKE3 hex digest of a payload the gateway builds — `"nimbus-egress-window-v2"`,
+  the outbound and total counts, and the window's ordered row hashes
+  (`digestEgressWindow`, `egress-sign.ts:24`). The caller supplies `since` and
+  `until` integers, nothing more. The reachable message space is 64-character hex
+  strings, each pinned to real ledger content.
+- **The `v2` domain tag is bound, transitively.** It is inside the hashed payload
+  rather than the signed message, but since the signed message *is* that hash,
+  a digest produced under a different rule cannot collide with one produced under
+  this one.
+- **Cross-protocol reuse is not reachable.** The same keypair signs share files,
+  but `buildShareFile` signs `canonicalizeBody(body)` — canonical JSON bytes
+  (`share/share-format.ts:76`). A 64-character hex string is not a canonical JSON
+  body, so a signature harvested here cannot be replayed as a share file.
+- **What it does share is identity.** A ledger receipt and a share file verify
+  under the same public key, which `share.pubkey` already publishes. That is a
+  property of upstream's deliberate "reused — no new Vault key" choice, not
+  something this route introduces.
+
+The proposal should still ask for a **per-token rate limit on `prove`
+specifically** — it is the only one of the four routes that does asymmetric
+crypto per call, so it is the only one where a hot loop costs meaningfully more
+than a read.
+
+Deliberately **not** asked for: a ledger-specific derived signing key. Key
+separation is a Vault key-management decision upstream owns, and the current
+reuse is documented as intentional; raising it here would trade the route's
+chances for a change this client does not need. If upstream declines `prove`
+outright, the client degrades by losing *Export proof* and nothing else.
 
 ### U2 — caller identity on a targeted fetch
 
@@ -200,6 +263,10 @@ was for once U2 lands, authorized versus blocked, and outcome once U3 lands.
 Verification is an explicit action — pressing it walks the chain and reports the
 verdict. *Export proof* produces the signed `{ digest, sig, pubkey }` artifact.
 
+Rows are newest-first and paged with the cursor U1 provides; the page states the
+window it is showing and the total in it, so a truncated view reads as truncated
+rather than as the whole record.
+
 ## Degradation and the honesty rules
 
 The client already maps 403 → `insufficient_scope` (with a `scopeGap` detail)
@@ -220,7 +287,17 @@ Four rules this design is actually about:
   unable to disagree with `nimbus prove`.
 - **Verification is claimed, never assumed.** "Chain verified" appears only after
   `verify` returned intact. A failed verify is loud: the page states the chain
-  did not verify and stops presenting the list as trustworthy.
+  did not verify and stops presenting the list as trustworthy. Concretely it
+  names the first row where the chain broke (`verifyEgressChain` returns it),
+  says the three things that can cause it — tampering, database corruption, or a
+  pruned window whose tombstone is missing — and keeps *Export proof* available,
+  since the signed artifact over a broken window is exactly what a diagnosis
+  needs. It offers no repair action: nothing in this client may write to the
+  ledger.
+- **A count never comes from a page.** The summary line's numbers come from the
+  window totals the route returns, never from `rows.length`. This is the failure
+  mode `countOutboundEgress` was written to end, and a browser view that
+  re-introduced it would under-report egress while looking confident.
 - **Unattributable is a bucket, not a guess.**
 - **The pre-attribution window is stated, not hidden.** Rows written before U2
   carry no label, so "ours by default" would otherwise render a silently short
@@ -250,7 +327,9 @@ needs its `sourceId: null` claim updated.
 
 **Upstream (Nimbus worktree)**
 
-- **U1** — `egress` scope, four read routes, route-auth entry, I29 doc note.
+- **U1** — `egress` scope, four read routes (newest-first ordering, a cursor, and
+  window totals on the list route), a per-token rate limit on `prove`, the
+  route-auth entry, and the I29 doc note.
 - **U2** — caller label and `{ service, type, id }` identity on targeted-fetch rows.
 - **U3** — outcome rows; its own design document first.
 
@@ -274,3 +353,16 @@ upstream piece.
   sanctioned mutation stays owner-gated and off the LAN allowlist.
 - It does not claim a fetch succeeded until U3 makes that a fact the ledger
   holds.
+- **It does not isolate clients from each other, and does not hash item ids.**
+  Considered and declined. The threat model is one owner on one machine: the
+  gateway binds loopback (I6) and every token is minted by that owner running
+  `nimbus clip pair` (I30). A token that can read the ledger can already
+  `resolve` and `fetch` those same items, so the rows expose no item the caller
+  could not otherwise reach. What the "everything" view does add is the fact that
+  *another* client fetched something — and that is the deliberate content of the
+  ours-by-default-everything-one-click-away decision, not an oversight; the
+  alternative, an ours-only view, was rejected because the chain covers the whole
+  ledger and a verification claim over rows the view refuses to show is not a
+  claim worth making. Per-client sub-ledgers fail for the same reason. Hashing
+  ids would defeat the feature's own purpose, which is to name the page a fetch
+  was for.

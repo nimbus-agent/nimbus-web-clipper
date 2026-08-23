@@ -835,6 +835,24 @@ grow a second half to match.*
 > **Depends** a read surface over that record. **Propose in the gateway repo.**
 > **Done when** Every gateway-side fetch the panel triggered is listed with
 > time, target and outcome, and the list does not contradict the gateway's own.
+> **Status** Designed, not yet built — see
+> [`docs/superpowers/specs/2026-08-23-gateway-activity-ledger-design.md`](./docs/superpowers/specs/2026-08-23-gateway-activity-ledger-design.md).
+> The design reads the upstream and settles the question this brief left open:
+> **yes, a targeted sync is ledgered.** `sync/targeted-fetch.ts` appends one row
+> per fetch before calling the connector, and agent runs over HTTP append one
+> `source_type='http'` row each. Three corrections to this brief follow from
+> reading the rows themselves. **The dependency is narrower than "a read
+> surface":** `egress.list`/`head`/`verify`/`proveWindow` already exist as IPC
+> verbs — what is missing is an HTTP route over them, plus an `egress` scope,
+> which means an already-paired user must re-pair. **The done-when is not
+> reachable from today's rows:** a fetch row carries no item identity ("for
+> which page") and is appended *before* the fetch, so it records authorization
+> rather than outcome ("how it ended") — both are proposed upstream, outcome as
+> its own design there. **The `Touches` line understates it:** the log outgrew
+> an options section, so it is a summary line in the trust panel plus its own
+> page, and the reads live in a new `egress-client.ts` rather than in
+> `gateway-client.ts`. Still 🟡, and the client slices are sequenced to ship
+> against the read route alone.
 
 ### C4.2 Preview before a fetch · 🟢 · S — ✅ shipped
 > **What** Extend the pre-send preview (1.3) to cover fetch requests: show
