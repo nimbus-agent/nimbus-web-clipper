@@ -4,6 +4,7 @@
 
 import { isCanonicalRejection } from "./canonical.ts";
 import { isSourceShape } from "./clip.ts";
+import type { EgressError, EgressPartition, EgressProof, EgressVerdict } from "./egress.ts";
 import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
@@ -273,6 +274,85 @@ export interface PassageClearRequest {
   readonly kind: "passage-clear";
 }
 
+/**
+ * Read a page of the gateway's egress ledger. Read-only; causes no egress of its
+ * own, and persists nothing — every row rendered comes from the gateway on that
+ * read.
+ */
+export interface EgressWindowRequest {
+  readonly kind: "egress-window";
+  /** Cursor: return rows older than this ledger id. Absent means the newest page. */
+  readonly before?: number;
+}
+
+export interface EgressVerifyRequest {
+  readonly kind: "egress-verify";
+}
+
+export interface EgressProveRequest {
+  readonly kind: "egress-prove";
+  readonly since?: number;
+  readonly until?: number;
+}
+
+/** Every way a ledger read can fail, plus the one the client raises itself. */
+export type EgressFailure = EgressError | "not_paired";
+
+export type EgressWindowResponse =
+  | {
+      readonly kind: "egress-window";
+      readonly ok: true;
+      readonly partition: EgressPartition;
+      readonly rowsTotal: number;
+      readonly rowsTruncated: boolean;
+    }
+  | {
+      readonly kind: "egress-window";
+      readonly ok: false;
+      readonly reason: EgressFailure;
+      readonly scopeGap?: ScopeGap;
+    };
+
+export type EgressVerifyResponse =
+  | { readonly kind: "egress-verify"; readonly ok: true; readonly verdict: EgressVerdict }
+  | {
+      readonly kind: "egress-verify";
+      readonly ok: false;
+      readonly reason: EgressFailure;
+      readonly scopeGap?: ScopeGap;
+    };
+
+export type EgressProveResponse =
+  | { readonly kind: "egress-prove"; readonly ok: true; readonly proof: EgressProof }
+  | {
+      readonly kind: "egress-prove";
+      readonly ok: false;
+      readonly reason: EgressFailure;
+      readonly scopeGap?: ScopeGap;
+    };
+
+/** A ledger id from a page script: absent, or a non-negative integer. */
+function isOptionalLedgerId(v: unknown): boolean {
+  return v === undefined || (typeof v === "number" && Number.isInteger(v) && v >= 0);
+}
+
+export function isEgressWindowRequest(v: unknown): v is EgressWindowRequest {
+  return isObject(v) && v["kind"] === "egress-window" && isOptionalLedgerId(v["before"]);
+}
+
+export function isEgressVerifyRequest(v: unknown): v is EgressVerifyRequest {
+  return isObject(v) && v["kind"] === "egress-verify";
+}
+
+export function isEgressProveRequest(v: unknown): v is EgressProveRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "egress-prove" &&
+    isOptionalLedgerId(v["since"]) &&
+    isOptionalLedgerId(v["until"])
+  );
+}
+
 export type ExtensionRequest =
   | CaptureRequest
   | PairRequest
@@ -297,7 +377,10 @@ export type ExtensionRequest =
   | BriefLogRequest
   | BriefLogClearRequest
   | PassageDropRequest
-  | PassageClearRequest;
+  | PassageClearRequest
+  | EgressWindowRequest
+  | EgressVerifyRequest
+  | EgressProveRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
