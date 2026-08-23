@@ -835,7 +835,15 @@ grow a second half to match.*
 > **Depends** a read surface over that record. **Propose in the gateway repo.**
 > **Done when** Every gateway-side fetch the panel triggered is listed with
 > time, target and outcome, and the list does not contradict the gateway's own.
-> **Status** Designed, not yet built — see
+> **Status** **Client slices shipped; the upstream read route is in review.**
+> `src/ledger/` is the Activity page, `src/options/ledger-summary-view.ts` the
+> trust-panel line, and `src/shared/egress.ts` the partition both share so they
+> cannot disagree about what is yours. The gateway half — the `egress` scope and
+> the four read routes — is Nimbus#1319; until it lands every gateway 404s and
+> the page says so rather than showing an empty list. Two of the brief's four
+> promises still wait on further upstream work: a fetch row carries no item
+> identity ("for which page") and is appended before the fetch, so it records
+> authorisation rather than outcome ("how it ended"). See
 > [`docs/superpowers/specs/2026-08-23-gateway-activity-ledger-design.md`](./docs/superpowers/specs/2026-08-23-gateway-activity-ledger-design.md).
 > The design reads the upstream and settles the question this brief left open:
 > **yes, a targeted sync is ledgered.** `sync/targeted-fetch.ts` appends one row

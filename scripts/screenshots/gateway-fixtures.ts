@@ -235,6 +235,87 @@ export const INDEX_BRIEF_REPORT = {
  * running server. A control endpoint would make each test's meaning depend on
  * what ran before it, which is the standard way a browser suite becomes flaky.
  */
+/**
+ * A ledger window as `GET /v1/egress` returns it: newest first, with the totals
+ * counted over the whole window rather than derived from this page.
+ *
+ * The four rows are deliberately one of each shape the Activity page has to
+ * tell apart — an agent run this browser caused, an agent run another client
+ * caused, a targeted fetch nothing can attribute yet (the gateway hardcodes
+ * `sourceId: null` for those), and a scheduled background sync nobody asked for.
+ */
+export const EGRESS_WINDOW = {
+  rows: [
+    {
+      id: 4,
+      timestamp: 1_755_600_000_000,
+      sourceType: "sync",
+      sourceId: null,
+      destination: "slack",
+      method: "sync.run",
+      payloadSummary: '{"method":"sync.run"}',
+      hitlStatus: "not_required",
+      resultStatus: "authorized",
+      rowHash: "d4".repeat(32),
+      prevHash: "c3".repeat(32),
+    },
+    {
+      id: 3,
+      timestamp: 1_755_599_000_000,
+      sourceType: "sync",
+      sourceId: null,
+      destination: "github",
+      method: "items.fetch",
+      payloadSummary: '{"method":"items.fetch"}',
+      hitlStatus: "not_required",
+      resultStatus: "authorized",
+      rowHash: "c3".repeat(32),
+      prevHash: "b2".repeat(32),
+    },
+    {
+      id: 2,
+      timestamp: 1_755_598_000_000,
+      sourceType: "http",
+      sourceId: "nimbus-editor",
+      destination: "jira",
+      method: "agents.impact",
+      payloadSummary: '{"agent":"impact"}',
+      hitlStatus: "not_required",
+      resultStatus: "authorized",
+      rowHash: "b2".repeat(32),
+      prevHash: "a1".repeat(32),
+    },
+    {
+      id: 1,
+      timestamp: 1_755_597_000_000,
+      sourceType: "http",
+      sourceId: "nimbus-browser",
+      destination: "github",
+      method: "agents.why",
+      payloadSummary: '{"agent":"why"}',
+      hitlStatus: "not_required",
+      resultStatus: "authorized",
+      rowHash: "a1".repeat(32),
+      prevHash: "00".repeat(32),
+    },
+  ],
+  rowsTotal: 4,
+  rowsTruncated: false,
+} as const;
+
+export const EGRESS_HEAD = { head: "d4".repeat(32), count: 4 } as const;
+
+/** The gateway's own verdict vocabulary — `ok`/`verifiedRows`, not a re-spelling. */
+export const EGRESS_VERIFY = { ok: true, verifiedRows: 4 } as const;
+
+export const EGRESS_PROVE = {
+  digest: "ab".repeat(32),
+  sigB64: "c2lnbmF0dXJl",
+  pubkeyB64: "cHVibGlja2V5",
+  rowsTotal: 4,
+  rowsTruncated: false,
+} as const;
+
 export interface Scenario {
   /** Keyed by the exact `url` query param `GET /v1/items/resolve` receives. */
   readonly resolve?: Readonly<Record<string, unknown>>;
@@ -244,6 +325,10 @@ export interface Scenario {
   readonly ingest?: unknown;
   readonly itemsFetch?: unknown;
   readonly agentRun?: unknown;
+  readonly egress?: unknown;
+  readonly egressHead?: unknown;
+  readonly egressVerify?: unknown;
+  readonly egressProve?: unknown;
   /** Path → HTTP status, applied before the body is chosen. */
   readonly status?: Readonly<Record<string, number>>;
   /**

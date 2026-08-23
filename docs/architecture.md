@@ -1353,6 +1353,39 @@ egress class raised behind a router chokepoint.
 
 Full reasoning: `docs/superpowers/specs/2026-08-17-research-briefs-design.md`.
 
+## The activity ledger (Phase C4.1)
+
+The trust panel's first half answers "where does my data go?". The Activity page
+(`src/ledger/`) answers the second half — "and what did it go and get?" — for a
+client that can now cause the gateway to reach out.
+
+Three decisions carry it.
+
+**Nothing is stored.** `EgressDeps` (`src/background/egress-handlers.ts`) has no
+writer, and a test pins its key set. Every row rendered comes from the gateway on
+that read. A local copy is the one thing the design forbids, because it could
+quietly disagree with the gateway's own `nimbus prove`.
+
+**Attribution is exact label match, never inference.** `partitionRows`
+(`src/shared/egress.ts`) splits a window into *ours* / *other clients* / *not
+attributable* on `sourceId` alone. Timing, destination and action class are
+deliberately ignored — any of them would let the page claim a row the ledger does
+not attribute. The label comes from the stored `Connection`, never from the
+requesting page. Today every targeted fetch lands in *not attributable*, because
+the gateway hardcodes `sourceId: null` for them; `actionClass` reads `method`
+instead (`items.fetch` versus `sync.run`), which is how the page can still say a
+fetch was asked for by *someone* without guessing who.
+
+**Verification is claimed, never assumed.** "Chain verified." appears only after
+`GET /v1/egress/verify` answers intact. A failed verify *request* stays distinct
+from a broken chain — saying "did not verify" on a transport failure would claim
+evidence we do not have. A broken chain names the first bad row when the gateway
+gave one and omits the clause when it did not.
+
+Counts never come from a page. `rowsTotal` is counted in SQL by the gateway over
+the whole window; the summary line says "at least N" for the per-client split
+whenever the page is a truncated view of it.
+
 ## Two state machines worth understanding
 
 These are the parts that are easy to get subtly wrong, and where most of the
