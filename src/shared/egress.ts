@@ -77,6 +77,27 @@ export interface EgressPartition {
 
 export type ActionClass = "targeted-fetch" | "agent-run" | "background-sync" | "other";
 
+/**
+ * Why a ledger read did not answer.
+ *
+ * Declared HERE rather than in `background/egress-client.ts` where it is raised:
+ * `shared/messages.ts` needs it for the response envelope, and nothing under
+ * `src/shared/` may import from `src/background/` — that file is bundled into
+ * every page and content script, so the dependency would point the wrong way.
+ *
+ * `unsupported` is the 404: a gateway that predates the surface. It is distinct
+ * from `server_error` because the remedy is "upgrade your gateway", and distinct
+ * from an empty list because the client must never present "no route" as "no
+ * activity".
+ */
+export type EgressError =
+  | "unreachable"
+  | "unauthorized"
+  | "insufficient_scope"
+  | "unsupported"
+  | "rate_limited"
+  | "server_error";
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }

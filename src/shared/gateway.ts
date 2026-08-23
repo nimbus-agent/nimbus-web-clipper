@@ -53,6 +53,22 @@ export const GATEWAY_PATHS = {
    * Returns 404 `briefs_disabled` when the gateway's briefs seam is not wired.
    */
   briefs: "/v1/briefs",
+  /**
+   * The egress-ledger reads (C4.1), under the `egress` token scope.
+   *
+   * Four separate paths rather than one with a mode parameter, mirroring the
+   * four separate verbs they sit over upstream. `egress` is NOT a legacy scope
+   * and is not granted by any existing pairing, so a 403 here is the FIRST
+   * thing every already-paired browser hits — the owner grants it in place with
+   * `nimbus clip scopes`, without re-pairing.
+   *
+   * A gateway that predates the surface 404s; the client says so rather than
+   * rendering an empty list.
+   */
+  egress: "/v1/egress",
+  egressHead: "/v1/egress/head",
+  egressVerify: "/v1/egress/verify",
+  egressProve: "/v1/egress/prove",
 } as const;
 
 export type GatewayEndpoint = keyof typeof GATEWAY_PATHS;

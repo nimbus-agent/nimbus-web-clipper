@@ -2,7 +2,7 @@ import { describe, expect, it, test } from "vitest";
 import { endpointUrl, GATEWAY_PATHS, isLoopbackOrigin } from "../../src/shared/gateway.ts";
 
 describe("GATEWAY_PATHS", () => {
-  it("is the nine contracted gateway paths", () => {
+  it("is the thirteen contracted gateway paths", () => {
     expect(GATEWAY_PATHS).toEqual({
       ingest: "/v1/clips",
       pairConfirm: "/v1/clips/pair/confirm",
@@ -13,6 +13,10 @@ describe("GATEWAY_PATHS", () => {
       agents: "/v1/agents",
       agentRuns: "/v1/agents/runs",
       briefs: "/v1/briefs",
+      egress: "/v1/egress",
+      egressHead: "/v1/egress/head",
+      egressVerify: "/v1/egress/verify",
+      egressProve: "/v1/egress/prove",
     });
   });
 
