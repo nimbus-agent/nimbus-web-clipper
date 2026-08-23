@@ -1,8 +1,10 @@
 # What the gateway did for you — the egress ledger in the browser (C4.1)
 
-> **Status:** design, approved 2026-08-23. Cross-repo, three upstream efforts
-> and four client slices. The read routes, the `egress` scope and the ledger-row
-> changes are **proposed, not contracted** — per the roadmap's
+> **Status:** design approved 2026-08-23; **U1 and client slices S1–S3 shipped
+> the same day.** The `egress` scope and the four read routes landed in
+> Nimbus#1319 and are now contracted. **U2** (caller and item identity on a
+> fetch row) and **U3** (outcome rows) remain **proposed, not contracted** — per
+> the roadmap's
 > [gateway-dependent feature protocol](../../../ROADMAP.md#proposing-a-gateway-dependent-feature)
 > their shape is decided in the Nimbus repo, not here. This document is the
 > whole cross-repo design; each upstream slice carries its own.

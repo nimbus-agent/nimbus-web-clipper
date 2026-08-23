@@ -8,7 +8,7 @@
 // at runtime than its own type is how an unmodelled value reaches a consumer
 // that narrowed on a closed union.
 //
-// Read over `GET /v1/egress` — proposed in Nimbus#1319, under the `egress`
+// Read over `GET /v1/egress` — shipped in Nimbus#1319, under the `egress`
 // scope. An older gateway 404s and the client says so; it never renders an
 // empty list.
 
