@@ -1,0 +1,159 @@
+// src/ledger/ledger.ts
+// The Activity page. Sends messages, renders what comes back.
+//
+// It never calls the gateway: the service worker owns the token and the reads.
+// It also never stores a row — the whole point of C4.1 is that this page shows
+// the gateway's record rather than a copy of its own that could quietly
+// disagree with `nimbus prove`.
+//
+// Every send goes through the browser seam's `sendMessage`, typed as
+// `ExtensionRequest`, for the reason brief.ts records: a raw
+// `chrome.runtime.sendMessage` takes `unknown`, which is how a breaking change
+// to a request shape once got past the compiler.
+
+import { sendMessage } from "../browser/runtime.ts";
+import type { EgressPartition, EgressProof, EgressVerdict } from "../shared/egress.ts";
+import type {
+  EgressProveResponse,
+  EgressVerifyResponse,
+  EgressWindowResponse,
+} from "../shared/messages.ts";
+import { type LedgerModel, type LedgerScope, renderLedger } from "./ledger-view.ts";
+
+const body = document.getElementById("ledger-body");
+const oursButton = document.getElementById("scope-ours");
+const allButton = document.getElementById("scope-all");
+const verifyButton = document.getElementById("verify");
+const proveButton = document.getElementById("prove");
+const olderButton = document.getElementById("older");
+
+/**
+ * The last window the gateway answered with, and the verdict for the chain.
+ *
+ * The verdict is deliberately NOT cleared by a scope toggle or by paging:
+ * `verifyEgressChain` walks the WHOLE chain upstream, so a verdict is a claim
+ * about the ledger, not about the rows currently on screen.
+ */
+let partition: EgressPartition = { ours: [], others: [], unattributable: [] };
+let rowsTotal = 0;
+let rowsTruncated = false;
+let verdict: EgressVerdict | null = null;
+let scope: LedgerScope = "ours";
+let failure: Extract<LedgerModel, { state: "error" }> | null = null;
+
+function render(): void {
+  if (body === null) {
+    return;
+  }
+  renderLedger(
+    body,
+    failure ?? {
+      state: "loaded",
+      scope,
+      partition,
+      rowsTotal,
+      rowsTruncated,
+      verdict,
+      nowMs: Date.now(),
+    },
+  );
+  oursButton?.setAttribute("aria-pressed", String(scope === "ours"));
+  allButton?.setAttribute("aria-pressed", String(scope === "all"));
+  if (olderButton !== null) {
+    olderButton.hidden = failure !== null || !rowsTruncated;
+  }
+}
+
+/** The oldest row currently shown — the cursor for the next page back. */
+function oldestShownId(): number | undefined {
+  const all = [...partition.ours, ...partition.others, ...partition.unattributable];
+  if (all.length === 0) {
+    return undefined;
+  }
+  return all.reduce((min, row) => (row.id < min ? row.id : min), all[0]?.id ?? 0);
+}
+
+async function loadWindow(before?: number): Promise<void> {
+  const res = (await sendMessage(
+    before === undefined ? { kind: "egress-window" } : { kind: "egress-window", before },
+  )) as EgressWindowResponse | undefined;
+  if (res === undefined) {
+    failure = { state: "error", reason: "server_error" };
+    render();
+    return;
+  }
+  if (!res.ok) {
+    failure =
+      res.scopeGap === undefined
+        ? { state: "error", reason: res.reason }
+        : { state: "error", reason: res.reason, scopeGap: res.scopeGap };
+    render();
+    return;
+  }
+  failure = null;
+  // Replace, never append: each response carries its own totals, and a list
+  // spanning several responses would be described by only the newest one's.
+  partition = res.partition;
+  rowsTotal = res.rowsTotal;
+  rowsTruncated = res.rowsTruncated;
+  render();
+}
+
+async function runVerify(): Promise<void> {
+  const res = (await sendMessage({ kind: "egress-verify" })) as EgressVerifyResponse | undefined;
+  if (res === undefined || !res.ok) {
+    // A failed CHECK is not a broken chain. Saying "did not verify" here would
+    // claim evidence we do not have.
+    failure =
+      res !== undefined && res.scopeGap !== undefined
+        ? { state: "error", reason: res.reason, scopeGap: res.scopeGap }
+        : { state: "error", reason: res?.ok === false ? res.reason : "server_error" };
+    render();
+    return;
+  }
+  verdict = res.verdict;
+  render();
+}
+
+function downloadProof(proof: EgressProof): void {
+  const blob = new Blob([JSON.stringify(proof, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "nimbus-egress-proof.json";
+  link.click();
+  // Revoked on the next tick, not synchronously: revoking straight after
+  // `click()` can abort the download before the browser has read the blob.
+  setTimeout(() => URL.revokeObjectURL(url), 100);
+}
+
+async function runProve(): Promise<void> {
+  const res = (await sendMessage({ kind: "egress-prove" })) as EgressProveResponse | undefined;
+  if (res === undefined || !res.ok) {
+    failure =
+      res !== undefined && res.scopeGap !== undefined
+        ? { state: "error", reason: res.reason, scopeGap: res.scopeGap }
+        : { state: "error", reason: res?.ok === false ? res.reason : "server_error" };
+    render();
+    return;
+  }
+  downloadProof(res.proof);
+}
+
+function setScope(next: LedgerScope): void {
+  // A toggle re-renders the response already in hand. Re-reading would show a
+  // different window than the one just verified, and would spend a gateway read
+  // to display rows already on the page.
+  scope = next;
+  render();
+}
+
+oursButton?.addEventListener("click", () => setScope("ours"));
+allButton?.addEventListener("click", () => setScope("all"));
+verifyButton?.addEventListener("click", () => void runVerify());
+// Only ever on an explicit gesture: prove signs with the gateway's Vault key and
+// carries its own tight rate limit, so it must never fire on mount.
+proveButton?.addEventListener("click", () => void runProve());
+olderButton?.addEventListener("click", () => void loadWindow(oldestShownId()));
+
+void loadWindow();

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Activity — Nimbus</title>
+    <link rel="stylesheet" href="ledger.css" />
+  </head>
+  <body>
+    <main class="ledger">
+      <h1 class="ledger__title">Activity</h1>
+      <p class="ledger__lede">
+        What your gateway did on your behalf. This list is read from your gateway's own
+        append-only record every time you open it — Nimbus keeps no copy of its own.
+      </p>
+
+      <div class="ledger__controls">
+        <button id="scope-ours" type="button">Yours</button>
+        <button id="scope-all" type="button">All</button>
+        <button id="verify" type="button">Verify chain</button>
+        <button id="prove" type="button">Export proof</button>
+      </div>
+
+      <section id="ledger-body" class="ledger__body"></section>
+
+      <button id="older" type="button" class="ledger__older">Older</button>
+    </main>
+    <script src="ledger.js"></script>
+  </body>
+</html>
