@@ -115,7 +115,7 @@ describe("the four egress-ledger reads", () => {
       "sync:sync.run:null",
       "sync:items.fetch:null",
       "http:agents.impact:nimbus-editor",
-      "http:agents.why:nimbus-browser",
+      "http:agents.why:Mock Device",
     ]);
   });
 

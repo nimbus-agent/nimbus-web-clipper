@@ -289,7 +289,10 @@ export const EGRESS_WINDOW = {
       id: 1,
       timestamp: 1_755_597_000_000,
       sourceType: "http",
-      sourceId: "nimbus-browser",
+      // The SAME label the harness pairs with, not a second hardcoded string:
+      // `partitionRows` matches on exact label, so a fixture that invented its
+      // own would put every row in "other clients" and quietly prove nothing.
+      sourceId: PAIR_CONFIRM.label,
       destination: "github",
       method: "agents.why",
       payloadSummary: '{"agent":"why"}',

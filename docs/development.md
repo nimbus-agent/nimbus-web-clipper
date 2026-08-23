@@ -813,6 +813,35 @@ header comment for why.
 6. With that page still open in a tab, collect a passage, then use *use the
    whole page instead* and send. Reopen: the passages are still there.
 
+## Manual verification — Activity: what the gateway did for you (C4.1)
+
+Needs a gateway offering `GET /v1/egress` and a token holding the `egress`
+scope. Against the mock, both are given. Against a real gateway, grant the
+scope in place with `nimbus clip scopes <device> --set <scopes>` — there is no
+re-pairing step, and `--set` REPLACES the set, so name every scope the device
+should keep.
+
+1. <!-- e2e:ledger-summary --> Open Options and read stage 4. Under "Where your
+   data goes", the line *"and what did it go and get?"* states how many
+   outbound actions were recorded and how many were this browser's. It says
+   nothing about verification.
+2. <!-- e2e:ledger-page --> Press **Open Activity**. The page lists the actions
+   newest first with a time, a service and a kind. In **Yours** it shows only
+   rows carrying this browser's label, and — because a targeted fetch carries
+   no caller identity yet — a notice naming how many fetches in the window
+   cannot be attributed. Switch to **All**: the other client's rows and the
+   background syncs appear, the unattributable ones marked as such.
+3. <!-- e2e:ledger-verify --> Press **Verify chain**. Only now does the page
+   claim *"Chain verified."* Before pressing it, no such claim appears
+   anywhere.
+4. <!-- e2e:ledger-old-gateway --> Point the extension at a gateway without the
+   route (or force a 404). The page says your gateway does not offer the
+   activity ledger yet — never an empty list, which would read as "nothing
+   happened".
+5. Press **Export proof**. A `nimbus-egress-proof.json` downloads carrying the
+   digest, the signature and the public key. It is the only action that spends
+   the gateway's signing budget, so it must never fire on page load.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any
