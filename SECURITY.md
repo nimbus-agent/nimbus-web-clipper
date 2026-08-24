@@ -27,6 +27,17 @@ version. We aim to acknowledge reports within a few business days.
   token.
 - **Token handling.** The bearer token is stored in extension storage, never
   logged, and never written into a page's DOM. The pairing code is never logged.
+- **Page access is opt-in, and separate from the network destination.**
+  `optional_host_permissions` declares broad match patterns (`http://*/*`,
+  `https://*/*`) so the panel can recognise a self-hosted Jira / Jenkins /
+  Bitbucket tab, whose hostname cannot be enumerated in advance. Nothing is
+  granted at install; a grant is made per host from the Options page and is
+  revocable there. It buys reading a tab's URL without a user gesture — it adds
+  no destination the extension sends to, which stays loopback.
+- **Scoped tokens.** A token carries the gateway scopes the owner chose when
+  opening the pairing window (`nimbus clip pair --scopes`, adjusted later with
+  `nimbus clip scopes`). The extension cannot request a scope; a route it lacks
+  returns 403 and it reports the gap rather than widening anything.
 - **Revocation.** A lost or compromised extension is cut off from the gateway
   side with `nimbus clip revoke` — the gateway deletes the token, and any browser
   still holding it gets a 401.

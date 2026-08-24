@@ -99,6 +99,13 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          # Any lockfile change busts the exact key, and most of them do not move
+          # Playwright at all. A prefix restore usually hands the install step a
+          # cache that already holds the right Chromium; when it does not,
+          # `playwright install` fetches the missing build and the exact key is
+          # written at the end of the job as usual.
+          restore-keys: |
+            playwright-${{ runner.os }}-
 
       - name: Install Playwright browsers
         # Two egress facts about this one line, both learned the hard way.

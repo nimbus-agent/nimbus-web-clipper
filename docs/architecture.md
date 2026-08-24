@@ -11,7 +11,9 @@ disagree, the code wins — fix the document.
 A Chrome + Firefox **Manifest V3** extension that clips the readable article or
 the current selection of a web page into the user's local-first
 [Nimbus](https://github.com/nimbus-agent/Nimbus) index, and surfaces related
-indexed items in an on-demand panel.
+indexed items in an on-demand panel. Phases C1–C5 added the rest of what is
+documented below: page recognition, the agent lanes, targeted fetch, research
+briefs, and the activity page over the gateway's egress ledger.
 
 It is a **thin client** over a locked HTTP contract. It talks to exactly one
 place — a Nimbus gateway on `127.0.0.1` — and holds exactly one secret, the
@@ -70,8 +72,10 @@ in a node environment.
 ┌─────────────────────────────────────────────────────────────────┐
 │  Entry points (each bundled independently)                       │
 │                                                                   │
-│  popup/        options/        capture/ (injected)   panel/toast  │
-│  clip · tags   pair · connms   Readability/selection  (injected)  │
+│  popup/        options/        capture.js      panel.js           │
+│  clip · tags   pair · connms   (injected)      cue.js · toast.js  │
+│  brief/        ledger/                         (injected)         │
+│  briefs page   activity page                                      │
 │     │              │                    │                 │       │
 │     └──────────────┴─── chrome.runtime messaging ─────────┘       │
 │                              │                                     │
@@ -98,26 +102,43 @@ in a node environment.
                     │  POST /v1/clips/related
                     │  GET  /v1/items/resolve
                     │  POST /v1/items/fetch  ← WRITE, see below
+                    │  POST /v1/agents/{agent} · GET /v1/agents/runs/{id}
+                    │  /v1/briefs (5 routes) · /v1/egress (4 reads)
+                    │  GET  /v1/health       ← the one tokenless call
                     └───────────────────────┘
 ```
+
+`GATEWAY_PATHS` in [`../src/shared/gateway.ts`](../src/shared/gateway.ts) is the
+single list of routes this client calls; the box above is a summary of it, so
+check that constant rather than this diagram when the two could disagree.
 
 - **`src/manifest/`** — typed manifest compose (`composeManifest`).
 - **`src/background/`** — the MV3 service worker and its pure core (see below).
 - **`src/browser/`** — the thin typed seam over `chrome.*` (`storage`, `tabs`,
-  `scripting`, `runtime`, `action`, `alarms`, `context-menus`). The only module
-  layer that imports WebExtension APIs.
+  `scripting`, `runtime`, `action`, `alarms`, `context-menus`, `commands`,
+  `permissions`). The only module layer that imports WebExtension APIs.
 - **`src/capture/`** — page capture injected into the tab: `capture-in-page.ts`
   (Readability / selection → `CaptureResult`) with a pure `fallback.ts`
   (meta-description/URL bookmark when no readable content is found), plus the
-  injected `toast` (result feedback) and `panel` (related items) views.
+  injected `toast` (result feedback) view.
+- **`src/panel/`** — the other injected surfaces: the related-items + agent-lane
+  panel (`panel-in-page.ts`, pure `panel-view.ts`) and the ambient cue
+  (`cue-in-page.ts`, pure `cue-view.ts`).
 - **`src/popup/`**, **`src/options/`** — the toolbar popup (clip / clip-selection
   + tags + status + queue view) and the options page (gateway URL + 6-digit
-  pairing form + connection management).
+  pairing form + connection management, plus the surfaces / shortcuts /
+  disclosure-log / activity-summary views it composes).
+- **`src/brief/`**, **`src/ledger/`** — the two full-tab extension pages: the
+  research-briefs composer + report, and the activity page over the gateway's
+  egress ledger. Each is an HTML/CSS pair copied verbatim by `esbuild.mjs` plus a
+  bundle and a pure view module.
 - **`src/shared/`** — pure modules shared across every entry: `types.ts`
   (cross-module types), `clip.ts` (tag parsing + payload builder), `gateway.ts`
   (endpoints + loopback origin validation), `messages.ts` (typed envelope +
   guards), `queue.ts`, `related.ts`, `origins.ts` + `recognise.ts` (page
-  recognition — see below).
+  recognition — see below), and one module per later surface (`canonical.ts`,
+  `preview.ts`, `brief.ts`, `passage.ts`, `egress.ts`, …). `ls src/shared` is the
+  current list; this sentence is a sketch of it.
 
 ## The message envelope
 

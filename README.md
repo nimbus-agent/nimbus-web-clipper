@@ -16,6 +16,16 @@ searchable alongside your Drive files, email, and bookmarks.
 - **Clip a selection** — highlight text and clip just that.
 - **Related items** — an on-demand panel surfaces related things already in your
   index, without leaving the tab.
+- **Know where you are** — the panel recognises a pull request, a build or an
+  issue (GitHub / GitLab / Bitbucket / Jenkins / Jira, self-hosted included) and
+  names the indexed item behind the page you are on.
+- **Run the agents from the page** — seven of the gateway's own agents answer
+  about that item as panel lanes (impact, expert, why, catchup, decisions,
+  ownership, glossary).
+- **Ask across your open tabs** — pick a set of tabs, ask one question, get a
+  research brief with its sources named.
+- **See what was done for you** — an Activity page reads the gateway's
+  append-only egress ledger back, so nothing happens on your behalf unseen.
 
 Everything stays on your machine: the extension talks **only** to a Nimbus
 gateway running on `127.0.0.1`. There are no remote servers, no telemetry, and
@@ -29,7 +39,11 @@ no cloud calls.
 > offline retry queue, connection management (pairing status + unpair), quick-clip
 > entry points (right-click context menu + `Alt+Shift+C` / `Alt+Shift+S`, confirmed
 > by an in-page toast), and terminal-413 / rate-limited-429 handling are all
-> implemented. Tagging `vX.Y.Z` builds, signs and submits to both stores
+> implemented — as are the later phases: page recognition and per-origin page
+> access (C1), the agent lanes (C2), targeted fetch and capture-as-last-resort
+> (C3), the Activity page over the gateway's egress ledger (C4.1, partial —
+> see the roadmap), and research briefs over your open tabs and your index
+> (C5). Tagging `vX.Y.Z` builds, signs and submits to both stores
 > ([store/publishing.md](./store/publishing.md)); each store's own review then
 > gates the public rollout. See the
 > [changelog](./CHANGELOG.md) for the per-slice breakdown.
@@ -44,6 +58,11 @@ no cloud calls.
 │                           │            JSON            │  POST /v1/clips/related     │
 └──────────────────────────┘                            └────────────────────────────┘
 ```
+
+Those three are the clip path. The later phases added more loopback routes —
+item resolve and targeted fetch, the agent runs, briefs and the egress-ledger
+reads — each behind its own gateway token scope. `GATEWAY_PATHS` in
+[`src/shared/gateway.ts`](./src/shared/gateway.ts) is the complete list.
 
 Pairing is owner-consented: you run `nimbus clip pair` on the machine running the
 gateway, it prints a one-time 6-digit code, and you enter that code in the

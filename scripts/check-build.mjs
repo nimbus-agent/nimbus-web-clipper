@@ -3,11 +3,19 @@
 // dev-loadable MV3 extension. Run after `bun run build`; CI runs it on push/PR.
 //
 // Checks, per target (chrome, firefox):
-//   1. Every required artifact exists (manifest + 3 bundles + popup/options
-//      HTML+CSS + the three icon sizes).
+//   1. Every entry in REQUIRED_FILES below exists — the manifest, one bundle per
+//      esbuild entry point, the HTML+CSS of each page surface, and the three icon
+//      sizes. Deliberately not restated as a count in prose: this comment said
+//      "3 bundles" long after there were nine, and the array is the only thing
+//      actually checked.
 //   2. manifest.json is valid JSON, manifest_version 3, with a non-empty version.
 //   3. The background key matches the target: Chrome uses `service_worker`,
 //      Firefox uses `background.scripts` AND carries the Gecko add-on id.
+//
+// REQUIRED_FILES is hand-written and must stay in step with `ENTRIES` and
+// `HTML_CSS` in esbuild.mjs. An entry added there but not here produces a bundle
+// nothing guards, and check-build still prints OK — the silent direction, and the
+// one that ships. `test/unit/build-artifacts.test.ts` fails on it.
 import { existsSync, readFileSync } from "node:fs";
 
 const TARGETS = ["chrome", "firefox"];

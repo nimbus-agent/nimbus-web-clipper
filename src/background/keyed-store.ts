@@ -1,7 +1,17 @@
 // src/background/keyed-store.ts
-// The two things every persisted store in this worker needs, in one place.
+// The two things a persisted keyed store in this worker needs, in one place.
 //
-// Both existed in four copies. That mattered more than the line count: each copy
+// Before this module, `readGuarded` existed in two copies (agent-run-store,
+// brief-run-store) and `createWriteChain` in five — those two plus
+// brief-log-store, clip-queue-store and passage-store. The two run stores now
+// import both from here. The other three still hold their own chain, and that is
+// the honest state: `readGuarded` does not fit them at all (they persist an
+// ARRAY, not a keyed record), and each carries a different write-failure policy —
+// the clip queue drops its oldest entry under storage pressure, the passage store
+// refuses so the user can act on it, the disclosure log evicts to
+// MAX_LOG_ENTRIES. So this is the pattern's named home, not yet its only copy.
+//
+// That mattered more than the line count: each copy
 // carries a subtlety that is invisible if you get it wrong. `readGuarded`
 // DISCARDS entries rather than throwing, because storage is external input — a
 // hand-edited or partially-written value must not take the whole store down

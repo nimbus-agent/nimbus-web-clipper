@@ -284,6 +284,16 @@ silently or showing an empty result.
 
 ### Changed
 
+- **The privacy policy now lists everything the extension keeps on your device,
+  not just two of the things.** It described the pairing token and the offline
+  clip queue, and said nothing about the passages you collect, the answers the
+  gateway sends back, the local disclosure log, or the sites you configured for
+  recognition — all added by the phases since, and all of which stay on your
+  machine. It now also states plainly that the broad page-access patterns are
+  opt-in per site and are not somewhere the extension sends anything, and that a
+  brief answered by a remote model is your gateway reaching out, not this
+  extension.
+
 - The panel now resolves pages against the gateway's shipped
   `GET /v1/items/resolve` route instead of the guessed shape Phase C1 was built
   against. It shows when the item was last updated, marks a closest-match result

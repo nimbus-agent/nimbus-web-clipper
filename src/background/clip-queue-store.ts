@@ -3,7 +3,9 @@
 // read-modify-write (updateQueue). The SW is single-threaded but not single-task:
 // an alarm flush and a popup message both await storage and would otherwise clobber
 // each other. updateQueue chains every mutation on a module-level promise so each
-// runs against freshly-read state — the single-writer guarantee.
+// runs against freshly-read state — the single-writer guarantee. That pattern's
+// named home is `keyed-store.ts`'s `createWriteChain`; this copy stays inline
+// because its failure arm differs (the quota fail-safe below).
 import { storageGet, storageSet } from "../browser/storage.ts";
 import { isQueuedClip, type QueuedClip } from "../shared/queue.ts";
 

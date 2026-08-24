@@ -2,8 +2,9 @@
 // The staged brief protocol, as pure orchestration over injected deps.
 //
 // A SUB-ROUTER's worth of work, kept out of service-worker.ts on purpose: that
-// router is already a fourteen-branch function that needed `openPanelForCue`
-// extracted to stay under Sonar's cognitive-complexity cap (S3776, 15). Six more
+// router already carries nineteen branches, split across four order-preserving
+// slices to stay under Sonar's cognitive-complexity cap (S3776, 15), having
+// earlier needed `openPanelForCue` extracted for the same reason. Six more
 // message kinds routed inline would break the gate. The worker gains one branch
 // that delegates here.
 import type { CandidateTab, TabCandidates } from "../browser/tabs.ts";

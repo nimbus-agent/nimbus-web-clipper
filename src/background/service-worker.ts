@@ -684,9 +684,11 @@ function isBriefMessage(v: unknown): v is BriefMessage {
 /**
  * Fan-out for the six brief message kinds.
  *
- * A separate function, not six branches in the router: that function is already
- * at fourteen branches and needed `openPanelForCue` extracted to stay under
- * Sonar's cognitive-complexity cap (S3776, 15).
+ * A separate function, not six branches in the router: the router already carries
+ * nineteen branches, and has since been split into four order-preserving slices
+ * (`routeCapturePair` / `routeIndexReads` / `routeQueueAndConnection` /
+ * `routeSubRouters`) to stay under Sonar's cognitive-complexity cap (S3776, 15) —
+ * having earlier needed `openPanelForCue` extracted for the same reason.
  */
 async function routeBriefMessage(message: BriefMessage): Promise<unknown> {
   if (message.kind === "brief-tabs") {
@@ -934,9 +936,10 @@ addMenuClickListener((menuItemId, tabId, selectionText) => {
  * act on.
  *
  * Lives outside the message listener rather than inline: the listener is a flat
- * router of fourteen branches, and a nested `if` inside one of them costs more
- * cognitive complexity than the branch itself (SonarCloud S3776, which this
- * pushed to 16 against a threshold of 15). The router routes; this decides.
+ * router (now four order-preserving slices carrying nineteen branches between
+ * them), and a nested `if` inside one of them costs more cognitive complexity
+ * than the branch itself (SonarCloud S3776, which this pushed to 16 against a
+ * threshold of 15). The router routes; this decides.
  */
 /**
  * The ONE place `pairingGeneration` is bumped: both `handlePair` (on a
