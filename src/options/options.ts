@@ -120,10 +120,13 @@ async function refreshLedgerSummary(): Promise<void> {
     );
     return;
   }
+  const { ours, others, unattributable } = res.partition;
   renderLedgerSummary(host, {
     state: "loaded",
-    rowsTotal: res.rowsTotal,
-    oursCount: res.partition.ours.length,
+    // Actions, not rows: the partition has already had outcome markers split out
+    // of it, so this counts what the gateway DID rather than what it wrote down.
+    actionsShown: ours.length + others.length + unattributable.length,
+    oursCount: ours.length,
     rowsTruncated: res.rowsTruncated,
   });
 }

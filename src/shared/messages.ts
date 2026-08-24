@@ -4,7 +4,13 @@
 
 import { isCanonicalRejection } from "./canonical.ts";
 import { isSourceShape } from "./clip.ts";
-import type { EgressError, EgressPartition, EgressProof, EgressVerdict } from "./egress.ts";
+import type {
+  EgressError,
+  EgressPartition,
+  EgressProof,
+  EgressVerdict,
+  LedgerOutcome,
+} from "./egress.ts";
 import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
@@ -306,6 +312,14 @@ export type EgressWindowResponse =
       /** This browser's own device label — the one the partition was computed
        *  with, so the page names other clients without guessing at ours. */
       readonly ourLabel: string;
+      /**
+       * How each action ended, keyed by that action's own `rowHash`.
+       *
+       * A missing key means the outcome was NOT RECORDED — never that the fetch
+       * is still running. A gateway older than the outcome marker writes rows
+       * indistinguishable from ones whose marker was lost.
+       */
+      readonly outcomes: Readonly<Record<string, LedgerOutcome>>;
       readonly rowsTotal: number;
       readonly rowsTruncated: boolean;
     }
@@ -875,7 +889,7 @@ export function isPassageClearRequest(v: unknown): v is PassageClearRequest {
 /**
  * Guards the DOMAIN state crossing the SW→panel boundary — not the wire shape.
  * The wire's `status`/`runId`/`failureReason` vocabulary is parsed in
- * gateway-client.ts and never reaches here (mirrors isResolveOutcome/isFetchOutcome
+ * gateway-client.ts and never reaches here (mirrors isResolveOutcome/isLedgerOutcome
  * above).
  */
 function isLaneState(v: unknown): v is LaneState {

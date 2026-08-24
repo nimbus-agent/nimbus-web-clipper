@@ -247,6 +247,22 @@ export const INDEX_BRIEF_REPORT = {
 export const EGRESS_WINDOW = {
   rows: [
     {
+      // The outcome marker for the targeted fetch below. Higher id, so a
+      // newest-first read hands it over BEFORE the row it describes — which is
+      // exactly the ordering the page has to cope with.
+      id: 5,
+      timestamp: 1_755_600_500_000,
+      sourceType: "outcome",
+      sourceId: "c3".repeat(32),
+      destination: "github",
+      method: "items.fetch.outcome",
+      payloadSummary: '{"status":"indexed","itemId":"github:acme/web#482"}',
+      hitlStatus: "not_required",
+      resultStatus: "authorized",
+      rowHash: "e5".repeat(32),
+      prevHash: "d4".repeat(32),
+    },
+    {
       id: 4,
       timestamp: 1_755_600_000_000,
       sourceType: "sync",
@@ -302,7 +318,7 @@ export const EGRESS_WINDOW = {
       prevHash: "00".repeat(32),
     },
   ],
-  rowsTotal: 4,
+  rowsTotal: 5,
   rowsTruncated: false,
 } as const;
 

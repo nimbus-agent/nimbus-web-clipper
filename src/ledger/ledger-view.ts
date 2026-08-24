@@ -14,6 +14,7 @@ import {
   type EgressPartition,
   type EgressRow,
   type EgressVerdict,
+  type LedgerOutcome,
 } from "../shared/egress.ts";
 import { formatAge } from "../shared/freshness.ts";
 import type { EgressFailure } from "../shared/messages.ts";
@@ -30,6 +31,15 @@ export type LedgerModel =
       /** This browser's own device label, so the All scope can name the OTHER
        *  clients rather than only marking rows as attributed. */
       readonly ourLabel: string | null;
+      /**
+       * How each action ended, keyed by that action's own `rowHash`.
+       *
+       * A missing key renders as "not recorded", NEVER as in-flight: a gateway
+       * older than the outcome marker writes rows indistinguishable from ones
+       * whose marker was lost, and an action whose marker sits on another page
+       * is the same from this page's evidence.
+       */
+      readonly outcomes: ReadonlyMap<string, LedgerOutcome>;
       readonly rowsTotal: number;
       readonly rowsTruncated: boolean;
       readonly verdict: EgressVerdict | null;
@@ -87,13 +97,44 @@ function visibleRows(partition: EgressPartition, scope: LedgerScope): readonly E
   );
 }
 
-function renderRow(row: EgressRow, nowMs: number, ourLabel: string | null): HTMLElement {
+const OUTCOME_LABELS: Record<LedgerOutcome["status"], string> = {
+  indexed: "Indexed",
+  not_found: "Not found",
+  rate_limited: "Rate-limited",
+};
+
+/** The outcome cell: what the gateway recorded, or that it recorded nothing. */
+function renderOutcome(outcome: LedgerOutcome | undefined): HTMLElement {
+  if (outcome === undefined) {
+    return el("span", "ledger__outcome ledger__outcome--absent", "Outcome not recorded");
+  }
+  const text =
+    outcome.itemId !== undefined
+      ? `${OUTCOME_LABELS[outcome.status]} — ${outcome.itemId}`
+      : outcome.reason !== undefined
+        ? `${OUTCOME_LABELS[outcome.status]} — ${outcome.reason}`
+        : OUTCOME_LABELS[outcome.status];
+  return el("span", `ledger__outcome ledger__outcome--${outcome.status}`, text);
+}
+
+function renderRow(
+  row: EgressRow,
+  nowMs: number,
+  ourLabel: string | null,
+  outcome: LedgerOutcome | undefined,
+): HTMLElement {
   const item = el("li", "ledger__row");
   item.append(el("span", "ledger__when", formatAge(row.timestamp, nowMs)));
   item.append(el("span", "ledger__service", row.destination));
   item.append(el("span", "ledger__action", ACTION_LABELS[actionClass(row)]));
   if (row.resultStatus === "blocked") {
     item.append(el("span", "ledger__blocked", "Blocked"));
+  }
+  // Only a fetch has an outcome to report. An agent run or a background sync has
+  // no equivalent record, and printing "not recorded" against them would invent a
+  // gap the ledger never claimed.
+  if (actionClass(row) === "targeted-fetch") {
+    item.append(renderOutcome(outcome));
   }
   if (row.sourceId === null) {
     // Labelled, never guessed. An unlabelled row means the gateway could not say
@@ -112,10 +153,10 @@ function renderRow(row: EgressRow, nowMs: number, ourLabel: string | null): HTML
 /**
  * The honesty notice for the default scope.
  *
- * Every targeted fetch is unlabelled until caller attribution lands upstream, so
- * leading with "yours" would render a silently short list. `method` already
- * tells us these were asked for by SOMEONE, which is exactly as much as can be
- * said without guessing.
+ * On a gateway older than caller attribution (Nimbus#1322) every targeted fetch
+ * is unlabelled, so leading with "yours" would render a silently short list.
+ * `method` still tells us these were asked for by SOMEONE, which is exactly as
+ * much as can be said without guessing.
  */
 function unattributedFetchNotice(partition: EgressPartition): string | null {
   const n = partition.unattributable.filter((r) => actionClass(r) === "targeted-fetch").length;
@@ -183,7 +224,7 @@ export function renderLedger(root: HTMLElement, model: LedgerModel): void {
   } else {
     const list = el("ul", "ledger__rows");
     for (const row of rows) {
-      list.append(renderRow(row, model.nowMs, model.ourLabel));
+      list.append(renderRow(row, model.nowMs, model.ourLabel, model.outcomes.get(row.rowHash)));
     }
     root.append(list);
   }

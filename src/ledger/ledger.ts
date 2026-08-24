@@ -12,7 +12,12 @@
 // to a request shape once got past the compiler.
 
 import { sendMessage } from "../browser/runtime.ts";
-import type { EgressPartition, EgressProof, EgressVerdict } from "../shared/egress.ts";
+import type {
+  EgressPartition,
+  EgressProof,
+  EgressVerdict,
+  LedgerOutcome,
+} from "../shared/egress.ts";
 import type {
   EgressProveResponse,
   EgressVerifyResponse,
@@ -39,6 +44,7 @@ let rowsTotal = 0;
 let rowsTruncated = false;
 let verdict: EgressVerdict | null = null;
 let ourLabel: string | null = null;
+let outcomes: ReadonlyMap<string, LedgerOutcome> = new Map();
 let paged = false;
 let scope: LedgerScope = "ours";
 let failure: Extract<LedgerModel, { state: "error" }> | null = null;
@@ -54,6 +60,7 @@ function render(): void {
       scope,
       partition,
       ourLabel,
+      outcomes,
       rowsTotal,
       rowsTruncated,
       verdict,
@@ -109,6 +116,9 @@ async function loadWindow(before?: number): Promise<void> {
   failure = null;
   paged = before !== undefined;
   ourLabel = res.ourLabel;
+  // The response carries a plain object across the message boundary; the view
+  // wants lookup, not iteration.
+  outcomes = new Map(Object.entries(res.outcomes));
   // Replace, never append: each response carries its own totals, and a list
   // spanning several responses would be described by only the newest one's.
   partition = res.partition;

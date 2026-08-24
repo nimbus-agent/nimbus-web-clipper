@@ -32,6 +32,8 @@ test("the trust panel summarises, the page partitions, and verification is only 
     const options = await h.context.newPage();
     await options.goto(`chrome-extension://${h.extId}/options.html`);
     const summary = options.locator("#trust-ledger");
+    // FOUR actions, though the window holds five rows: the fifth is an outcome
+    // marker, which is bookkeeping about egress rather than egress itself.
     await expect(summary).toContainText("4 outbound actions recorded");
     // One of the four rows carries this browser's label in the fixture.
     await expect(summary).toContainText("of them from this browser");
@@ -50,8 +52,13 @@ test("the trust panel summarises, the page partitions, and verification is only 
     await expect(page.locator(".ledger__notice")).toContainText("cannot be attributed");
 
     await page.locator("#scope-all").click();
+    // Still four: the outcome marker is never a row of its own.
     await expect(rows).toHaveCount(4);
     await expect(page.locator(".ledger__body")).toContainText("Not attributable");
+    // The fetch's outcome, joined to its authorising row by rowHash. It lives in
+    // All because the fetch itself is unattributable on this gateway.
+    await expect(page.locator(".ledger__body")).toContainText("Indexed");
+    await expect(page.locator(".ledger__body")).toContainText("github:acme/web#482");
 
     // ── Step 3: the verification claim ─────────────────────────────────────
     await expect(page.locator(".ledger__verdict")).toHaveCount(0);

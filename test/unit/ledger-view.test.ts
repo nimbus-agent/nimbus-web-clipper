@@ -37,6 +37,7 @@ function model(over: Partial<LedgerModel> = {}): LedgerModel {
     scope: "ours",
     partition: { ours: [row()], others: [], unattributable: [] },
     ourLabel: "my-browser",
+    outcomes: new Map(),
     rowsTotal: 1,
     rowsTruncated: false,
     verdict: null,
@@ -174,6 +175,66 @@ describe("renderLedger", () => {
     renderLedger(root, model({ rowsTotal: 40, rowsTruncated: true, paged: true }));
     expect(root.textContent).toContain("Showing a page of 40");
     expect(root.textContent).not.toContain("most recent");
+  });
+
+  it("renders the recorded outcome against a targeted fetch", () => {
+    const fetchRow = row({ sourceType: "sync", method: "items.fetch", rowHash: "ff" });
+    renderLedger(
+      root,
+      model({
+        partition: { ours: [fetchRow], others: [], unattributable: [] },
+        outcomes: new Map([["ff", { status: "indexed", itemId: "github:acme/web#482" }]]),
+      }),
+    );
+    const text = root.textContent ?? "";
+    expect(text).toContain("Indexed");
+    expect(text).toContain("github:acme/web#482");
+  });
+
+  it("says NOT RECORDED, never in-flight, when no outcome exists for the row", () => {
+    // A gateway older than the outcome marker writes rows indistinguishable from
+    // ones whose marker was lost, and an action whose marker is on another page
+    // is the same from this page's evidence. The ledger cannot support the
+    // stronger claim, so the page does not make it.
+    const fetchRow = row({ sourceType: "sync", method: "items.fetch", rowHash: "ff" });
+    renderLedger(root, model({ partition: { ours: [fetchRow], others: [], unattributable: [] } }));
+    const text = root.textContent ?? "";
+    expect(text).toContain("Outcome not recorded");
+    expect(text).not.toContain("flight");
+    expect(text).not.toContain("running");
+  });
+
+  it("renders a miss with the gateway's own reason", () => {
+    const fetchRow = row({ sourceType: "sync", method: "items.fetch", rowHash: "ff" });
+    renderLedger(
+      root,
+      model({
+        partition: { ours: [fetchRow], others: [], unattributable: [] },
+        outcomes: new Map([["ff", { status: "not_found", reason: "absent" }]]),
+      }),
+    );
+    expect(root.textContent).toContain("Not found");
+    expect(root.textContent).toContain("absent");
+  });
+
+  it("does not claim a missing outcome for rows that never have one", () => {
+    // An agent run and a background sync have no outcome record, so printing
+    // "not recorded" against them would invent a gap the ledger never claimed.
+    renderLedger(root, model());
+    expect(root.textContent).not.toContain("Outcome not recorded");
+
+    renderLedger(
+      root,
+      model({
+        partition: {
+          ours: [],
+          others: [],
+          unattributable: [row({ sourceType: "sync", method: "sync.run" })],
+        },
+        scope: "all",
+      }),
+    );
+    expect(root.textContent).not.toContain("Outcome not recorded");
   });
 
   it("says the window is truncated when it is", () => {

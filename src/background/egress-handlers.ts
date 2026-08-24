@@ -10,7 +10,7 @@
 // persist a ledger row: a local copy is exactly the private log the design
 // forbids, because it could quietly disagree with `nimbus prove`.
 
-import { type EgressPartition, partitionRows } from "../shared/egress.ts";
+import { type EgressPartition, partitionRows, splitOutcomes } from "../shared/egress.ts";
 import type {
   EgressProveRequest,
   EgressProveResponse,
@@ -59,14 +59,19 @@ export async function handleEgressWindow(
       ? { kind: "egress-window", ok: false, reason: res.reason }
       : { kind: "egress-window", ok: false, reason: res.reason, scopeGap };
   }
+  // Outcome markers come out FIRST: they annotate an action rather than being
+  // one, so partitioning them by caller would list them as rows in their own
+  // right and ask "who caused this annotation", which is not a question.
+  const { actions, outcomesByHash } = splitOutcomes(res.value.rows);
   // The label comes from the stored connection, never from the requesting page:
   // a page-supplied label would let a content script claim another client's rows.
-  const partition: EgressPartition = partitionRows(res.value.rows, conn.label);
+  const partition: EgressPartition = partitionRows(actions, conn.label);
   return {
     kind: "egress-window",
     ok: true,
     partition,
     ourLabel: conn.label,
+    outcomes: Object.fromEntries(outcomesByHash),
     rowsTotal: res.value.rowsTotal,
     rowsTruncated: res.value.rowsTruncated,
   };

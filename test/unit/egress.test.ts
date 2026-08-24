@@ -4,8 +4,11 @@ import {
   actionClass,
   type EgressRow,
   isEgressRow,
+  isOutcomeRow,
   parseEgressWindow,
+  parseOutcome,
   partitionRows,
+  splitOutcomes,
 } from "../../src/shared/egress.ts";
 
 function row(over: Partial<EgressRow> = {}): EgressRow {
@@ -152,5 +155,90 @@ describe("actionClass", () => {
     expect(actionClass(row({ sourceType: "sync", method: "sync.run" }))).toBe("background-sync");
     expect(actionClass(row({ sourceType: "http", method: "agents.why" }))).toBe("agent-run");
     expect(actionClass(row({ sourceType: "model", method: "synthesis" }))).toBe("other");
+  });
+});
+
+/** An outcome marker as the gateway writes it: `source_id` names the row it describes. */
+function outcome(over: Partial<EgressRow> = {}): EgressRow {
+  return row({
+    id: 20,
+    sourceType: "outcome",
+    sourceId: "aa".repeat(32),
+    method: "items.fetch.outcome",
+    payloadSummary: JSON.stringify({ status: "indexed", itemId: "github:acme/web#482" }),
+    ...over,
+  });
+}
+
+describe("isOutcomeRow", () => {
+  it("recognises the marker and nothing else", () => {
+    expect(isOutcomeRow(outcome())).toBe(true);
+    expect(isOutcomeRow(row({ sourceType: "sync" }))).toBe(false);
+    expect(isOutcomeRow(row({ sourceType: "http" }))).toBe(false);
+  });
+});
+
+describe("parseOutcome", () => {
+  it("reads the status and the item id", () => {
+    expect(parseOutcome(outcome())).toEqual({
+      status: "indexed",
+      itemId: "github:acme/web#482",
+    });
+  });
+
+  it("reads a miss reason, with no item id", () => {
+    const parsed = parseOutcome(
+      outcome({ payloadSummary: JSON.stringify({ status: "not_found", reason: "absent" }) }),
+    );
+    expect(parsed).toEqual({ status: "not_found", reason: "absent" });
+  });
+
+  it("returns null for a truncated summary rather than throwing", () => {
+    // `redactEgressSummary` caps at 256 bytes and appends "…[truncated]", which
+    // is not valid JSON. The page shows "not recorded" rather than crashing.
+    expect(parseOutcome(outcome({ payloadSummary: '{"status":"inde…[truncated]' }))).toBeNull();
+  });
+
+  it("returns null for a status the gateway never writes", () => {
+    // Type narrow, runtime wide: the union is closed upstream, so an unknown
+    // value is malformed data and must not reach a consumer that narrowed on it.
+    expect(
+      parseOutcome(outcome({ payloadSummary: JSON.stringify({ status: "maybe" }) })),
+    ).toBeNull();
+  });
+
+  it("returns null for a row that is not an outcome at all", () => {
+    expect(parseOutcome(row({ sourceType: "sync" }))).toBeNull();
+  });
+});
+
+describe("splitOutcomes", () => {
+  it("takes outcome rows out of the action list and keys them by the row they describe", () => {
+    const action = row({ id: 1, rowHash: "aa".repeat(32) });
+    const marker = outcome({ id: 2 });
+
+    const { actions, outcomesByHash } = splitOutcomes([marker, action]);
+
+    // An outcome is an annotation on an action, not an action — it has no time,
+    // service or kind of its own worth showing.
+    expect(actions).toEqual([action]);
+    expect(outcomesByHash.get("aa".repeat(32))).toEqual({
+      status: "indexed",
+      itemId: "github:acme/web#482",
+    });
+  });
+
+  it("drops an orphan outcome whose authorising row is on another page", () => {
+    // The outcome carries a HIGHER id than the row it describes and the read is
+    // newest-first, so the pair routinely straddles a page boundary. An orphan
+    // is simply not rendered.
+    const { actions, outcomesByHash } = splitOutcomes([outcome()]);
+    expect(actions).toEqual([]);
+    expect(outcomesByHash.size).toBe(1);
+  });
+
+  it("keeps an outcome whose summary will not parse out of the map", () => {
+    const { outcomesByHash } = splitOutcomes([outcome({ payloadSummary: "not json at all" })]);
+    expect(outcomesByHash.size).toBe(0);
   });
 });

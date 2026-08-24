@@ -821,7 +821,7 @@ answer is to ask the gateway to go and get it, not to shred the DOM.*
 *Theme: the extension can now cause the gateway to reach out. Pillar 4 has to
 grow a second half to match.*
 
-### C4.1 "What did the gateway do for me?" · 🟡 · M
+### C4.1 "What did the gateway do for me?" · 🟡 · M — ✅ shipped
 > **What** A browser-side record of the actions this extension caused: what was
 > fetched, when, for which page, and how it ended.
 > **Why it wows** "Nothing leaves without you seeing it" stops being only about
@@ -835,8 +835,9 @@ grow a second half to match.*
 > **Depends** a read surface over that record. **Propose in the gateway repo.**
 > **Done when** Every gateway-side fetch the panel triggered is listed with
 > time, target and outcome, and the list does not contradict the gateway's own.
-> **Status** **Partially shipped.** The client and the read route are done; the
-> brief's own done-when is not yet met, so this item stays 🟡.
+> **Status** ✅ **Shipped, and the done-when is met.** Every gateway-side fetch
+> the panel triggered is listed with time, target and outcome, and the list is
+> the gateway's own record rather than a copy that could contradict it.
 > `src/ledger/` is the Activity page, `src/options/ledger-summary-view.ts` the
 > trust-panel line, and `src/shared/egress.ts` the partition both share so they
 > cannot disagree about what is yours. The gateway half — the `egress` scope and
@@ -861,7 +862,7 @@ grow a second half to match.*
 > its own design there. **The `Touches` line understates it:** the log outgrew
 > an options section, so it is a summary line in the trust panel plus its own
 > page, and the reads live in a new `egress-client.ts` rather than in
-> `gateway-client.ts`. Still 🟡, and the client slices are sequenced to ship
+> `gateway-client.ts`. The client slices were sequenced to ship
 > against the read route alone.
 
 ### C4.2 Preview before a fetch · 🟢 · S — ✅ shipped

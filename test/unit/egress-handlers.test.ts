@@ -59,8 +59,38 @@ describe("handleEgressWindow", () => {
       ok: true,
       partition: { ours: [row()], others: [], unattributable: [] },
       ourLabel: "my-browser",
+      outcomes: {},
       rowsTotal: 1,
       rowsTruncated: false,
+    });
+  });
+
+  it("takes outcome markers out of the rows and keys them by the row they describe", async () => {
+    // A marker annotates an action rather than being one. Partitioning it by
+    // caller would list it as a row in its own right and ask "who caused this
+    // annotation", which is not a question.
+    const action = row({ id: 1, rowHash: "ff" });
+    const marker = row({
+      id: 2,
+      sourceType: "outcome",
+      sourceId: "ff",
+      method: "items.fetch.outcome",
+      payloadSummary: JSON.stringify({ status: "indexed", itemId: "github:acme/web#482" }),
+    });
+    const res = await handleEgressWindow(
+      deps({
+        listEgress: async () => ({
+          ok: true,
+          value: { rows: [marker, action], rowsTotal: 2, rowsTruncated: false },
+        }),
+      }),
+      { kind: "egress-window" },
+    );
+
+    expect(res).toMatchObject({
+      ok: true,
+      partition: { ours: [action], others: [], unattributable: [] },
+      outcomes: { ff: { status: "indexed", itemId: "github:acme/web#482" } },
     });
   });
 

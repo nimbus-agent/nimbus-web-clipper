@@ -17,7 +17,7 @@ beforeEach(() => {
 function model(over: Partial<LedgerSummaryModel> = {}): LedgerSummaryModel {
   return {
     state: "loaded",
-    rowsTotal: 14,
+    actionsShown: 14,
     oursCount: 9,
     rowsTruncated: false,
     ...over,
@@ -32,13 +32,20 @@ describe("renderLedgerSummary", () => {
     expect(text).toContain("9");
   });
 
-  it("refuses to state an exact split when the window is truncated", () => {
-    // rowsTotal is counted by the gateway; oursCount can only be counted from
-    // the page. Printing both as facts would under-report the split.
-    renderLedgerSummary(root, model({ rowsTotal: 3412, oursCount: 900, rowsTruncated: true }));
+  it("states both counts as floors when the window is truncated", () => {
+    // Both are counted from the page, so a longer window holds more of each.
+    // Stating either as exact would under-report.
+    renderLedgerSummary(root, model({ actionsShown: 1000, oursCount: 900, rowsTruncated: true }));
     const text = root.textContent ?? "";
-    expect(text).toContain("3412");
+    expect(text).toContain("At least 1000");
     expect(text).toContain("at least 900");
+  });
+
+  it("counts ACTIONS, not ledger rows — markers are bookkeeping, not egress", () => {
+    // The gateway's rowsTotal counts every row in the window, boot and outcome
+    // markers included. Reporting that as "outbound actions" over-counted.
+    renderLedgerSummary(root, model({ actionsShown: 4, oursCount: 1 }));
+    expect(root.textContent).toContain("4 outbound actions recorded");
   });
 
   it("says nothing about verification — that lives on the page", () => {
