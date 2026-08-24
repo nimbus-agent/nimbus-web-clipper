@@ -128,12 +128,12 @@ describe("buildCreateBody", () => {
     ];
     const body = buildCreateBody("x".repeat(5000), sources, true);
     expect(body.sources).toHaveLength(2);
-    expect(body.brief.length).toBe(BRIEF_CAPS.maxQuestionChars);
+    expect(body.brief).toHaveLength(BRIEF_CAPS.maxQuestionChars);
   });
 
   it("cuts an over-long question to the gateway's character cap", () => {
     const body = buildCreateBody("q".repeat(BRIEF_CAPS.maxQuestionChars + 10), [], false);
-    expect(body.brief.length).toBe(BRIEF_CAPS.maxQuestionChars);
+    expect(body.brief).toHaveLength(BRIEF_CAPS.maxQuestionChars);
   });
 
   it("never declares more sources than the gateway accepts", () => {

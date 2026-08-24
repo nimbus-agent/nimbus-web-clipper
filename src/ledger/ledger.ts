@@ -92,7 +92,7 @@ function oldestShownId(): number | undefined {
   if (all.length === 0) {
     return undefined;
   }
-  return all.reduce((min, row) => (row.id < min ? row.id : min), all[0]?.id ?? 0);
+  return all.reduce((min, row) => Math.min(min, row.id), all[0]?.id ?? 0);
 }
 
 /**
@@ -143,11 +143,11 @@ async function loadWindow(before?: number): Promise<void> {
 async function runVerify(): Promise<void> {
   const raw = await sendMessage({ kind: "egress-verify" });
   const res = isReplyFor(raw, "egress-verify") ? (raw as EgressVerifyResponse) : undefined;
-  if (res === undefined || !res.ok) {
+  if (!res?.ok) {
     // A failed CHECK is not a broken chain. Saying "did not verify" here would
     // claim evidence we do not have.
     failure =
-      res !== undefined && res.scopeGap !== undefined
+      res?.scopeGap !== undefined
         ? { state: "error", reason: res.reason, scopeGap: res.scopeGap }
         : { state: "error", reason: res?.ok === false ? res.reason : "server_error" };
     render();
@@ -175,9 +175,9 @@ function downloadProof(proof: EgressProof): void {
 async function runProve(): Promise<void> {
   const raw = await sendMessage({ kind: "egress-prove" });
   const res = isReplyFor(raw, "egress-prove") ? (raw as EgressProveResponse) : undefined;
-  if (res === undefined || !res.ok) {
+  if (!res?.ok) {
     failure =
-      res !== undefined && res.scopeGap !== undefined
+      res?.scopeGap !== undefined
         ? { state: "error", reason: res.reason, scopeGap: res.scopeGap }
         : { state: "error", reason: res?.ok === false ? res.reason : "server_error" };
     render();

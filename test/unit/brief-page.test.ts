@@ -96,7 +96,7 @@ async function loadPage(): Promise<void> {
   await import("../../src/brief/brief.ts");
   await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "brief-tabs" }));
   await vi.waitFor(() =>
-    expect(document.querySelectorAll("#composer .brief__tabs input").length).toBe(2),
+    expect(document.querySelectorAll("#composer .brief__tabs input")).toHaveLength(2),
   );
 }
 
@@ -130,7 +130,7 @@ describe("composer", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalled());
-    expect($("composer").children.length).toBe(0);
+    expect($("composer").children).toHaveLength(0);
   });
 
   test("a partial answer falls back to empty lists rather than rendering undefined", async () => {
@@ -139,7 +139,9 @@ describe("composer", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalled());
-    expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(0);
+    expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]")).toHaveLength(
+      0,
+    );
   });
 
   test("a FAILED brief-tabs renders the error, not a claim about the browser", async () => {
@@ -171,7 +173,7 @@ describe("composer", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() =>
-      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(
+      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]")).toHaveLength(
         21,
       ),
     );
@@ -406,7 +408,7 @@ describe("save", () => {
     await reachDone();
     const calls = harness.sendMessage.mock.calls.length;
     $("state").dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    expect(harness.sendMessage.mock.calls.length).toBe(calls);
+    expect(harness.sendMessage.mock.calls).toHaveLength(calls);
   });
 });
 
@@ -426,7 +428,7 @@ describe("collected passages", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() =>
-      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(
+      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]")).toHaveLength(
         3,
       ),
     );
@@ -558,7 +560,7 @@ describe("collected passages", () => {
     vi.resetModules();
     await import("../../src/brief/brief.ts");
     await vi.waitFor(() =>
-      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(
+      expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]")).toHaveLength(
         3,
       ),
     );
@@ -581,9 +583,9 @@ describe("collected passages", () => {
 
     // Same page, other mode — and still picked.
     expect(pickBox("tab:3").checked).toBe(true);
-    expect(document.querySelector('#composer input[value="passages:https://example.com/c"]')).toBe(
-      null,
-    );
+    expect(
+      document.querySelector('#composer input[value="passages:https://example.com/c"]'),
+    ).toBeNull();
     expect($("preview-body").textContent).toContain("https://example.com/c#live");
   });
 
@@ -601,7 +603,7 @@ describe("collected passages", () => {
 
     const back = pickBox("passages:https://example.com/c");
     expect(back.checked).toBe(true);
-    expect(document.querySelector('#composer input[value="tab:3"]')).toBe(null);
+    expect(document.querySelector('#composer input[value="tab:3"]')).toBeNull();
     expect($("composer").textContent).toContain("2 passages");
     expect($("preview-body").textContent).toContain("first excerpt");
   });
@@ -653,6 +655,8 @@ describe("re-enumeration", () => {
     harness.emitPermissionsAdded();
 
     await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledTimes(2));
-    expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]").length).toBe(2);
+    expect(document.querySelectorAll("#composer .brief__tabs input[type=checkbox]")).toHaveLength(
+      2,
+    );
   });
 });

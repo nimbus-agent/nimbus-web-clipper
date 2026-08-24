@@ -985,8 +985,22 @@ function carriesUnauthorized(res: unknown): boolean {
   );
 }
 
-addMessageListener((message, rawRespond, sender) => {
-  const respond = (res: unknown): void => {
+/** The reply callback every route is handed — the wrapped one, never `rawRespond`. */
+type Respond = (res: unknown) => void;
+
+/** What the runtime seam knows about the sender: the tab id, when there is one. */
+type SenderInfo = { readonly tabId?: number };
+
+/**
+ * `null` when a route does not recognise the message, so the next one gets a
+ * look; otherwise the value the listener must return — `true` to hold the
+ * message channel open for an async reply, `false` when nothing will answer.
+ */
+type Routed = boolean | null;
+
+/** The one place a 401 is noticed, wrapped around every route's replies. */
+function wrapRespond(rawRespond: Respond): Respond {
+  return (res: unknown): void => {
     if (carriesUnauthorized(res)) {
       // Fire-and-forget: the user's answer must not wait on a storage write, and
       // a failed write only means the flag is set on the next 401.
@@ -1000,6 +1014,15 @@ addMessageListener((message, rawRespond, sender) => {
     }
     rawRespond(res);
   };
+}
+
+/**
+ * The router is split into four in ORDER-PRESERVING slices, not for tidiness:
+ * one function carrying every branch is past S3776's cognitive-complexity cap,
+ * and a message must still meet the same guards in the same sequence, because
+ * the guards are not disjoint by construction — only by the order they run in.
+ */
+function routeCapturePair(message: unknown, respond: Respond, sender: SenderInfo): Routed {
   if (isCaptureRequest(message)) {
     const tabId = sender.tabId;
     if (tabId === undefined) {
@@ -1055,6 +1078,10 @@ addMessageListener((message, rawRespond, sender) => {
       });
     return true;
   }
+  return null;
+}
+
+function routeIndexReads(message: unknown, respond: Respond): Routed {
   if (isRelatedRequest(message)) {
     handleRelated({ getConnection, postRelated }, message)
       .then(respond)
@@ -1126,6 +1153,10 @@ addMessageListener((message, rawRespond, sender) => {
       });
     return true;
   }
+  return null;
+}
+
+function routeQueueAndConnection(message: unknown, respond: Respond): Routed {
   if (isQueueListRequest(message)) {
     handleQueueList({ getQueue })
       .then(respond)
@@ -1181,6 +1212,10 @@ addMessageListener((message, rawRespond, sender) => {
       });
     return true;
   }
+  return null;
+}
+
+function routeSubRouters(message: unknown, respond: Respond, sender: SenderInfo): Routed {
   // ONE branch for six kinds — the fan-out lives in `routeBriefMessage` so this
   // router stays under S3776's cap. Placed before the narrower guards below only
   // because its own guard is exact (a `brief-` prefix plus an optional string id).
@@ -1227,7 +1262,20 @@ addMessageListener((message, rawRespond, sender) => {
     openPanelForCue(sender.tabId);
     return false;
   }
-  return false;
+  return null;
+}
+
+addMessageListener((message, rawRespond, sender) => {
+  const respond = wrapRespond(rawRespond);
+  // `??`, not `||`: a route that handled the message by answering synchronously
+  // returns `false`, and that must STOP the chain — only `null` means "not mine".
+  return (
+    routeCapturePair(message, respond, sender) ??
+    routeIndexReads(message, respond) ??
+    routeQueueAndConnection(message, respond) ??
+    routeSubRouters(message, respond, sender) ??
+    false
+  );
 });
 
 // The hotkey injects the related panel into the active tab. activeTab is granted on

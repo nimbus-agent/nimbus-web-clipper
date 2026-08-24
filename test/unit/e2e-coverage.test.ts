@@ -51,7 +51,7 @@ describe("e2e coverage markers stay in step with the suite", () => {
 
   test("marker ids are unique — a duplicate hides a gap", () => {
     const seen = markersInChecklist();
-    expect(seen.length).toBe(new Set(seen).size);
+    expect(seen).toHaveLength(new Set(seen).size);
   });
 
   test("every e2e file declares a non-empty COVERS", () => {

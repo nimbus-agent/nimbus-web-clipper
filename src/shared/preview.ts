@@ -6,7 +6,7 @@
 import type { CanonicalRejection } from "./canonical.ts";
 import type { ClipPayload } from "./clip.ts";
 import { joinPassages } from "./passage.ts";
-import type { FetchTarget } from "./types.ts";
+import type { ClipSource, FetchTarget } from "./types.ts";
 
 /** How much body text the preview shows. The FULL body is still what is sent. */
 export const EXCERPT_CHARS = 300;
@@ -57,6 +57,48 @@ const CANONICAL_NOTICE: Record<CanonicalRejection, string> = {
 };
 
 /**
+ * The `source` rows, one per field the gateway will receive.
+ *
+ * These rows are NOT optional. 1.3's promise is that nothing leaves without
+ * the user seeing it, and `source` is new on the wire — Language included,
+ * which the design's row list forgot. A field on the request with no row
+ * here voids the promise.
+ *
+ * Listed one by one, like every other field in this module: see
+ * {@link buildClipPreview}'s docblock. Iterating `Object.keys(source)` would
+ * render whatever a future caller happened to put there.
+ */
+function sourceFields(source: ClipSource | undefined): PreviewField[] {
+  if (source === undefined) {
+    return [];
+  }
+  const fields: PreviewField[] = [];
+  if (source.author !== undefined) {
+    fields.push({ label: "Author", value: source.author });
+  }
+  if (source.publishedAt !== undefined) {
+    // A calendar day, not a relative age: `formatAge` would render an
+    // ordinary archive article as "2,000 days ago", which answers a question
+    // nobody asked of a publication date. Locale-free, so what a test asserts
+    // is what every reader sees.
+    fields.push({
+      label: "Published",
+      value: new Date(source.publishedAt).toISOString().slice(0, 10),
+    });
+  }
+  if (source.siteName !== undefined) {
+    fields.push({ label: "Site", value: source.siteName });
+  }
+  if (source.lang !== undefined) {
+    fields.push({ label: "Language", value: source.lang });
+  }
+  if (source.leadImage !== undefined) {
+    fields.push({ label: "Lead image", value: source.leadImage });
+  }
+  return fields;
+}
+
+/**
  * The clip payload, field by field.
  *
  * FIELDS ARE LISTED EXPLICITLY, never derived by iterating the object's keys.
@@ -99,40 +141,7 @@ export function buildClipPreview(
   // Appended AFTER Tags, never between URL and Note: every CANONICAL_NOTICE
   // sentence ends "used the address above", which is only true while the Note
   // row sits directly beneath URL.
-  //
-  // These rows are NOT optional. 1.3's promise is that nothing leaves without
-  // the user seeing it, and `source` is new on the wire — Language included,
-  // which the design's row list forgot. A field on the request with no row
-  // here voids the promise.
-  //
-  // Listed one by one, like every other field in this function: see the
-  // docblock. Iterating `Object.keys(source)` would render whatever a future
-  // caller happened to put there.
-  const source = payload.source;
-  if (source !== undefined) {
-    if (source.author !== undefined) {
-      fields.push({ label: "Author", value: source.author });
-    }
-    if (source.publishedAt !== undefined) {
-      // A calendar day, not a relative age: `formatAge` would render an
-      // ordinary archive article as "2,000 days ago", which answers a question
-      // nobody asked of a publication date. Locale-free, so what a test asserts
-      // is what every reader sees.
-      fields.push({
-        label: "Published",
-        value: new Date(source.publishedAt).toISOString().slice(0, 10),
-      });
-    }
-    if (source.siteName !== undefined) {
-      fields.push({ label: "Site", value: source.siteName });
-    }
-    if (source.lang !== undefined) {
-      fields.push({ label: "Language", value: source.lang });
-    }
-    if (source.leadImage !== undefined) {
-      fields.push({ label: "Lead image", value: source.leadImage });
-    }
-  }
+  fields.push(...sourceFields(payload.source));
   const truncated = payload.body.length > EXCERPT_CHARS;
   return {
     fields,
@@ -209,6 +218,15 @@ function sourcesSummary(sources: readonly BriefPreviewSource[]): string {
   return `${sources.length} sources — ${pagePart}, ${setPart}`;
 }
 
+/** One source's row value: its address, plus the passage count when it has one. */
+function sourceValue(s: BriefPreviewSource): string {
+  if (s.passages === undefined) {
+    return s.url;
+  }
+  const n = s.passages.length;
+  return `${s.url} — ${n} ${n === 1 ? "passage" : "passages"}`;
+}
+
 /**
  * What the user is told before source text leaves — and it deliberately does not
  * promise local synthesis.
@@ -280,13 +298,7 @@ export function buildBriefPreview(input: {
       { label: "Question", value: input.question },
       { label: "Sources", value: sourcesSummary(input.sources) },
     ],
-    sources: input.sources.map((s) => ({
-      label: s.title,
-      value:
-        s.passages === undefined
-          ? s.url
-          : `${s.url} — ${s.passages.length} ${s.passages.length === 1 ? "passage" : "passages"}`,
-    })),
+    sources: input.sources.map((s) => ({ label: s.title, value: sourceValue(s) })),
     bodies: input.sources
       .filter(
         (s): s is BriefPreviewSource & { passages: readonly string[] } => s.passages !== undefined,
