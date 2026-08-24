@@ -179,6 +179,43 @@ describe("the Activity page", () => {
     );
   });
 
+  test("an outcome from an earlier page survives paging to the row it describes", async () => {
+    // A marker carries a HIGHER id than its action, so newest-first paging hands
+    // the marker over on one page and the action on the NEXT. Replacing the map
+    // per page would show "not recorded" for an outcome we already received.
+    const older = row({ id: 7, sourceType: "sync", method: "items.fetch", rowHash: "ff" });
+    let call = 0;
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind !== "egress-window") return replies()(m);
+      call += 1;
+      return call === 1
+        ? {
+            kind: "egress-window",
+            ok: true,
+            partition: { ours: [OURS], others: [], unattributable: [] },
+            ourLabel: "Mock Device",
+            // The marker arrives on page one; its action does not.
+            outcomes: { ff: { status: "indexed", itemId: "github:acme/web#482" } },
+            rowsTotal: 40,
+            rowsTruncated: true,
+          }
+        : {
+            kind: "egress-window",
+            ok: true,
+            partition: { ours: [older], others: [], unattributable: [] },
+            ourLabel: "Mock Device",
+            outcomes: {},
+            rowsTotal: 40,
+            rowsTruncated: true,
+          };
+    });
+
+    await loadPage();
+    click("older");
+    await vi.waitFor(() => expect(document.body.textContent).toContain("github:acme/web#482"));
+    expect(document.body.textContent).not.toContain("Outcome not recorded");
+  });
+
   test("Older is hidden when the window is not truncated", async () => {
     await loadPage();
     expect((document.getElementById("older") as HTMLButtonElement).hidden).toBe(true);

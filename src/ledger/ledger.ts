@@ -44,7 +44,18 @@ let rowsTotal = 0;
 let rowsTruncated = false;
 let verdict: EgressVerdict | null = null;
 let ourLabel: string | null = null;
-let outcomes: ReadonlyMap<string, LedgerOutcome> = new Map();
+/**
+ * Outcomes ACCUMULATE across pages; the row list does not.
+ *
+ * A marker carries a higher id than the action it describes, so newest-first
+ * paging hands the marker over on one page and its action on the NEXT. Replacing
+ * this map per page would therefore discard a marker just before the action it
+ * belongs to arrives, and render "Outcome not recorded" for an outcome the
+ * gateway had already told us. Remembering it within the open page is not a
+ * private log — nothing is persisted, and every value here came from a read in
+ * this session.
+ */
+const outcomes = new Map<string, LedgerOutcome>();
 let paged = false;
 let scope: LedgerScope = "ours";
 let failure: Extract<LedgerModel, { state: "error" }> | null = null;
@@ -116,9 +127,11 @@ async function loadWindow(before?: number): Promise<void> {
   failure = null;
   paged = before !== undefined;
   ourLabel = res.ourLabel;
-  // The response carries a plain object across the message boundary; the view
-  // wants lookup, not iteration.
-  outcomes = new Map(Object.entries(res.outcomes));
+  // Merged, never replaced — see the declaration. The response carries a plain
+  // object across the message boundary; the view wants lookup, not iteration.
+  for (const [hash, outcome] of Object.entries(res.outcomes)) {
+    outcomes.set(hash, outcome);
+  }
   // Replace, never append: each response carries its own totals, and a list
   // spanning several responses would be described by only the newest one's.
   partition = res.partition;

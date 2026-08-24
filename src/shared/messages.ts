@@ -357,6 +357,32 @@ export function isEgressWindowRequest(v: unknown): v is EgressWindowRequest {
   return isObject(v) && v["kind"] === "egress-window" && isOptionalLedgerId(v["before"]);
 }
 
+/**
+ * Is this a well-formed successful window response?
+ *
+ * `sendMessage` is typed `unknown` at the seam, and a hand-rolled
+ * `typeof res === "object"` check does NOT reject `null` — `typeof null` is
+ * `"object"`, so a null reply reached `res.kind` and threw. A malformed success
+ * (`ok: true` with no partition) threw at the destructure instead.
+ */
+export function isEgressWindowSuccess(
+  v: unknown,
+): v is Extract<EgressWindowResponse, { ok: true }> {
+  if (!isObject(v) || v["kind"] !== "egress-window" || v["ok"] !== true) {
+    return false;
+  }
+  const partition = v["partition"];
+  if (!isObject(partition)) {
+    return false;
+  }
+  for (const bucket of ["ours", "others", "unattributable"]) {
+    if (!Array.isArray(partition[bucket])) {
+      return false;
+    }
+  }
+  return typeof v["rowsTruncated"] === "boolean" && isObject(v["outcomes"]);
+}
+
 export function isEgressVerifyRequest(v: unknown): v is EgressVerifyRequest {
   return isObject(v) && v["kind"] === "egress-verify";
 }

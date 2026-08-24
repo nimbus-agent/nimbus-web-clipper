@@ -842,10 +842,13 @@ grow a second half to match.*
 > trust-panel line, and `src/shared/egress.ts` the partition both share so they
 > cannot disagree about what is yours. The gateway half — the `egress` scope and
 > the four read routes — landed in Nimbus#1319. A gateway older than that 404s
-> and the page says so rather than showing an empty list. Two of the brief's four
-> promises still wait on further upstream work: a fetch row carries no item
-> identity ("for which page") and is appended before the fetch, so it records
-> authorisation rather than outcome ("how it ended"). See
+> and the page says so rather than showing an empty list. The two promises this
+> brief could not originally reach — *which page* and *how it ended* — are both
+> met now, and by the same mechanism: a completed fetch appends a second row
+> (Nimbus#1325, gateway 2.18.0) carrying its outcome and, on success, the item
+> id. That superseded the original plan to derive identity by parsing the URL
+> before the fetch, which would have needed a normalised parser exported from
+> five connectors. See
 > [`docs/superpowers/specs/2026-08-23-gateway-activity-ledger-design.md`](./docs/superpowers/specs/2026-08-23-gateway-activity-ledger-design.md).
 > The design reads the upstream and settles the question this brief left open:
 > **yes, a targeted sync is ledgered.** `sync/targeted-fetch.ts` appends one row
@@ -855,11 +858,11 @@ grow a second half to match.*
 > surface":** `egress.list`/`head`/`verify`/`proveWindow` already exist as IPC
 > verbs — what is missing is an HTTP route over them, plus an `egress` scope
 > (granted to an existing pairing with `nimbus clip scopes`, so no re-pair).
-> **The done-when is not
-> reachable from today's rows:** a fetch row carries no item identity ("for
-> which page") and is appended *before* the fetch, so it records authorization
-> rather than outcome ("how it ended") — both are proposed upstream, outcome as
-> its own design there. **The `Touches` line understates it:** the log outgrew
+> **The done-when was not reachable from the rows as they then were:** a fetch
+> row carried no item identity ("for which page") and is appended *before* the
+> fetch, so it recorded authorization rather than outcome ("how it ended"). Both
+> were proposed upstream and both have since landed — outcome as its own design
+> there, carrying the item id with it. **The `Touches` line understates it:** the log outgrew
 > an options section, so it is a summary line in the trust panel plus its own
 > page, and the reads live in a new `egress-client.ts` rather than in
 > `gateway-client.ts`. The client slices were sequenced to ship

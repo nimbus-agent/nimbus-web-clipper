@@ -6,10 +6,11 @@ import { getAllCommands } from "../browser/commands.ts";
 import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.ts";
 import { isFirefoxRuntime, sendMessage } from "../browser/runtime.ts";
 import { isBriefLogEntry } from "../shared/brief-log.ts";
-import type { EgressWindowResponse } from "../shared/messages.ts";
 import {
   type DiscoverResponse,
+  type EgressWindowResponse,
   isConnectionResponse,
+  isEgressWindowSuccess,
   type PairResponse,
 } from "../shared/messages.ts";
 import {
@@ -105,30 +106,39 @@ async function refreshLedgerSummary(): Promise<void> {
     renderLedgerSummary(host, { state: "error", reason: "unreachable" });
     return;
   }
-  if (res === undefined || typeof res !== "object" || res.kind !== "egress-window") {
-    // `sendMessage` is typed `unknown` at the seam: a null, a stale reply, or a
-    // response for a different request must not be read as a window.
-    renderLedgerSummary(host, { state: "error", reason: "server_error" });
+  if (res !== undefined && isEgressWindowSuccess(res)) {
+    const { ours, others, unattributable } = res.partition;
+    renderLedgerSummary(host, {
+      state: "loaded",
+      // Actions, not rows: the partition has already had outcome markers split
+      // out of it, so this counts what the gateway DID rather than what it wrote.
+      actionsShown: ours.length + others.length + unattributable.length,
+      oursCount: ours.length,
+      rowsTruncated: res.rowsTruncated,
+    });
     return;
   }
-  if (!res.ok) {
+  // A null, a stale reply, or a response for a different request must not be read
+  // as a window — `typeof res === "object"` does NOT reject null, which is how a
+  // null reply used to reach `res.kind` and throw.
+  const failure =
+    res !== undefined &&
+    typeof res === "object" &&
+    res !== null &&
+    (res as { kind?: unknown }).kind === "egress-window"
+      ? (res as Extract<EgressWindowResponse, { ok: false }>)
+      : null;
+  if (failure !== null && failure.ok === false) {
     renderLedgerSummary(
       host,
-      res.scopeGap === undefined
-        ? { state: "error", reason: res.reason }
-        : { state: "error", reason: res.reason, scopeGap: res.scopeGap },
+      failure.scopeGap === undefined
+        ? { state: "error", reason: failure.reason }
+        : { state: "error", reason: failure.reason, scopeGap: failure.scopeGap },
     );
     return;
   }
-  const { ours, others, unattributable } = res.partition;
-  renderLedgerSummary(host, {
-    state: "loaded",
-    // Actions, not rows: the partition has already had outcome markers split out
-    // of it, so this counts what the gateway DID rather than what it wrote down.
-    actionsShown: ours.length + others.length + unattributable.length,
-    oursCount: ours.length,
-    rowsTruncated: res.rowsTruncated,
-  });
+  // `ok: true` that failed the guard above is malformed — reported, never read.
+  renderLedgerSummary(host, { state: "error", reason: "server_error" });
 }
 
 async function refreshConnection(): Promise<void> {

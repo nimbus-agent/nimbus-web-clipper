@@ -686,7 +686,8 @@ describe("trust panel: the activity summary (#trust-ledger)", () => {
       kind: "egress-window",
       ok: true,
       partition: { ours: [{ id: 1 }, { id: 2 }], others: [{ id: 3 }], unattributable: [] },
-      rowsTotal: 3,
+      ourLabel: "MacBook",
+      outcomes: {},
       rowsTruncated: false,
     });
     expect(el("trust-ledger").textContent).toContain("3 outbound actions recorded");
@@ -698,7 +699,8 @@ describe("trust panel: the activity summary (#trust-ledger)", () => {
       kind: "egress-window",
       ok: true,
       partition: { ours: [{ id: 1 }], others: [], unattributable: [] },
-      rowsTotal: 900,
+      ourLabel: "MacBook",
+      outcomes: {},
       rowsTruncated: true,
     });
     expect(el("trust-ledger").textContent).toContain("at least 1");
@@ -719,6 +721,18 @@ describe("trust panel: the activity summary (#trust-ledger)", () => {
     expect(el("trust-ledger").textContent).toContain(
       "nimbus clip scopes mock-device --set clip,egress",
     );
+  });
+
+  test("a NULL reply reports rather than throwing", async () => {
+    // `typeof null === "object"`, so the old hand-rolled shape check let null
+    // through to `res.kind` and threw.
+    await bootWith(null);
+    expect((el("trust-ledger").textContent ?? "").trim().length).toBeGreaterThan(0);
+  });
+
+  test("a malformed success is reported, never destructured", async () => {
+    await bootWith({ kind: "egress-window", ok: true });
+    expect((el("trust-ledger").textContent ?? "").trim().length).toBeGreaterThan(0);
   });
 
   test("a dead service worker reports rather than rendering a blank line", async () => {
