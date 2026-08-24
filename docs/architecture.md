@@ -1382,9 +1382,21 @@ from a broken chain — saying "did not verify" on a transport failure would cla
 evidence we do not have. A broken chain names the first bad row when the gateway
 gave one and omits the clause when it did not.
 
-Counts never come from a page. `rowsTotal` is counted in SQL by the gateway over
-the whole window; the summary line says "at least N" for the per-client split
-whenever the page is a truncated view of it.
+**An outcome is an annotation, not an action.** The gateway records how a fetch
+ended in a SECOND row — a `source_type: "outcome"` marker naming its authorising
+row by that row's `rowHash`. `splitOutcomes` takes those out of the displayed
+list before `partitionRows` runs, so a marker is never listed as a row of its own
+and never asked "who caused this". The marker carries a higher id than the row it
+describes and the read is newest-first, so it arrives FIRST and the pair
+routinely straddles a page boundary: an orphan marker is simply not rendered, and
+an action whose marker is on another page reads as "Outcome not recorded" —
+which, from that page's evidence, is the same thing. The page never says
+"in flight"; the ledger cannot support that claim.
+
+Counts are of ACTIONS, never rows. The gateway's `rowsTotal` includes markers —
+boot markers and outcome markers alike — so the trust-panel summary counts the
+partition instead, and says "at least N" for both figures whenever the page is a
+truncated view of the window.
 
 ## Two state machines worth understanding
 

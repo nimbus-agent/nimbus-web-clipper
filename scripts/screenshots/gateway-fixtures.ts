@@ -247,6 +247,22 @@ export const INDEX_BRIEF_REPORT = {
 export const EGRESS_WINDOW = {
   rows: [
     {
+      // The outcome marker for the targeted fetch below. Higher id, so a
+      // newest-first read hands it over BEFORE the row it describes — which is
+      // exactly the ordering the page has to cope with.
+      id: 5,
+      timestamp: 1_755_600_500_000,
+      sourceType: "outcome",
+      sourceId: "c3".repeat(32),
+      destination: "github",
+      method: "items.fetch.outcome",
+      payloadSummary: '{"status":"indexed","itemId":"github:acme/web#482"}',
+      hitlStatus: "not_required",
+      resultStatus: "authorized",
+      rowHash: "e5".repeat(32),
+      prevHash: "d4".repeat(32),
+    },
+    {
       id: 4,
       timestamp: 1_755_600_000_000,
       sourceType: "sync",
@@ -302,20 +318,20 @@ export const EGRESS_WINDOW = {
       prevHash: "00".repeat(32),
     },
   ],
-  rowsTotal: 4,
+  rowsTotal: 5,
   rowsTruncated: false,
 } as const;
 
-export const EGRESS_HEAD = { head: "d4".repeat(32), count: 4 } as const;
+export const EGRESS_HEAD = { head: "e5".repeat(32), count: 5 } as const;
 
 /** The gateway's own verdict vocabulary — `ok`/`verifiedRows`, not a re-spelling. */
-export const EGRESS_VERIFY = { ok: true, verifiedRows: 4 } as const;
+export const EGRESS_VERIFY = { ok: true, verifiedRows: 5 } as const;
 
 export const EGRESS_PROVE = {
   digest: "ab".repeat(32),
   sigB64: "c2lnbmF0dXJl",
   pubkeyB64: "cHVibGlja2V5",
-  rowsTotal: 4,
+  rowsTotal: 5,
   rowsTruncated: false,
 } as const;
 

@@ -21,6 +21,22 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   the pre-send preview. Such an address is now refused, and the clip is filed
   under the address bar instead.
 
+- **The Activity page said every fetch was authorised, and never how it ended.**
+  Your gateway records a fetch before it makes it — deliberately, so a fetch it
+  cannot record is a fetch it does not make — which meant the page could only
+  ever report that a fetch was *allowed*, not whether it found anything. It now
+  shows the outcome beside each one: what was indexed, what was not found and
+  why, what the provider rate-limited. Where no outcome was recorded it says
+  exactly that, and never that a fetch is still running — a gateway older than
+  the change leaves rows indistinguishable from ones whose outcome was lost.
+  Requires **gateway 2.18.0** or later (Nimbus#1325).
+
+- **The trust panel counted the gateway's bookkeeping as things it had done.**
+  "N outbound actions recorded" was counting every row in your gateway's record,
+  including the entries it writes about itself — a marker at each startup, and
+  now one per completed fetch. The line now counts only actions, so the number
+  matches what the Activity page lists.
+
 - **A page could decide which of your clips it overwrote.** The address a page
   declares as its canonical one was forwarded to Nimbus exactly as written, and
   Nimbus files a clip under that address — so a page declaring a relative

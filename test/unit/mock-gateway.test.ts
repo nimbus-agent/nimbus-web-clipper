@@ -101,9 +101,9 @@ describe("the four egress-ledger reads", () => {
     const res = await get("/v1/egress");
     expect(res.status).toBe(200);
     const body = (await res.json()) as { rows: { id: number }[]; rowsTotal: number };
-    expect(body.rows.map((r) => r.id)).toEqual([4, 3, 2, 1]);
+    expect(body.rows.map((r) => r.id)).toEqual([5, 4, 3, 2, 1]);
     // Not derived from `rows` — the whole reason the route returns it.
-    expect(body.rowsTotal).toBe(4);
+    expect(body.rowsTotal).toBe(5);
   });
 
   it("covers every row shape the page has to tell apart", async () => {
@@ -111,7 +111,10 @@ describe("the four egress-ledger reads", () => {
       rows: { sourceType: string; sourceId: string | null; method: string }[];
     };
     const shapes = body.rows.map((r) => `${r.sourceType}:${r.method}:${r.sourceId ?? "null"}`);
+    // The outcome marker leads, because it carries a HIGHER id than the fetch it
+    // describes and the read is newest-first — the ordering the page must cope with.
     expect(shapes).toEqual([
+      "outcome:items.fetch.outcome:" + "c3".repeat(32),
       "sync:sync.run:null",
       "sync:items.fetch:null",
       "http:agents.impact:nimbus-editor",
@@ -121,12 +124,12 @@ describe("the four egress-ledger reads", () => {
 
   it("serves head, verify and prove in the gateway's own vocabulary", async () => {
     const head = (await (await get("/v1/egress/head")).json()) as Record<string, unknown>;
-    expect(head["count"]).toBe(4);
+    expect(head["count"]).toBe(5);
 
     // `ok` / `verifiedRows`, not a client-side re-spelling of them.
     const verify = (await (await get("/v1/egress/verify")).json()) as Record<string, unknown>;
     expect(verify["ok"]).toBe(true);
-    expect(verify["verifiedRows"]).toBe(4);
+    expect(verify["verifiedRows"]).toBe(5);
 
     const prove = (await (await get("/v1/egress/prove")).json()) as Record<string, unknown>;
     expect(prove["digest"]).toEqual(expect.any(String));
@@ -145,8 +148,8 @@ describe("the four egress-ledger reads", () => {
       rowsTotal: number;
       rowsTruncated: boolean;
     };
-    expect(limited.rows.map((r) => r.id)).toEqual([4, 3]);
-    expect(limited.rowsTotal).toBe(4);
+    expect(limited.rows.map((r) => r.id)).toEqual([5, 4]);
+    expect(limited.rowsTotal).toBe(5);
     expect(limited.rowsTruncated).toBe(true);
   });
 

@@ -16,7 +16,16 @@ import type { ScopeGap } from "../shared/types.ts";
 export type LedgerSummaryModel =
   | {
       readonly state: "loaded";
-      readonly rowsTotal: number;
+      /**
+       * ACTIONS in the page, not rows.
+       *
+       * The gateway's `rowsTotal` counts every row in the window, markers
+       * included — boot markers and outcome markers among them — so reporting it
+       * as "outbound actions" over-counted. Markers are bookkeeping about egress,
+       * not egress; upstream excludes them from its own outbound count for
+       * exactly this reason.
+       */
+      readonly actionsShown: number;
       readonly oursCount: number;
       readonly rowsTruncated: boolean;
     }
@@ -46,16 +55,15 @@ function el(tag: string, className: string, text: string): HTMLElement {
 /**
  * The counts, phrased to match how much is actually known.
  *
- * `rowsTotal` is counted in SQL by the gateway over the whole window;
- * `oursCount` can only be counted from the page it returned. When the page is
- * the whole window both are facts. When it is not, the split becomes a floor —
- * stating it as exact would under-report, which is the failure the route's
- * totals exist to prevent.
+ * Both numbers are counted from the page. When the page IS the whole window
+ * (`rowsTruncated === false`) that is exact and may be stated plainly. When it is
+ * not, both become floors — "at least" — because a longer window holds more of
+ * each and claiming otherwise would under-report.
  */
-function loadedText(rowsTotal: number, oursCount: number, truncated: boolean): string {
+function loadedText(actionsShown: number, oursCount: number, truncated: boolean): string {
   return truncated
-    ? `${rowsTotal} outbound actions recorded — at least ${oursCount} from this browser in the most recent page.`
-    : `${rowsTotal} outbound actions recorded, ${oursCount} of them from this browser.`;
+    ? `At least ${actionsShown} outbound actions recorded, at least ${oursCount} of them from this browser.`
+    : `${actionsShown} outbound actions recorded, ${oursCount} of them from this browser.`;
 }
 
 export function renderLedgerSummary(root: HTMLElement, model: LedgerSummaryModel): void {
@@ -65,7 +73,7 @@ export function renderLedgerSummary(root: HTMLElement, model: LedgerSummaryModel
       el(
         "span",
         "trust-ledger__counts",
-        loadedText(model.rowsTotal, model.oursCount, model.rowsTruncated),
+        loadedText(model.actionsShown, model.oursCount, model.rowsTruncated),
       ),
     );
     return;
