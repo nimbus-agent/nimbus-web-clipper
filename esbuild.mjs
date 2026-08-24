@@ -30,6 +30,7 @@ const ENTRIES = [
   { in: "src/capture/toast-in-page.ts", out: "toast" },
   { in: "src/panel/cue-in-page.ts", out: "cue" },
   { in: "src/brief/brief.ts", out: "brief" },
+  { in: "src/ledger/ledger.ts", out: "ledger" },
 ];
 
 // Static assets copied verbatim into each target dir.
@@ -40,6 +41,8 @@ const HTML_CSS = [
   "src/options/options.css",
   "src/brief/brief.html",
   "src/brief/brief.css",
+  "src/ledger/ledger.html",
+  "src/ledger/ledger.css",
 ];
 
 function jsOptions(target) {

@@ -42,6 +42,8 @@ const FIXTURE = `
   <section id="stage-trust">
     <span id="trust-origin"></span>
     <span id="trust-hosts"></span>
+    <span id="trust-ledger"></span>
+    <button id="trust-ledger-open" type="button">Open Activity</button>
     <input id="preview-toggle" type="checkbox" checked />
     <input id="index-toggle" type="checkbox" />
   </section>
@@ -666,6 +668,76 @@ describe("options.html stages", () => {
     // A tooltip is invisible to touch and to keyboard users, for exactly the
     // sentence they most need. src/ contains no title= anywhere; keep it that way.
     expect(html).not.toContain("title=");
+  });
+});
+
+describe("trust panel: the activity summary (#trust-ledger)", () => {
+  /** A kind-aware reply table — the panel now sends two different messages. */
+  function bootWith(egress: unknown): Promise<void> {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) =>
+      m.kind === "egress-window" ? egress : unpaired,
+    );
+    return bootOptions();
+  }
+
+  test("states the window total and our share", async () => {
+    await bootWith({
+      kind: "egress-window",
+      ok: true,
+      partition: { ours: [{ id: 1 }, { id: 2 }], others: [{ id: 3 }], unattributable: [] },
+      rowsTotal: 3,
+      rowsTruncated: false,
+    });
+    expect(el("trust-ledger").textContent).toContain("3 outbound actions recorded");
+    expect(el("trust-ledger").textContent).toContain("2 of them from this browser");
+  });
+
+  test("says at-least when the window is truncated, never an exact split", async () => {
+    await bootWith({
+      kind: "egress-window",
+      ok: true,
+      partition: { ours: [{ id: 1 }], others: [], unattributable: [] },
+      rowsTotal: 900,
+      rowsTruncated: true,
+    });
+    expect(el("trust-ledger").textContent).toContain("at least 1");
+  });
+
+  test("names a too-old gateway rather than showing nothing", async () => {
+    await bootWith({ kind: "egress-window", ok: false, reason: "unsupported" });
+    expect(el("trust-ledger").textContent).toContain("does not offer");
+  });
+
+  test("renders the built scope command when the scope is missing", async () => {
+    await bootWith({
+      kind: "egress-window",
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: { label: "mock-device", required: "egress", granted: ["clip"] },
+    });
+    expect(el("trust-ledger").textContent).toContain(
+      "nimbus clip scopes mock-device --set clip,egress",
+    );
+  });
+
+  test("a dead service worker reports rather than rendering a blank line", async () => {
+    await bootWith(undefined);
+    expect((el("trust-ledger").textContent ?? "").trim().length).toBeGreaterThan(0);
+  });
+
+  test("a REJECTING channel reports rather than throwing", async () => {
+    // An unguarded await here surfaces as an unhandled rejection that fails the
+    // whole run — which is exactly how CI caught it.
+    harness = installChromeMock();
+    harness.sendMessage.mockRejectedValue(new Error("channel closed"));
+    await bootOptions();
+    expect(el("trust-ledger").textContent).toContain("Could not read");
+  });
+
+  test("a reply for a DIFFERENT request is not read as a window", async () => {
+    await bootWith({ kind: "connection", paired: false });
+    expect((el("trust-ledger").textContent ?? "").trim().length).toBeGreaterThan(0);
   });
 });
 

@@ -68,6 +68,21 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **You can now see what your gateway went and got for you.** Nimbus could
+  already show you everything that left the browser before it left; what it
+  could not show you was the other direction — the fetches and agent runs it
+  asked your gateway to make on your behalf. A new **Activity** page lists them:
+  when, which service, what kind of action, and whether it was authorised or
+  blocked. It is read from your gateway's own append-only record every time you
+  open it, and Nimbus keeps no copy of its own, so the page cannot quietly
+  disagree with `nimbus prove`. You can check the record's tamper-evident chain
+  on demand — the page never claims it is verified until you ask — and export
+  the signed result. The "Where your data goes" panel gains the matching
+  one-line summary and a way in. Requires **gateway 2.16.0** or later
+  (Nimbus#1319); an older one is named as such rather than shown an empty list.
+  The scope it needs is granted to an existing pairing with
+  `nimbus clip scopes <device> --set <scopes>` — no re-pairing.
+
 - **A clip is now a record you can cite.** Every clip carried the page's text
   and its address and nothing else — the byline, the publication date, the
   publication's name, the language and the article's lead image were all sitting

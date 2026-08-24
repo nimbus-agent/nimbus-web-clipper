@@ -6,6 +6,7 @@ import { getAllCommands } from "../browser/commands.ts";
 import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.ts";
 import { isFirefoxRuntime, sendMessage } from "../browser/runtime.ts";
 import { isBriefLogEntry } from "../shared/brief-log.ts";
+import type { EgressWindowResponse } from "../shared/messages.ts";
 import {
   type DiscoverResponse,
   isConnectionResponse,
@@ -21,6 +22,7 @@ import {
 import { BUILT_IN_SURFACES } from "../shared/recognise.ts";
 import type { ConfiguredOrigin } from "../shared/types.ts";
 import { renderBriefLog } from "./brief-log-view.ts";
+import { renderLedgerSummary } from "./ledger-summary-view.ts";
 import { applyStages, healthLine, stagesFrom } from "./setup-view.ts";
 import { renderShortcuts, shortcutRows, shortcutsHint } from "./shortcuts-view.ts";
 import { renderSurfaceList, type SurfaceRow, sharedHostNote } from "./surfaces-view.ts";
@@ -78,6 +80,52 @@ function renderConnection(res: unknown): void {
   if (trustOrigin !== null) {
     trustOrigin.textContent = res.paired ? res.origin : "your local gateway (not paired yet)";
   }
+}
+
+/**
+ * The trust panel's second half. Read-only, and it never claims verification —
+ * that is an explicit action, and its result belongs on the Activity page.
+ *
+ * `oursCount` comes from the partition the worker computed with the stored
+ * device label, so this line and the page cannot disagree about what is ours.
+ */
+async function refreshLedgerSummary(): Promise<void> {
+  const host = document.getElementById("trust-ledger");
+  if (host === null) {
+    return;
+  }
+  let res: EgressWindowResponse | undefined;
+  try {
+    res = (await sendMessage({ kind: "egress-window" })) as EgressWindowResponse | undefined;
+  } catch {
+    // The message channel rejected (service worker asleep or erroring). Same
+    // posture as `refreshConnection`: report, never throw. An unguarded await
+    // here surfaces as an unhandled rejection that fails the whole test run,
+    // and in the browser would abandon the rest of the panel's render.
+    renderLedgerSummary(host, { state: "error", reason: "unreachable" });
+    return;
+  }
+  if (res === undefined || typeof res !== "object" || res.kind !== "egress-window") {
+    // `sendMessage` is typed `unknown` at the seam: a null, a stale reply, or a
+    // response for a different request must not be read as a window.
+    renderLedgerSummary(host, { state: "error", reason: "server_error" });
+    return;
+  }
+  if (!res.ok) {
+    renderLedgerSummary(
+      host,
+      res.scopeGap === undefined
+        ? { state: "error", reason: res.reason }
+        : { state: "error", reason: res.reason, scopeGap: res.scopeGap },
+    );
+    return;
+  }
+  renderLedgerSummary(host, {
+    state: "loaded",
+    rowsTotal: res.rowsTotal,
+    oursCount: res.partition.ours.length,
+    rowsTruncated: res.rowsTruncated,
+  });
 }
 
 async function refreshConnection(): Promise<void> {
@@ -517,7 +565,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
   void refreshConnection();
+  void refreshLedgerSummary();
   void refreshSurfaces();
+  document.getElementById("trust-ledger-open")?.addEventListener("click", () => {
+    void chrome.tabs.create({ url: chrome.runtime.getURL("ledger.html") }).catch(() => undefined);
+  });
   void refreshShortcuts();
   void refreshPreviewToggle();
   void refreshIndexToggle();

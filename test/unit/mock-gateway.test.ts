@@ -87,6 +87,77 @@ describe("mock gateway fixtures — locked contract shape", () => {
   });
 });
 
+describe("the four egress-ledger reads", () => {
+  const get = (path: string, scenario?: Parameters<typeof handleRequest>[1]) =>
+    handleRequest(
+      new Request(`http://127.0.0.1:8765${path}`, {
+        method: "GET",
+        headers: { authorization: "Bearer test-token" },
+      }),
+      scenario,
+    );
+
+  it("serves a window newest-first, with totals counted over the whole window", async () => {
+    const res = await get("/v1/egress");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rows: { id: number }[]; rowsTotal: number };
+    expect(body.rows.map((r) => r.id)).toEqual([4, 3, 2, 1]);
+    // Not derived from `rows` — the whole reason the route returns it.
+    expect(body.rowsTotal).toBe(4);
+  });
+
+  it("covers every row shape the page has to tell apart", async () => {
+    const body = (await (await get("/v1/egress")).json()) as {
+      rows: { sourceType: string; sourceId: string | null; method: string }[];
+    };
+    const shapes = body.rows.map((r) => `${r.sourceType}:${r.method}:${r.sourceId ?? "null"}`);
+    expect(shapes).toEqual([
+      "sync:sync.run:null",
+      "sync:items.fetch:null",
+      "http:agents.impact:nimbus-editor",
+      "http:agents.why:Mock Device",
+    ]);
+  });
+
+  it("serves head, verify and prove in the gateway's own vocabulary", async () => {
+    const head = (await (await get("/v1/egress/head")).json()) as Record<string, unknown>;
+    expect(head["count"]).toBe(4);
+
+    // `ok` / `verifiedRows`, not a client-side re-spelling of them.
+    const verify = (await (await get("/v1/egress/verify")).json()) as Record<string, unknown>;
+    expect(verify["ok"]).toBe(true);
+    expect(verify["verifiedRows"]).toBe(4);
+
+    const prove = (await (await get("/v1/egress/prove")).json()) as Record<string, unknown>;
+    expect(prove["digest"]).toEqual(expect.any(String));
+    expect(prove["sigB64"]).toEqual(expect.any(String));
+    expect(prove["pubkeyB64"]).toEqual(expect.any(String));
+  });
+
+  it("honours the before cursor and the limit", async () => {
+    // A mock that ignored the cursor would answer every page with the same rows,
+    // so a paging test could pass against a client that never sent one.
+    const page = (await (await get("/v1/egress?before=3")).json()) as { rows: { id: number }[] };
+    expect(page.rows.map((r) => r.id)).toEqual([2, 1]);
+
+    const limited = (await (await get("/v1/egress?limit=2")).json()) as {
+      rows: { id: number }[];
+      rowsTotal: number;
+      rowsTruncated: boolean;
+    };
+    expect(limited.rows.map((r) => r.id)).toEqual([4, 3]);
+    expect(limited.rowsTotal).toBe(4);
+    expect(limited.rowsTruncated).toBe(true);
+  });
+
+  it("honours a status override, so a suite can force 403 and 404", async () => {
+    // 404 is the too-old gateway; 403 is the ungranted `egress` scope. Both are
+    // states the page must render distinctly, so both must be forceable.
+    expect((await get("/v1/egress", { status: { "/v1/egress": 404 } })).status).toBe(404);
+    expect((await get("/v1/egress", { status: { "/v1/egress": 403 } })).status).toBe(403);
+  });
+});
+
 describe("brief run routes — method-checked per action", () => {
   // One shared `runs` map per test, threaded through every call — the default
   // parameter on `handleRequest` mints a FRESH one per call, so a run created

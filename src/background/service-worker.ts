@@ -33,6 +33,9 @@ import {
   isConnectionStatusRequest,
   isCueOpenRequest,
   isDiscoverRequest,
+  isEgressProveRequest,
+  isEgressVerifyRequest,
+  isEgressWindowRequest,
   isFetchRequest,
   isPairRequest,
   isPassageClearRequest,
@@ -78,6 +81,13 @@ import {
   markStale,
   setConnection,
 } from "./connection-store.ts";
+import { listEgress, proveEgressWindow, verifyEgress } from "./egress-client.ts";
+import {
+  type EgressDeps,
+  handleEgressProve,
+  handleEgressVerify,
+  handleEgressWindow,
+} from "./egress-handlers.ts";
 import { showFeedback } from "./feedback.ts";
 import {
   confirmPair,
@@ -597,6 +607,47 @@ async function resumeBriefPolls(): Promise<void> {
       }),
   );
   await disarmBriefAlarmIfIdle();
+}
+
+/**
+ * The egress-ledger reads. No writer, deliberately — see egress-handlers.ts.
+ */
+const egressDeps: EgressDeps = {
+  getConnection,
+  listEgress,
+  verifyEgress,
+  proveEgressWindow,
+};
+
+/**
+ * The three ledger kinds, narrowed off the raw message by prefix.
+ *
+ * A prefix check plus a fan-out, exactly like `isBriefMessage` below and for the
+ * same reason: the router is at Sonar's cognitive-complexity cap (S3776, 15), so
+ * these three kinds arrive through ONE branch and are re-narrowed by their real
+ * guards inside the fan-out.
+ */
+type EgressMessage = { readonly kind: string };
+
+function isEgressMessage(v: unknown): v is EgressMessage {
+  if (typeof v !== "object" || v === null) {
+    return false;
+  }
+  const kind = (v as { kind?: unknown }).kind;
+  return typeof kind === "string" && kind.startsWith("egress-");
+}
+
+async function routeEgressMessage(message: EgressMessage): Promise<unknown> {
+  if (isEgressWindowRequest(message)) {
+    return await handleEgressWindow(egressDeps, message);
+  }
+  if (isEgressVerifyRequest(message)) {
+    return await handleEgressVerify(egressDeps, message);
+  }
+  if (isEgressProveRequest(message)) {
+    return await handleEgressProve(egressDeps, message);
+  }
+  return { kind: message.kind, ok: false, reason: "server_error" };
 }
 
 /**
@@ -1133,6 +1184,19 @@ addMessageListener((message, rawRespond, sender) => {
   // ONE branch for six kinds — the fan-out lives in `routeBriefMessage` so this
   // router stays under S3776's cap. Placed before the narrower guards below only
   // because its own guard is exact (a `brief-` prefix plus an optional string id).
+  // ONE branch for the three ledger reads, same shape and same reason as the
+  // brief branch below.
+  if (isEgressMessage(message)) {
+    routeEgressMessage(message)
+      .then(respond)
+      .catch(() => {
+        // The REQUEST's kind, not a fixed one: each caller narrows on its own
+        // discriminant, and an `egress-window` reply to a verify request does
+        // not match that request's response union.
+        respond({ kind: message.kind, ok: false, reason: "server_error" });
+      });
+    return true;
+  }
   if (isBriefMessage(message)) {
     routeBriefMessage(message)
       .then(respond)

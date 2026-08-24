@@ -10,6 +10,10 @@ import {
   AGENT_RUN_DONE,
   BRIEF_REPORT,
   CLIP_INGEST,
+  EGRESS_HEAD,
+  EGRESS_PROVE,
+  EGRESS_VERIFY,
+  EGRESS_WINDOW,
   FETCH_FIXTURE,
   type FedBriefCreate,
   type FedBriefSource,
@@ -168,6 +172,42 @@ export async function handleRequest(
     const target = url.searchParams.get("url") ?? "";
     const keyed = scenario.resolve?.[target];
     return jsonResponse(keyed ?? scenario.resolveDefault ?? RESOLVE_FIXTURE);
+  }
+  // The four egress-ledger reads. GETs, checked before the POST-only gate below.
+  // `egress` is matched before its three children because none of them is a
+  // prefix of another — an exact match each, same as the real route table.
+  if (req.method === "GET" && url.pathname === GATEWAY_PATHS.egress) {
+    if (scenario.egress !== undefined) {
+      return jsonResponse(scenario.egress);
+    }
+    // Honour `before` and `limit` against the default fixture. A mock that
+    // ignored the cursor would answer every page with the same four rows, so a
+    // paging test could pass against a client that never sent one.
+    const before = Number.parseInt(url.searchParams.get("before") ?? "", 10);
+    const limit = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
+    let rows = [...EGRESS_WINDOW.rows];
+    if (Number.isSafeInteger(before)) {
+      rows = rows.filter((r) => r.id < before);
+    }
+    if (Number.isSafeInteger(limit) && limit > 0) {
+      rows = rows.slice(0, limit);
+    }
+    return jsonResponse({
+      rows,
+      // Counted over the WHOLE window, never the page — the property the real
+      // route exists to provide.
+      rowsTotal: EGRESS_WINDOW.rowsTotal,
+      rowsTruncated: rows.length < EGRESS_WINDOW.rowsTotal,
+    });
+  }
+  if (req.method === "GET" && url.pathname === GATEWAY_PATHS.egressHead) {
+    return jsonResponse(scenario.egressHead ?? EGRESS_HEAD);
+  }
+  if (req.method === "GET" && url.pathname === GATEWAY_PATHS.egressVerify) {
+    return jsonResponse(scenario.egressVerify ?? EGRESS_VERIFY);
+  }
+  if (req.method === "GET" && url.pathname === GATEWAY_PATHS.egressProve) {
+    return jsonResponse(scenario.egressProve ?? EGRESS_PROVE);
   }
   // `GET /v1/agents/runs/{id}` — the poll route. Checked ahead of the
   // POST-only gate below because it is the one GET route under `/v1/agents`;
