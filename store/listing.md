@@ -48,7 +48,7 @@ Features:
 - Related items — an on-demand panel of related items already in your index.
 - Offline retry queue — clips made while the gateway is down are saved and retried automatically.
 
-Requires a running Nimbus gateway with the web-clipper surface. See https://nimbus-agent.dev/user-guide/install/.
+Requires a running Nimbus gateway with the web-clipper surface, version 2.18.0 or later for every feature listed above. An older gateway still works: each surface tells you what that gateway cannot do rather than failing silently. See https://nimbus-agent.dev/user-guide/install/.
 
 ## URLs
 
