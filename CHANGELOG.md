@@ -78,7 +78,7 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   disagree with `nimbus prove`. You can check the record's tamper-evident chain
   on demand — the page never claims it is verified until you ask — and export
   the signed result. The "Where your data goes" panel gains the matching
-  one-line summary and a way in. Requires a gateway offering `GET /v1/egress`
+  one-line summary and a way in. Requires **gateway 2.16.0** or later
   (Nimbus#1319); an older one is named as such rather than shown an empty list.
   The scope it needs is granted to an existing pairing with
   `nimbus clip scopes <device> --set <scopes>` — no re-pairing.
