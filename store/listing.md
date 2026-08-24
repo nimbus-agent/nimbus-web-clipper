@@ -9,7 +9,7 @@ Nimbus Web Clipper
 
 ## Short summary
 
-Clip articles and selections into your private, local-first Nimbus index. Loopback-only, no telemetry, no cloud.
+Bring your local-first Nimbus index to the page you're on — clip it, ask about it, see what Nimbus already knows. No cloud.
 
 <!-- ≤132 chars (Chrome Web Store) — the line above is within budget; AMO summary reuses it (≤250). -->
 
@@ -19,9 +19,9 @@ Productivity
 
 ## Single purpose (Chrome Web Store)
 
-Clip the readable article or the current selection from the active tab into the
-user's local-first Nimbus index running on 127.0.0.1, and show related indexed
-items on demand.
+Connect the page in the active tab to the user's local-first Nimbus index
+running on 127.0.0.1 — clipping the readable article or selection into it, and
+surfacing what that index already holds about the page.
 
 ## Full description
 
@@ -30,8 +30,10 @@ the browser.
 
 Nimbus Web Clipper clips the readable article or your current text selection into
 Nimbus, where it becomes searchable alongside your Drive files, email, and
-bookmarks. An on-demand panel surfaces related things already in your index,
-without leaving the tab.
+bookmarks. It also works the other way round: on a page Nimbus already knows — a
+pull request, a build, an issue — it recognises where you are, finds the matching
+item in your index, and lets you ask your own agents about it without leaving the
+tab.
 
 Everything stays on your machine. The extension talks only to a Nimbus gateway
 running on 127.0.0.1 — there are no remote servers, no telemetry, and no cloud
@@ -42,13 +44,18 @@ the only secret the extension holds; it lives in the browser's extension storage
 and is revocable from the gateway with `nimbus clip revoke`.
 
 Features:
-- Clip an article — extract the readable content of the current page.
+- Clip an article — extract the readable content of the current page, with the byline, date and publication kept so a clip is a record you can cite.
 - Clip a selection — highlight text and clip just that, with optional tags.
 - Quick clip — clip the page or a selection without opening the popup: right-click → "Clip page / Clip selection to Nimbus", or press Alt+Shift+C / Alt+Shift+S. A small in-page toast confirms the result.
-- Related items — an on-demand panel of related items already in your index.
+- Knows where you are — on a GitHub, GitLab or Bitbucket pull request, a Jenkins build or a Jira issue, the panel names the item your index already holds for that page. Self-hosted instances are configurable, and page access is granted per site, off by default.
+- Ask your own agents — on a resolved pull request, ask why a change exists, what breaks if it lands, or who should review it, answered by the agents already running on your gateway.
+- Research briefs — ask one question across several tabs you have open, or across passages you highlighted, and get an answer with citations back to the sources.
+- Related items — an on-demand panel of related items already in your index, with what each one is and how fresh it is.
+- See what leaves, before it leaves — clipping from the toolbar shows the whole payload and sends nothing until you confirm.
+- Activity — what your gateway did on your behalf: what it fetched, when, and how each one ended, read from the gateway's own tamper-evident record.
 - Offline retry queue — clips made while the gateway is down are saved and retried automatically.
 
-Requires a running Nimbus gateway with the web-clipper surface. See https://nimbus-agent.dev/user-guide/install/.
+Requires a running Nimbus gateway with the web-clipper surface, version 2.18.0 or later for every feature listed above. An older gateway still works: each surface tells you what that gateway cannot do rather than failing silently. See https://nimbus-agent.dev/user-guide/install/.
 
 ## URLs
 

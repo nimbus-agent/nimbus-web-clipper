@@ -8,6 +8,18 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-24
+
+The release in which the clipper became a client. Alongside capture, the
+extension now recognises the page you are on, resolves it to an item your
+gateway has already indexed, runs your agents against it without a context
+switch, answers questions across several open tabs, and shows you what your
+gateway did on your behalf.
+
+**Requires gateway 2.18.0 or later for everything here.** Older gateways are
+supported and say so: each surface names what it cannot do rather than failing
+silently or showing an empty result.
+
 ### Fixed
 
 - **Two refusals of a page's canonical address said the wrong thing, and one
@@ -395,6 +407,7 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   extension storage; never logged, never placed in the page or popup/options
   DOM, and never returned to the UI. The pairing code is likewise never logged.
 
-[Unreleased]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.2.0...v0.5.0
 [0.2.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/nimbus-agent/nimbus-web-clipper/releases/tag/v0.1.0
