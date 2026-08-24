@@ -50,6 +50,34 @@ describe("isEgressRow", () => {
   });
 });
 
+describe("isEgressRow — the rejection paths", () => {
+  // These guards exist to stop a wire value the types say cannot occur from
+  // reaching a consumer that narrowed on it. An untested rejection path is a
+  // guard nobody has watched refuse anything.
+  it("rejects a non-object", () => {
+    expect(isEgressRow(null)).toBe(false);
+    expect(isEgressRow("row")).toBe(false);
+    expect(isEgressRow(42)).toBe(false);
+  });
+
+  it("rejects a sourceId that is neither a string nor null", () => {
+    expect(isEgressRow({ ...row(), sourceId: 7 })).toBe(false);
+  });
+
+  it("rejects a non-string in any of the plain string fields", () => {
+    for (const key of [
+      "sourceType",
+      "destination",
+      "method",
+      "payloadSummary",
+      "rowHash",
+      "prevHash",
+    ]) {
+      expect(isEgressRow({ ...row(), [key]: 1 })).toBe(false);
+    }
+  });
+});
+
 describe("parseEgressWindow", () => {
   it("reads rows and the window totals", () => {
     expect(
@@ -61,6 +89,21 @@ describe("parseEgressWindow", () => {
     // Without totals the view would have to count the page, which is the exact
     // under-reporting the design forbids.
     expect(parseEgressWindow({ rows: [row()] })).toBeNull();
+  });
+
+  it("refuses a non-object body and one whose rows are not an array", () => {
+    expect(parseEgressWindow(null)).toBeNull();
+    expect(parseEgressWindow({ rows: "none", rowsTotal: 0, rowsTruncated: false })).toBeNull();
+  });
+
+  it("refuses a non-boolean rowsTruncated", () => {
+    // A truthy string here would read as "there is more", and the page would
+    // offer an Older button that pages into nothing.
+    expect(parseEgressWindow({ rows: [], rowsTotal: 0, rowsTruncated: "yes" })).toBeNull();
+  });
+
+  it("refuses a non-integer rowsTotal", () => {
+    expect(parseEgressWindow({ rows: [], rowsTotal: 1.5, rowsTruncated: false })).toBeNull();
   });
 
   it("refuses a body with one malformed row rather than silently dropping it", () => {
