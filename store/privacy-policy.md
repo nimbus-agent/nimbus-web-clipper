@@ -37,7 +37,10 @@ shared.
   anywhere else. You can revoke it at any time on the gateway with
   `nimbus clip revoke`.
 - **Offline clip queue.** Clips made while the gateway is unreachable are stored
-  locally and retried automatically. The bearer token is not stored in the queue.
+  locally and retried automatically, together with the time the next retry is due
+  — your gateway asks the extension to wait after a burst, and that deadline has
+  to survive the browser suspending the extension. The bearer token is not stored
+  in the queue.
 - **Passages you collect.** Text you explicitly add from a page, kept until you
   use it in a brief or clear it.
 - **Answers the gateway sent back.** Agent-lane briefs and research-brief
