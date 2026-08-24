@@ -17,6 +17,7 @@ import {
   type ResolveMatchKind,
   type ResolveOutcome,
 } from "../shared/types.ts";
+import { isObject, parseScopeGap, readJson } from "./http-json.ts";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -115,18 +116,6 @@ async function getJson(
 ): Promise<Response> {
   const qs = new URLSearchParams(query).toString();
   return getJsonAt(doFetch, `${endpointUrl(origin, endpoint)}?${qs}`, headers, timeoutMs);
-}
-
-async function readJson(res: Response): Promise<unknown> {
-  try {
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
 }
 
 export async function confirmPair(
@@ -414,20 +403,6 @@ export async function resolveItem(
 
 /** The 403 body's scope detail. Absent or malformed => omit it; the panel then
  *  falls back to generic guidance rather than inventing a command. */
-function parseScopeGap(v: unknown): { required: string; granted: string[] } | null {
-  if (!isObject(v) || typeof v["required"] !== "string" || !Array.isArray(v["granted"])) {
-    return null;
-  }
-  const granted: string[] = [];
-  for (const s of v["granted"]) {
-    if (typeof s !== "string") {
-      return null;
-    }
-    granted.push(s);
-  }
-  return { required: v["required"], granted };
-}
-
 /**
  * True for the abort our own timeout raises. Kept narrow deliberately: anything
  * else — DNS, connection refused, a killed service worker — is `unreachable`,

@@ -15,6 +15,7 @@ import {
   quotesWereOmitted,
   visibleGaps,
 } from "../shared/brief-report.ts";
+import { el } from "../shared/dom.ts";
 import { groupKey, type PassageGroup } from "../shared/passage.ts";
 import { safeHttpUrl } from "../shared/safe-url.ts";
 
@@ -127,21 +128,6 @@ export function composerRows(model: {
  *  detail of this module. */
 export function pickId(row: ComposerRow): string {
   return row.kind === "tab" ? `tab:${row.tab.id}` : `passages:${row.group.url}`;
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  text?: string,
-  className?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (text !== undefined) {
-    node.textContent = text;
-  }
-  if (className !== undefined) {
-    node.className = className;
-  }
-  return node;
 }
 
 /** Exported so ticking a box can refresh the counter WITHOUT redrawing the

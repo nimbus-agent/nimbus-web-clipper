@@ -1,16 +1,18 @@
 // src/background/agent-run-store.ts
 // Persistence for agent-lane runs, so a run outlives the panel: expand a lane,
-// close the panel, and the brief is waiting on reopen. Modelled on
-// clip-queue-store.ts — same storageGet/storageSet seam through
-// src/browser/storage.ts, same rule that stored data is external input to be
-// filtered through a guard and never cast, AND the same single-writer chain:
-// the SW is single-threaded but not single-task, so two `putRun` calls in
-// flight together (both lanes expanded on one item; a poll's `done` landing
-// while a fresh lane-start writes `running`) would otherwise read the same
-// snapshot and the second write would silently clobber the first.
-import { storageGet, storageSet } from "../browser/storage.ts";
+// close the panel, and the brief is waiting on reopen.
+//
+// The guarded read and the single-writer lock both come from keyed-store.ts,
+// which brief-run-store.ts shares: stored data is external input, to be
+// filtered through a guard and never cast; and the SW is single-threaded but
+// not single-task, so two `putRun` calls in flight together (both lanes
+// expanded on one item; a poll's `done` landing while a fresh lane-start writes
+// `running`) would otherwise read the same snapshot and the second write would
+// silently clobber the first.
+import { storageSet } from "../browser/storage.ts";
 import { isAgentError, isScopeGap } from "../shared/messages.ts";
 import { AGENT_LANES, type AgentLane, type LaneState } from "../shared/types.ts";
+import { createWriteChain, readGuarded } from "./keyed-store.ts";
 
 const STORE_KEY = "agentRuns";
 
@@ -160,20 +162,9 @@ function isStoredEntry(v: unknown): v is StoredEntry {
   );
 }
 
-/** Read the whole store, discarding anything that fails the guard. Storage is
- *  external input: a hand-edited or partially-written value must not throw. */
-async function readAll(): Promise<Record<string, StoredEntry>> {
-  const raw = await storageGet(STORE_KEY);
-  if (!isObject(raw)) {
-    return {};
-  }
-  const out: Record<string, StoredEntry> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (isStoredEntry(value)) {
-      out[key] = value;
-    }
-  }
-  return out;
+/** Read the whole store, discarding anything that fails the guard. */
+function readAll(): Promise<Record<string, StoredEntry>> {
+  return readGuarded(STORE_KEY, isStoredEntry);
 }
 
 /** Strip the internal `writtenAtMs` bookkeeping field before it crosses the
@@ -197,11 +188,8 @@ export async function getRun(
   return toStoredRun(found);
 }
 
-// Single-writer chain — see clip-queue-store.ts's `chain` for the identical
-// pattern and the reasoning: the SW is single-threaded but not single-task, so
-// concurrent callers awaiting storage would otherwise read the same snapshot
-// and clobber each other's write.
-let chain: Promise<unknown> = Promise.resolve();
+// Single-writer lock — see keyed-store.ts for the pattern and the reasoning.
+const exclusively = createWriteChain();
 
 /**
  * The cap is enforced on WRITE, not only on read: `putRun` evicts before
@@ -210,7 +198,7 @@ let chain: Promise<unknown> = Promise.resolve();
  * state is MAX_STORED_RUNS stale entries, each dropped the moment it is read.
  */
 export function putRun(run: StoredRun, nowMs: number): Promise<void> {
-  const next = chain.then(async () => {
+  return exclusively(async () => {
     const all = await readAll();
     const key = makeKey(run.subject, run.lane);
     const entries = Object.entries(all).filter(([k]) => k !== key);
@@ -233,9 +221,6 @@ export function putRun(run: StoredRun, nowMs: number): Promise<void> {
     }
     await storageSet(STORE_KEY, Object.fromEntries(entries));
   });
-  // Keep the lock chain alive whether or not this call resolved or rejected.
-  chain = next.catch(() => undefined);
-  return next;
 }
 
 /**
@@ -246,11 +231,9 @@ export function putRun(run: StoredRun, nowMs: number): Promise<void> {
  * rest of the TTL.
  */
 export function clearRuns(): Promise<void> {
-  const next = chain.then(async () => {
+  return exclusively(async () => {
     await storageSet(STORE_KEY, {});
   });
-  chain = next.catch(() => undefined);
-  return next;
 }
 
 export async function listRunning(nowMs: number): Promise<StoredRun[]> {

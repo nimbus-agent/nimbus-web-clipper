@@ -13,6 +13,7 @@
 import type { BriefSourceBody, BriefSourceDecl } from "../shared/brief.ts";
 import { type BriefReport, isBriefReport } from "../shared/brief-report.ts";
 import { endpointUrl } from "../shared/gateway.ts";
+import { isObject, parseScopeGap, readJson } from "./http-json.ts";
 
 /** Create/run/save share the gateway's `brief` bucket; feeding has its own. */
 const BRIEF_TIMEOUT_MS = 10_000;
@@ -39,29 +40,6 @@ export type FeedRefusal = "source_too_large" | "run_capacity";
 export type ScopeGap = { required: string; granted: string[] };
 
 type FetchLike = typeof fetch;
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
-
-async function readJson(res: Response): Promise<unknown> {
-  try {
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-function parseScopeGap(body: unknown): ScopeGap | null {
-  if (!isObject(body) || typeof body["required"] !== "string") {
-    return null;
-  }
-  const granted = body["granted"];
-  if (!Array.isArray(granted) || !granted.every((g) => typeof g === "string")) {
-    return null;
-  }
-  return { required: body["required"], granted: [...granted] };
-}
 
 function briefUrl(origin: string, id?: string, action?: string): string {
   const base = endpointUrl(origin, "briefs");
@@ -112,6 +90,25 @@ function commonError(status: number): BriefError | null {
     return "busy";
   }
   return null;
+}
+
+/**
+ * The whole non-200 ladder the four id-bearing routes share.
+ *
+ * `createBrief` is deliberately NOT a caller. It has no id yet, so its 404 is
+ * the seam being OFF (`disabled`, carrying the gateway's own hint) rather than a
+ * missing run, and its 403 body is parsed for a scope gap the other four never
+ * carry. Folding it in here would mean two extra parameters and a shape that
+ * fits nobody; keeping it out is what lets this one stay a plain mapping.
+ */
+function routeError(status: number): { ok: false; reason: BriefError } {
+  if (status === 403) {
+    return { ok: false, reason: "insufficient_scope" };
+  }
+  if (status === 404) {
+    return { ok: false, reason: "not_found" };
+  }
+  return { ok: false, reason: commonError(status) ?? "server_error" };
 }
 
 export async function createBrief(
@@ -196,13 +193,7 @@ export async function feedBriefSource(
       isObject(data) && data["detail"] === "run_capacity" ? "run_capacity" : "source_too_large";
     return { ok: false, reason: "refused", detail };
   }
-  if (res.status === 403) {
-    return { ok: false, reason: "insufficient_scope" };
-  }
-  if (res.status === 404) {
-    return { ok: false, reason: "not_found" };
-  }
-  return { ok: false, reason: commonError(res.status) ?? "server_error" };
+  return routeError(res.status);
 }
 
 export async function runBrief(
@@ -227,13 +218,7 @@ export async function runBrief(
   if (res.status === 200) {
     return { ok: true };
   }
-  if (res.status === 403) {
-    return { ok: false, reason: "insufficient_scope" };
-  }
-  if (res.status === 404) {
-    return { ok: false, reason: "not_found" };
-  }
-  return { ok: false, reason: commonError(res.status) ?? "server_error" };
+  return routeError(res.status);
 }
 
 /** The terminal answer a 200 body can carry, or a `server_error` when it is malformed. */
@@ -289,13 +274,7 @@ export async function getBrief(
   if (res.status === 200) {
     return parseBriefBody(await readJson(res));
   }
-  if (res.status === 403) {
-    return { ok: false, reason: "insufficient_scope" };
-  }
-  if (res.status === 404) {
-    return { ok: false, reason: "not_found" };
-  }
-  return { ok: false, reason: commonError(res.status) ?? "server_error" };
+  return routeError(res.status);
 }
 
 export async function saveBrief(
@@ -323,11 +302,5 @@ export async function saveBrief(
       ? { ok: true, itemId: data["itemId"] }
       : { ok: false, reason: "server_error" };
   }
-  if (res.status === 403) {
-    return { ok: false, reason: "insufficient_scope" };
-  }
-  if (res.status === 404) {
-    return { ok: false, reason: "not_found" };
-  }
-  return { ok: false, reason: commonError(res.status) ?? "server_error" };
+  return routeError(res.status);
 }

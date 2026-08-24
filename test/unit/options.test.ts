@@ -928,3 +928,188 @@ describe("the trust panel matches what ships", () => {
     expect(html.toLowerCase()).toContain("hotkey");
   });
 });
+/**
+ * Boot Options with a reply table keyed by message kind.
+ *
+ * `boot()` above answers EVERY message with one value, which is enough for the
+ * connection panel but not for a page that also asks for a discovery result and
+ * a disclosure log. `#brief-log` and `#open-brief` are appended rather than
+ * added to FIXTURE so the assertions in the rest of this file keep counting the
+ * messages they already count.
+ */
+async function bootWithReplies(table: Record<string, unknown>): Promise<void> {
+  harness = installChromeMock();
+  harness.sendMessage.mockImplementation(async (m: unknown) => {
+    const kind = (m as { kind?: string }).kind ?? "";
+    return kind in table ? table[kind] : unpaired;
+  });
+  document.body.innerHTML = `${FIXTURE}<section id="stage-briefs"><button id="open-brief" type="button">Open</button><div id="brief-log"></div></section>`;
+  document.dispatchEvent(new Event("DOMContentLoaded"));
+  await flush();
+}
+
+describe("discover()", () => {
+  test("fills the gateway URL field with what the worker found", async () => {
+    // The whole point of the button: the user should not have to know the port.
+    await bootWithReplies({ discover: { kind: "discover", origin: "http://127.0.0.1:7474" } });
+    input("origin").value = "";
+
+    button("discover").click();
+    await flush();
+
+    expect(input("origin").value).toBe("http://127.0.0.1:7474");
+    expect(el("discover-status").textContent).toContain("http://127.0.0.1:7474");
+  });
+
+  test("a miss leaves the field alone and says where to go instead", async () => {
+    // Overwriting a URL the user typed with nothing would destroy their input
+    // to report a failure.
+    await bootWithReplies({ discover: { kind: "discover", origin: null } });
+    input("origin").value = "http://127.0.0.1:9999";
+
+    button("discover").click();
+    await flush();
+
+    expect(input("origin").value).toBe("http://127.0.0.1:9999");
+    expect(el("discover-status").textContent).toContain("No gateway found");
+  });
+
+  test("a reply for a DIFFERENT request is never read as a discovery", async () => {
+    // `sendMessage` is typed `unknown` at the seam, so a stale or mismatched
+    // reply must not reach `res.origin` — which on a connection reply is the
+    // paired gateway, i.e. exactly the wrong answer rendered confidently.
+    await bootWithReplies({
+      discover: { kind: "connection", paired: true, origin: "http://evil" },
+    });
+    input("origin").value = "";
+
+    button("discover").click();
+    await flush();
+
+    expect(input("origin").value).toBe("");
+    expect(el("discover-status").textContent).toBe("Unexpected response.");
+  });
+
+  test("a rejected message channel recovers the status rather than sticking on Looking…", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: unknown) => {
+      if ((m as { kind?: string }).kind === "discover") {
+        throw new Error("worker asleep");
+      }
+      return unpaired;
+    });
+    await bootOptions();
+
+    button("discover").click();
+    await flush();
+
+    expect(el("discover-status").textContent).toContain("Couldn't reach the extension");
+  });
+});
+
+describe("the disclosure log panel", () => {
+  const entry = {
+    runId: "r1",
+    at: Date.UTC(2026, 5, 27, 12, 0, 0),
+    question: "what changed in auth",
+    sourceCount: 2,
+    truncatedCount: 0,
+    model: "llama3",
+    remote: false,
+  };
+
+  test("renders the entries the worker holds", async () => {
+    await bootWithReplies({ "brief-log": { kind: "brief-log", entries: [entry] } });
+    expect(el("brief-log").textContent).toContain("what changed in auth");
+  });
+
+  test("drops an entry that fails the guard rather than rendering a half-entry", async () => {
+    // Storage is external input. A malformed entry rendered as blanks would
+    // claim an egress happened without saying what left.
+    await bootWithReplies({
+      "brief-log": { kind: "brief-log", entries: [entry, { runId: 7 }, null] },
+    });
+    expect(el("brief-log").querySelectorAll(".brief-log li")).toHaveLength(1);
+  });
+
+  test("a reply with no entries array renders the empty state, not a crash", async () => {
+    await bootWithReplies({ "brief-log": { kind: "brief-log" } });
+    expect(el("brief-log").textContent).toContain("No research briefs have been run");
+  });
+
+  test("a rejected read leaves the section as it was", async () => {
+    // On a failed read the section must not claim nothing has ever been sent —
+    // which would be the one wrong thing to say here.
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: unknown) => {
+      if ((m as { kind?: string }).kind === "brief-log") {
+        throw new Error("worker asleep");
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = `${FIXTURE}<div id="brief-log">held over</div>`;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    expect(el("brief-log").textContent).toBe("held over");
+  });
+
+  test("Clear empties the list through the worker, then repaints from it", async () => {
+    let cleared = false;
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: unknown) => {
+      const kind = (m as { kind?: string }).kind;
+      if (kind === "brief-log-clear") {
+        cleared = true;
+        return { kind: "brief-log-clear", ok: true };
+      }
+      if (kind === "brief-log") {
+        return { kind: "brief-log", entries: cleared ? [] : [entry] };
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = `${FIXTURE}<div id="brief-log"></div>`;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+    expect(el("brief-log").textContent).toContain("what changed in auth");
+
+    button("clear-brief-log").click();
+    await flush();
+
+    expect(cleared).toBe(true);
+    expect(el("brief-log").textContent).toContain("No research briefs have been run");
+  });
+
+  test("a failed clear still repaints from whatever the worker holds", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: unknown) => {
+      const kind = (m as { kind?: string }).kind;
+      if (kind === "brief-log-clear") {
+        throw new Error("worker asleep");
+      }
+      if (kind === "brief-log") {
+        return { kind: "brief-log", entries: [entry] };
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = `${FIXTURE}<div id="brief-log"></div>`;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    const readsBefore = harness.sendMessage.mock.calls.filter(
+      (c) => (c[0] as { kind?: string }).kind === "brief-log",
+    ).length;
+
+    button("clear-brief-log").click();
+    await flush();
+
+    // The repaint is what proves the failure did not abandon the panel: the
+    // entry still being on screen would also be true of a handler that did
+    // nothing at all.
+    const readsAfter = harness.sendMessage.mock.calls.filter(
+      (c) => (c[0] as { kind?: string }).kind === "brief-log",
+    ).length;
+    expect(readsAfter).toBeGreaterThan(readsBefore);
+    expect(el("brief-log").textContent).toContain("what changed in auth");
+  });
+});

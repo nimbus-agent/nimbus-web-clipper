@@ -312,3 +312,43 @@ describe("isFirefoxRuntime", () => {
     expect(isFirefoxRuntime()).toBe(false);
   });
 });
+describe("getAllCommands hardens whatever the browser hands back", () => {
+  function stubCommands(getAll: unknown): void {
+    installChromeStub();
+    (globalThis as unknown as { chrome: Record<string, unknown> }).chrome["commands"] = { getAll };
+  }
+
+  test("a getAll that calls back with nothing yields an empty list", async () => {
+    // Firefox has answered `undefined` here on a profile with no bindings at
+    // all. `raw.map` on that throws, and the throw escapes into Options'
+    // `void refreshShortcuts()` as an unhandled rejection.
+    stubCommands((cb: (c: unknown[] | undefined) => void) => cb(undefined));
+    expect(await getAllCommands()).toEqual([]);
+  });
+
+  test("an entry that is not an object still yields a fully-formed binding", async () => {
+    stubCommands((cb: (c: unknown[]) => void) => cb([null, "show_related", 7]));
+    expect(await getAllCommands()).toEqual([
+      { name: "", description: "", shortcut: "" },
+      { name: "", description: "", shortcut: "" },
+      { name: "", description: "", shortcut: "" },
+    ]);
+  });
+
+  test("non-string fields normalise to empty, never to the word undefined", async () => {
+    // The shortcut is rendered straight into the Options row. A non-string
+    // reaching the DOM would print as "undefined" or "[object Object]" and read
+    // as a binding the user cannot find on their keyboard.
+    stubCommands((cb: (c: unknown[]) => void) =>
+      cb([{ name: 7, description: null, shortcut: { key: "Alt" } }]),
+    );
+    expect(await getAllCommands()).toEqual([{ name: "", description: "", shortcut: "" }]);
+  });
+
+  test("a chrome.commands object with no getAll is treated as absent", async () => {
+    // Options must still render if the API is unavailable: a page that fails to
+    // render tells the user nothing at all.
+    stubCommands(undefined);
+    expect(await getAllCommands()).toEqual([]);
+  });
+});

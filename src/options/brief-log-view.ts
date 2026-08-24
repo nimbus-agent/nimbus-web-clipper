@@ -6,21 +6,7 @@
 // This is the second half of that panel's answer. The rest of stage 4 says which
 // one origin the extension talks to; this says what it caused to leave.
 import { type BriefLogEntry, MAX_LOG_ENTRIES } from "../shared/brief-log.ts";
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  text?: string,
-  className?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (text !== undefined) {
-    node.textContent = text;
-  }
-  if (className !== undefined) {
-    node.className = className;
-  }
-  return node;
-}
+import { el } from "../shared/dom.ts";
 
 /** One entry in the user's words. `failed` still describes a real egress: the
  *  source text left before synthesis gave up. */

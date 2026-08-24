@@ -197,3 +197,135 @@ describe("handleEgressProve", () => {
     expect(res).toEqual({ kind: "egress-prove", ok: false, reason: "unsupported" });
   });
 });
+
+describe("every route refuses before it reads", () => {
+  // `getConnection` returning null is the not-paired case, and it must be
+  // answered WITHOUT a gateway read: an unpaired browser has no token to send,
+  // and a call made anyway would be an unauthenticated request the user never
+  // asked for. Two tests rather than one table because the handlers take
+  // different request types, and a table would need a cast to bridge them.
+  it("verify refuses when not paired, without calling the gateway", async () => {
+    let reads = 0;
+    const res = await handleEgressVerify(
+      deps({
+        getConnection: async () => null,
+        verifyEgress: async () => {
+          reads += 1;
+          return {
+            ok: true,
+            value: { intact: true, brokenAt: null, verifiedRows: 0, reason: null },
+          };
+        },
+      }),
+      { kind: "egress-verify" },
+    );
+    expect(res).toEqual({ kind: "egress-verify", ok: false, reason: "not_paired" });
+    expect(reads).toBe(0);
+  });
+
+  it("prove refuses when not paired, without calling the gateway", async () => {
+    let reads = 0;
+    const res = await handleEgressProve(
+      deps({
+        getConnection: async () => null,
+        proveEgressWindow: async () => {
+          reads += 1;
+          return {
+            ok: true,
+            value: { digest: "d", sigB64: "s", pubkeyB64: "p", rowsTotal: 0, rowsTruncated: false },
+          };
+        },
+      }),
+      { kind: "egress-prove" },
+    );
+    expect(res).toEqual({ kind: "egress-prove", ok: false, reason: "not_paired" });
+    expect(reads).toBe(0);
+  });
+});
+
+describe("scope gaps reach every route's caller", () => {
+  // Only the handler knows the device label, so a route that forgets to widen
+  // the gateway's raw gap leaves the view unable to print a pasteable
+  // `nimbus clip scopes` command — the one thing that fixes a 403.
+  const RAW = { required: "egress", granted: ["clip"] };
+  const WIDENED = { label: "my-browser", required: "egress", granted: ["clip"] };
+
+  it("verify widens the gap with the device label", async () => {
+    const res = await handleEgressVerify(
+      deps({
+        verifyEgress: async () => ({ ok: false, reason: "insufficient_scope", scopeGap: RAW }),
+      }),
+      { kind: "egress-verify" },
+    );
+    expect(res).toEqual({
+      kind: "egress-verify",
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: WIDENED,
+    });
+  });
+
+  it("prove widens the gap with the device label", async () => {
+    const res = await handleEgressProve(
+      deps({
+        proveEgressWindow: async () => ({ ok: false, reason: "insufficient_scope", scopeGap: RAW }),
+      }),
+      { kind: "egress-prove" },
+    );
+    expect(res).toEqual({
+      kind: "egress-prove",
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: WIDENED,
+    });
+  });
+
+  it("an error with no gap carries NO scopeGap key at all", async () => {
+    // Not `scopeGap: undefined`: the views branch on `=== undefined`, and an
+    // explicit key would also make `toEqual` treat the two shapes as equal, so
+    // a regression here would not be caught by the assertions above.
+    const res = await handleEgressWindow(
+      deps({ listEgress: async () => ({ ok: false, reason: "unreachable" }) }),
+      { kind: "egress-window" },
+    );
+    expect(res).toEqual({ kind: "egress-window", ok: false, reason: "unreachable" });
+    expect(Object.keys(res)).not.toContain("scopeGap");
+  });
+
+  it("verify's error with no gap carries no scopeGap key either", async () => {
+    const res = await handleEgressVerify(
+      deps({ verifyEgress: async () => ({ ok: false, reason: "unreachable" }) }),
+      { kind: "egress-verify" },
+    );
+    expect(Object.keys(res)).not.toContain("scopeGap");
+  });
+});
+
+describe("handleEgressProve window bounds", () => {
+  it("passes since/until through, and omits each one that was not asked for", async () => {
+    // Built by spread from two optional fields: an absent bound must not become
+    // an explicit `undefined`, which the gateway would serialise into the query.
+    let seen: unknown = null;
+    const capture = deps({
+      proveEgressWindow: async (_o, _t, opts) => {
+        seen = opts;
+        return {
+          ok: true,
+          value: { digest: "d", sigB64: "s", pubkeyB64: "p", rowsTotal: 1, rowsTruncated: false },
+        };
+      },
+    });
+
+    await handleEgressProve(capture, { kind: "egress-prove", since: 10, until: 20 });
+    expect(seen).toEqual({ since: 10, until: 20 });
+
+    await handleEgressProve(capture, { kind: "egress-prove", since: 10 });
+    expect(Object.keys(seen as object)).toEqual(["since"]);
+
+    await handleEgressProve(capture, { kind: "egress-prove", until: 20 });
+    expect(Object.keys(seen as object)).toEqual(["until"]);
+
+    await handleEgressProve(capture, { kind: "egress-prove" });
+    expect(seen).toEqual({});
+  });
+});

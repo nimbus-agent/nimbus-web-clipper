@@ -13,6 +13,7 @@
 import type { EgressError, EgressProof, EgressVerdict, EgressWindow } from "../shared/egress.ts";
 import { parseEgressWindow } from "../shared/egress.ts";
 import { endpointUrl, type GatewayEndpoint } from "../shared/gateway.ts";
+import { isObject, parseScopeGap, readJson } from "./http-json.ts";
 
 /** Reads over a local index. Long enough for a 1000-row page, short enough that
  *  a wedged gateway does not hang the page behind it. */
@@ -33,32 +34,6 @@ export type EgressResult<T> =
   | { ok: false; reason: EgressError; scopeGap?: RawScopeGap };
 
 type FetchLike = typeof fetch;
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
-
-async function readJson(res: Response): Promise<unknown> {
-  try {
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
-
-function parseScopeGap(v: unknown): RawScopeGap | null {
-  if (!isObject(v) || typeof v["required"] !== "string" || !Array.isArray(v["granted"])) {
-    return null;
-  }
-  const granted: string[] = [];
-  for (const s of v["granted"]) {
-    if (typeof s !== "string") {
-      return null;
-    }
-    granted.push(s);
-  }
-  return { required: v["required"], granted };
-}
 
 /**
  * One GET, one status ladder, one parse.
