@@ -38,6 +38,8 @@ let partition: EgressPartition = { ours: [], others: [], unattributable: [] };
 let rowsTotal = 0;
 let rowsTruncated = false;
 let verdict: EgressVerdict | null = null;
+let ourLabel: string | null = null;
+let paged = false;
 let scope: LedgerScope = "ours";
 let failure: Extract<LedgerModel, { state: "error" }> | null = null;
 
@@ -51,9 +53,11 @@ function render(): void {
       state: "loaded",
       scope,
       partition,
+      ourLabel,
       rowsTotal,
       rowsTruncated,
       verdict,
+      paged,
       nowMs: Date.now(),
     },
   );
@@ -73,15 +77,27 @@ function oldestShownId(): number | undefined {
   return all.reduce((min, row) => (row.id < min ? row.id : min), all[0]?.id ?? 0);
 }
 
+/**
+ * Is this a reply to the request we actually made?
+ *
+ * `sendMessage` is typed `unknown` at the seam. A null, a stale reply, or a
+ * response for a DIFFERENT request must not be read as one of ours: `res.ok`
+ * would throw on null, and a mismatched shape would reach the renderer.
+ */
+function isReplyFor<K extends string>(res: unknown, kind: K): res is { kind: K; ok: boolean } {
+  return typeof res === "object" && res !== null && (res as { kind?: unknown }).kind === kind;
+}
+
 async function loadWindow(before?: number): Promise<void> {
-  const res = (await sendMessage(
+  const raw = await sendMessage(
     before === undefined ? { kind: "egress-window" } : { kind: "egress-window", before },
-  )) as EgressWindowResponse | undefined;
-  if (res === undefined) {
+  );
+  if (!isReplyFor(raw, "egress-window")) {
     failure = { state: "error", reason: "server_error" };
     render();
     return;
   }
+  const res = raw as EgressWindowResponse;
   if (!res.ok) {
     failure =
       res.scopeGap === undefined
@@ -91,6 +107,8 @@ async function loadWindow(before?: number): Promise<void> {
     return;
   }
   failure = null;
+  paged = before !== undefined;
+  ourLabel = res.ourLabel;
   // Replace, never append: each response carries its own totals, and a list
   // spanning several responses would be described by only the newest one's.
   partition = res.partition;
@@ -100,7 +118,8 @@ async function loadWindow(before?: number): Promise<void> {
 }
 
 async function runVerify(): Promise<void> {
-  const res = (await sendMessage({ kind: "egress-verify" })) as EgressVerifyResponse | undefined;
+  const raw = await sendMessage({ kind: "egress-verify" });
+  const res = isReplyFor(raw, "egress-verify") ? (raw as EgressVerifyResponse) : undefined;
   if (res === undefined || !res.ok) {
     // A failed CHECK is not a broken chain. Saying "did not verify" here would
     // claim evidence we do not have.
@@ -111,6 +130,9 @@ async function runVerify(): Promise<void> {
     render();
     return;
   }
+  // A previous failure must not survive a successful retry: `render()` would
+  // otherwise keep drawing the old error over a verdict that just arrived.
+  failure = null;
   verdict = res.verdict;
   render();
 }
@@ -128,7 +150,8 @@ function downloadProof(proof: EgressProof): void {
 }
 
 async function runProve(): Promise<void> {
-  const res = (await sendMessage({ kind: "egress-prove" })) as EgressProveResponse | undefined;
+  const raw = await sendMessage({ kind: "egress-prove" });
+  const res = isReplyFor(raw, "egress-prove") ? (raw as EgressProveResponse) : undefined;
   if (res === undefined || !res.ok) {
     failure =
       res !== undefined && res.scopeGap !== undefined

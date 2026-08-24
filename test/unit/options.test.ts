@@ -725,6 +725,20 @@ describe("trust panel: the activity summary (#trust-ledger)", () => {
     await bootWith(undefined);
     expect((el("trust-ledger").textContent ?? "").trim().length).toBeGreaterThan(0);
   });
+
+  test("a REJECTING channel reports rather than throwing", async () => {
+    // An unguarded await here surfaces as an unhandled rejection that fails the
+    // whole run — which is exactly how CI caught it.
+    harness = installChromeMock();
+    harness.sendMessage.mockRejectedValue(new Error("channel closed"));
+    await bootOptions();
+    expect(el("trust-ledger").textContent).toContain("Could not read");
+  });
+
+  test("a reply for a DIFFERENT request is not read as a window", async () => {
+    await bootWith({ kind: "connection", paired: false });
+    expect((el("trust-ledger").textContent ?? "").trim().length).toBeGreaterThan(0);
+  });
 });
 
 describe("trust panel content (#trust-origin / #trust-hosts)", () => {

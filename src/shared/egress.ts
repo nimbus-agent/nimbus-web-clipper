@@ -119,7 +119,9 @@ export function isEgressRow(v: unknown): v is EgressRow {
   if (!isObject(v)) {
     return false;
   }
-  if (typeof v["id"] !== "number" || !Number.isInteger(v["id"])) {
+  // `>= 0`: a ledger id is an AUTOINCREMENT rowid, so a negative one is
+  // malformed gateway data, not a row the page should try to render or page from.
+  if (typeof v["id"] !== "number" || !Number.isInteger(v["id"]) || v["id"] < 0) {
     return false;
   }
   if (typeof v["timestamp"] !== "number" || !Number.isFinite(v["timestamp"])) {
@@ -146,7 +148,13 @@ export function parseEgressWindow(v: unknown): EgressWindow | null {
   if (!isObject(v) || !Array.isArray(v["rows"])) {
     return null;
   }
-  if (typeof v["rowsTotal"] !== "number" || !Number.isInteger(v["rowsTotal"])) {
+  // A negative total would make `rows.length < rowsTotal` false on a genuinely
+  // truncated window, hiding the Older control.
+  if (
+    typeof v["rowsTotal"] !== "number" ||
+    !Number.isInteger(v["rowsTotal"]) ||
+    v["rowsTotal"] < 0
+  ) {
     return null;
   }
   if (typeof v["rowsTruncated"] !== "boolean") {

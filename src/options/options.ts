@@ -94,8 +94,20 @@ async function refreshLedgerSummary(): Promise<void> {
   if (host === null) {
     return;
   }
-  const res = (await sendMessage({ kind: "egress-window" })) as EgressWindowResponse | undefined;
-  if (res === undefined) {
+  let res: EgressWindowResponse | undefined;
+  try {
+    res = (await sendMessage({ kind: "egress-window" })) as EgressWindowResponse | undefined;
+  } catch {
+    // The message channel rejected (service worker asleep or erroring). Same
+    // posture as `refreshConnection`: report, never throw. An unguarded await
+    // here surfaces as an unhandled rejection that fails the whole test run,
+    // and in the browser would abandon the rest of the panel's render.
+    renderLedgerSummary(host, { state: "error", reason: "unreachable" });
+    return;
+  }
+  if (res === undefined || typeof res !== "object" || res.kind !== "egress-window") {
+    // `sendMessage` is typed `unknown` at the seam: a null, a stale reply, or a
+    // response for a different request must not be read as a window.
     renderLedgerSummary(host, { state: "error", reason: "server_error" });
     return;
   }

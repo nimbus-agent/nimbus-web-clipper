@@ -36,6 +36,7 @@ function model(over: Partial<LedgerModel> = {}): LedgerModel {
     state: "loaded",
     scope: "ours",
     partition: { ours: [row()], others: [], unattributable: [] },
+    ourLabel: "my-browser",
     rowsTotal: 1,
     rowsTruncated: false,
     verdict: null,
@@ -145,6 +146,34 @@ describe("renderLedger", () => {
       }),
     );
     expect(root.textContent).not.toContain("cannot be attributed");
+  });
+
+  it("names the other client in the all scope, not just that a row is attributed", () => {
+    // Ours and another client's rendered identically before: the view said
+    // WHETHER a row was attributed without ever saying to WHOM.
+    renderLedger(
+      root,
+      model({
+        scope: "all",
+        partition: {
+          ours: [row({ id: 1 })],
+          others: [row({ id: 2, sourceId: "nimbus-editor", destination: "jira" })],
+          unattributable: [],
+        },
+      }),
+    );
+    expect(root.textContent).toContain("nimbus-editor");
+  });
+
+  it("does not label our own rows with our own name", () => {
+    renderLedger(root, model({ scope: "all" }));
+    expect(root.querySelector(".ledger__client")).toBeNull();
+  });
+
+  it("does not call an older page the most recent one", () => {
+    renderLedger(root, model({ rowsTotal: 40, rowsTruncated: true, paged: true }));
+    expect(root.textContent).toContain("Showing a page of 40");
+    expect(root.textContent).not.toContain("most recent");
   });
 
   it("says the window is truncated when it is", () => {

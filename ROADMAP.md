@@ -835,7 +835,8 @@ grow a second half to match.*
 > **Depends** a read surface over that record. **Propose in the gateway repo.**
 > **Done when** Every gateway-side fetch the panel triggered is listed with
 > time, target and outcome, and the list does not contradict the gateway's own.
-> **Status** **Shipped, both halves.**
+> **Status** **Partially shipped.** The client and the read route are done; the
+> brief's own done-when is not yet met, so this item stays 🟡.
 > `src/ledger/` is the Activity page, `src/options/ledger-summary-view.ts` the
 > trust-panel line, and `src/shared/egress.ts` the partition both share so they
 > cannot disagree about what is yours. The gateway half — the `egress` scope and

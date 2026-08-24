@@ -27,10 +27,16 @@ export type LedgerModel =
       readonly state: "loaded";
       readonly scope: LedgerScope;
       readonly partition: EgressPartition;
+      /** This browser's own device label, so the All scope can name the OTHER
+       *  clients rather than only marking rows as attributed. */
+      readonly ourLabel: string | null;
       readonly rowsTotal: number;
       readonly rowsTruncated: boolean;
       readonly verdict: EgressVerdict | null;
       readonly nowMs: number;
+      /** True once the reader has paged back. The first page IS the most recent
+       *  one; a later page is not, and must not claim to be. */
+      readonly paged?: boolean;
     }
   | {
       readonly state: "error";
@@ -81,7 +87,7 @@ function visibleRows(partition: EgressPartition, scope: LedgerScope): readonly E
   );
 }
 
-function renderRow(row: EgressRow, nowMs: number, attributed: boolean): HTMLElement {
+function renderRow(row: EgressRow, nowMs: number, ourLabel: string | null): HTMLElement {
   const item = el("li", "ledger__row");
   item.append(el("span", "ledger__when", formatAge(row.timestamp, nowMs)));
   item.append(el("span", "ledger__service", row.destination));
@@ -89,10 +95,16 @@ function renderRow(row: EgressRow, nowMs: number, attributed: boolean): HTMLElem
   if (row.resultStatus === "blocked") {
     item.append(el("span", "ledger__blocked", "Blocked"));
   }
-  if (!attributed) {
+  if (row.sourceId === null) {
     // Labelled, never guessed. An unlabelled row means the gateway could not say
     // who asked — not that nobody did.
     item.append(el("span", "ledger__unattributed", "Not attributable"));
+  } else if (ourLabel !== null && row.sourceId !== ourLabel) {
+    // In the All scope, "yours" and "another client's" rendered identically, so
+    // the view showed WHETHER a row was attributed without ever saying to WHOM.
+    // The label is gateway-supplied text, so it goes in via textContent like
+    // every other field.
+    item.append(el("span", "ledger__client", row.sourceId));
   }
   return item;
 }
@@ -171,7 +183,7 @@ export function renderLedger(root: HTMLElement, model: LedgerModel): void {
   } else {
     const list = el("ul", "ledger__rows");
     for (const row of rows) {
-      list.append(renderRow(row, model.nowMs, row.sourceId !== null));
+      list.append(renderRow(row, model.nowMs, model.ourLabel));
     }
     root.append(list);
   }
@@ -181,7 +193,9 @@ export function renderLedger(root: HTMLElement, model: LedgerModel): void {
       el(
         "p",
         "ledger__truncated",
-        `Showing the most recent page of ${model.rowsTotal} recorded actions.`,
+        model.paged === true
+          ? `Showing a page of ${model.rowsTotal} recorded actions.`
+          : `Showing the most recent page of ${model.rowsTotal} recorded actions.`,
       ),
     );
   }

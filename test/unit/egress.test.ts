@@ -43,6 +43,10 @@ describe("isEgressRow", () => {
     expect(isEgressRow({ ...row(), timestamp: Number.NaN })).toBe(false);
   });
 
+  it("rejects a negative id — a rowid is never below zero", () => {
+    expect(isEgressRow({ ...row(), id: -1 })).toBe(false);
+  });
+
   it("accepts an explicitly null sourceId but rejects a missing one", () => {
     expect(isEgressRow({ ...row(), sourceId: null })).toBe(true);
     const { sourceId: _dropped, ...withoutSourceId } = row();
@@ -102,8 +106,11 @@ describe("parseEgressWindow", () => {
     expect(parseEgressWindow({ rows: [], rowsTotal: 0, rowsTruncated: "yes" })).toBeNull();
   });
 
-  it("refuses a non-integer rowsTotal", () => {
+  it("refuses a non-integer or negative rowsTotal", () => {
     expect(parseEgressWindow({ rows: [], rowsTotal: 1.5, rowsTruncated: false })).toBeNull();
+    // A negative total makes `rows.length < rowsTotal` false on a genuinely
+    // truncated window, which would hide the Older control.
+    expect(parseEgressWindow({ rows: [], rowsTotal: -1, rowsTruncated: true })).toBeNull();
   });
 
   it("refuses a body with one malformed row rather than silently dropping it", () => {

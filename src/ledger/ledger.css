@@ -16,7 +16,7 @@ body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
   gap: 4px 12px;
   align-items: baseline;
   padding: 8px 4px;
-  border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-top: 1px solid color-mix(in srgb, currentcolor 15%, transparent);
 }
 .ledger__when { font-size: 12px; opacity: 0.7; }
 .ledger__service { overflow-wrap: anywhere; }
@@ -32,7 +32,7 @@ body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
 }
 
 .ledger__verdict { margin: 0 0 16px; padding: 8px 12px; border-radius: 6px; }
-.ledger__verdict--ok { background: color-mix(in srgb, currentColor 8%, transparent); }
+.ledger__verdict--ok { background: color-mix(in srgb, currentcolor 8%, transparent); }
 .ledger__verdict--broken {
   background: color-mix(in srgb, #c0392b 18%, transparent);
   font-weight: 600;
@@ -50,7 +50,7 @@ body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
   padding: 8px 10px;
   font-size: 13px;
   overflow-wrap: anywhere;
-  background: color-mix(in srgb, currentColor 10%, transparent);
+  background: color-mix(in srgb, currentcolor 10%, transparent);
   border-radius: 4px;
 }
 

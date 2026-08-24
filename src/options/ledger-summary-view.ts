@@ -79,6 +79,9 @@ export function renderLedgerSummary(root: HTMLElement, model: LedgerSummaryModel
   // set, and the label and scope names are gateway-supplied strings it refuses
   // to embed unless they are shell-safe. Re-pairing is not the remedy.
   const command = model.scopeGap === undefined ? null : scopeCommand(model.scopeGap);
+  // A text node, so the command does not butt against the sentence before it
+  // ("...activity scope.nimbus clip scopes ...").
+  root.append(document.createTextNode(" "));
   root.append(
     command === null
       ? el("span", "trust-ledger__remedy", " Run nimbus clip status on your gateway to grant it.")

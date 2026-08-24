@@ -134,6 +134,22 @@ describe("the four egress-ledger reads", () => {
     expect(prove["pubkeyB64"]).toEqual(expect.any(String));
   });
 
+  it("honours the before cursor and the limit", async () => {
+    // A mock that ignored the cursor would answer every page with the same rows,
+    // so a paging test could pass against a client that never sent one.
+    const page = (await (await get("/v1/egress?before=3")).json()) as { rows: { id: number }[] };
+    expect(page.rows.map((r) => r.id)).toEqual([2, 1]);
+
+    const limited = (await (await get("/v1/egress?limit=2")).json()) as {
+      rows: { id: number }[];
+      rowsTotal: number;
+      rowsTruncated: boolean;
+    };
+    expect(limited.rows.map((r) => r.id)).toEqual([4, 3]);
+    expect(limited.rowsTotal).toBe(4);
+    expect(limited.rowsTruncated).toBe(true);
+  });
+
   it("honours a status override, so a suite can force 403 and 404", async () => {
     // 404 is the too-old gateway; 403 is the ungranted `egress` scope. Both are
     // states the page must render distinctly, so both must be forceable.

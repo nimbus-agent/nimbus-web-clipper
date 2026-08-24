@@ -58,6 +58,7 @@ describe("handleEgressWindow", () => {
       kind: "egress-window",
       ok: true,
       partition: { ours: [row()], others: [], unattributable: [] },
+      ourLabel: "my-browser",
       rowsTotal: 1,
       rowsTruncated: false,
     });

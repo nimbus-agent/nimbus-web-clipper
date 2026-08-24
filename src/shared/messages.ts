@@ -303,6 +303,9 @@ export type EgressWindowResponse =
       readonly kind: "egress-window";
       readonly ok: true;
       readonly partition: EgressPartition;
+      /** This browser's own device label — the one the partition was computed
+       *  with, so the page names other clients without guessing at ours. */
+      readonly ourLabel: string;
       readonly rowsTotal: number;
       readonly rowsTruncated: boolean;
     }

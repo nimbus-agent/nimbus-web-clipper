@@ -177,7 +177,28 @@ export async function handleRequest(
   // `egress` is matched before its three children because none of them is a
   // prefix of another — an exact match each, same as the real route table.
   if (req.method === "GET" && url.pathname === GATEWAY_PATHS.egress) {
-    return jsonResponse(scenario.egress ?? EGRESS_WINDOW);
+    if (scenario.egress !== undefined) {
+      return jsonResponse(scenario.egress);
+    }
+    // Honour `before` and `limit` against the default fixture. A mock that
+    // ignored the cursor would answer every page with the same four rows, so a
+    // paging test could pass against a client that never sent one.
+    const before = Number.parseInt(url.searchParams.get("before") ?? "", 10);
+    const limit = Number.parseInt(url.searchParams.get("limit") ?? "", 10);
+    let rows = [...EGRESS_WINDOW.rows];
+    if (Number.isSafeInteger(before)) {
+      rows = rows.filter((r) => r.id < before);
+    }
+    if (Number.isSafeInteger(limit) && limit > 0) {
+      rows = rows.slice(0, limit);
+    }
+    return jsonResponse({
+      rows,
+      // Counted over the WHOLE window, never the page — the property the real
+      // route exists to provide.
+      rowsTotal: EGRESS_WINDOW.rowsTotal,
+      rowsTruncated: rows.length < EGRESS_WINDOW.rowsTotal,
+    });
   }
   if (req.method === "GET" && url.pathname === GATEWAY_PATHS.egressHead) {
     return jsonResponse(scenario.egressHead ?? EGRESS_HEAD);

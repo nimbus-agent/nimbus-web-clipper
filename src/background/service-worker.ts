@@ -1190,7 +1190,10 @@ addMessageListener((message, rawRespond, sender) => {
     routeEgressMessage(message)
       .then(respond)
       .catch(() => {
-        respond({ kind: "egress-window", ok: false, reason: "server_error" });
+        // The REQUEST's kind, not a fixed one: each caller narrows on its own
+        // discriminant, and an `egress-window` reply to a verify request does
+        // not match that request's response union.
+        respond({ kind: message.kind, ok: false, reason: "server_error" });
       });
     return true;
   }

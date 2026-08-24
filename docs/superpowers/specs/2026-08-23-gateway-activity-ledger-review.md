@@ -1,6 +1,13 @@
 # Design Review: Gateway Activity Ledger
 
-This document contains open questions, suggestions, and improvements for the [Gateway Activity Ledger Design Spec (2026-08-23)](file:///C:/gitrep/nimbus-web-clipper/docs/superpowers/specs/2026-08-23-gateway-activity-ledger-design.md).
+> **Historical.** This is the review as written against the first draft, kept
+> for the record. Every point was answered — see the design doc and the commits
+> that followed. One item has since been overtaken by fact: the re-pairing
+> concern below assumes the `egress` scope needs a new pairing. It does not.
+> `nimbus clip scopes <device> --set <scopes>` grants it to an existing pairing
+> in place, and the design and CHANGELOG say so.
+
+This document contains open questions, suggestions, and improvements for the [Gateway Activity Ledger Design Spec (2026-08-23)](./2026-08-23-gateway-activity-ledger-design.md).
 
 ---
 

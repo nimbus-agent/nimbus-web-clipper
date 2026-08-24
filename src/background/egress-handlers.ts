@@ -66,6 +66,7 @@ export async function handleEgressWindow(
     kind: "egress-window",
     ok: true,
     partition,
+    ourLabel: conn.label,
     rowsTotal: res.value.rowsTotal,
     rowsTruncated: res.value.rowsTruncated,
   };

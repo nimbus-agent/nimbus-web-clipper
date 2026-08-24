@@ -79,39 +79,46 @@ async function read<T>(
   const url = qs === "" ? endpointUrl(origin, endpoint) : `${endpointUrl(origin, endpoint)}?${qs}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), EGRESS_TIMEOUT_MS);
-  let res: Response;
   try {
-    res = await doFetch(url, {
-      method: "GET",
-      headers: { authorization: `Bearer ${token}` },
-      signal: controller.signal,
-    });
-  } catch {
-    return { ok: false, reason: "unreachable" };
+    let res: Response;
+    try {
+      res = await doFetch(url, {
+        method: "GET",
+        headers: { authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+    } catch {
+      return { ok: false, reason: "unreachable" };
+    }
+
+    // The timer stays ARMED across the body read, and is cleared in the outer
+    // `finally` once this function is done. Clearing it as soon as the headers
+    // arrive would leave a gateway that answers 200 and then hangs its body
+    // stream un-timed-out — the page would wait forever on a read that the
+    // timeout was supposed to bound.
+    if (res.status === 200) {
+      const value = parse(await readJson(res));
+      return value === null ? { ok: false, reason: "server_error" } : { ok: true, value };
+    }
+    if (res.status === 401) {
+      return { ok: false, reason: "unauthorized" };
+    }
+    if (res.status === 403) {
+      const gap = parseScopeGap(await readJson(res));
+      return gap === null
+        ? { ok: false, reason: "insufficient_scope" }
+        : { ok: false, reason: "insufficient_scope", scopeGap: gap };
+    }
+    if (res.status === 404) {
+      return { ok: false, reason: "unsupported" };
+    }
+    if (res.status === 429) {
+      return { ok: false, reason: "rate_limited" };
+    }
+    return { ok: false, reason: "server_error" };
   } finally {
     clearTimeout(timer);
   }
-
-  if (res.status === 200) {
-    const value = parse(await readJson(res));
-    return value === null ? { ok: false, reason: "server_error" } : { ok: true, value };
-  }
-  if (res.status === 401) {
-    return { ok: false, reason: "unauthorized" };
-  }
-  if (res.status === 403) {
-    const gap = parseScopeGap(await readJson(res));
-    return gap === null
-      ? { ok: false, reason: "insufficient_scope" }
-      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
-  }
-  if (res.status === 404) {
-    return { ok: false, reason: "unsupported" };
-  }
-  if (res.status === 429) {
-    return { ok: false, reason: "rate_limited" };
-  }
-  return { ok: false, reason: "server_error" };
 }
 
 /** Present numbers only. An absent option must not become the string "undefined". */
