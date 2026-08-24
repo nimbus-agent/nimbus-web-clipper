@@ -29,7 +29,7 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   why, what the provider rate-limited. Where no outcome was recorded it says
   exactly that, and never that a fetch is still running — a gateway older than
   the change leaves rows indistinguishable from ones whose outcome was lost.
-  Requires the gateway release carrying Nimbus#1325.
+  Requires **gateway 2.18.0** or later (Nimbus#1325).
 
 - **The trust panel counted the gateway's bookkeeping as things it had done.**
   "N outbound actions recorded" was counting every row in your gateway's record,
