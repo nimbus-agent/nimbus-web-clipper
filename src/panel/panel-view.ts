@@ -469,7 +469,6 @@ function appendFetchBlocked(
   // advice would be a dead end. Same null-fallback convention as `needs-scope`:
   // an unsafe label or scope name leaks neither the label nor `--set`.
   appendScopeGuidance(doc, box, "This pairing can't fetch pages yet.", state.scopeGap);
-  return;
 }
 
 /**
@@ -502,7 +501,6 @@ function appendFetchRetry(
   box.append(
     actionButton(doc, "nimbus-related__action", "Check again", () => onFetch?.("resolve")),
   );
-  return;
 }
 
 /**
@@ -561,6 +559,78 @@ function appendCaptureOffer(
   );
 }
 
+/**
+ * The `error` arm of {@link renderHeader}. Handled whole rather than folded into
+ * the shared surface line: `surface` is nullable only on this arm, and splitting
+ * it would leave the shared tail unable to narrow it to a string.
+ */
+function appendErrorHeader(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<HeaderState, { kind: "error" }>,
+): void {
+  if (state.surface !== null) {
+    box.append(line(doc, "nimbus-related__surface", state.surface));
+  }
+  box.append(line(doc, "nimbus-related__status", state.message));
+}
+
+/**
+ * The `ambiguous` arm of {@link renderHeader}. Same reason for existing as
+ * {@link appendFetchBlocked}.
+ */
+function appendAmbiguousHeader(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<HeaderState, { kind: "ambiguous" }>,
+  onChoose?: (c: ResolveCandidate) => void,
+): void {
+  if (state.truncated) {
+    // Upstream deliberately sends an EMPTY list when it would have to truncate:
+    // a shortened menu implies the right answer is on it. Say so instead.
+    box.append(
+      line(
+        doc,
+        "nimbus-related__status",
+        "Too many matches to choose from — open the item in Nimbus.",
+      ),
+    );
+    return;
+  }
+  box.append(line(doc, "nimbus-related__status", "Several indexed items match this page:"));
+  box.append(chooser(doc, state.candidates, onChoose));
+}
+
+/**
+ * The `not-indexed` arm of {@link renderHeader}. Same reason for existing as
+ * {@link appendFetchBlocked}.
+ */
+function appendNotIndexed(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<HeaderState, { kind: "not-indexed" }>,
+  onFetch?: (action: "fetch" | "resolve") => void,
+): void {
+  box.append(line(doc, "nimbus-related__status", "Not indexed."));
+  // The button appears only when the miss is fetchable — otherwise there is
+  // nothing to offer.
+  if (state.fetchable) {
+    box.append(
+      actionButton(
+        // A second, stable class beside the shared `nimbus-related__action` —
+        // this is the one control a confirm preview's own Send/Cancel controls
+        // (see `renderFetchPreview` below) could otherwise be confused with by
+        // a selector that picks "the first button" rather than this one by
+        // class. See that function's own doc comment.
+        doc,
+        "nimbus-related__action nimbus-related__fetch",
+        `Fetch this from ${PRODUCT_NAMES[state.product]}`,
+        () => onFetch?.("fetch"),
+      ),
+    );
+  }
+}
+
 export function renderHeader(
   doc: Document,
   state: HeaderState,
@@ -592,14 +662,8 @@ export function renderHeader(
     appendCaptureOffer(doc, box, state, onCapture);
     return box;
   }
-  // Handled whole rather than folded into the shared tail below: `surface` is
-  // nullable only on this arm, and splitting it would leave the tail unable to
-  // narrow it to a string.
   if (state.kind === "error") {
-    if (state.surface !== null) {
-      box.append(line(doc, "nimbus-related__surface", state.surface));
-    }
-    box.append(line(doc, "nimbus-related__status", state.message));
+    appendErrorHeader(doc, box, state);
     return box;
   }
 
@@ -632,20 +696,7 @@ export function renderHeader(
   }
 
   if (state.kind === "ambiguous") {
-    if (state.truncated) {
-      // Upstream deliberately sends an EMPTY list when it would have to truncate:
-      // a shortened menu implies the right answer is on it. Say so instead.
-      box.append(
-        line(
-          doc,
-          "nimbus-related__status",
-          "Too many matches to choose from — open the item in Nimbus.",
-        ),
-      );
-      return box;
-    }
-    box.append(line(doc, "nimbus-related__status", "Several indexed items match this page:"));
-    box.append(chooser(doc, state.candidates, onChoose));
+    appendAmbiguousHeader(doc, box, state, onChoose);
     return box;
   }
 
@@ -681,24 +732,7 @@ export function renderHeader(
     const _never: never = state;
     return _never;
   }
-  box.append(line(doc, "nimbus-related__status", "Not indexed."));
-  // The button appears only when the miss is fetchable — otherwise there is
-  // nothing to offer.
-  if (state.fetchable) {
-    box.append(
-      actionButton(
-        // A second, stable class beside the shared `nimbus-related__action` —
-        // this is the one control a confirm preview's own Send/Cancel controls
-        // (see `renderFetchPreview` below) could otherwise be confused with by
-        // a selector that picks "the first button" rather than this one by
-        // class. See that function's own doc comment.
-        doc,
-        "nimbus-related__action nimbus-related__fetch",
-        `Fetch this from ${PRODUCT_NAMES[state.product]}`,
-        () => onFetch?.("fetch"),
-      ),
-    );
-  }
+  appendNotIndexed(doc, box, state, onFetch);
   appendCaptureOffer(doc, box, state, onCapture);
   return box;
 }
@@ -1041,6 +1075,38 @@ function renderCaptureRefusal(doc: Document, message: string): HTMLElement {
   return box;
 }
 
+/**
+ * The one element at the top of the shell: a pending confirm step if there is
+ * one — fetch takes precedence over capture, the order the ternary chain this
+ * replaced already had — otherwise the header itself.
+ */
+function renderShellTop(
+  doc: Document,
+  state: PanelState,
+  onChoose?: (c: ResolveCandidate) => void,
+  onFetch?: (action: "fetch" | "resolve") => void,
+  onCapture?: () => void,
+  onRecapture?: () => void,
+): HTMLElement {
+  if (state.fetchPreview !== undefined) {
+    return renderFetchPreview(
+      doc,
+      state.fetchPreview.target,
+      state.fetchPreview.onSend,
+      state.fetchPreview.onCancel,
+    );
+  }
+  if (state.capturePreview !== undefined) {
+    return renderCapturePreview(
+      doc,
+      state.capturePreview.preview,
+      state.capturePreview.onSend,
+      state.capturePreview.onCancel,
+    );
+  }
+  return renderHeader(doc, state.header, onChoose, onFetch, onCapture, onRecapture);
+}
+
 export function renderShell(
   doc: Document,
   state: PanelState,
@@ -1051,23 +1117,7 @@ export function renderShell(
 ): HTMLElement {
   const shell = doc.createElement("div");
   shell.className = "nimbus-related__shell";
-  shell.append(
-    state.fetchPreview !== undefined
-      ? renderFetchPreview(
-          doc,
-          state.fetchPreview.target,
-          state.fetchPreview.onSend,
-          state.fetchPreview.onCancel,
-        )
-      : state.capturePreview !== undefined
-        ? renderCapturePreview(
-            doc,
-            state.capturePreview.preview,
-            state.capturePreview.onSend,
-            state.capturePreview.onCancel,
-          )
-        : renderHeader(doc, state.header, onChoose, onFetch, onCapture, onRecapture),
-  );
+  shell.append(renderShellTop(doc, state, onChoose, onFetch, onCapture, onRecapture));
   if (state.captureRefusal !== undefined) {
     shell.append(renderCaptureRefusal(doc, state.captureRefusal));
   }

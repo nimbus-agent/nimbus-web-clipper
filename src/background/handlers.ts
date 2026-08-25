@@ -201,17 +201,36 @@ export async function handleRecognise(
   };
 }
 
+/**
+ * Read the stored pairing.
+ *
+ * Every gateway-touching Deps surface below needs it, and it is spelled once so
+ * a change to what a connection carries cannot reach some of them and not
+ * others.
+ */
+type GetConnection = () => Promise<{ origin: string; token: string; label: string } | null>;
+
+/**
+ * Resolve a page URL to an indexed item.
+ *
+ * One signature for the two Deps surfaces that take it. It was written out
+ * twice, and the two copies had ALREADY drifted in spelling — one wrote the 403
+ * detail inline as `{ required, granted }`, the other as `RawScopeGap` — which
+ * is how a real divergence starts.
+ */
+type ResolveItem = (
+  origin: string,
+  token: string,
+  pageUrl: string,
+) => Promise<
+  | { ok: true; outcome: ResolveOutcome }
+  | { ok: false; reason: ResolveError; scopeGap?: RawScopeGap }
+>;
+
 export interface ResolveDeps {
   readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
-  readonly getConnection: () => Promise<{ origin: string; token: string; label: string } | null>;
-  readonly resolveItem: (
-    origin: string,
-    token: string,
-    pageUrl: string,
-  ) => Promise<
-    | { ok: true; outcome: ResolveOutcome }
-    | { ok: false; reason: ResolveError; scopeGap?: { required: string; granted: string[] } }
-  >;
+  readonly getConnection: GetConnection;
+  readonly resolveItem: ResolveItem;
 }
 
 /**
@@ -347,15 +366,8 @@ type InvokeResult =
 
 export interface AgentRunDeps {
   readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
-  readonly getConnection: () => Promise<{ origin: string; token: string; label: string } | null>;
-  readonly resolveItem: (
-    origin: string,
-    token: string,
-    pageUrl: string,
-  ) => Promise<
-    | { ok: true; outcome: ResolveOutcome }
-    | { ok: false; reason: ResolveError; scopeGap?: RawScopeGap }
-  >;
+  readonly getConnection: GetConnection;
+  readonly resolveItem: ResolveItem;
   readonly invokeAgent: (
     origin: string,
     token: string,
@@ -372,7 +384,7 @@ export interface AgentRunDeps {
 
 export interface AgentStateDeps {
   readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
-  readonly getConnection: () => Promise<{ origin: string; token: string; label: string } | null>;
+  readonly getConnection: GetConnection;
   readonly resolveItem: AgentRunDeps["resolveItem"];
   readonly getRun: (subject: RunSubject, lane: AgentLane) => Promise<StoredRun | null>;
 }

@@ -515,6 +515,33 @@ function fetchOutcomeHeader(res: unknown, surface: string, product: Product): He
 }
 
 /**
+ * The line a QUEUED clip gets — busy versus offline.
+ *
+ * Split out of the caller's condition rather than nested inside it: a queued
+ * outcome is not a failure (the clip was not dropped), so the two readings of
+ * "queued" deserve to be named where they are decided.
+ */
+function queuedClipMessage(reason: string): string {
+  return reason === "rate_limited"
+    ? "Nimbus is busy — queued, will retry shortly."
+    : "Saved offline — will sync when Nimbus is back.";
+}
+
+/**
+ * The item the shown header names: `resolved`'s item, `chosen`'s candidate, or
+ * nothing at all on a miss, an error, or an unpicked ambiguous answer.
+ */
+function shownItemId(shown: HeaderState): string | undefined {
+  if (shown.kind === "resolved") {
+    return shown.item.id;
+  }
+  if (shown.kind === "chosen") {
+    return shown.candidate.id;
+  }
+  return undefined;
+}
+
+/**
  * One panel's state and the two loads that fill it. Related now waits on
  * Resolve (see `loadRelated`'s `shownHeader()` read and the mount-time
  * `loadHeader().then(loadRelated)` chain): Related queries the item the
@@ -1205,21 +1232,48 @@ function createPanel(body: HTMLElement): {
     }
   }
 
-  function paint(): void {
+  /** Each repaint (resolve/related landing, a lane's own state changing, …)
+   *  rebuilds every <details> from scratch — read the live open/closed state
+   *  before replacing it, so a lane the user toggled doesn't spring back to its
+   *  previous state. */
+  function readOpenState(): void {
     const open = body.querySelector<HTMLDetailsElement>('[data-lane="related"]');
     if (open !== null) {
       relatedExpanded = open.open;
     }
-    // Each repaint (resolve/related landing, a lane's own state changing, …)
-    // rebuilds every <details> from scratch — read the live open/closed state
-    // before replacing it, same as `relatedExpanded` above, so a lane the user
-    // toggled doesn't spring back to its previous state.
     for (const lane of AGENT_LANES) {
       const el = body.querySelector<HTMLDetailsElement>(`[data-lane="${lane}"]`);
       if (el !== null) {
         laneOpen[lane] = el.open;
       }
     }
+  }
+
+  /** `renderShell`/`renderLane` build a fresh <details> every repaint — attach
+   *  this repaint's toggle listeners after the fact rather than threading a
+   *  callback through `Lane`, which every OTHER lane (including "related")
+   *  does not need. `attachLaneToggle` (above) is what filters out the
+   *  synthetic "toggle" a fresh, already-expanded element queues on its own
+   *  — this loop only wires it to this lane's own handler.
+   *
+   *  A `pollLane` answer of `collapsed` for a lane the user has open is
+   *  converted to `failed`/`stale` before it is ever stored (see `pollLane`
+   *  above), so that specific path can no longer reach `onLaneToggle`'s own
+   *  `kind === "collapsed"` invoke condition while a lane sits open — but
+   *  `attachLaneToggle`'s suppression is the general-purpose one underneath
+   *  it, independent of whatever the caller's state happens to be. */
+  function attachLaneToggles(): void {
+    for (const lane of AGENT_LANES) {
+      const el = body.querySelector<HTMLDetailsElement>(`[data-lane="${lane}"]`);
+      if (el === null) {
+        continue;
+      }
+      attachLaneToggle(el, (open) => onLaneToggle(lane, open));
+    }
+  }
+
+  function paint(): void {
+    readOpenState();
     const shown = shownHeader();
     // Which lanes render is `lanesFor` (lane-input.ts), against the context
     // assembled just below. Two gates, one per kind of lane:
@@ -1320,26 +1374,7 @@ function createPanel(body: HTMLElement): {
         runCapture,
       ),
     );
-    // `renderShell`/`renderLane` build a fresh <details> every repaint — attach
-    // this repaint's toggle listeners after the fact rather than threading a
-    // callback through `Lane`, which every OTHER lane (including "related")
-    // does not need. `attachLaneToggle` (above) is what filters out the
-    // synthetic "toggle" a fresh, already-expanded element queues on its own
-    // — this loop only wires it to this lane's own handler.
-    //
-    // A `pollLane` answer of `collapsed` for a lane the user has open is
-    // converted to `failed`/`stale` before it is ever stored (see `pollLane`
-    // above), so that specific path can no longer reach `onLaneToggle`'s own
-    // `kind === "collapsed"` invoke condition while a lane sits open — but
-    // `attachLaneToggle`'s suppression is the general-purpose one underneath
-    // it, independent of whatever the caller's state happens to be.
-    for (const lane of AGENT_LANES) {
-      const el = body.querySelector<HTMLDetailsElement>(`[data-lane="${lane}"]`);
-      if (el === null) {
-        continue;
-      }
-      attachLaneToggle(el, (open) => onLaneToggle(lane, open));
-    }
+    attachLaneToggles();
   }
 
   async function loadHeader(): Promise<void> {
@@ -1652,11 +1687,7 @@ function createPanel(body: HTMLElement): {
       // `captureRefusal` instead, so the header — and its capture offer —
       // stays reachable for a retry rather than stranding the panel.
       const queued = res.reason === "rate_limited" || res.queued === true;
-      const message = queued
-        ? res.reason === "rate_limited"
-          ? "Nimbus is busy — queued, will retry shortly."
-          : "Saved offline — will sync when Nimbus is back."
-        : "Couldn't save this copy to Nimbus.";
+      const message = queued ? queuedClipMessage(res.reason) : "Couldn't save this copy to Nimbus.";
       if (queued) {
         captureState = { kind: "error", surface, message };
       } else {
@@ -1765,12 +1796,7 @@ function createPanel(body: HTMLElement): {
     // above the `try` so the success branch below can filter it back out of the
     // gateway's own results (see that branch's own comment for why).
     const shown = shownHeader();
-    const itemId =
-      shown.kind === "resolved"
-        ? shown.item.id
-        : shown.kind === "chosen"
-          ? shown.candidate.id
-          : undefined;
+    const itemId = shownItemId(shown);
     try {
       const context = readContext();
       res = await sendMessage({

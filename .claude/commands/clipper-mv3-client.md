@@ -23,7 +23,8 @@ reason to open.
 
 ## The gate set
 
-CI (`.github/workflows/ci.yml`, `ubuntu-24.04`) runs exactly five steps, in order:
+CI (`.github/workflows/ci.yml`, `ubuntu-24.04`) has **two** jobs. `build-test` runs exactly
+five steps, in order:
 
 ```bash
 bun run typecheck   # tsc --noEmit, strict
@@ -37,9 +38,15 @@ The whole suite runs in about fifteen seconds. `bun run lint` is a real gate for
 not style: `noConsole` is `"error"` inside `src/` (`biome.json`), so a debug `console.log`
 left in an extension source file fails CI.
 
-**Two PR checks those five cannot reproduce**, and they are the usual answer to "local was
-green, why did CI fail":
+The second job is `e2e`: `bunx playwright install chromium` → `bun run build` →
+`bun run test:e2e`. It runs on every PR and is a required part of the gate set, so **five
+green steps is not "CI is green"**. Locally it needs a browser download and a build first,
+which is why it is the step most often skipped before pushing.
 
+**Three PR checks those five steps cannot reproduce**, and they are the usual answer to
+"local was green, why did CI fail":
+
+- the `e2e` job above, whenever you did not run it locally.
 - `.github/workflows/codeql.yml` — `Analyze (javascript-typescript)` on every PR to `main`,
   plus a Monday cron. Nothing local runs it.
 - `.github/workflows/cla.yml` — fires on `pull_request_target`, so it also runs for
@@ -51,9 +58,10 @@ sets `sonar.qualitygate.wait=true`, so a gate ERROR fails the PR. But the analys
 `if: env.SONAR_TOKEN != ''` — absent the secret it skips and the check goes green having
 scanned nothing.
 
-`.gitlab-ci.yml` is a **hand-maintained warm-standby mirror** of the same five. Nothing
-checks the two against each other — adding a gate to `ci.yml` and not to `.gitlab-ci.yml`
-is silent drift. Its `before_script` encodes a real trap: the `oven/bun` image ships
+`.gitlab-ci.yml` is a **hand-maintained warm-standby mirror** of those same five steps — and
+of `build-test` only: it has no e2e job, because the `oven/bun` image carries no browser.
+Nothing checks the two against each other — adding a gate to `ci.yml` and not to
+`.gitlab-ci.yml` is silent drift. Its `before_script` encodes a real trap: the `oven/bun` image ships
 without `git`, and Biome's `vcs.useIgnoreFile: true` needs it or the run scans
 `node_modules`.
 
@@ -76,8 +84,11 @@ without `git`, and Biome's `vcs.useIgnoreFile: true` needs it or the run scans
   `scripts/check-build.mjs` is a literal array. Adding an entry to `ENTRIES` in
   `esbuild.mjs` without adding its output to `REQUIRED_FILES` leaves the new bundle
   unguarded and `check-build` still prints OK. The reverse direction fails loudly, which is
-  why the omission is the one that ships. That file's own header comment enumerates fewer
-  artefacts than the array actually lists — a stale comment inside the guard itself.
+  why the omission is the one that ships. `test/unit/build-artifacts.test.ts` now closes
+  that gap by comparing the two arrays as text — but it is a regex over source, so
+  renaming `ENTRIES`, `HTML_CSS` or `REQUIRED_FILES` makes it throw rather than pass
+  vacuously. That file's header comment used to enumerate "3 bundles" long after there
+  were nine; it no longer restates the list, and neither should you.
 
 ## The wire contract is not yours
 
@@ -167,12 +178,28 @@ either repo notices.
   `test/unit/store-publishing-doc.test.ts` and `store-tooling.test.ts` do the same for
   `store/publishing.md` and the CLI devDependencies. `biome.json` turns
   `noTemplateCurlyInString` off for exactly one file so the GHA `${{ }}` assertions lint.
+  `test/unit/workflow-hygiene.test.ts` applies to **every** workflow, including one you
+  add: each job needs `timeout-minutes`, each `uses:` a 40-character SHA, each workflow a
+  top-level `permissions:`, each checkout `persist-credentials: false`, each
+  `pull_request`-triggered workflow a `concurrency:` group — and no tag-triggered workflow
+  may set `cancel-in-progress: true`, because cancelling a release mid-upload can leave a
+  store submission half-made.
+- **A manifest permission ⇄ `store/privacy-policy.md`.** Nothing enforces this one. The
+  policy enumerates what the extension stores and what it declares, and it is submitted to
+  both stores — a new `chrome.storage.local` key or a new declared permission makes it
+  wrong, silently, in the one document a reviewer reads most closely.
 - **Pruning a design spec.** `test/unit/doc-references.test.ts` walks `ROADMAP.md`,
   `docs/*.md` and every `src/**/*.ts` for `docs/superpowers/<kind>/<date>-<slug>.md` and
   fails on a dangling reference. The one allowed exception is `INTENTIONALLY_PRUNED`, and
   the rule for adding to it is that the *surrounding prose* tells the reader the file is gone.
 - **The manifest is TypeScript.** `esbuild.mjs` imports `composeManifest` directly, which is
   why the build runs `bun esbuild.mjs` and never `node esbuild.mjs`.
+- **`keyed-store.ts` is the single-writer lock's named home, not its only copy.** The two
+  run stores import `createWriteChain` / `readGuarded`; `brief-log-store`,
+  `clip-queue-store` and `passage-store` keep their own chain on purpose, because each has
+  a different write-failure policy (evict / drop-oldest / refuse) and persists an array
+  rather than a keyed record. So grepping `createWriteChain` does **not** enumerate every
+  store that locks — grep `let chain: Promise<unknown>` too.
 
 ## Test seams
 
@@ -217,9 +244,8 @@ Two more that cost real time to rediscover:
   leaves established keep-alive sockets serving, and Chromium holds one — `verify-setup.ts`
   calls `closeAllConnections()` first, or step 6 reports a false PASS.
 
-`bun run verify:setup` automates steps 1–6 of `development.md`'s "Setup that works" — note
-it is absent from the command list in `CLAUDE.md`. It is **not in CI** and says so on
-screen: step 7 (Firefox) is impossible because Playwright cannot side-load an MV3 add-on
+`bun run verify:setup` automates steps 1–6 of `development.md`'s "Setup that works". It is
+**not in CI** and says so on screen: step 7 (Firefox) is impossible because Playwright cannot side-load an MV3 add-on
 into Firefox, step 8 needs real GitHub/Jira/Jenkins hostnames, and step 5's clip is
 synthesized (it sends the `clip` message, so it exercises `markClipSuccess` but does not
 prove the popup button).
@@ -231,9 +257,17 @@ prove the popup button).
   on `void runStartupSequence();`). The two live markers are `src/manifest/manifest.ts`
   (`optional_host_permissions`, S5332) and the last line of
   `src/background/service-worker.ts` (S7785).
-- **Cognitive complexity S3776 caps at 15** and has already forced two extractions:
-  `parseAgentRunBody` out of `getAgentRun`, and `openPanelForCue` out of the fourteen-branch
-  message router. Keep new router branches flat.
+- **Cognitive complexity S3776 caps at 15** and has forced extractions repeatedly:
+  `parseAgentRunBody` out of `getAgentRun`, `openPanelForCue` out of the message router,
+  and then the router itself into four order-preserving slices (`routeCapturePair` /
+  `routeIndexReads` / `routeQueueAndConnection` / `routeSubRouters`, nineteen branches
+  between them). Order is load-bearing there: the guards are not disjoint by construction,
+  only by the sequence they run in, so a new branch goes in its slice — not at the top.
+- **A complexity refactor strands the comments that described the old shape.** The router
+  split left three comments in two files still calling it "a fourteen-branch function",
+  including one sitting directly above the code that says it is now four. Sonar does not
+  read prose and no gate does either. After changing a shape, grep the phrase you just
+  falsified — repo-wide, not in the file you edited.
 
 ## What only a human in a real browser can prove
 

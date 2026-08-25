@@ -43,6 +43,8 @@ bun run lint        # biome check . (src + test + scripts)
 bun run test        # vitest run
 bun run build       # esbuild → dist/chrome + dist/firefox
 bun run watch       # rebuild on save
+bun run test:e2e    # playwright test — run `bun run build` and
+                    # `bunx playwright install chromium` first
 ```
 
 ### Loading the built extension
@@ -59,7 +61,10 @@ pick up a rebuild.
 
 - **Loopback only.** The extension talks only to the Nimbus gateway on
   `127.0.0.1` / `localhost`. Do not add network calls or `host_permissions` for
-  any other origin.
+  any other origin. Page access is a separate axis: `optional_host_permissions`
+  carries broad patterns so recognition can read the URL of a self-hosted
+  Jira/Jenkins/Bitbucket tab, but it is inert at install, granted per host from
+  Options, and never a place the extension sends anything.
 - **The bearer token is the only secret.** It lives in extension storage and is
   held by the background service worker. Never log the token or the pairing code,
   and never write either into the page DOM.
@@ -67,14 +72,18 @@ pick up a rebuild.
   (messages, gateway responses) and narrow with a type guard. Biome enforces the
   rules in `biome.json`, including `noConsole` in `src/` — the extension ships to
   users, so there are no stray `console.*` calls in `src/`.
-- The HTTP wire contract (`/v1/clips`, `/v1/clips/pair/confirm`,
-  `/v1/clips/related`) is owned by the Nimbus gateway repo. Treat it as fixed here.
+- The HTTP wire contract is owned by the Nimbus gateway repo — treat it as fixed
+  here. Every route this client calls is listed once, in `GATEWAY_PATHS`
+  (`src/shared/gateway.ts`): the three clip routes plus `/v1/items/resolve`,
+  `/v1/items/fetch`, `/v1/agents/*`, `/v1/briefs*`, `/v1/egress*` and
+  `/v1/health`. Each of the later ones sits behind its own gateway token scope.
 
 ## Pull requests
 
 - Keep PRs focused; include tests for behavior changes.
 - `bun run typecheck && bun run lint && bun run test && bun run build && bun run check-build`
-  must pass (CI runs the same on Ubuntu).
+  must pass (CI's `build-test` job runs exactly that on Ubuntu). CI also runs a
+  second `e2e` job — `bun run test:e2e` — which those five do not cover.
 
 ## Releases
 

@@ -6,6 +6,7 @@
 // each test installs a FRESH chrome mock and resets the module cache *before*
 // importing, then drives the freshly-registered listeners via the harness.
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { StoredRun } from "../../src/background/agent-run-store.ts";
 import { addNavigationListener } from "../../src/browser/tabs.ts";
 import type { QueuedClip } from "../../src/shared/queue.ts";
 import type { CaptureResult, Connection } from "../../src/shared/types.ts";
@@ -1173,29 +1174,75 @@ describe("agent run polling — survives eviction", () => {
     await settle();
   }
 
-  // Date is faked (not setTimeout — the poll loop's real setTimeout still needs
-  // to interoperate with settle()'s real macrotask ticks) so `Date.now()` inside
-  // the SW lines up with the fixed `expiresAtMs` values these tests seed.
-  test("resumes polling a persisted run after a simulated worker eviction", async () => {
+  /**
+   * Boot the worker with Date faked at NOW, then pair it.
+   *
+   * Date is faked (not setTimeout — the poll loop's real setTimeout still needs
+   * to interoperate with settle()'s real macrotask ticks) so `Date.now()` inside
+   * the SW lines up with the fixed `expiresAtMs` values these tests seed.
+   */
+  async function loadPairedAtNow(): Promise<void> {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(NOW);
     await load();
     harness.storage.set(CONNECTION_KEY, conn);
-    // Persist a running run directly through the store (bypassing agent-run,
-    // whose module is the SAME fresh instance load() just imported) — the
-    // closest this harness gets to modelling "the worker was evicted": module
-    // state (activeAgentPolls, any in-flight setTimeout) is gone, storage is not.
-    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+  }
+
+  /**
+   * Boot the worker, THEN fake the full timer set, then pair it.
+   *
+   * For the tests whose assertions are about WHICH backoff ticks fire and when.
+   * Load-first on purpose: load()'s own settle() relies on REAL setTimeout(0)
+   * ticks, so fake timers can only go on once it has finished.
+   */
+  async function loadPairedThenFakeTimers(): Promise<void> {
+    await load();
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    harness.storage.set(CONNECTION_KEY, conn);
+  }
+
+  /**
+   * Persist a RUNNING run for gh-1/impact directly through the store, bypassing
+   * agent-run — whose module is the SAME fresh instance load() just imported.
+   *
+   * This is the closest this harness gets to modelling "the worker was evicted":
+   * module state (activeAgentPolls, any in-flight setTimeout) is gone, storage
+   * is not.
+   */
+  async function seedRunningRun(
+    at: { expiresAtMs?: number; writtenAtMs?: number } = {},
+  ): Promise<void> {
+    const { putRun } = await import("../../src/background/agent-run-store.ts");
     await putRun(
       {
         subject: { kind: "item", id: "gh-1" },
         lane: "impact",
         runId: "r1",
         state: { kind: "running", runId: "r1" },
-        expiresAtMs: NOW + 60_000,
+        expiresAtMs: at.expiresAtMs ?? NOW + 60_000,
       },
-      NOW,
+      at.writtenAtMs ?? NOW,
     );
+  }
+
+  /** What `seedRunningRun`'s run looks like now — null once it has been cleared
+   *  or has aged out. */
+  async function seededRun(): Promise<StoredRun | null> {
+    const { getRun } = await import("../../src/background/agent-run-store.ts");
+    return getRun({ kind: "item", id: "gh-1" }, "impact", NOW);
+  }
+
+  // Date is faked (not setTimeout — the poll loop's real setTimeout still needs
+  // to interoperate with settle()'s real macrotask ticks) so `Date.now()` inside
+  // the SW lines up with the fixed `expiresAtMs` values these tests seed.
+  test("resumes polling a persisted run after a simulated worker eviction", async () => {
+    await loadPairedAtNow();
+    // Persist a running run directly through the store (bypassing agent-run,
+    // whose module is the SAME fresh instance load() just imported) — the
+    // closest this harness gets to modelling "the worker was evicted": module
+    // state (activeAgentPolls, any in-flight setTimeout) is gone, storage is not.
+    await seedRunningRun();
 
     const polls: string[] = [];
     stubFetch((url) => {
@@ -1206,28 +1253,15 @@ describe("agent run polling — survives eviction", () => {
     await fireAlarm(AGENT_POLL_ALARM);
 
     expect(polls.some((u) => u.includes("/v1/agents/runs/r1"))).toBe(true);
-    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
+    expect((await seededRun())?.state).toEqual({
       kind: "done",
       brief: "answered",
     });
   });
 
   test("stops polling a run past its expiry rather than polling forever", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(NOW);
-    await load();
-    harness.storage.set(CONNECTION_KEY, conn);
-    const { putRun } = await import("../../src/background/agent-run-store.ts");
-    await putRun(
-      {
-        subject: { kind: "item", id: "gh-1" },
-        lane: "impact",
-        runId: "r1",
-        state: { kind: "running", runId: "r1" },
-        expiresAtMs: NOW - 1,
-      },
-      NOW - 2,
-    );
+    await loadPairedAtNow();
+    await seedRunningRun({ expiresAtMs: NOW - 1, writtenAtMs: NOW - 2 });
 
     const polls: string[] = [];
     const fetchMock = stubFetch((url) => {
@@ -1242,21 +1276,8 @@ describe("agent run polling — survives eviction", () => {
   });
 
   test("a done poll result also clears the now-empty poll alarm", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(NOW);
-    await load();
-    harness.storage.set(CONNECTION_KEY, conn);
-    const { putRun } = await import("../../src/background/agent-run-store.ts");
-    await putRun(
-      {
-        subject: { kind: "item", id: "gh-1" },
-        lane: "impact",
-        runId: "r1",
-        state: { kind: "running", runId: "r1" },
-        expiresAtMs: NOW + 60_000,
-      },
-      NOW,
-    );
+    await loadPairedAtNow();
+    await seedRunningRun();
     harness.alarmsClear.mockClear();
     stubFetch(() => jsonRes(200, { status: "done", brief: "answered" }));
 
@@ -1266,21 +1287,8 @@ describe("agent run polling — survives eviction", () => {
   });
 
   test("a stale poll result is terminal and does not auto-re-invoke", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(NOW);
-    await load();
-    harness.storage.set(CONNECTION_KEY, conn);
-    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
-    await putRun(
-      {
-        subject: { kind: "item", id: "gh-1" },
-        lane: "impact",
-        runId: "r1",
-        state: { kind: "running", runId: "r1" },
-        expiresAtMs: NOW + 60_000,
-      },
-      NOW,
-    );
+    await loadPairedAtNow();
+    await seedRunningRun();
     const invokeCalls: string[] = [];
     stubFetch((url) => {
       if (url.includes("/v1/agents/runs/")) {
@@ -1292,7 +1300,7 @@ describe("agent run polling — survives eviction", () => {
 
     await fireAlarm(AGENT_POLL_ALARM);
 
-    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
+    expect((await seededRun())?.state).toEqual({
       kind: "failed",
       reason: "stale",
     });
@@ -1304,26 +1312,13 @@ describe("agent run polling — survives eviction", () => {
   // `server_error`, which is reserved for a genuinely failed CALL. The
   // gateway's free-text explanation carries through as `detail`.
   test("the agent's own failed run maps to agent_failed, carrying the gateway's detail", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(NOW);
-    await load();
-    harness.storage.set(CONNECTION_KEY, conn);
-    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
-    await putRun(
-      {
-        subject: { kind: "item", id: "gh-1" },
-        lane: "impact",
-        runId: "r1",
-        state: { kind: "running", runId: "r1" },
-        expiresAtMs: NOW + 60_000,
-      },
-      NOW,
-    );
+    await loadPairedAtNow();
+    await seedRunningRun();
     stubFetch(() => jsonRes(200, { status: "failed", failureReason: "no LLM configured" }));
 
     await fireAlarm(AGENT_POLL_ALARM);
 
-    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
+    expect((await seededRun())?.state).toEqual({
       kind: "failed",
       reason: "agent_failed",
       detail: "no LLM configured",
@@ -1334,26 +1329,13 @@ describe("agent run polling — survives eviction", () => {
   // `detail: undefined` — since toEqual treats an explicit undefined as equal
   // and would let that regress silently.
   test("a blank failureReason stores agent_failed with no detail key at all", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(NOW);
-    await load();
-    harness.storage.set(CONNECTION_KEY, conn);
-    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
-    await putRun(
-      {
-        subject: { kind: "item", id: "gh-1" },
-        lane: "impact",
-        runId: "r1",
-        state: { kind: "running", runId: "r1" },
-        expiresAtMs: NOW + 60_000,
-      },
-      NOW,
-    );
+    await loadPairedAtNow();
+    await seedRunningRun();
     stubFetch(() => jsonRes(200, { status: "failed", failureReason: "" }));
 
     await fireAlarm(AGENT_POLL_ALARM);
 
-    const state = (await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state;
+    const state = (await seededRun())?.state;
     expect(state).toEqual({ kind: "failed", reason: "agent_failed" });
     expect(state !== undefined && "detail" in state).toBe(false);
   });
@@ -1369,24 +1351,14 @@ describe("agent run polling — survives eviction", () => {
     vi.setSystemTime(NOW);
     await load();
     // Deliberately NOT seeding CONNECTION_KEY.
-    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
-    await putRun(
-      {
-        subject: { kind: "item", id: "gh-1" },
-        lane: "impact",
-        runId: "r1",
-        state: { kind: "running", runId: "r1" },
-        expiresAtMs: NOW + 60_000,
-      },
-      NOW,
-    );
+    await seedRunningRun();
     stubFetch(() => {
       throw new Error("must not fetch with no connection");
     });
 
     await fireAlarm(AGENT_POLL_ALARM);
 
-    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
+    expect((await seededRun())?.state).toEqual({
       kind: "failed",
       reason: "not_paired",
     });
@@ -1407,23 +1379,10 @@ describe("agent run polling — survives eviction", () => {
   // assertion is about WHICH backoff ticks fire and when; with real timers the
   // 750ms step would race the test body.
   test("a second alarm tick does not start a second poll loop for a run already being polled", async () => {
-    await load();
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-    harness.storage.set(CONNECTION_KEY, conn);
-    const { putRun } = await import("../../src/background/agent-run-store.ts");
-    await putRun(
-      {
-        subject: { kind: "item", id: "gh-1" },
-        lane: "impact",
-        runId: "r1",
-        state: { kind: "running", runId: "r1" },
-        // Well past every tick this test drives: the run must stay `running` the
-        // whole way, so nothing here can be mistaken for the expiry give-up.
-        expiresAtMs: NOW + 600_000,
-      },
-      NOW,
-    );
+    await loadPairedThenFakeTimers();
+    // Well past every tick this test drives: the run must stay `running` the
+    // whole way, so nothing here can be mistaken for the expiry give-up.
+    await seedRunningRun({ expiresAtMs: NOW + 600_000 });
     const polls: string[] = [];
     stubFetch((url) => {
       polls.push(url);
@@ -1524,35 +1483,22 @@ describe("agent run polling — survives eviction", () => {
     // load()'s own settle() relies on REAL setTimeout(0) ticks, so fake timers
     // (including setTimeout, unlike the Date-only tests above) go on AFTER
     // load() completes, never before.
-    await load();
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-    harness.storage.set(CONNECTION_KEY, conn);
-    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await loadPairedThenFakeTimers();
     // Expires 600ms out: past the first backoff step (500ms) but short of the
     // second (500 * 1.5 = 750ms), so the run is still "running" at t=0 (included
     // by listRunning) but has expired by the time the SECOND tick fires.
-    await putRun(
-      {
-        subject: { kind: "item", id: "gh-1" },
-        lane: "impact",
-        runId: "r1",
-        state: { kind: "running", runId: "r1" },
-        expiresAtMs: NOW + 600,
-      },
-      NOW,
-    );
+    await seedRunningRun({ expiresAtMs: NOW + 600 });
     stubFetch(() => jsonRes(200, { status: "running" }));
 
     harness.emitAlarm(AGENT_POLL_ALARM);
     await vi.advanceTimersByTimeAsync(0); // the alarm's own immediate first tick
-    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
+    expect((await seededRun())?.state).toEqual({
       kind: "running",
       runId: "r1",
     });
     await vi.advanceTimersByTimeAsync(750); // the scheduled second tick, past expiry
 
-    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
+    expect((await seededRun())?.state).toEqual({
       kind: "failed",
       reason: "stale",
     });
@@ -1563,21 +1509,8 @@ describe("agent run polling — survives eviction", () => {
   // report THAT reason, not invent `stale` for a condition that was never
   // ambiguous about what was wrong.
   test("a run that outlives its TTL after only ever seeing unreachable gives up as unreachable", async () => {
-    await load();
-    vi.useFakeTimers();
-    vi.setSystemTime(NOW);
-    harness.storage.set(CONNECTION_KEY, conn);
-    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
-    await putRun(
-      {
-        subject: { kind: "item", id: "gh-1" },
-        lane: "impact",
-        runId: "r1",
-        state: { kind: "running", runId: "r1" },
-        expiresAtMs: NOW + 600,
-      },
-      NOW,
-    );
+    await loadPairedThenFakeTimers();
+    await seedRunningRun({ expiresAtMs: NOW + 600 });
     // A doFetch rejection (not merely a non-2xx status) is what getAgentRun
     // maps to `unreachable` — see its own try/catch.
     stubFetch(() => {
@@ -1588,7 +1521,7 @@ describe("agent run polling — survives eviction", () => {
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(750);
 
-    expect((await getRun({ kind: "item", id: "gh-1" }, "impact", NOW))?.state).toEqual({
+    expect((await seededRun())?.state).toEqual({
       kind: "failed",
       reason: "unreachable",
     });
@@ -1600,21 +1533,8 @@ describe("agent run polling — survives eviction", () => {
   // is gated so the poll is provably still mid-flight (inside its
   // `getAgentRun` await) at the moment `unpair` runs.
   test("a poll whose generation is superseded mid-flight does not call putRun", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(NOW);
-    await load();
-    harness.storage.set(CONNECTION_KEY, conn);
-    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
-    await putRun(
-      {
-        subject: { kind: "item", id: "gh-1" },
-        lane: "impact",
-        runId: "r1",
-        state: { kind: "running", runId: "r1" },
-        expiresAtMs: NOW + 60_000,
-      },
-      NOW,
-    );
+    await loadPairedAtNow();
+    await seedRunningRun();
 
     let releaseFetch: (() => void) | undefined;
     const gate = new Promise<void>((resolve) => {
@@ -1635,7 +1555,7 @@ describe("agent run polling — survives eviction", () => {
     // generation) before responding, so by the time this resolves the
     // generation has already moved on and the store is already empty.
     await harness.emitMessage({ kind: "unpair" });
-    expect(await getRun({ kind: "item", id: "gh-1" }, "impact", NOW)).toBeNull();
+    expect(await seededRun()).toBeNull();
 
     // Let the gated fetch resolve and the poll's continuation run.
     releaseFetch?.();
@@ -1643,7 +1563,7 @@ describe("agent run polling — survives eviction", () => {
 
     // Had the superseded poll written its result, this would be `done` with
     // the stale brief instead of staying absent.
-    expect(await getRun({ kind: "item", id: "gh-1" }, "impact", NOW)).toBeNull();
+    expect(await seededRun()).toBeNull();
   });
 });
 

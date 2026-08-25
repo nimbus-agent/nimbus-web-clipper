@@ -9,11 +9,13 @@ import type { BriefState, SkippedSource } from "../background/brief-handlers.ts"
 import type { CandidateTab } from "../browser/tabs.ts";
 import { BRIEF_CAPS } from "../shared/brief.ts";
 import {
+  type BriefCitation,
   type BriefReport,
   type BriefReportItem,
   quotesWereOmitted,
   visibleGaps,
 } from "../shared/brief-report.ts";
+import { el } from "../shared/dom.ts";
 import { groupKey, type PassageGroup } from "../shared/passage.ts";
 import { safeHttpUrl } from "../shared/safe-url.ts";
 
@@ -126,21 +128,6 @@ export function composerRows(model: {
  *  detail of this module. */
 export function pickId(row: ComposerRow): string {
   return row.kind === "tab" ? `tab:${row.tab.id}` : `passages:${row.group.url}`;
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  text?: string,
-  className?: string,
-): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (text !== undefined) {
-    node.textContent = text;
-  }
-  if (className !== undefined) {
-    node.className = className;
-  }
-  return node;
 }
 
 /** Exported so ticking a box can refresh the counter WITHOUT redrawing the
@@ -402,46 +389,66 @@ function saveErrorText(reason: string): string {
  * consumers must never do: rewrite a type into something it is not.
  */
 export function itemTypeLabel(itemType: string): string {
-  return itemType.replace(/_/g, " ").trim();
+  return itemType.replaceAll("_", " ").trim();
+}
+
+/**
+ * The " · <type>" tail on an index citation, or "" when there is nothing to name.
+ *
+ * The LABEL decides the separator, not the field's presence. `itemType` is
+ * deliberately unvalidated — an arbitrary connector string, never an enum — so a
+ * malformed payload can carry `""` or `"__"`, which `itemTypeLabel` correctly
+ * renders as nothing. Keying the " · " off `itemType !== undefined` then printed
+ * "from your index · " with nothing after it. Fixed here rather than in the
+ * guard: the guard must keep accepting whatever type arrives.
+ */
+function citationTypeSuffix(itemType: string | undefined): string {
+  const label = itemType === undefined ? "" : itemTypeLabel(itemType);
+  return label === "" ? "" : ` · ${label}`;
+}
+
+/**
+ * A citation url as a clickable link, or as plain text when it is not safe.
+ *
+ * A citation url is as untrusted as the rest of the report — `isBriefReport`
+ * checks it is a string, not that it is safe to click — so the scheme is
+ * validated before it reaches an href. A rejected url is still shown as TEXT:
+ * the user should see what the citation claimed, just not be able to click it
+ * into `javascript:` or `data:`.
+ */
+function citationUrlNode(url: string): HTMLElement {
+  const href = safeHttpUrl(url);
+  if (href === null) {
+    return el("span", url, "brief__cite-url");
+  }
+  const a = el("a", url, "brief__cite-url");
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  return a;
+}
+
+function renderCitation(c: BriefCitation): HTMLElement {
+  const li = el("li");
+  li.appendChild(el("span", c.title, "brief__cite-title"));
+  if (c.kind === "clip") {
+    li.appendChild(
+      el("span", `from your index${citationTypeSuffix(c.itemType)}`, "brief__cite-origin"),
+    );
+  }
+  if (c.quote !== undefined) {
+    li.appendChild(el("blockquote", c.quote));
+  }
+  if (c.url !== undefined) {
+    li.appendChild(citationUrlNode(c.url));
+  }
+  return li;
 }
 
 function renderCitations(item: BriefReportItem): HTMLElement {
   const list = el("ul", undefined, "brief__citations");
   for (const c of item.citations) {
-    const li = el("li");
-    li.appendChild(el("span", c.title, "brief__cite-title"));
-    if (c.kind === "clip") {
-      // The LABEL decides the separator, not the field's presence. `itemType` is
-      // deliberately unvalidated — an arbitrary connector string, never an enum —
-      // so a malformed payload can carry `""` or `"__"`, which `itemTypeLabel`
-      // correctly renders as nothing. Keying the " · " off `itemType !== undefined`
-      // then printed "from your index · " with nothing after it. Fixed here rather
-      // than in the guard: the guard must keep accepting whatever type arrives.
-      const label = c.itemType === undefined ? "" : itemTypeLabel(c.itemType);
-      const type = label === "" ? "" : ` · ${label}`;
-      li.appendChild(el("span", `from your index${type}`, "brief__cite-origin"));
-    }
-    if (c.quote !== undefined) {
-      li.appendChild(el("blockquote", c.quote));
-    }
-    // A citation url is as untrusted as the rest of the report — `isBriefReport`
-    // checks it is a string, not that it is safe to click — so the scheme is
-    // validated before it reaches an href. A rejected url is still shown as
-    // TEXT: the user should see what the citation claimed, just not be able to
-    // click it into `javascript:` or `data:`.
-    if (c.url !== undefined) {
-      const href = safeHttpUrl(c.url);
-      if (href === null) {
-        li.appendChild(el("span", c.url, "brief__cite-url"));
-      } else {
-        const a = el("a", c.url, "brief__cite-url");
-        a.href = href;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        li.appendChild(a);
-      }
-    }
-    list.appendChild(li);
+    list.appendChild(renderCitation(c));
   }
   return list;
 }

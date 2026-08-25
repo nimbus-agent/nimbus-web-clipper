@@ -33,4 +33,12 @@ describe("permissions seam", () => {
     harness.permissionsRequest.mockRejectedValueOnce(new Error("user gesture required"));
     await expect(requestOrigin("https://corp.example/*")).resolves.toBe(false);
   });
+  test("a rejected remove resolves false rather than throwing", async () => {
+    // Revocation is offered from a row in Options. Firefox rejects
+    // `permissions.remove` for a pattern it considers required, and the row's
+    // click handler is `void`-ed — an escaping rejection would surface as an
+    // unhandled rejection rather than a false the row can render.
+    harness.permissionsRemove.mockRejectedValueOnce(new Error("cannot be removed"));
+    await expect(removeOrigin("https://corp.example/*")).resolves.toBe(false);
+  });
 });

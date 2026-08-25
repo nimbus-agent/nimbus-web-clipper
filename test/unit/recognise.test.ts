@@ -374,3 +374,82 @@ describe("dashboard (home) surfaces", () => {
     expect(surfaceLine(r)).toBe("GitHub dashboard");
   });
 });
+describe("a path that ALMOST matches is a miss, never a guess", () => {
+  // Each of these is a real page on the product's own host, one segment away
+  // from the shape the matcher wants. A partial match here would send the
+  // gateway a `resolveUrl` for an item that does not exist, and the panel would
+  // report "not indexed" for a page that was never an item in the first place.
+  const cases: ReadonlyArray<readonly [string, string, readonly ConfiguredOrigin[]]> = [
+    [
+      "GitLab MR with a word where the number goes",
+      "https://gitlab.com/a/b/-/merge_requests/new",
+      NONE,
+    ],
+    ["GitLab MR path with no number at all", "https://gitlab.com/a/b/-/merge_requests", NONE],
+    [
+      "GitLab path whose group is too shallow to split",
+      "https://gitlab.com/-/merge_requests/7",
+      NONE,
+    ],
+    [
+      "Bitbucket Server repo page, one segment short of a PR",
+      "https://stash.corp.example:8443/projects/ACME/repos",
+      SELF_HOSTED,
+    ],
+    [
+      "Bitbucket Server commits page, not pull-requests",
+      "https://stash.corp.example:8443/projects/ACME/repos/web/commits/abc",
+      SELF_HOSTED,
+    ],
+    [
+      "Bitbucket Server PR with a word where the number goes",
+      "https://stash.corp.example:8443/projects/ACME/repos/web/pull-requests/new",
+      SELF_HOSTED,
+    ],
+    [
+      "Bitbucket Cloud PR with a word where the number goes",
+      "https://bitbucket.org/acme/web/pull-requests/new",
+      NONE,
+    ],
+    ["Jenkins /job with no job name after it", "https://corp.example/jenkins/job", SELF_HOSTED],
+    ["Jenkins job page with no build number", "https://corp.example/jenkins/job/web", SELF_HOSTED],
+    [
+      "Jenkins lastBuild alias, which is not a build number",
+      "https://corp.example/jenkins/job/web/lastBuild",
+      SELF_HOSTED,
+    ],
+    ["GitHub PR path with no number at all", "https://github.com/acme/web/pull", NONE],
+    [
+      "Jira browse with a key that is not a Jira key",
+      "https://acme.atlassian.net/browse/nope",
+      NONE,
+    ],
+  ];
+
+  it.each(cases)("%s", (_name, url, origins) => {
+    expect(recognise(url, origins)).toEqual({ ok: false, reason: "unrecognised-path" });
+  });
+});
+
+describe("an instance root is a home surface on every product", () => {
+  // The bare root is the page a user lands on before navigating anywhere, and
+  // it is what the ambient cue keys on to say "this instance is connected". A
+  // product whose root falls through to `unrecognised-path` shows nothing there.
+  it("GitLab's bare root", () => {
+    const r = recognise("https://gitlab.com/", NONE);
+    expect(r.ok && { product: r.product, kind: r.kind, ref: r.ref }).toEqual({
+      product: "gitlab",
+      kind: "home",
+      ref: "",
+    });
+  });
+
+  it("a self-hosted Jenkins root, after its path prefix is stripped", () => {
+    const r = recognise("https://corp.example/jenkins", SELF_HOSTED);
+    expect(r.ok && { product: r.product, kind: r.kind, ref: r.ref }).toEqual({
+      product: "jenkins",
+      kind: "home",
+      ref: "",
+    });
+  });
+});

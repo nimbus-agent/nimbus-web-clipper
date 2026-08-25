@@ -2,8 +2,9 @@
 // The staged brief protocol, as pure orchestration over injected deps.
 //
 // A SUB-ROUTER's worth of work, kept out of service-worker.ts on purpose: that
-// router is already a fourteen-branch function that needed `openPanelForCue`
-// extracted to stay under Sonar's cognitive-complexity cap (S3776, 15). Six more
+// router already carries nineteen branches, split across four order-preserving
+// slices to stay under Sonar's cognitive-complexity cap (S3776, 15), having
+// earlier needed `openPanelForCue` extracted for the same reason. Six more
 // message kinds routed inline would break the gate. The worker gains one branch
 // that delegates here.
 import type { CandidateTab, TabCandidates } from "../browser/tabs.ts";
@@ -192,6 +193,100 @@ async function putPhase(deps: BriefDeps, id: string, phase: StoredBrief["phase"]
   await deps.store.put({ ...existing, phase }, nowMs);
 }
 
+/** The text of one source, or the reason there is none. */
+type SourceText =
+  | { readonly ok: true; readonly text: string; readonly capturedAt: number }
+  | { readonly ok: false; readonly reason: string };
+
+/** Read one source's text: a tab is captured, a passage group is stitched. */
+async function readSourceText(deps: BriefDeps, source: PickedSource): Promise<SourceText> {
+  if (source.kind === "tab") {
+    const outcome = await deps.capture(source.tab.id, source.tab.url);
+    if (!outcome.ok) {
+      return { ok: false, reason: outcome.reason };
+    }
+    return { ok: true, text: outcome.capture.body, capturedAt: deps.now() };
+  }
+  // No capture, and no way to fail one: the text was captured when the user
+  // highlighted it. `capturedAt` is the group's OLDEST passage — a stitched
+  // body is only as fresh as its oldest text.
+  return { ok: true, text: stitch(source.group), capturedAt: groupCapturedAt(source.group) };
+}
+
+/**
+ * The passages this accepted feed may forget, or `null` when none may be.
+ *
+ * What was STITCHED, captured at the moment the feed was accepted — not the
+ * page, whose collection may have grown since the read.
+ *
+ * A truncated body forgets NOTHING, because a cut body means part of the group
+ * never left, and "clear what left" has exactly one reading for that: keep it
+ * all. `addPassage` refuses any add that would push a page's stitched body past
+ * the same cap, so a collection THIS client built cannot get here — but
+ * `isPassage` bounds a stored passage's shape, not its size, so a corrupted,
+ * hand-edited or migrated store still can. The cut is still reported by the
+ * caller; only the forgetting is withheld.
+ */
+function forgettablePassages(
+  source: PickedSource,
+  url: string,
+  truncated: boolean,
+): FedPassages | null {
+  if (source.kind !== "passages" || truncated) {
+    return null;
+  }
+  return { url, ats: source.group.passages.map((p) => p.at) };
+}
+
+/** What one feed attempt tells the loop to do. */
+type FeedStep =
+  | { readonly kind: "skipped"; readonly entry: SkippedSource }
+  /** The run is full — the loop stops, it does not merely skip this source. */
+  | { readonly kind: "stop"; readonly entry: SkippedSource }
+  | {
+      readonly kind: "accepted";
+      readonly received: number;
+      /** The title to report as cut, or `null` when the body went whole. */
+      readonly truncatedTitle: string | null;
+      readonly fed: FedPassages | null;
+    };
+
+/** Capture and feed ONE declared source. */
+async function feedOne(
+  deps: BriefDeps,
+  conn: { origin: string; token: string },
+  id: string,
+  source: PickedSource,
+): Promise<FeedStep> {
+  const declared = declare(source);
+  const read = await readSourceText(deps, source);
+  if (!read.ok) {
+    return { kind: "skipped", entry: { title: declared.title, reason: read.reason } };
+  }
+  const body = buildSourceBody({
+    url: declared.url,
+    title: declared.title,
+    body: read.text,
+    capturedAt: read.capturedAt,
+  });
+  const res = await deps.client.feedBriefSource(conn.origin, conn.token, id, body);
+  if (!res.ok) {
+    if (res.reason === "refused" && res.detail === "run_capacity") {
+      // The run is full. Every remaining source would be refused too, and the
+      // sources already accepted still produce a report whose `gaps` name the
+      // shortfall. Stopping is the correct answer, not an error.
+      return { kind: "stop", entry: { title: declared.title, reason: "run_capacity" } };
+    }
+    return { kind: "skipped", entry: { title: declared.title, reason: res.reason } };
+  }
+  return {
+    kind: "accepted",
+    received: res.received,
+    truncatedTitle: body.truncated ? declared.title : null,
+    fed: forgettablePassages(source, declared.url, body.truncated),
+  };
+}
+
 /**
  * Capture and feed each declared source, in order.
  *
@@ -214,63 +309,23 @@ async function feedAll(
   const fedPassages: FedPassages[] = [];
   let accepted = 0;
   for (const source of picked) {
-    const declared = declare(source);
-    let text: string;
-    let capturedAt: number;
-    if (source.kind === "tab") {
-      const outcome = await deps.capture(source.tab.id, source.tab.url);
-      if (!outcome.ok) {
-        skipped.push({ title: declared.title, reason: outcome.reason });
-        continue;
-      }
-      text = outcome.capture.body;
-      capturedAt = deps.now();
-    } else {
-      // No capture, and no way to fail one: the text was captured when the user
-      // highlighted it. `capturedAt` is the group's OLDEST passage — a stitched
-      // body is only as fresh as its oldest text.
-      text = stitch(source.group);
-      capturedAt = groupCapturedAt(source.group);
-    }
-    const body = buildSourceBody({
-      url: declared.url,
-      title: declared.title,
-      body: text,
-      capturedAt,
-    });
-    const res = await deps.client.feedBriefSource(conn.origin, conn.token, id, body);
-    if (res.ok) {
-      accepted += 1;
-      if (body.truncated) {
-        truncated.push(declared.title);
-      }
-      if (source.kind === "passages" && !body.truncated) {
-        // What was STITCHED, captured at the moment the feed was accepted — not
-        // the page, whose collection may have grown since the read.
-        //
-        // `!body.truncated` because a cut body means part of the group never
-        // left, and "clear what left" has exactly one reading for that: keep it
-        // all. `addPassage` refuses any add that would push a page's stitched
-        // body past the same cap, so a collection THIS client built cannot get
-        // here — but `isPassage` bounds a stored passage's shape, not its size,
-        // so a corrupted, hand-edited or migrated store still can. The cut is
-        // still reported above; only the forgetting is withheld.
-        fedPassages.push({
-          url: declared.url,
-          ats: source.group.passages.map((p) => p.at),
-        });
-      }
-      emit(deps, { kind: "feeding", id, received: res.received, expected });
+    const step = await feedOne(deps, conn, id, source);
+    if (step.kind === "skipped") {
+      skipped.push(step.entry);
       continue;
     }
-    if (res.reason === "refused" && res.detail === "run_capacity") {
-      // The run is full. Every remaining source would be refused too, and the
-      // sources already accepted still produce a report whose `gaps` name the
-      // shortfall. Stopping is the correct answer, not an error.
-      skipped.push({ title: declared.title, reason: "run_capacity" });
+    if (step.kind === "stop") {
+      skipped.push(step.entry);
       break;
     }
-    skipped.push({ title: declared.title, reason: res.reason });
+    accepted += 1;
+    if (step.truncatedTitle !== null) {
+      truncated.push(step.truncatedTitle);
+    }
+    if (step.fed !== null) {
+      fedPassages.push(step.fed);
+    }
+    emit(deps, { kind: "feeding", id, received: step.received, expected });
   }
   return { accepted, skipped, truncated, fedPassages };
 }
@@ -324,6 +379,74 @@ async function settleRun(
 }
 
 /**
+ * The picks that became sources, deduplicated by page, in pick order.
+ *
+ * Every pick is resolved against state the background already holds — a tab id
+ * against listTabs, a url against the collection — and an unmatched pick is
+ * DROPPED, exactly as an unmatched tabId always was. A url the collection
+ * never held cannot become a source, so the guard in messages.ts is the outer
+ * fence, not the load-bearing one. Same rule C2.5 applies to a supplied itemId.
+ *
+ * A page is claimed at most ONCE, in whichever mode named it first. This is
+ * the spec's "a URL is declared exactly once, in exactly one mode", enforced
+ * at the layer that declares: the composer renders one row per page key, but
+ * the composer is UI and the guard checks shape, not uniqueness. Without this
+ * a tab pick and a passage pick naming the same page — or two passage picks
+ * differing only by fragment — would each become a source, and the gateway
+ * canonicalises them to one identity.
+ */
+function pickSources(
+  picks: readonly BriefPick[],
+  named: readonly CandidateTab[],
+  groups: readonly PassageGroup[],
+): PickedSource[] {
+  const picked: PickedSource[] = [];
+  const claimed = new Set<string>();
+  for (const pick of picks) {
+    const source = resolvePick(pick, named, groups);
+    if (source === null) {
+      continue;
+    }
+    const key = pageKey(source);
+    if (claimed.has(key)) {
+      continue;
+    }
+    claimed.add(key);
+    picked.push(source);
+  }
+  return picked;
+}
+
+/**
+ * The `hint` a create failure may carry, as a spreadable part.
+ *
+ * Absent rather than `undefined` when there is none: `BriefState` declares
+ * `hint` optional, and `exactOptionalPropertyTypes` treats a present-but-
+ * undefined key as a different thing from a missing one.
+ */
+function hintPart(created: { readonly reason: string; readonly hint?: string }): { hint?: string } {
+  return created.hint === undefined ? {} : { hint: created.hint };
+}
+
+/**
+ * Drop the passages this run actually sent, never failing the run over it.
+ *
+ * `try`/`catch`, not `.catch()`: a storage failure here must never turn a
+ * live run into a reported failure, and `.catch()` alone only covers a
+ * rejected promise — not a dep that throws synchronously.
+ */
+async function forgetFed(deps: BriefDeps, fed: FeedResult): Promise<void> {
+  if (fed.fedPassages.length === 0) {
+    return;
+  }
+  try {
+    await deps.forgetPassages(fed.fedPassages);
+  } catch {
+    // Swallowed deliberately: see above.
+  }
+}
+
+/**
  * Create → capture → feed → run → poll.
  *
  * The order matters: every picked source is DECLARED at create even though a
@@ -341,33 +464,7 @@ export async function handleBriefStart(
   }
   const tabs = await deps.listTabs();
   const groups = groupPassages(await deps.passages());
-  // Every pick is resolved against state the background already holds — a tab id
-  // against listTabs, a url against the collection — and an unmatched pick is
-  // DROPPED, exactly as an unmatched tabId always was. A url the collection
-  // never held cannot become a source, so the guard in messages.ts is the outer
-  // fence, not the load-bearing one. Same rule C2.5 applies to a supplied itemId.
-  //
-  // A page is claimed at most ONCE, in whichever mode named it first. This is
-  // the spec's "a URL is declared exactly once, in exactly one mode", enforced
-  // at the layer that declares: the composer renders one row per page key, but
-  // the composer is UI and the guard checks shape, not uniqueness. Without this
-  // a tab pick and a passage pick naming the same page — or two passage picks
-  // differing only by fragment — would each become a source, and the gateway
-  // canonicalises them to one identity.
-  const picked: PickedSource[] = [];
-  const claimed = new Set<string>();
-  for (const pick of req.picks) {
-    const source = resolvePick(pick, tabs.named, groups);
-    if (source === null) {
-      continue;
-    }
-    const key = pageKey(source);
-    if (claimed.has(key)) {
-      continue;
-    }
-    claimed.add(key);
-    picked.push(source);
-  }
+  const picked = pickSources(req.picks, tabs.named, groups);
   const sources = picked.slice(0, BRIEF_CAPS.maxSources);
   if (sources.length === 0) {
     return emit(deps, { kind: "failed", reason: "no_sources" });
@@ -379,11 +476,10 @@ export async function handleBriefStart(
     buildCreateBody(req.question, sources.map(declare), req.useIndex),
   );
   if (!created.ok) {
-    const hint = "hint" in created ? created.hint : undefined;
     return emit(deps, {
       kind: "failed",
       reason: created.reason,
-      ...(hint === undefined ? {} : { hint }),
+      ...hintPart(created),
     });
   }
 
@@ -427,17 +523,7 @@ export async function handleBriefStart(
   // Cleared HERE, not on the report: this is the moment the text left. Leaving
   // them would mean the next brief silently re-sends text already sent. A run
   // that failed before this line keeps everything, because nothing left.
-  //
-  // `try`/`catch`, not `.catch()`: a storage failure here must never turn a
-  // live run into a reported failure, and `.catch()` alone only covers a
-  // rejected promise — not a dep that throws synchronously.
-  if (fed.fedPassages.length > 0) {
-    try {
-      await deps.forgetPassages(fed.fedPassages);
-    } catch {
-      // Swallowed deliberately: see above.
-    }
-  }
+  await forgetFed(deps, fed);
   await putPhase(deps, id, { kind: "running" });
   emit(deps, { kind: "running", id });
 
@@ -489,7 +575,7 @@ export async function handleBriefSave(deps: BriefDeps, id: string): Promise<Brie
   }
   const nowMs = deps.now();
   const stored = await deps.store.get(id, nowMs);
-  if (stored === null || stored.phase.kind !== "done") {
+  if (stored?.phase.kind !== "done") {
     return emit(deps, { kind: "save-failed", id, reason: "expired" });
   }
   const saved = await deps.client.saveBrief(conn.origin, conn.token, id);

@@ -263,3 +263,195 @@ describe("the Activity page", () => {
     expect(harness.storageSet).not.toHaveBeenCalled();
   });
 });
+describe("the Activity page refuses a reply that is not its own", () => {
+  // `sendMessage` is typed `unknown` at the seam. A null, a stale reply, or a
+  // response for a DIFFERENT request must not be read as one of ours: `res.ok`
+  // would throw on null, and a mismatched shape would reach the renderer.
+  async function loadUntil(selector: string): Promise<void> {
+    document.body.innerHTML = FIXTURE;
+    vi.resetModules();
+    await import("../../src/ledger/ledger.ts");
+    await vi.waitFor(() => expect(document.querySelector(selector)).not.toBeNull());
+  }
+
+  test("a reply addressed to a DIFFERENT request never reaches the renderer", async () => {
+    harness.sendMessage.mockImplementation(
+      replies({ "egress-window": { kind: "connection", ok: true, paired: true } }),
+    );
+    await loadUntil(".ledger__error");
+    expect(document.querySelectorAll(".ledger__row")).toHaveLength(0);
+  });
+
+  test("no reply at all is reported as an error, not as an empty ledger", async () => {
+    // An empty ledger is a CLAIM — "nothing has left this machine". A dropped
+    // message must never be rendered as one.
+    harness.sendMessage.mockImplementation(replies({ "egress-window": undefined }));
+    await loadUntil(".ledger__error");
+    expect(document.querySelectorAll(".ledger__row")).toHaveLength(0);
+  });
+
+  test("a verify reply for another request is a failed CHECK, not a broken chain", async () => {
+    harness.sendMessage.mockImplementation(
+      replies({ "egress-verify": { kind: "egress-window", ok: true } }),
+    );
+    await loadPage();
+    click("verify");
+    await vi.waitFor(() => expect(document.querySelector(".ledger__error")).not.toBeNull());
+    expect(document.body.textContent).not.toContain("did not verify");
+    expect(document.querySelector(".ledger__verdict")).toBeNull();
+  });
+});
+
+describe("the Activity page's error shapes", () => {
+  async function loadUntilError(): Promise<void> {
+    document.body.innerHTML = FIXTURE;
+    vi.resetModules();
+    await import("../../src/ledger/ledger.ts");
+    await vi.waitFor(() => expect(document.querySelector(".ledger__error")).not.toBeNull());
+  }
+
+  test("a 403 with NO gap falls back to generic guidance, never a fabricated command", async () => {
+    // `--set` REPLACES the scope set, so a command built without the gateway's
+    // own `granted` list would silently REVOKE scopes the token already has.
+    // With no gap in hand the page must say where to look instead.
+    harness.sendMessage.mockImplementation(
+      replies({
+        "egress-window": { kind: "egress-window", ok: false, reason: "insufficient_scope" },
+      }),
+    );
+    await loadUntilError();
+    expect(document.body.textContent).not.toContain("nimbus clip scopes");
+    expect(document.body.textContent).toContain("nimbus clip status");
+  });
+  test("Older is hidden while an error is on screen, even on a truncated window", async () => {
+    // `rowsTruncated` survives from the previous successful read, so without the
+    // failure check the page would offer to page back through rows it is not
+    // showing.
+    harness.sendMessage.mockImplementation(
+      replies({
+        "egress-window": {
+          kind: "egress-window",
+          ok: true,
+          partition: { ours: [OURS], others: [], unattributable: [] },
+          outcomes: {},
+          rowsTotal: 40,
+          rowsTruncated: true,
+        },
+      }),
+    );
+    await loadPage();
+    expect((document.getElementById("older") as HTMLButtonElement).hidden).toBe(false);
+
+    harness.sendMessage.mockImplementation(
+      replies({ "egress-window": { kind: "egress-window", ok: false, reason: "unreachable" } }),
+    );
+    click("older");
+    await vi.waitFor(() => expect(document.querySelector(".ledger__error")).not.toBeNull());
+    expect((document.getElementById("older") as HTMLButtonElement).hidden).toBe(true);
+  });
+
+  test("a verify scope gap reaches the page as a pasteable command", async () => {
+    harness.sendMessage.mockImplementation(
+      replies({
+        "egress-verify": {
+          kind: "egress-verify",
+          ok: false,
+          reason: "insufficient_scope",
+          scopeGap: { label: "mock-device", required: "egress", granted: ["clip"] },
+        },
+      }),
+    );
+    await loadPage();
+    click("verify");
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain(
+        "nimbus clip scopes mock-device --set clip,egress",
+      ),
+    );
+  });
+
+  test("a successful verify clears the error a failed read left behind", async () => {
+    // `render()` would otherwise keep drawing the old error over a verdict that
+    // just arrived.
+    harness.sendMessage.mockImplementation(
+      replies({ "egress-window": { kind: "egress-window", ok: false, reason: "unreachable" } }),
+    );
+    await loadUntilError();
+    click("verify");
+    await vi.waitFor(() => expect(document.querySelector(".ledger__verdict")).not.toBeNull());
+    expect(document.querySelector(".ledger__error")).toBeNull();
+  });
+});
+
+describe("Export proof", () => {
+  test("hands over no file when the gateway refuses", async () => {
+    // A downloaded file is a claim that the gateway signed something. A refusal
+    // must produce nothing at all rather than an unsigned or empty artifact.
+    harness.sendMessage.mockImplementation(
+      replies({ "egress-prove": { kind: "egress-prove", ok: false, reason: "unsupported" } }),
+    );
+    await loadPage();
+    click("prove");
+    await vi.waitFor(() => expect(document.querySelector(".ledger__error")).not.toBeNull());
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  test("a prove scope gap reaches the page as a pasteable command", async () => {
+    harness.sendMessage.mockImplementation(
+      replies({
+        "egress-prove": {
+          kind: "egress-prove",
+          ok: false,
+          reason: "insufficient_scope",
+          scopeGap: { label: "mock-device", required: "egress", granted: ["clip"] },
+        },
+      }),
+    );
+    await loadPage();
+    click("prove");
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain(
+        "nimbus clip scopes mock-device --set clip,egress",
+      ),
+    );
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  test("a reply for another request never produces a download", async () => {
+    harness.sendMessage.mockImplementation(
+      replies({ "egress-prove": { kind: "egress-window", ok: true, proof: { digest: "d" } } }),
+    );
+    await loadPage();
+    click("prove");
+    await vi.waitFor(() => expect(document.querySelector(".ledger__error")).not.toBeNull());
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+});
+
+describe("Older with nothing on screen", () => {
+  test("asks for the newest window rather than paging from a cursor it does not have", async () => {
+    // `oldestShownId()` has no oldest row to name. Sending `before: 0` would ask
+    // for rows older than the first row that ever existed, i.e. always nothing.
+    harness.sendMessage.mockImplementation(
+      replies({
+        "egress-window": {
+          kind: "egress-window",
+          ok: true,
+          partition: { ours: [], others: [], unattributable: [] },
+          outcomes: {},
+          rowsTotal: 40,
+          rowsTruncated: true,
+        },
+      }),
+    );
+    document.body.innerHTML = FIXTURE;
+    vi.resetModules();
+    await import("../../src/ledger/ledger.ts");
+    await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalled());
+    harness.sendMessage.mockClear();
+
+    click("older");
+    await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalled());
+    expect(harness.sendMessage.mock.calls[0]?.[0]).toEqual({ kind: "egress-window" });
+  });
+});

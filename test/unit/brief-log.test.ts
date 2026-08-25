@@ -134,7 +134,7 @@ describe("brief-log-store", () => {
     for (let i = 0; i < MAX_LOG_ENTRIES + 5; i++) {
       await appendLogEntry(entry({ runId: `r${i}`, at: i }));
     }
-    expect((await readLog()).length).toBe(MAX_LOG_ENTRIES);
+    expect(await readLog()).toHaveLength(MAX_LOG_ENTRIES);
   });
 
   it("clearLog empties it", async () => {

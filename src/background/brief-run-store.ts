@@ -1,18 +1,19 @@
 // src/background/brief-run-store.ts
 // Persistence for a brief run, so closing the page does not lose it.
 //
-// Modelled on agent-run-store.ts: same storageGet/storageSet seam, same rule
-// that stored data is external input to be filtered through a guard and never
-// cast, and the same single-writer chain — the SW is single-threaded but not
-// single-task, so two `putBriefRun` calls in flight together would otherwise
-// read the same snapshot and the second would clobber the first.
+// Modelled on agent-run-store.ts, and sharing keyed-store.ts with it: stored
+// data is external input, to be filtered through a guard and never cast; and
+// the SW is single-threaded but not single-task, so two `putBriefRun` calls in
+// flight together would otherwise read the same snapshot and the second would
+// clobber the first.
 //
 // WHAT IS NOT HERE IS THE POINT: no source bodies. `BriefSource.body` is
 // ephemeral by contract ("never written to disk"), and this client must not hold
 // what the gateway refuses to hold. Only the declared url/title the user already
 // chose, the question they asked, and the phase.
-import { storageGet, storageSet } from "../browser/storage.ts";
+import { storageSet } from "../browser/storage.ts";
 import { type BriefReport, isBriefReport } from "../shared/brief-report.ts";
+import { createWriteChain, readGuarded } from "./keyed-store.ts";
 
 const STORE_KEY = "briefRuns";
 
@@ -89,20 +90,9 @@ function isStoredEntry(v: unknown): v is StoredEntry {
   );
 }
 
-/** Read the whole store, discarding anything that fails the guard. Storage is
- *  external input: a hand-edited or partially-written value must not throw. */
-async function readAll(): Promise<Record<string, StoredEntry>> {
-  const raw = await storageGet(STORE_KEY);
-  if (!isObject(raw)) {
-    return {};
-  }
-  const out: Record<string, StoredEntry> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (isStoredEntry(value)) {
-      out[key] = value;
-    }
-  }
-  return out;
+/** Read the whole store, discarding anything that fails the guard. */
+function readAll(): Promise<Record<string, StoredEntry>> {
+  return readGuarded(STORE_KEY, isStoredEntry);
 }
 
 /** Strip the internal `writtenAtMs` bookkeeping before it crosses the public
@@ -121,16 +111,15 @@ export async function getBriefRun(id: string, nowMs: number): Promise<StoredBrie
   return toStoredBrief(found);
 }
 
-// Single-writer chain — see clip-queue-store.ts's `chain` for the identical
-// pattern and the reasoning.
-let chain: Promise<unknown> = Promise.resolve();
+// Single-writer lock — see keyed-store.ts for the pattern and the reasoning.
+const exclusively = createWriteChain();
 
 /**
  * The cap is enforced on WRITE, not only on read: this evicts before writing, so
  * the store can never exceed MAX_STORED_BRIEFS entries at any moment.
  */
 export function putBriefRun(run: StoredBrief, nowMs: number): Promise<void> {
-  const next = chain.then(async () => {
+  return exclusively(async () => {
     const all = await readAll();
     const entries = Object.entries(all).filter(([k]) => k !== run.id);
     entries.push([run.id, { ...run, writtenAtMs: nowMs }]);
@@ -142,8 +131,6 @@ export function putBriefRun(run: StoredBrief, nowMs: number): Promise<void> {
     }
     await storageSet(STORE_KEY, Object.fromEntries(entries));
   });
-  chain = next.catch(() => undefined);
-  return next;
 }
 
 export async function listBriefRuns(nowMs: number): Promise<StoredBrief[]> {
@@ -161,9 +148,7 @@ export async function listBriefRuns(nowMs: number): Promise<StoredBrief[]> {
  * already happened and does not un-happen when the pairing changes.
  */
 export function clearBriefRuns(): Promise<void> {
-  const next = chain.then(async () => {
+  return exclusively(async () => {
     await storageSet(STORE_KEY, {});
   });
-  chain = next.catch(() => undefined);
-  return next;
 }

@@ -275,7 +275,7 @@ Every item carries three tags so you can pick work that fits:
 
 | Tag | Meaning |
 | --- | --- |
-| 🟢 **client-only** | Buildable today against the existing locked contract (`/v1/clips`, `/v1/clips/pair/confirm`, `/v1/clips/related`). No other repo needed. |
+| 🟢 **client-only** | Buildable today against the existing locked contract — the three original clip routes, plus everything the C-phases have since landed upstream (`/v1/items/resolve`, `/v1/items/fetch`, `/v1/agents/*`, `/v1/briefs*`, `/v1/egress*`, `/v1/health`), each behind its own token scope. `GATEWAY_PATHS` in `src/shared/gateway.ts` is the current list. No other repo needed. |
 | 🟡 **needs-gateway** | Client UI is ready; blocked on a **new gateway surface** proposed in the [Nimbus gateway repo](https://github.com/nimbus-agent/Nimbus). The brief names the surface it needs. |
 | 🔵 **ecosystem** | Depends on a sibling repo landing (the Nimbus SDK, the engine's plugin story). |
 
@@ -292,8 +292,10 @@ Each brief follows the same shape:
 
 ## Foundation — shipped ✅
 
-The base you're building on is real, not a promise. Through **v0.2.0** the
-end-to-end core works in both Chrome and Firefox:
+The base you're building on is real, not a promise. This is what is on `main`
+today and works end-to-end in both Chrome and Firefox. (The last cut release is
+**v0.2.0**; everything below the clip core landed after it and ships with the
+next tag — `CHANGELOG.md`'s `[Unreleased]` is the honest boundary.)
 
 - **Pairing** — redeem a 6-digit gateway code → long-lived bearer token
   (`/v1/clips/pair/confirm`), stored in `chrome.storage.local`, held by the SW.
@@ -314,6 +316,15 @@ end-to-end core works in both Chrome and Firefox:
   a lane-based panel shell that leads with the recognised surface and the
   resolved item; opt-in page access, granted per host. The resolve read is
   shipped against the gateway's real contract — see C1.1.
+- **Agent lanes (Phase C2)** — the seven lanes in `AGENT_LANES`
+  (`src/shared/types.ts`) run the gateway's own agents against the recognised
+  item, with MV3-safe polling and per-surface lane rules.
+- **Targeted fetch + capture fallback (Phase C3)** — a confirmed single-item
+  sync on a resolve miss, and page capture only as the last resort.
+- **Activity (Phase C4.1, partial)** — `src/ledger/` reads the gateway's egress
+  ledger back; see the C4.1 row for the two promises it does not yet meet.
+- **Research briefs (Phase C5)** — a question across the tabs you pick, over
+  passages you collected and over the index, with a local disclosure log.
 - **Release** — tag-driven build/package + Chrome Web Store / Firefox AMO publish
   automation.
 
@@ -1212,7 +1223,7 @@ endpoint.*
 > **Done when** The user can switch capture shape per-clip; the choice is
 > remembered as a default.
 
-### 2.5 Faithful metadata & figures · 🟢 · M
+### 2.5 Faithful metadata & figures · 🟢 · M — ✅ shipped
 > **What** Extract author, publish date, canonical URL, site name, and preserve
 > key figures/images references.
 > **Why it wows** A clip becomes a real record you can cite, not a de-styled dump.

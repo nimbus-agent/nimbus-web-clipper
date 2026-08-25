@@ -2,6 +2,12 @@
 # Warm-standby mirror of the GitHub Actions pipeline. GitHub Actions syntax
 # does not translate to GitLab, so this is a faithful re-expression of the
 # same gates, not a conversion. Kept in sync with package.json scripts.
+#
+# Scope: ci.yml's `build-test` job only. Its `e2e` job is deliberately NOT
+# mirrored — the oven/bun image ships no browser, and installing Chromium plus
+# its shared libraries here would cost more than a standby pipeline is worth.
+# Nothing checks this file against ci.yml, so a gate added there and not here is
+# silent drift; that is the known cost of the mirror.
 image: oven/bun:latest
 
 stages:

@@ -92,7 +92,7 @@ function oldestShownId(): number | undefined {
   if (all.length === 0) {
     return undefined;
   }
-  return all.reduce((min, row) => (row.id < min ? row.id : min), all[0]?.id ?? 0);
+  return all.reduce((min, row) => Math.min(min, row.id), all[0]?.id ?? 0);
 }
 
 /**
@@ -106,21 +106,34 @@ function isReplyFor<K extends string>(res: unknown, kind: K): res is { kind: K; 
   return typeof res === "object" && res !== null && (res as { kind?: unknown }).kind === kind;
 }
 
+/**
+ * The failure a refused — or unrecognisable — reply becomes.
+ *
+ * One function for all three reads, because the distinction it encodes is easy
+ * to get subtly wrong in triplicate: `undefined` means "that was not our reply
+ * at all", which is a `server_error` and never the gateway's own reason; and an
+ * error with no gap must omit the `scopeGap` KEY rather than write
+ * `scopeGap: undefined`, because `renderError` branches on the key's presence
+ * and would otherwise print generic guidance where a command belongs.
+ */
+function refusalFailure(
+  res: EgressWindowResponse | EgressVerifyResponse | EgressProveResponse | undefined,
+): Extract<LedgerModel, { state: "error" }> {
+  if (res === undefined || res.ok) {
+    return { state: "error", reason: "server_error" };
+  }
+  return res.scopeGap === undefined
+    ? { state: "error", reason: res.reason }
+    : { state: "error", reason: res.reason, scopeGap: res.scopeGap };
+}
+
 async function loadWindow(before?: number): Promise<void> {
   const raw = await sendMessage(
     before === undefined ? { kind: "egress-window" } : { kind: "egress-window", before },
   );
-  if (!isReplyFor(raw, "egress-window")) {
-    failure = { state: "error", reason: "server_error" };
-    render();
-    return;
-  }
-  const res = raw as EgressWindowResponse;
-  if (!res.ok) {
-    failure =
-      res.scopeGap === undefined
-        ? { state: "error", reason: res.reason }
-        : { state: "error", reason: res.reason, scopeGap: res.scopeGap };
+  const res = isReplyFor(raw, "egress-window") ? (raw as EgressWindowResponse) : undefined;
+  if (res === undefined || !res.ok) {
+    failure = refusalFailure(res);
     render();
     return;
   }
@@ -143,13 +156,10 @@ async function loadWindow(before?: number): Promise<void> {
 async function runVerify(): Promise<void> {
   const raw = await sendMessage({ kind: "egress-verify" });
   const res = isReplyFor(raw, "egress-verify") ? (raw as EgressVerifyResponse) : undefined;
-  if (res === undefined || !res.ok) {
+  if (!res?.ok) {
     // A failed CHECK is not a broken chain. Saying "did not verify" here would
     // claim evidence we do not have.
-    failure =
-      res !== undefined && res.scopeGap !== undefined
-        ? { state: "error", reason: res.reason, scopeGap: res.scopeGap }
-        : { state: "error", reason: res?.ok === false ? res.reason : "server_error" };
+    failure = refusalFailure(res);
     render();
     return;
   }
@@ -175,11 +185,8 @@ function downloadProof(proof: EgressProof): void {
 async function runProve(): Promise<void> {
   const raw = await sendMessage({ kind: "egress-prove" });
   const res = isReplyFor(raw, "egress-prove") ? (raw as EgressProveResponse) : undefined;
-  if (res === undefined || !res.ok) {
-    failure =
-      res !== undefined && res.scopeGap !== undefined
-        ? { state: "error", reason: res.reason, scopeGap: res.scopeGap }
-        : { state: "error", reason: res?.ok === false ? res.reason : "server_error" };
+  if (!res?.ok) {
+    failure = refusalFailure(res);
     render();
     return;
   }

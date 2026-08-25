@@ -7,7 +7,9 @@
 // It differs from that store in one deliberate place: a failed write REFUSES.
 // The queue drops its oldest entry under storage pressure; a passage exists in
 // exactly one place and was put there by hand, so losing one silently is worse
-// than a refusal the user can act on immediately.
+// than a refusal the user can act on immediately. That difference is why this
+// chain stays inline rather than calling `keyed-store.ts`'s `createWriteChain`,
+// which is the pattern's named home.
 import { storageGet, storageSet } from "../browser/storage.ts";
 import { isPassage, type Passage, type PassageUpdate } from "../shared/passage.ts";
 

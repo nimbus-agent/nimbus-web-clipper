@@ -143,13 +143,16 @@ function showPreview(): void {
  * is on the screen, not what was ticked before the last refresh.
  */
 function paint(): void {
-  for (const url of [...wholePage]) {
+  // Iterated directly, not over a copy: a Set iterator tolerates deleting the
+  // entry it is standing on — removed entries are simply skipped, and nothing
+  // here re-adds one, which is the only case that would revisit a key.
+  for (const url of wholePage) {
     if (!named.some((t) => groupKey(t.url) === url)) {
       wholePage.delete(url);
     }
   }
   const live = new Set(rows().map(pickId));
-  for (const id of [...selected]) {
+  for (const id of selected) {
     if (!live.has(id)) {
       selected.delete(id);
     }

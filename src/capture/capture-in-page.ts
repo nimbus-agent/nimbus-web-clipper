@@ -1,6 +1,11 @@
 // src/capture/capture-in-page.ts
 import { Readability } from "@mozilla/readability";
-import { declaredCanonicalHref, resolveCanonical } from "../shared/canonical.ts";
+import {
+  type CanonicalRejection,
+  type CanonicalResult,
+  declaredCanonicalHref,
+  resolveCanonical,
+} from "../shared/canonical.ts";
 import type { CaptureResult, ClipSource } from "../shared/types.ts";
 import { fallbackBody } from "./fallback.ts";
 import { parsePublishedAt, readPageMeta } from "./page-meta.ts";
@@ -67,16 +72,28 @@ function pageOnly(page: ClipSource): ClipSource | undefined {
   return Object.keys(page).length === 0 ? undefined : page;
 }
 
+/**
+ * The canonical fields a capture carries: the resolved address, the refusal
+ * reason, or neither. Spread into the result, so "none" contributes no key at
+ * all rather than an explicit `undefined` — `exactOptionalPropertyTypes` treats
+ * those as different things.
+ */
+function canonicalPartOf(
+  canonical: CanonicalResult,
+): { canonicalUrl: string } | { canonicalRejected: CanonicalRejection } | Record<string, never> {
+  if (canonical.kind === "resolved") {
+    return { canonicalUrl: canonical.url };
+  }
+  if (canonical.kind === "rejected") {
+    return { canonicalRejected: canonical.reason };
+  }
+  return {};
+}
+
 function capture(mode: string): CaptureResult {
   const url = location.href;
   const title = document.title;
-  const canonical = resolveCanonical(declaredCanonicalHref(document), url);
-  const canonicalPart =
-    canonical.kind === "resolved"
-      ? { canonicalUrl: canonical.url }
-      : canonical.kind === "rejected"
-        ? { canonicalRejected: canonical.reason }
-        : {};
+  const canonicalPart = canonicalPartOf(resolveCanonical(declaredCanonicalHref(document), url));
   const pageMeta = readPageMeta(document, url);
 
   if (mode === "selection") {
