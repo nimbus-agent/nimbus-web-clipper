@@ -132,6 +132,18 @@ generalisation of the rule `recognise()` already applies to user entries ("User
 entries first so a configured prefix can win over a built-in bare host",
 `recognise.ts:233`), rather than a second copy of it.
 
+**Self-hosted origins stay siloed by product, and that is already true.**
+`matchOrigin` picks the entry with the **longest matching path prefix** among
+those whose origin equals the page's (`shared/origins.ts:98-114`), and
+`recognise()` then runs `MATCHERS[entry.product]` — that product's matcher and
+no other. Two products self-hosted on one host are therefore two entries
+(`https://internal.corp/jira` → jira, `https://internal.corp/wiki` → confluence),
+resolved by prefix length, and a Confluence-shaped path under a **Jira-only**
+entry stays unrecognised rather than becoming a Confluence page. The registry's
+`hosts` list governs **built-in** hosts only; it never widens what a user's own
+entry matches. Nothing in this design changes that, and the test named under
+Testing pins it.
+
 **`Product` stays a literal union.** `types.ts` keeps one `PRODUCT_IDS` array
 `as const` and derives `Product` from it, so `Record<Product, …>` exhaustiveness
 still holds and the registry imports types rather than the reverse. The six
@@ -153,9 +165,21 @@ absence of a lane is expressed in the type system, not in a comment.
 | Linear | `/<ws>/issue/<TEAM-123>/…` | `issue` | `TEAM-123` | `/<ws>`, `/<ws>/inbox`, `/<ws>/my-issues` |
 | Sentry | `/organizations/<org>/issues/<id>/`, `<org>.sentry.io/issues/<id>/` | `incident` | `<org>#<id>` | `/issues/`, `/organizations/<org>/issues/` |
 | Confluence | `/wiki/spaces/<KEY>/pages/<id>/…` | `doc` | `<KEY>/<id>` | `/wiki/`, `/wiki/home` |
-| PagerDuty | `/incidents/<ID>` | `incident` | `<ID>` | `/`, `/incidents` |
+| PagerDuty | `/incidents/<ID>` | `incident` | `<ID>` | `/incidents` |
 | Notion | `/<ws>/<slug>-<32hex>`, `/<32hex>` | `doc` | the 32-hex id, dashes stripped | `/<ws>` |
 | CircleCI | `/pipelines/<vcs>/<org>/<repo>/<n>` | `build` | `<org>/<repo> #<n>` | `/pipelines`, `/home` |
+
+**A tenant-suffix host rule must never claim bare `/`.** `<org>.sentry.io` and
+`<sub>.pagerduty.com` are `suffix` rules, and a suffix matches every subdomain —
+including `status.`, `www.`, `support.` and `blog.`, which are not tenants.
+A dashboard path of `/` would therefore recognise `status.pagerduty.com` as a
+PagerDuty dashboard and offer three service lanes about someone else's status
+page: a confidently wrong header, which is the one failure `recognise.ts`'s
+opening comment exists to prevent. So every `suffix` rule's `home` paths are
+specific (`/incidents`, `/issues/`), never the root. Jira Cloud already dodges
+this by matching `/jira/your-work` and `/secure/Dashboard.jspa` rather than `/`;
+this makes the dodge a rule. `origin` rules may still claim `/`, because a single
+named host has no sibling subdomains to be confused with.
 
 **Sentry is `incident`, not `issue`, despite Sentry's own wording.** The kind
 exists to gate lanes, and an error group poses the operational question a
@@ -183,9 +207,22 @@ new static permissions.
 `Map<serviceId, { state, lastSuccessfulSync }>`. The route takes no bearer, but
 the client calls it **only when paired**: pairing is the consent moment, and an
 unpaired extension makes no gateway reads. Results are cached in
-`connector-health-store.ts` with a short TTL over `chrome.storage.local` —
-mirroring `agent-run-store.ts`, because the service worker is evicted — and
-concurrent reads share one request through the existing `single-flight.ts`.
+`connector-health-store.ts` over `chrome.storage.local` — mirroring
+`agent-run-store.ts`, because the service worker is evicted — and concurrent
+reads share one request through the existing `single-flight.ts`.
+
+**The cache exists to dedupe, not to persist: every panel open on a dashboard
+reads fresh.** The TTL is **60 seconds**, and its only job is to collapse the
+reads a single sitting produces — a panel reopened twice in a minute, or two
+tabs opening panels at once — into one loopback request. It deliberately does
+*not* survive as a rendering source across sittings, because the sequence that
+matters is the remedial one: a user told "Nimbus has never synced Linear" leaves,
+configures the connector, and comes back. Their next panel open must reflect
+that, and with a 60-second dedupe window and a gateway on `127.0.0.1` it does,
+without a revalidation dance. Stale-while-revalidate was considered and rejected
+for the same reason it usually is on a fast local read: it buys milliseconds and
+pays for them with a panel that changes shape after the user has begun reading
+it.
 
 On a recognised dashboard, the state decides what renders:
 
@@ -213,6 +250,16 @@ Four rules govern the copy and the failure paths:
    fails the guard all yield `unknown`, and `unknown` renders the lanes ungated —
    exactly today's behaviour. An older gateway loses the gate, not the feature,
    and is not nagged about it.
+5. **This read never originates a connection-error state.** An offline gateway is
+   already reported by the paths that own it — `unreachable` copy in the panel
+   ("Can't reach Nimbus — is the gateway running?", `panel-in-page.ts:93`, `:128`)
+   and a `failed`/`unreachable` lane state (`:1145`). A health read that failed
+   for the same reason must not race that message with a second one phrased
+   differently; it degrades to `unknown` and leaves the report to whichever call
+   the user's next action actually makes. This is why `unknown` does not
+   distinguish "route absent" from "gateway offline": the two differ in cause but
+   not in what this gate should do, and the offline case is already covered
+   downstream.
 
 **The gate applies to all eleven products, including the five already shipped.**
 That is a deliberate behaviour change on a shipped surface, and it is a defect
@@ -251,8 +298,18 @@ Six PRs, each independently reviewable:
 - **Shared-host ordering**: `*.atlassian.net/wiki/spaces/…` is Confluence while
   `/browse/ENG-1` on that same host stays Jira; and a Confluence-shaped path
   under a **user-configured Jira Server origin** must not become Confluence.
+- **Self-hosted siloing**: two entries on one host (`https://internal.corp/jira`,
+  `https://internal.corp/wiki`) each recognise their own product and neither
+  matches the other's paths — the longest-prefix rule in `matchOrigin`, pinned
+  from the recogniser's side.
+- **Non-tenant subdomains**: `status.pagerduty.com/`, `www.pagerduty.com/` and
+  `blog.sentry.io/` are **not** recognised as dashboards. One case per `suffix`
+  rule, in the must-not-match list.
 - **The gate**: a table test over all seven states → (lanes rendered? caveat?),
   plus `unknown` → ungated.
+- **The cache is a dedupe, not a memory**: two panel opens inside the TTL make
+  one request; an open after it makes a second — so a connector configured
+  between two sittings is reflected on the next open.
 - **The body guard**: an unrecognised `state` string degrades to `unknown`
   rather than throwing; `lastSuccessfulSync` arrives as an ISO string, not a
   `Date`, because it crossed JSON.
@@ -273,13 +330,37 @@ Six PRs, each independently reviewable:
   simply **never synced** are indistinguishable from here. Detectable drift, not
   preventable drift — documented rather than guarded, because a guard that
   cannot tell those apart would lie.
+
+  Two mitigations were considered and **rejected**. A checked-in JSON fixture of
+  upstream connector ids is a second hand-maintained copy of an upstream list —
+  the drift shape this design spends slice 1 removing, reintroduced one layer
+  out, and stale the moment upstream adds a connector. A runtime check ("our
+  `serviceId` appears in no `/v1/connectors` row") fails for the same reason the
+  paragraph above gives: on a user who does not use that service, absence is the
+  correct and expected answer. What *is* worth having is a **developer-only**
+  check that reads the sibling repo's `bundled-connector-registry.ts` when it
+  exists on the machine and skips when it does not — useful locally, and
+  explicitly **not a CI gate**, since a check that always skips in CI is a gate
+  that proves nothing while looking green.
 - **Eleven built-in rows in Options**, each its own page-access grant. The list
   and the grant burden both grow. Grouping is worth a look; not in this arc.
-- **Notion and Sentry matchers are unverified.** Notion's slug-plus-id URLs have
-  no stable separator guarantee, and a wrong match is a confidently wrong header
-  — the failure `recognise.ts`'s opening comment exists to prevent. Verify
-  against real pages before writing either matcher; drop Notion if it will not
-  normalise.
+- **Three URL shapes are unverified and must be checked against real pages before
+  their matcher is written** — not from memory, and not from this table:
+  1. **Notion.** Slug-plus-id URLs have no stable separator guarantee, and a
+     wrong match is a confidently wrong header. Check specifically against
+     database-view URLs (`/<ws>/<db-hash>?v=<view-hash>`), where the **query
+     value is also a 32-hex id** and must not be captured as the page id, and
+     against inline subpages and public pages. Drop Notion if it will not
+     normalise.
+  2. **Sentry's two spellings.** `sentry.io/organizations/<org>/…` and the
+     tenant-subdomain `<org>.sentry.io/…` must produce the *same* `ref` for the
+     same issue, or `sameItem` will treat one issue as two.
+  3. **Linear workspace subdomains.** `<workspace>.linear.app` may or may not be
+     a supported address; this design assumes only `linear.app/<ws>/…`. Adding a
+     `*.linear.app` suffix rule on an unconfirmed scheme would be exactly the
+     unverified guess the rule above forbids, so it is deliberately **not** in
+     the design: confirm the address first, then add it as a `suffix` rule with
+     specific `home` paths per the bare-`/` rule.
 - **Item pages on the new products carry no agent lane.** They deliver resolve,
   Related, freshness and targeted fetch — real C1/C3 value, and honestly less
   than a lane. Giving `issue`, `build`, `doc` and `incident` lanes of their own
