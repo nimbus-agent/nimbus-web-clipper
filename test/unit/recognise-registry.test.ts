@@ -53,6 +53,7 @@ describe("the built-in tables are derived, not copied", () => {
     // wrong one.
     expect([...BUILT_IN_ORIGINS]).toEqual([
       { origin: "https://bitbucket.org", product: "bitbucket" },
+      { origin: "https://app.circleci.com", product: "circleci" },
       { origin: "https://github.com", product: "github" },
       { origin: "https://gitlab.com", product: "gitlab" },
     ]);
@@ -64,6 +65,7 @@ describe("the built-in tables are derived, not copied", () => {
     // passes for any implementation, including a wrong one.
     expect([...BUILT_IN_SURFACES]).toEqual([
       { label: "bitbucket.org", product: "bitbucket", pattern: "https://bitbucket.org/*" },
+      { label: "app.circleci.com", product: "circleci", pattern: "https://app.circleci.com/*" },
       { label: "github.com", product: "github", pattern: "https://github.com/*" },
       { label: "gitlab.com", product: "gitlab", pattern: "https://gitlab.com/*" },
       { label: "*.atlassian.net", product: "jira", pattern: "https://*.atlassian.net/*" },
@@ -91,15 +93,16 @@ describe("the built-in tables are derived, not copied", () => {
     expect(BUILT_IN_SURFACES.find((s) => s.product === "jenkins")).toBeUndefined();
   });
 
-  it("derives exactly four rows — no product invents one", () => {
-    // Jenkins has no built-in host, so five products yield four rows. A derivation
-    // that mapped over products instead of over their hosts would produce five.
-    expect(BUILT_IN_SURFACES).toHaveLength(4);
+  it("derives exactly five rows — no product invents one", () => {
+    // Jenkins has no built-in host, so six products yield five rows. A derivation
+    // that mapped over products instead of over their hosts would produce six.
+    expect(BUILT_IN_SURFACES).toHaveLength(5);
   });
 });
 
 describe("productName", () => {
   it("names every declared product from the registry", () => {
+    expect(productName("circleci")).toBe("CircleCI");
     expect(productName("github")).toBe("GitHub");
     expect(productName("gitlab")).toBe("GitLab");
     expect(productName("bitbucket")).toBe("Bitbucket");
@@ -115,6 +118,7 @@ describe("PRODUCT_SERVICE_ID", () => {
     // fail, and it pins nothing about what each service id actually is.
     expect(PRODUCT_SERVICE_ID).toEqual({
       bitbucket: "bitbucket",
+      circleci: "circleci",
       github: "github",
       gitlab: "gitlab",
       jenkins: "jenkins",
@@ -130,6 +134,7 @@ describe("the self-hosted product picker is derived, not hand-written", () => {
     // wrong one.
     expect(SELF_HOSTABLE_PRODUCTS.map((r) => r.product)).toEqual([
       "bitbucket",
+      "circleci",
       "github",
       "gitlab",
       "jenkins",

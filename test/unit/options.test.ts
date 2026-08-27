@@ -365,6 +365,7 @@ describe("recognised surfaces", () => {
 
     expect([...select("surface-product").options].map((o) => o.value)).toEqual([
       "bitbucket",
+      "circleci",
       "github",
       "gitlab",
       "jenkins",

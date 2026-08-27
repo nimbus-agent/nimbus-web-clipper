@@ -1,6 +1,7 @@
 // The one table. Everything else keyed by `Product` derives from it.
 import type { Product } from "../types.ts";
 import { bitbucketRule } from "./bitbucket.ts";
+import { circleciRule } from "./circleci.ts";
 import { githubRule } from "./github.ts";
 import { gitlabRule } from "./gitlab.ts";
 import { jenkinsRule } from "./jenkins.ts";
@@ -14,6 +15,7 @@ import type { ProductRule } from "./rule.ts";
  */
 export const RULE_BY_PRODUCT: Record<Product, ProductRule> = {
   bitbucket: bitbucketRule,
+  circleci: circleciRule,
   github: githubRule,
   gitlab: gitlabRule,
   jenkins: jenkinsRule,

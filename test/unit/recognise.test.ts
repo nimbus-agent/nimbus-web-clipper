@@ -286,6 +286,7 @@ describe("BUILT_IN_SURFACES", () => {
   test("every surface pattern matches a real page URL on that product", () => {
     const pages: Record<string, string> = {
       bitbucket: "https://bitbucket.org/acme/web/pull-requests/7",
+      circleci: "https://app.circleci.com/pipelines/github/acme/web/482",
       github: "https://github.com/acme/web/pull/482",
       gitlab: "https://gitlab.com/acme/web/-/merge_requests/9",
       jira: "https://acme.atlassian.net/browse/ABC-1",
@@ -486,6 +487,54 @@ describe("self-hosted origins stay siloed by product", () => {
       ok: false,
       reason: "unrecognised-path",
     });
+  });
+});
+
+describe("CircleCI", () => {
+  it("recognises a pipeline", () => {
+    expectItem("https://app.circleci.com/pipelines/github/acme/web/482", NONE, {
+      product: "circleci",
+      kind: "build",
+      ref: "acme/web #482",
+      resolveUrl: "https://app.circleci.com/pipelines/github/acme/web/482",
+    });
+  });
+
+  it("recognises both dashboards", () => {
+    for (const url of ["https://app.circleci.com/pipelines", "https://app.circleci.com/home"]) {
+      const r = recognise(url, NONE);
+      expect(r.ok && r.kind).toBe("home");
+    }
+  });
+
+  it("declines paths it does not model", () => {
+    // A wrong header is worse than no header: settings, insights and a
+    // non-numeric pipeline id are all misses, not guesses.
+    for (const url of [
+      "https://app.circleci.com/settings/organization",
+      "https://app.circleci.com/insights/github/acme/web",
+      "https://app.circleci.com/pipelines/github/acme/web/not-a-number",
+      "https://circleci.com/pipelines/github/acme/web/482",
+    ]) {
+      expect(recognise(url, NONE).ok).toBe(false);
+    }
+  });
+
+  it("declines the org- and repo-scoped pipeline lists — they are not the connector's scope", () => {
+    // These ARE dashboards in CircleCI's UI, and they are deliberately NOT `home`
+    // here. `home` means a page whose scope is the WHOLE connector: `LANE_RULES`
+    // gives `catchup`/`decisions`/`ownership` to `home` precisely because they
+    // answer about an entire service, and the header claims "Nimbus can answer
+    // across all indexed CircleCI pipelines". On a page scoped to one org or one
+    // repo that sentence is false, and the three lanes would repeat the same
+    // service-wide answer on every repo the user visits — the exact failure the
+    // `LANE_RULES` comment cites for item pages.
+    for (const url of [
+      "https://app.circleci.com/pipelines/github/acme",
+      "https://app.circleci.com/pipelines/github/acme/web",
+    ]) {
+      expect(recognise(url, NONE).ok).toBe(false);
+    }
   });
 });
 
