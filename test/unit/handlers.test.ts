@@ -759,9 +759,12 @@ describe("handleResolve attaches connector health on a dashboard", () => {
     expect(res.ok && res.connector?.state).toBe("unknown");
   });
 
-  it("reports unknown when the gateway listed no row for this connector", async () => {
-    // getAllConnectorHealth returns only connectors with a sync_state row, so a
-    // service the gateway has never touched is absent rather than not_configured.
+  it("reports not_configured when the gateway listed no row for this connector", async () => {
+    // `getAllConnectorHealth` selects FROM sync_state, whose only production insert is
+    // inside `transitionHealth` — so a connector the scheduler never touched has no row
+    // and is simply omitted. That is the ordinary never-configured connector this gate
+    // exists for, NOT an unreadable answer, and upstream's own single-connector
+    // accessor answers `not_configured` for the same missing row.
     const res = await handleResolve(
       {
         getOrigins: async () => [],
@@ -771,7 +774,50 @@ describe("handleResolve attaches connector health on a dashboard", () => {
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
-    expect(res.ok && res.connector?.state).toBe("unknown");
+    expect(res.ok && res.connector?.state).toBe("not_configured");
+  });
+
+  it("keeps a failed read and an absent row distinct", async () => {
+    // The whole point of the pair above: `unknown` must mean "could not ask" and
+    // nothing else, because `unknown` is the only state that renders the ungated
+    // panel. If these two ever collapse, either every older gateway starts
+    // withholding lanes, or every unconfigured connector goes back to answering
+    // three times with nothing.
+    const absent = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: okOutcome,
+        readConnectorHealth: async () => new Map(),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/" },
+    );
+    const failed = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: okOutcome,
+        readConnectorHealth: async () => null,
+      },
+      { kind: "resolve", pageUrl: "https://github.com/" },
+    );
+    expect(absent.ok && absent.connector?.state).not.toBe(
+      failed.ok ? failed.connector?.state : undefined,
+    );
+  });
+
+  it("still reports the connector's own state when the gateway did list it", async () => {
+    // The absent-row rule must not swallow a real answer.
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: okOutcome,
+        readConnectorHealth: async () => new Map([["github", { state: "degraded" as const }]]),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/" },
+    );
+    expect(res.ok && res.connector?.state).toBe("degraded");
   });
 
   it("makes no health read on a non-dashboard page", async () => {
