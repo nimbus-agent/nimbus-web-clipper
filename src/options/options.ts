@@ -20,7 +20,7 @@ import {
   removeConfiguredOrigin,
   upsertOrigin,
 } from "../shared/origins.ts";
-import { BUILT_IN_SURFACES } from "../shared/recognise.ts";
+import { BUILT_IN_SURFACES } from "../shared/recognise/index.ts";
 import type { ConfiguredOrigin } from "../shared/types.ts";
 import { renderBriefLog } from "./brief-log-view.ts";
 import { renderLedgerSummary } from "./ledger-summary-view.ts";

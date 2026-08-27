@@ -7,7 +7,7 @@ import {
   recognise,
   sameItem,
   surfaceLine,
-} from "../../src/shared/recognise.ts";
+} from "../../src/shared/recognise/index.ts";
 import type { ConfiguredOrigin } from "../../src/shared/types.ts";
 
 const NONE: readonly ConfiguredOrigin[] = [];
@@ -451,5 +451,56 @@ describe("an instance root is a home surface on every product", () => {
       kind: "home",
       ref: "",
     });
+  });
+});
+
+describe("self-hosted origins stay siloed by product", () => {
+  const TWO_ON_ONE_HOST: readonly ConfiguredOrigin[] = [
+    { origin: "https://internal.corp/jira", product: "jira" },
+    { origin: "https://internal.corp/jenkins", product: "jenkins" },
+  ];
+
+  it("resolves each prefix to its own product", () => {
+    expectItem("https://internal.corp/jira/browse/ENG-1", TWO_ON_ONE_HOST, {
+      product: "jira",
+      kind: "issue",
+      ref: "ENG-1",
+      resolveUrl: "https://internal.corp/jira/browse/ENG-1",
+    });
+    expectItem("https://internal.corp/jenkins/job/web/482", TWO_ON_ONE_HOST, {
+      product: "jenkins",
+      kind: "build",
+      ref: "web #482",
+      resolveUrl: "https://internal.corp/jenkins/job/web/482",
+    });
+  });
+
+  it("does not run one product's matcher under the other's prefix", () => {
+    // A Jenkins-shaped path under the Jira entry must be unrecognised, not a build.
+    const r = recognise("https://internal.corp/jira/job/web/482", TWO_ON_ONE_HOST);
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("a built-in suffix host is matched by suffix, not by origin", () => {
+  it("recognises any Jira Cloud tenant", () => {
+    expectItem("https://acme.atlassian.net/browse/ABC-1", NONE, {
+      product: "jira",
+      kind: "issue",
+      ref: "ABC-1",
+      resolveUrl: "https://acme.atlassian.net/browse/ABC-1",
+    });
+  });
+
+  it("does not recognise a lookalike host that merely contains the suffix", () => {
+    expect(recognise("https://atlassian.net.evil.example/browse/ABC-1", NONE).ok).toBe(false);
+    // The dotless-suffix trap, pinned from the outside: if a future rule declared
+    // `"atlassian.net"` instead of `".atlassian.net"`, this host would match.
+    expect(recognise("https://evilatlassian.net/browse/ABC-1", NONE).ok).toBe(false);
+  });
+
+  it("does not recognise the apex domain as a tenant", () => {
+    // `atlassian.net` itself is not somebody's Jira. Subdomains only.
+    expect(recognise("https://atlassian.net/browse/ABC-1", NONE).ok).toBe(false);
   });
 });

@@ -27,7 +27,7 @@ import type {
 } from "../shared/messages.ts";
 import { buildClipPreview } from "../shared/preview.ts";
 import { enqueue, type QueuedClip, removeFromQueue, toView } from "../shared/queue.ts";
-import { recognise } from "../shared/recognise.ts";
+import { recognise } from "../shared/recognise/index.ts";
 import { buildRelatedQuery, type RelatedQuery } from "../shared/related.ts";
 import {
   type AgentError,
