@@ -12,7 +12,7 @@
 // params or trailing slashes; no lower-casing. That is the GATEWAY's job, and
 // its rules are load-bearing precisely because the identity hash is taken over
 // their output — doing it here would be the same work under different rules.
-// See `src/shared/recognise.ts:253`. This module only ever REJECTS or
+// See `src/shared/recognise/index.ts`. This module only ever REJECTS or
 // ABSOLUTISES: path, query and fragment are forwarded exactly as declared. The
 // scheme and host come back case-normalised, because that is what the URL
 // parser does to any input — it is not a dedup rule this module chose.
@@ -159,7 +159,7 @@ export function resolveCanonical(declared: string | undefined, pageUrl: string):
   // Userinfo is REFUSED rather than stripped. Stripping would mean rewriting
   // what the page declared, and this module only ever rejects or absolutises —
   // the moment it starts editing a declaration it is canonicalising, which is
-  // the gateway's job (`src/shared/recognise.ts:253`). Refusing costs nothing:
+  // the gateway's job (`src/shared/recognise/index.ts`). Refusing costs nothing:
   // the clip falls back to the address bar like any other rejection, and a
   // credentials-shaped string stays out of both the identity hash and the
   // pre-send preview, where it would otherwise be rendered verbatim.
@@ -192,7 +192,7 @@ export function resolveCanonical(declared: string | undefined, pageUrl: string):
   // false "would overwrite your other clips" notice for a page that really is
   // the homepage. Telling a tracking parameter apart from a routing parameter
   // client-side would BE canonicalisation, which this module is forbidden from
-  // doing — see `src/shared/recognise.ts:253`.
+  // doing — see `src/shared/recognise/index.ts`.
   if (canonical.pathname === "/" && page.pathname !== "/") {
     return { kind: "rejected", reason: "root-collapse", declared };
   }

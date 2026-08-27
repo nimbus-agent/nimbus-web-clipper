@@ -220,7 +220,7 @@ describe("resolveCanonical — the root-collapse guard", () => {
 
 describe("resolveCanonical does NOT canonicalise", () => {
   // These two prove a negative. Canonicalisation is the gateway's job
-  // (src/shared/recognise.ts:253) and its rules are load-bearing, because
+  // (src/shared/recognise/index.ts) and its rules are load-bearing, because
   // externalIdFor hashes canonicalizeUrl's output. If either of these starts
   // failing, someone has taught this module to normalise — that is the bug.
   test("a fragment and tracking params survive untouched", () => {

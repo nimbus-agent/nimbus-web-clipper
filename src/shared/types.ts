@@ -221,7 +221,7 @@ export type Recognition =
       /**
        * The URL sent to the gateway as the resolution key: the address-bar URL with
        * identity normalisation only. The gateway owns canonicalisation — see
-       * shared/recognise.ts.
+       * shared/recognise/index.ts.
        */
       readonly resolveUrl: string;
     }
