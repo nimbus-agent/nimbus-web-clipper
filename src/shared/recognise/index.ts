@@ -5,7 +5,7 @@
 // The product is NEVER guessed from the path. A proxied or path-prefixed
 // self-hosted instance would produce a confidently wrong header, and on a surface
 // whose whole job is recognition, a wrong header is worse than no header.
-import { matchOrigin, splitOrigin } from "../origins.ts";
+import { hostPermissionPattern, matchOrigin, splitOrigin } from "../origins.ts";
 import type { ConfiguredOrigin, Product, Recognition, SurfaceKind } from "../types.ts";
 import { PRODUCT_RULES, RULE_BY_PRODUCT } from "./registry.ts";
 
@@ -23,10 +23,11 @@ export const BUILT_IN_ORIGINS: readonly ConfiguredOrigin[] = PRODUCT_RULES.flatM
  * recognises without configuration, and the permission pattern its page-access
  * grant is keyed by.
  *
- * Separate from BUILT_IN_ORIGINS above because Jira Cloud has no single origin —
- * it is matched by host suffix — so it can appear here and not there. The drift
- * guard is a test: every BUILT_IN_ORIGINS entry must have a row whose pattern is
- * exactly hostPermissionPattern(origin).
+ * DERIVED from the registry's host rules. An `origin` host's label is its
+ * hostname and its pattern is `hostPermissionPattern(origin)`; a `suffix` host
+ * has no origin at all, so it labels itself `*<suffix>` and carries the wildcard
+ * pattern its rule declares. A product with no built-in host (Jenkins)
+ * contributes no row.
  */
 export interface BuiltInSurface {
   /** Shown in Options. Not an origin: Jira Cloud's is a host pattern. */
@@ -35,12 +36,17 @@ export interface BuiltInSurface {
   readonly pattern: string;
 }
 
-export const BUILT_IN_SURFACES: readonly BuiltInSurface[] = [
-  { label: "bitbucket.org", product: "bitbucket", pattern: "https://bitbucket.org/*" },
-  { label: "github.com", product: "github", pattern: "https://github.com/*" },
-  { label: "gitlab.com", product: "gitlab", pattern: "https://gitlab.com/*" },
-  { label: "*.atlassian.net", product: "jira", pattern: "https://*.atlassian.net/*" },
-];
+export const BUILT_IN_SURFACES: readonly BuiltInSurface[] = PRODUCT_RULES.flatMap((rule) =>
+  rule.hosts.map((host) =>
+    host.kind === "origin"
+      ? {
+          label: new URL(host.origin).hostname,
+          product: rule.product,
+          pattern: hostPermissionPattern(host.origin) ?? host.origin,
+        }
+      : { label: `*${host.suffix}`, product: rule.product, pattern: host.pattern },
+  ),
+);
 
 const KIND_NAMES: Record<SurfaceKind, string> = {
   pr: "PR",
