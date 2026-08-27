@@ -1235,6 +1235,18 @@ per origin rather than held as one slot, is in that file's module doc.
 `paused` — and adds `unknown` for a row this client cannot parse, or a ninth state
 upstream adds later that this client does not recognise yet: coercing to `unknown`
 rather than throwing is what keeps an old panel working against a newer gateway.
+`unknown` means **the read itself failed** and nothing else — a 404 from a gateway too
+old to serve the route, an unreachable one, a timeout, a body the guard rejects. A
+successful read that simply *omits* a connector is `not_configured`, not `unknown`:
+`getAllConnectorHealth` selects `FROM sync_state`, whose only production insert lives
+inside `transitionHealth`, so a connector the scheduler has never touched has no row to
+list — which is exactly the never-configured connector this gate exists for. Upstream's
+own single-connector accessor answers `not_configured` for that same missing row.
+`connectorStateFor` (`src/background/handlers.ts`) is where the two are kept apart, and
+they must stay apart: `unknown` is the only state that renders the ungated panel, so
+collapsing them either makes every older gateway withhold lanes, or sends every
+unconfigured connector back to answering three times with nothing.
+
 `gatePolicy` maps each to what the panel renders:
 
 | State | Lanes | What's shown |

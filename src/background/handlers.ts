@@ -253,6 +253,38 @@ export interface ResolveDeps {
  * failure must not erase the fact that we know what page this is, or the panel
  * would drop back to "unrecognised" the moment the gateway hiccups.
  */
+/**
+ * One connector's health, from a read that may have failed.
+ *
+ * The two arms are NOT the same answer, and conflating them cost this gate its most
+ * common case:
+ *
+ * - `null` — the read itself failed (404 from a gateway too old to serve the route,
+ *   unreachable, timed out, malformed body). We could not ask, so we do not gate:
+ *   `unknown` renders exactly the panel a client without this gate renders.
+ * - a map that omits this connector — the read SUCCEEDED and the gateway has nothing
+ *   recorded for it. That is `not_configured`, and it is the ordinary state of a
+ *   connector nobody has set up. Upstream's own single-connector accessor
+ *   (`getConnectorHealth`) answers `not_configured` for exactly this missing row, and
+ *   `engine/connector-health-caveat.ts` consumes it that way; `getAllConnectorHealth`
+ *   selects `FROM sync_state`, whose only production insert is inside
+ *   `transitionHealth`, so a connector the scheduler never touched has no row to list.
+ *
+ * The residual risk is `PRODUCT_SERVICE_ID` drifting from upstream's connector ids: a
+ * wrong id would read as "never synced" rather than as three lanes. That is not worse
+ * — with a wrong id those lanes answer nothing either way — and it surfaces the drift
+ * instead of hiding it.
+ */
+function connectorStateFor(
+  health: ReadonlyMap<string, ConnectorHealth> | null,
+  serviceId: string,
+): ConnectorHealth {
+  if (health === null) {
+    return { state: "unknown" };
+  }
+  return health.get(serviceId) ?? { state: "not_configured" };
+}
+
 export async function handleResolve(
   deps: ResolveDeps,
   req: ResolveRequest,
@@ -291,10 +323,10 @@ export async function handleResolve(
     // filled in only because `ResolveResponse`'s ok arm requires one — the same
     // synthetic the unrecognised branch above already uses. `fetchable:false` keeps
     // the C3.1 button away from a page that is not a fetch candidate.
-    const health = await deps.readConnectorHealth(conn.origin);
-    const connector = health?.get(PRODUCT_SERVICE_ID[recognition.product]) ?? {
-      state: "unknown" as const,
-    };
+    const connector = connectorStateFor(
+      await deps.readConnectorHealth(conn.origin),
+      PRODUCT_SERVICE_ID[recognition.product],
+    );
     return {
       kind: "resolve",
       ok: true,
