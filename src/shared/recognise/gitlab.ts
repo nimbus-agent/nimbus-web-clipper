@@ -29,5 +29,7 @@ export const gitlabRule: ProductRule = {
   serviceId: "gitlab",
   name: "GitLab",
   hosts: [{ kind: "origin", origin: "https://gitlab.com" }],
+  corpus: "GitLab projects",
+  selfHostable: true,
   match,
 };

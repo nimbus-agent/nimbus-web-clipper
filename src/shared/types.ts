@@ -141,7 +141,15 @@ export interface CueState {
  * Keep it `as const` — widening to `string[]` silently widens `Product` to
  * `string` and every `Record<Product, …>` exhaustiveness check with it.
  */
-export const PRODUCT_IDS = ["bitbucket", "github", "gitlab", "jenkins", "jira"] as const;
+export const PRODUCT_IDS = [
+  "bitbucket",
+  "circleci",
+  "github",
+  "gitlab",
+  "jenkins",
+  "jira",
+  "linear",
+] as const;
 
 /** A product whose pages the client can recognise. */
 export type Product = (typeof PRODUCT_IDS)[number];

@@ -10,6 +10,14 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Fixed
 
+- **Linear's dashboard match keyed only on the second path segment, so any
+  first segment satisfied it — including Linear's own published documentation
+  pages.** `linear.app/docs/inbox` and `linear.app/docs/my-issues` are real
+  Linear docs articles, not a workspace called "docs", but both were
+  recognised as a workspace dashboard and shown the three connector-scoped
+  agent lanes. The matcher now declines a fixed set of reserved first
+  segments (`docs`, `settings`, `login`, and others no workspace can be
+  named) before treating one as a workspace slug.
 - **A dashboard for a connector Nimbus had no credential for still offered three
   agent lanes — and answered all three with nothing, which read as "you have no
   work" rather than "Nimbus isn't connected to this".** On a recognised product
@@ -25,6 +33,22 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   `GET /v1/connectors`; one that does not — a 404, or unreachable — leaves the
   panel exactly as it rendered before this change, silently, with no lanes
   withheld and nothing said about it.
+
+### Added
+
+- **Linear and CircleCI are now recognised.** Nimbus had nothing to say on
+  either — a Linear issue or a CircleCI pipeline was just a tab, and their
+  dashboards offered none of the three connector-scoped lanes GitHub's or
+  Jira's already did. Both now resolve: an issue or a pipeline page gets its
+  indexed item, Related, and a targeted fetch on a miss, the same as any other
+  recognised item page. Open the connector's own dashboard instead — CircleCI's
+  `/pipelines` or `/home`, a Linear workspace's Inbox or My Issues — and the
+  panel offers *catch me up*, *what changed while I was away* and *what's
+  mine*, gated on the connector's health exactly as every other dashboard's
+  lanes are. An issue or pipeline page itself gets none of the three: they
+  answer about the whole connector, not one item, so they stay where that scope
+  is honest. CircleCI can be added as a self-hosted origin — CircleCI Server
+  exists; Linear has no self-hosted edition, so it is not offered there.
 
 ## [0.5.0] - 2026-08-24
 

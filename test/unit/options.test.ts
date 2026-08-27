@@ -31,10 +31,7 @@ const FIXTURE = `
   </section>
   <section id="stage-sites">
     <input id="surface-origin" type="text" />
-    <select id="surface-product">
-      <option value="jenkins">Jenkins</option>
-      <option value="jira">Jira</option>
-    </select>
+    <select id="surface-product"></select>
     <button id="surface-add" type="button">Add surface</button>
     <output id="surface-status"></output>
     <div id="surface-list"></div>
@@ -363,6 +360,19 @@ describe("onUnpairClick() / disarmUnpair()", () => {
 });
 
 describe("recognised surfaces", () => {
+  test("the product picker is populated from the registry, not the fixture", async () => {
+    await boot();
+
+    expect([...select("surface-product").options].map((o) => o.value)).toEqual([
+      "bitbucket",
+      "circleci",
+      "github",
+      "gitlab",
+      "jenkins",
+      "jira",
+    ]);
+  });
+
   test("adding a valid origin stores it and renders a row", async () => {
     await boot();
     input("surface-origin").value = "https://corp.example/jenkins";
@@ -375,6 +385,26 @@ describe("recognised surfaces", () => {
       { origin: "https://corp.example/jenkins", product: "jenkins" },
     ]);
     expect(el("surface-list").textContent).toContain("https://corp.example/jenkins");
+  });
+
+  test("a non-self-hostable product is rejected even if forced past the picker", async () => {
+    // The picker only ever renders SELF_HOSTABLE_PRODUCTS (Linear is excluded,
+    // per the test above), so this drives the option in directly to pin that
+    // `addSurface` itself refuses it — not just that the picker doesn't offer
+    // it.
+    await boot();
+    const productSelect = select("surface-product");
+    const option = document.createElement("option");
+    option.value = "linear";
+    productSelect.append(option);
+    productSelect.value = "linear";
+    input("surface-origin").value = "https://corp.example/linear";
+
+    button("surface-add").click();
+    await flush();
+
+    expect(el("surface-status").textContent).toBe("Pick what this instance is running.");
+    expect(harness.storage.get("origins")).toBeUndefined();
   });
 
   test("an origin with no scheme is rejected with guidance, and nothing is stored", async () => {

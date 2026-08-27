@@ -1122,10 +1122,11 @@ so it needed a page whose scope actually matches: the product's own dashboard,
 recognised as `SurfaceKind: "home"` (GitHub root; GitLab root or `/dashboard`;
 Bitbucket `/dashboard/*`; Jira Cloud `/jira/your-work` and Server
 `/secure/Dashboard.jspa`; Jenkins instance root, past any configured path
-prefix).
+prefix; CircleCI `/pipelines` and `/home`; a Linear workspace's `/inbox` and
+`/my-issues`).
 
 **A service lane makes no resolve call.** `Recognition.product` already IS the
-gateway's connector id — the five `Product` values are exactly upstream's
+gateway's connector id — the seven `Product` values are exactly upstream's
 per-connector `SERVICE_ID` constants — so `resolveForAgent` (`handlers.ts`)
 branches on `recognition.kind === "home"` before ever calling `resolveItem`,
 and returns a `service`-scoped result straight from the recogniser. There is no
@@ -1141,6 +1142,17 @@ sides regardless. That buys **discoverability, not enforcement**: the map only c
 every `Product` has an entry, so an upstream connector rename (e.g.
 `"jenkins"` → `"jenkins-ci"`) would keep it typechecking green while every
 Jenkins lane quietly answered about a service that no longer exists.
+
+The same `ProductRule` also carries `corpus` (the noun for a dashboard's scope
+line — "across all indexed Jenkins builds", read via `productCorpus()`) and
+`selfHostable` (whether the product has a self-hosted edition at all — Linear
+is the first `false`). Both used to be separate tables a new product could be
+added without: `corpus` lived in a standalone `PRODUCT_CORPUS` map in
+`panel-view.ts`, and the Options page's self-hosted-instance picker was
+hardcoded `<option>` markup. The picker is now `SELF_HOSTABLE_PRODUCTS`
+(`PRODUCT_RULES` filtered on `selfHostable`), rendered into the `<select>` on
+load. See `src/shared/recognise/registry.ts` for both derivations; this file
+does not restate their reasoning.
 
 **The run store keys on scope, not just on an item.** `StoredRun`'s subject is
 a `RunSubject` — `{kind:"item", id}` or `{kind:"service", service}` — and

@@ -464,6 +464,15 @@ Six PRs, each independently reviewable:
      unverified guess the rule above forbids, so it is deliberately **not** in
      the design: confirm the address first, then add it as a `suffix` rule with
      specific `home` paths per the bare-`/` rule.
+     **Verified (Slice 3, Task 3): first-party evidence against it.** Linear's
+     own engineering blog on multi-region support states verbatim that its
+     client (`linear.app`) and API (`api.linear.app`) stay the single primary
+     domains "regardless of where your workspace is hosted" — a deliberate
+     choice not to fragment by subdomain or region. No source found (Linear's
+     docs, its changelog, or third-party integration guides) shows or uses a
+     `<workspace>.linear.app` address in practice. This settles the question
+     this item raised: there is no subdomain scheme to confirm, so a later
+     slice should not re-open it without new evidence.
 - **Item pages on the new products carry no agent lane.** They deliver resolve,
   Related, freshness and targeted fetch — real C1/C3 value, and honestly less
   than a lane. Giving `issue`, `build`, `doc` and `incident` lanes of their own

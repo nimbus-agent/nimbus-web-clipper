@@ -48,6 +48,25 @@ export interface ProductRule {
   /** Display name: "GitHub", "Jira". */
   readonly name: string;
   readonly hosts: readonly HostRule[];
+  /**
+   * What this connector's indexed items ARE, for a dashboard's scope line
+   * ("Nimbus can answer across all indexed GitHub repositories"). The noun is a
+   * claim about coverage — a wrong one reads as a promise the answer does not
+   * keep, which is why it lives beside the product rather than in a table one
+   * file away that a new product can be added without.
+   */
+  readonly corpus: string;
+  /**
+   * Does this product have a self-hosted edition a user could point Nimbus at?
+   *
+   * Gates the Options page's self-hosted product picker AND the submit path
+   * behind it (`addSurface` in `options.ts` re-checks it before storing an
+   * entry, not just at render). A SaaS-only product offered there is an
+   * invitation to configure something that cannot exist — the user types an
+   * origin, the entry stores, and recognition then matches a host the vendor
+   * does not run.
+   */
+  readonly selfHostable: boolean;
   match(segments: readonly string[]): Match | null;
 }
 

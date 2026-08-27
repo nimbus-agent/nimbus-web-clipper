@@ -1,10 +1,12 @@
 // The one table. Everything else keyed by `Product` derives from it.
 import type { Product } from "../types.ts";
 import { bitbucketRule } from "./bitbucket.ts";
+import { circleciRule } from "./circleci.ts";
 import { githubRule } from "./github.ts";
 import { gitlabRule } from "./gitlab.ts";
 import { jenkinsRule } from "./jenkins.ts";
 import { jiraRule } from "./jira.ts";
+import { linearRule } from "./linear.ts";
 import type { ProductRule } from "./rule.ts";
 
 /**
@@ -14,10 +16,12 @@ import type { ProductRule } from "./rule.ts";
  */
 export const RULE_BY_PRODUCT: Record<Product, ProductRule> = {
   bitbucket: bitbucketRule,
+  circleci: circleciRule,
   github: githubRule,
   gitlab: gitlabRule,
   jenkins: jenkinsRule,
   jira: jiraRule,
+  linear: linearRule,
 };
 
 /**
@@ -62,3 +66,19 @@ export function productName(product: Product): string {
 export const PRODUCT_SERVICE_ID: Record<Product, string> = Object.fromEntries(
   PRODUCT_RULES.map((rule) => [rule.product, rule.serviceId]),
 ) as Record<Product, string>;
+
+/** See `ProductRule.corpus`. Was a third `Record<Product, string>` in `panel-view.ts`. */
+export function productCorpus(product: Product): string {
+  return RULE_BY_PRODUCT[product].corpus;
+}
+
+/**
+ * The products the Options page may offer as self-hosted instances.
+ *
+ * Derived so a SaaS-only product cannot reach the picker by omission, and so a
+ * self-hostable one cannot be left out of it by omission either — the failure this
+ * replaces was silent in both directions.
+ */
+export const SELF_HOSTABLE_PRODUCTS: readonly ProductRule[] = PRODUCT_RULES.filter(
+  (rule) => rule.selfHostable,
+);

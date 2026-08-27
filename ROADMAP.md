@@ -1499,9 +1499,20 @@ another repo — ideal first contributions:
 
 - **Add a surface recogniser** — a new product module under
   `src/shared/recognise/`, its entry in `RULE_BY_PRODUCT` in `registry.ts`, its
-  id in `PRODUCT_IDS` in `src/shared/types.ts`, an entry in `PRODUCT_CORPUS` in
-  `src/panel/panel-view.ts`, and fixtures; the cleanest entry point into the
-  reframe now that C1.2 has shipped the scaffolding.
+  id in `PRODUCT_IDS` in `src/shared/types.ts`, and fixtures; the module's own
+  `ProductRule` carries its display name, its dashboard-scope noun (`corpus`)
+  and its self-hosted-picker eligibility (`selfHostable`), so nothing derives
+  from a separate table anymore. For an `origin`-kind host (a SaaS product
+  recognised on a fixed hostname — every shipped product except Jira, which is
+  `suffix`-kind), that is not the whole cost: it also forces a conscious edit
+  to **seven literal test lists**, pinned on purpose so a product cannot land
+  silently under-tested: `BUILT_IN_ORIGINS`, `BUILT_IN_SURFACES`, its
+  built-in-row count, and `PRODUCT_SERVICE_ID` (all in
+  `recognise-registry.test.ts`); the per-product `pages` fixture in
+  `recognise.test.ts`'s "every surface pattern matches a real page URL" case;
+  and, for a self-hostable product, `SELF_HOSTABLE_PRODUCTS`
+  (`recognise-registry.test.ts`) and the rendered `<option>` list in
+  `options.test.ts`.
 - **2.4 Full-page vs. readable toggle** — one setting, one capture branch.
 - **3.2 One-press undo** — a toast affordance + a short window (mind the gateway
   note).

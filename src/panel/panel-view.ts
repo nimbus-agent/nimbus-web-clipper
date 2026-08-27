@@ -7,7 +7,7 @@ import { type ConnectorHealth, gatePolicy } from "../shared/connector-health.ts"
 import { formatAge } from "../shared/freshness.ts";
 import { buildFetchPreview, type ClipPreview, type FetchPreview } from "../shared/preview.ts";
 import { renderPreview } from "../shared/preview-view.ts";
-import { productName } from "../shared/recognise/registry.ts";
+import { productCorpus, productName } from "../shared/recognise/registry.ts";
 import { safeHttpUrl } from "../shared/safe-url.ts";
 import { scopeCommand } from "../shared/scope-command.ts";
 import type {
@@ -21,17 +21,6 @@ import type {
   ScopeGap,
 } from "../shared/types.ts";
 import { groupHits, humaniseType } from "./related-groups.ts";
-
-/** What a connector's indexed items ARE, for the dashboard scope line. The
- *  lanes answer across the whole connector, so this noun is a claim about
- *  coverage — a wrong one reads as a promise the answer does not keep. */
-const PRODUCT_CORPUS: Record<Product, string> = {
-  bitbucket: "Bitbucket repositories",
-  github: "GitHub repositories",
-  gitlab: "GitLab projects",
-  jenkins: "Jenkins builds",
-  jira: "Jira projects",
-};
 
 export function renderError(doc: Document, message: string): HTMLElement {
   const p = doc.createElement("p");
@@ -437,7 +426,7 @@ function appendServiceHeader(
       line(
         doc,
         "nimbus-related__status",
-        `Nimbus can answer across all indexed ${PRODUCT_CORPUS[state.product]}.`,
+        `Nimbus can answer across all indexed ${productCorpus(state.product)}.`,
       ),
     );
   }

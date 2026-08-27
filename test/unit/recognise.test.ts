@@ -286,9 +286,11 @@ describe("BUILT_IN_SURFACES", () => {
   test("every surface pattern matches a real page URL on that product", () => {
     const pages: Record<string, string> = {
       bitbucket: "https://bitbucket.org/acme/web/pull-requests/7",
+      circleci: "https://app.circleci.com/pipelines/github/acme/web/482",
       github: "https://github.com/acme/web/pull/482",
       gitlab: "https://gitlab.com/acme/web/-/merge_requests/9",
       jira: "https://acme.atlassian.net/browse/ABC-1",
+      linear: "https://linear.app/acme/issue/ENG-123/fix-the-thing",
     };
     for (const surface of BUILT_IN_SURFACES) {
       const page = pages[surface.product];
@@ -486,6 +488,132 @@ describe("self-hosted origins stay siloed by product", () => {
       ok: false,
       reason: "unrecognised-path",
     });
+  });
+});
+
+describe("CircleCI", () => {
+  it("recognises a pipeline", () => {
+    expectItem("https://app.circleci.com/pipelines/github/acme/web/482", NONE, {
+      product: "circleci",
+      kind: "build",
+      ref: "acme/web #482",
+      resolveUrl: "https://app.circleci.com/pipelines/github/acme/web/482",
+    });
+  });
+
+  it("recognises both dashboards", () => {
+    for (const url of ["https://app.circleci.com/pipelines", "https://app.circleci.com/home"]) {
+      const r = recognise(url, NONE);
+      expect(r.ok && r.kind).toBe("home");
+    }
+  });
+
+  it("declines paths it does not model", () => {
+    // A wrong header is worse than no header: settings, insights and a
+    // non-numeric pipeline id are all misses, not guesses. Asserted with
+    // `reason`, not just `.ok` (Linear's equivalent test already does this) —
+    // a bare `.ok === false` cannot tell an unknown host apart from a
+    // recognised host with an unmodelled path, so it would still pass even if
+    // the CircleCI host rule vanished entirely.
+    for (const url of [
+      "https://app.circleci.com/settings/organization",
+      "https://app.circleci.com/insights/github/acme/web",
+      "https://app.circleci.com/pipelines/github/acme/web/not-a-number",
+    ]) {
+      expect(recognise(url, NONE)).toEqual({ ok: false, reason: "unrecognised-path" });
+    }
+    // Not `app.circleci.com` — this host is not built in at all.
+    expect(recognise("https://circleci.com/pipelines/github/acme/web/482", NONE)).toEqual({
+      ok: false,
+      reason: "unknown-host",
+    });
+  });
+
+  it("declines the org- and repo-scoped pipeline lists — they are not the connector's scope", () => {
+    // These ARE dashboards in CircleCI's UI, and they are deliberately NOT `home`
+    // here. `home` means a page whose scope is the WHOLE connector: `LANE_RULES`
+    // gives `catchup`/`decisions`/`ownership` to `home` precisely because they
+    // answer about an entire service, and the header claims "Nimbus can answer
+    // across all indexed CircleCI pipelines". On a page scoped to one org or one
+    // repo that sentence is false, and the three lanes would repeat the same
+    // service-wide answer on every repo the user visits — the exact failure the
+    // `LANE_RULES` comment cites for item pages.
+    for (const url of [
+      "https://app.circleci.com/pipelines/github/acme",
+      "https://app.circleci.com/pipelines/github/acme/web",
+    ]) {
+      expect(recognise(url, NONE).ok).toBe(false);
+    }
+  });
+});
+
+describe("Linear", () => {
+  it("recognises an issue", () => {
+    expectItem("https://linear.app/acme/issue/ENG-123/fix-the-thing", NONE, {
+      product: "linear",
+      kind: "issue",
+      ref: "ENG-123",
+      resolveUrl: "https://linear.app/acme/issue/ENG-123/fix-the-thing",
+    });
+  });
+
+  it("normalises the issue key so one issue has one resolveUrl", () => {
+    // Same rule Jira's matcher follows: the ladder upstream is case-sensitive.
+    const r = recognise("https://linear.app/acme/issue/eng-123/fix-the-thing", NONE);
+    expect(r.ok && r.ref).toBe("ENG-123");
+  });
+
+  it("recognises both dashboards", () => {
+    for (const url of ["https://linear.app/acme/inbox", "https://linear.app/acme/my-issues"]) {
+      const r = recognise(url, NONE);
+      expect(r.ok && r.kind).toBe("home");
+    }
+  });
+
+  it("declines paths it does not model", () => {
+    // Asserted with `reason`, not just `.ok`, so this test can tell an unknown
+    // host apart from a known host with an unmodelled path — a bare `linear.app`
+    // root and a `/settings/members` path fail for different reasons, and a test
+    // that could not tell them apart would pass even if the host rule vanished.
+    expect(recognise("https://linear.app/acme/settings/members", NONE)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+    expect(recognise("https://linear.app/acme/team/ENG/all", NONE)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+    expect(recognise("https://linear.app/acme/issue/not-a-key/slug", NONE)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+    // The bare root has no workspace segment — the segment is what makes a
+    // Linear URL a workspace's, and the marketing root is not a dashboard. The
+    // host still matches (linear.app is built in), so this is a path miss too.
+    expect(recognise("https://linear.app", NONE)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+  });
+
+  it("does not claim Linear's own docs pages as a workspace dashboard", () => {
+    // `/docs/inbox` and `/docs/my-issues` are real, currently-published Linear
+    // documentation pages — "docs" sits exactly where a workspace slug goes,
+    // and the second segment ("inbox" / "my-issues") is a real dashboard slug.
+    // The existing `/acme/settings/members` miss above does NOT pin this: its
+    // SECOND segment ("settings") is not a dashboard slug at all, so it would
+    // decline even without this rule. This case needs the second segment to be
+    // one of the modelled dashboard slugs for the collision to be live.
+    for (const url of ["https://linear.app/docs/inbox", "https://linear.app/docs/my-issues"]) {
+      expect(recognise(url, NONE)).toEqual({ ok: false, reason: "unrecognised-path" });
+    }
+  });
+
+  it("still recognises a genuine workspace dashboard", () => {
+    // Pins that the reserved-segment fix declines only the reserved slugs
+    // above, not workspace slugs in general.
+    const r = recognise("https://linear.app/acme/inbox", NONE);
+    expect(r.ok && r.kind).toBe("home");
   });
 });
 

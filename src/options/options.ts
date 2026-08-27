@@ -21,6 +21,7 @@ import {
   upsertOrigin,
 } from "../shared/origins.ts";
 import { BUILT_IN_SURFACES } from "../shared/recognise/index.ts";
+import { RULE_BY_PRODUCT, SELF_HOSTABLE_PRODUCTS } from "../shared/recognise/registry.ts";
 import type { ConfiguredOrigin } from "../shared/types.ts";
 import { renderBriefLog } from "./brief-log-view.ts";
 import { renderLedgerSummary } from "./ledger-summary-view.ts";
@@ -382,6 +383,28 @@ async function refreshSurfaces(): Promise<void> {
   }
 }
 
+/**
+ * Fill the self-hosted product picker from the registry.
+ *
+ * The five options used to be hardcoded in `options.html`, guarded by nothing:
+ * `options.test.ts` writes its own `<select>` fixture, so a product added to
+ * `PRODUCT_IDS` and forgotten here passed every test and was simply un-addable as a
+ * self-hosted origin. Deriving it also keeps a SaaS-only product out, which is not a
+ * tidiness point — offering one invites a user to configure an origin that cannot exist.
+ */
+function fillProductPicker(): void {
+  const el = document.getElementById("surface-product");
+  if (!(el instanceof HTMLSelectElement)) {
+    return;
+  }
+  for (const rule of SELF_HOSTABLE_PRODUCTS) {
+    const option = document.createElement("option");
+    option.value = rule.product;
+    option.textContent = rule.name;
+    el.append(option);
+  }
+}
+
 async function addSurface(): Promise<void> {
   const originEl = document.getElementById("surface-origin");
   const productEl = document.getElementById("surface-product");
@@ -389,6 +412,16 @@ async function addSurface(): Promise<void> {
     return;
   }
   if (!isProduct(productEl.value)) {
+    setSurfaceStatus("Pick what this instance is running.");
+    return;
+  }
+  // The picker only ever renders SELF_HOSTABLE_PRODUCTS, so this cannot fire
+  // through the UI today — but `isProduct` alone accepts any registered
+  // product, including a SaaS-only one like Linear. `selfHostable`'s whole
+  // purpose is refusing an origin that cannot exist, and a check that lives
+  // only in what the picker renders is not that: enforce it here too, not
+  // just at render.
+  if (!RULE_BY_PRODUCT[productEl.value].selfHostable) {
     setSurfaceStatus("Pick what this instance is running.");
     return;
   }
@@ -550,6 +583,7 @@ function onAmbientChange(event: Event): Promise<void> {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  fillProductPicker();
   document.getElementById("discover")?.addEventListener("click", () => void discover());
   document.getElementById("pair")?.addEventListener("click", () => void pair());
   document.getElementById("unpair")?.addEventListener("click", () => void onUnpairClick());

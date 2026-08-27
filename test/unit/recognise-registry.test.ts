@@ -6,6 +6,7 @@ import {
   PRODUCT_SERVICE_ID,
   productName,
   RULE_BY_PRODUCT,
+  SELF_HOSTABLE_PRODUCTS,
 } from "../../src/shared/recognise/registry.ts";
 import { PRODUCT_IDS } from "../../src/shared/types.ts";
 
@@ -52,8 +53,10 @@ describe("the built-in tables are derived, not copied", () => {
     // wrong one.
     expect([...BUILT_IN_ORIGINS]).toEqual([
       { origin: "https://bitbucket.org", product: "bitbucket" },
+      { origin: "https://app.circleci.com", product: "circleci" },
       { origin: "https://github.com", product: "github" },
       { origin: "https://gitlab.com", product: "gitlab" },
+      { origin: "https://linear.app", product: "linear" },
     ]);
   });
 
@@ -63,9 +66,11 @@ describe("the built-in tables are derived, not copied", () => {
     // passes for any implementation, including a wrong one.
     expect([...BUILT_IN_SURFACES]).toEqual([
       { label: "bitbucket.org", product: "bitbucket", pattern: "https://bitbucket.org/*" },
+      { label: "app.circleci.com", product: "circleci", pattern: "https://app.circleci.com/*" },
       { label: "github.com", product: "github", pattern: "https://github.com/*" },
       { label: "gitlab.com", product: "gitlab", pattern: "https://gitlab.com/*" },
       { label: "*.atlassian.net", product: "jira", pattern: "https://*.atlassian.net/*" },
+      { label: "linear.app", product: "linear", pattern: "https://linear.app/*" },
     ]);
   });
 
@@ -90,20 +95,22 @@ describe("the built-in tables are derived, not copied", () => {
     expect(BUILT_IN_SURFACES.find((s) => s.product === "jenkins")).toBeUndefined();
   });
 
-  it("derives exactly four rows — no product invents one", () => {
-    // Jenkins has no built-in host, so five products yield four rows. A derivation
-    // that mapped over products instead of over their hosts would produce five.
-    expect(BUILT_IN_SURFACES).toHaveLength(4);
+  it("derives exactly six rows — no product invents one", () => {
+    // Jenkins has no built-in host, so seven products yield six rows. A derivation
+    // that mapped over products instead of over their hosts would produce seven.
+    expect(BUILT_IN_SURFACES).toHaveLength(6);
   });
 });
 
 describe("productName", () => {
   it("names every declared product from the registry", () => {
+    expect(productName("circleci")).toBe("CircleCI");
     expect(productName("github")).toBe("GitHub");
     expect(productName("gitlab")).toBe("GitLab");
     expect(productName("bitbucket")).toBe("Bitbucket");
     expect(productName("jenkins")).toBe("Jenkins");
     expect(productName("jira")).toBe("Jira");
+    expect(productName("linear")).toBe("Linear");
   });
 });
 
@@ -114,10 +121,41 @@ describe("PRODUCT_SERVICE_ID", () => {
     // fail, and it pins nothing about what each service id actually is.
     expect(PRODUCT_SERVICE_ID).toEqual({
       bitbucket: "bitbucket",
+      circleci: "circleci",
       github: "github",
       gitlab: "gitlab",
       jenkins: "jenkins",
       jira: "jira",
+      linear: "linear",
     });
+  });
+});
+
+describe("the self-hosted product picker is derived, not hand-written", () => {
+  it("offers exactly the products that have a self-hosted edition", () => {
+    // Asserted as literal ids, not by re-running the filter: a test that
+    // recomputes the derivation passes for any implementation, including a
+    // wrong one.
+    expect(SELF_HOSTABLE_PRODUCTS.map((r) => r.product)).toEqual([
+      "bitbucket",
+      "circleci",
+      "github",
+      "gitlab",
+      "jenkins",
+      "jira",
+    ]);
+  });
+
+  it("gives every product a corpus noun", () => {
+    for (const rule of PRODUCT_RULES) {
+      expect(rule.corpus).not.toBe("");
+    }
+  });
+
+  it("keeps a SaaS-only product out of the self-hosted picker", () => {
+    // Linear has no self-hosted edition. Offering it would invite a user to
+    // configure an origin that cannot exist.
+    expect(SELF_HOSTABLE_PRODUCTS.map((r) => r.product)).not.toContain("linear");
+    expect(RULE_BY_PRODUCT.linear.selfHostable).toBe(false);
   });
 });
