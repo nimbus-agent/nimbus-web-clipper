@@ -995,11 +995,20 @@ describe("the fetch preview", () => {
 });
 
 describe("the service header", () => {
-  const state = {
+  const NOW = 1_700_000_000_000;
+  const base = {
     kind: "service" as const,
     surface: "Jenkins dashboard",
     product: "jenkins" as const,
+    nowMs: NOW,
   };
+  // `unknown` — the state an older gateway (or an unreadable answer) reports —
+  // is the regression guard: it must render byte-identical to what this header
+  // rendered before Task 4 existed. Written first, and asserted last below by
+  // the exact-content check, so a change to `gatePolicy`'s `unknown` row cannot
+  // silently regress the one output every user on an unpaired-with-health
+  // gateway is actually looking at today.
+  const state = { ...base, connector: { state: "unknown" as const } };
 
   it("names the surface and states the scope", () => {
     const el = renderHeader(document, state);
@@ -1015,7 +1024,7 @@ describe("the service header", () => {
     expect(el.textContent).not.toContain("Not indexed");
   });
 
-  it("renders exactly the surface line and the scope line", () => {
+  it("renders exactly the surface line and the scope line — no note, no age line", () => {
     // No assertion here names the instance host directly, because the `service`
     // arm carries no host field — `{surface, product}` only — so a host is
     // unrenderable by construction; there is nothing to withhold. This exact-
@@ -1029,6 +1038,60 @@ describe("the service header", () => {
       "Jenkins dashboard",
       "Nimbus can answer across all indexed Jenkins builds.",
     ]);
+  });
+
+  it("a healthy connector renders the same two lines as unknown, and no note", () => {
+    const el = renderHeader(document, { ...base, connector: { state: "healthy" } });
+    const lines = [...el.children].map((c) => c.textContent);
+    expect(lines).toEqual([
+      "Jenkins dashboard",
+      "Nimbus can answer across all indexed Jenkins builds.",
+    ]);
+  });
+
+  it("a degraded connector keeps the scope line and adds a caveat naming the product", () => {
+    const el = renderHeader(document, { ...base, connector: { state: "degraded" } });
+    expect(el.textContent).toContain("Nimbus can answer across all indexed Jenkins builds.");
+    expect(el.textContent).toContain("Jenkins");
+    expect(el.textContent).toMatch(/degraded/i);
+    expect(el.textContent).not.toContain("Synced");
+  });
+
+  it("a degraded connector with a sync time adds the age line too", () => {
+    const el = renderHeader(document, {
+      ...base,
+      connector: { state: "degraded", lastSuccessfulSyncMs: NOW - 3 * 60_000 },
+    });
+    expect(el.textContent).toContain("Synced 3 min ago");
+  });
+
+  it("an unconfigured connector withholds the scope line and renders only the note", () => {
+    const el = renderHeader(document, { ...base, connector: { state: "not_configured" } });
+    const lines = [...el.children].map((c) => c.textContent);
+    expect(lines).toHaveLength(2); // surface line + the one note
+    expect(el.textContent).not.toContain("Nimbus can answer");
+    expect(el.textContent).toMatch(/never synced/i);
+  });
+
+  it("a withheld state renders no age line even when the gateway supplied a sync time", () => {
+    const el = renderHeader(document, {
+      ...base,
+      connector: { state: "unauthenticated", lastSuccessfulSyncMs: NOW - 3 * 60_000 },
+    });
+    expect(el.textContent).not.toContain("Synced");
+    expect(el.textContent).not.toContain("min ago");
+  });
+
+  it("not_configured and unauthenticated read differently", () => {
+    const a = renderHeader(document, {
+      ...base,
+      connector: { state: "not_configured" },
+    }).textContent;
+    const b = renderHeader(document, {
+      ...base,
+      connector: { state: "unauthenticated" },
+    }).textContent;
+    expect(a).not.toBe(b);
   });
 });
 

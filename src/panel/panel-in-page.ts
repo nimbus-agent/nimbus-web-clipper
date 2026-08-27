@@ -5,6 +5,7 @@
 import { sendMessage } from "../browser/runtime.ts";
 import { declaredCanonicalHref, resolveCanonical } from "../shared/canonical.ts";
 import { isCapturedCopy } from "../shared/capture-offer.ts";
+import { gatePolicy } from "../shared/connector-health.ts";
 import {
   type ClipResponse,
   isAgentStateResponse,
@@ -402,7 +403,18 @@ function headerFrom(res: unknown, nowMs: number, fetchSent: boolean): HeaderStat
   // (handlers.ts fills one in only because the response type demands it), so
   // reading it here would render a dashboard as a miss.
   if (res.recognition.ok && res.recognition.kind === "home") {
-    return { kind: "service", surface, product: res.recognition.product };
+    // `res.connector` is optional only because the type is shared with every
+    // other surface (see its doc comment in messages.ts) — `handlers.ts` always
+    // fills one in for a home recognition, falling back to `unknown` itself when
+    // the read failed or listed no row for this connector. The fallback here is
+    // a second line of defence, for the same "unknown" reason: never guess.
+    return {
+      kind: "service",
+      surface,
+      product: res.recognition.product,
+      connector: res.connector ?? { state: "unknown" },
+      nowMs,
+    };
   }
   const outcome = res.outcome;
   if (outcome.kind === "found") {
@@ -1321,9 +1333,19 @@ function createPanel(body: HTMLElement): {
     // title and URL returns noise dressed as recall. The related REQUEST is still
     // sent — after the resolve, once the recognition is known — its answer is
     // simply not rendered here.
+    //
+    // On a dashboard, whether the agent lanes render at all is gated on the
+    // connector's health (`gatePolicy`): three lanes that can only ever come back
+    // empty read as "you have no work", not as "Nimbus cannot ask this connector
+    // anything". `shown.kind === "service"` whenever `surfaceKind === "home"` —
+    // see `headerFrom` — so the empty-array arm below is exhaustive in practice,
+    // never a silent drop of lanes for a page that has some other header.
+    const homeLanes = shown.kind === "service" && gatePolicy(shown.connector.state).lanes;
     const lanes: Lane[] =
       surfaceKind === "home"
-        ? agentLanes
+        ? homeLanes
+          ? agentLanes
+          : []
         : [
             { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
             ...agentLanes,

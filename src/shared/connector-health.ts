@@ -39,6 +39,63 @@ const KNOWN: ReadonlySet<string> = new Set(CONNECTOR_STATES);
  * headed for an injected page DOM, and an error string can carry a URL with a
  * credential in it.
  */
+export interface GatePolicy {
+  /** Render the service lanes at all? */
+  readonly lanes: boolean;
+  /** One short sentence shown above them, or instead of them. `%s` is replaced with
+   *  the product's display name by the caller — the noun lives at the call site, not
+   *  in this pure module. */
+  readonly note: string | null;
+}
+
+/**
+ * What the panel does about one connector's state.
+ *
+ * The three-way split is the point. `degraded`, `rate_limited` and `paused` still run
+ * the lanes: syncing is impaired but the indexed items are real, so the answers are
+ * real and merely possibly missing the newest. The three that withhold cannot answer
+ * at all, and each says something different — upstream keeps `not_configured` and
+ * `unauthenticated` apart deliberately (never-had-a-credential versus
+ * credential-rejected), and collapsing them is what made an upstream bug take an hour.
+ *
+ * No note names a command: `/v1/connectors` carries no remedy string, and inventing
+ * one is the failure `parseScopeGap` already refuses.
+ */
+const POLICIES: Record<ConnectorState, GatePolicy> = {
+  healthy: { lanes: true, note: null },
+  // Silent and ungated: an older gateway, or one that answered in a way this client
+  // does not recognise, loses the gate rather than the feature — and is not nagged.
+  unknown: { lanes: true, note: null },
+  degraded: {
+    lanes: true,
+    note: "Nimbus's last sync of %s was degraded, so recent items may be missing.",
+  },
+  rate_limited: {
+    lanes: true,
+    note: "%s is rate-limiting Nimbus, so recent items may be missing.",
+  },
+  paused: { lanes: true, note: "Syncing %s is paused, so recent items may be missing." },
+  // "never synced", NOT "you have not set this up": upstream returns this state for a
+  // missing sync_state row, which is also what a connector configured a minute ago
+  // looks like until its first tick. Say what is known.
+  not_configured: {
+    lanes: false,
+    note: "Nimbus has never synced %s, so there is nothing to answer from yet.",
+  },
+  unauthenticated: {
+    lanes: false,
+    note: "Nimbus's credential for %s was rejected, so it cannot read your items.",
+  },
+  error: {
+    lanes: false,
+    note: "Nimbus's last sync of %s failed, so its answers would be incomplete.",
+  },
+};
+
+export function gatePolicy(state: ConnectorState): GatePolicy {
+  return POLICIES[state];
+}
+
 export function parseConnectorHealth(body: unknown): ReadonlyMap<string, ConnectorHealth> | null {
   if (!isObject(body) || !Array.isArray(body["data"])) {
     return null;
