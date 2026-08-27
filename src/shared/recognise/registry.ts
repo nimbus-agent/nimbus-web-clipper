@@ -29,3 +29,14 @@ export const RULE_BY_PRODUCT: Record<Product, ProductRule> = {
  * rather than a reliance on this object's key order.
  */
 export const PRODUCT_RULES: readonly ProductRule[] = Object.values(RULE_BY_PRODUCT);
+
+/**
+ * The product's display name, for any surface that shows one.
+ *
+ * Three identical `Record<Product, string>` literals existed before this — in
+ * the recogniser, the panel and the Options surfaces view — so a renamed product
+ * was three edits, two of which nothing would have caught.
+ */
+export function productName(product: Product): string {
+  return RULE_BY_PRODUCT[product].name;
+}

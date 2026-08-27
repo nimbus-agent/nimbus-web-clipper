@@ -1,6 +1,7 @@
 // Pure DOM builders for the Options "Recognised surfaces" list. Origin strings
 // are user input; every one is written with textContent, never innerHTML.
 import { splitOrigin } from "../shared/origins.ts";
+import { productName } from "../shared/recognise/registry.ts";
 import type { Product } from "../shared/types.ts";
 
 export interface SurfaceRow {
@@ -15,14 +16,6 @@ export interface SurfaceRow {
   /** Whether the ambient cue is switched on for this row's host. */
   readonly ambient: boolean;
 }
-
-const PRODUCT_NAMES: Record<Product, string> = {
-  bitbucket: "Bitbucket",
-  github: "GitHub",
-  gitlab: "GitLab",
-  jenkins: "Jenkins",
-  jira: "Jira",
-};
 
 function button(doc: Document, action: string, origin: string, text: string): HTMLButtonElement {
   const el = doc.createElement("button");
@@ -88,7 +81,7 @@ export function renderSurfaceList(doc: Document, rows: readonly SurfaceRow[]): H
 
     const product = doc.createElement("span");
     product.className = "surfaces__product";
-    product.textContent = PRODUCT_NAMES[row.product];
+    product.textContent = productName(row.product);
 
     item.append(
       origin,

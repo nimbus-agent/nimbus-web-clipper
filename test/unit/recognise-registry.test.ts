@@ -2,7 +2,11 @@
 import { describe, expect, it } from "vitest";
 import { hostPermissionPattern } from "../../src/shared/origins.ts";
 import { BUILT_IN_ORIGINS, BUILT_IN_SURFACES } from "../../src/shared/recognise/index.ts";
-import { PRODUCT_RULES, RULE_BY_PRODUCT } from "../../src/shared/recognise/registry.ts";
+import {
+  PRODUCT_RULES,
+  productName,
+  RULE_BY_PRODUCT,
+} from "../../src/shared/recognise/registry.ts";
 import { PRODUCT_IDS } from "../../src/shared/types.ts";
 
 describe("the registry covers exactly the declared products", () => {
@@ -77,5 +81,15 @@ describe("the built-in tables are derived, not copied", () => {
     // Jenkins has no built-in host, so five products yield four rows. A derivation
     // that mapped over products instead of over their hosts would produce five.
     expect(BUILT_IN_SURFACES).toHaveLength(4);
+  });
+});
+
+describe("productName", () => {
+  it("names every declared product from the registry", () => {
+    expect(productName("github")).toBe("GitHub");
+    expect(productName("gitlab")).toBe("GitLab");
+    expect(productName("bitbucket")).toBe("Bitbucket");
+    expect(productName("jenkins")).toBe("Jenkins");
+    expect(productName("jira")).toBe("Jira");
   });
 });

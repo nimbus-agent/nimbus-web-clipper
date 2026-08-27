@@ -6,6 +6,7 @@ import { offersCapture } from "../shared/capture-offer.ts";
 import { formatAge } from "../shared/freshness.ts";
 import { buildFetchPreview, type ClipPreview, type FetchPreview } from "../shared/preview.ts";
 import { renderPreview } from "../shared/preview-view.ts";
+import { productName } from "../shared/recognise/registry.ts";
 import { safeHttpUrl } from "../shared/safe-url.ts";
 import { scopeCommand } from "../shared/scope-command.ts";
 import type {
@@ -19,15 +20,6 @@ import type {
   ScopeGap,
 } from "../shared/types.ts";
 import { groupHits, humaniseType } from "./related-groups.ts";
-
-/** One spelling of each product name — mirrors `options/surfaces-view.ts`. */
-const PRODUCT_NAMES: Record<Product, string> = {
-  bitbucket: "Bitbucket",
-  github: "GitHub",
-  gitlab: "GitLab",
-  jenkins: "Jenkins",
-  jira: "Jira",
-};
 
 /** What a connector's indexed items ARE, for the dashboard scope line. The
  *  lanes answer across the whole connector, so this noun is a claim about
@@ -459,7 +451,7 @@ function appendFetchBlocked(
       line(
         doc,
         "nimbus-related__status",
-        `No ${PRODUCT_NAMES[state.product]} connector is configured on your gateway.`,
+        `No ${productName(state.product)} connector is configured on your gateway.`,
       ),
     );
     return;
@@ -624,7 +616,7 @@ function appendNotIndexed(
         // class. See that function's own doc comment.
         doc,
         "nimbus-related__action nimbus-related__fetch",
-        `Fetch this from ${PRODUCT_NAMES[state.product]}`,
+        `Fetch this from ${productName(state.product)}`,
         () => onFetch?.("fetch"),
       ),
     );
@@ -706,9 +698,7 @@ export function renderHeader(
   }
 
   if (state.kind === "fetching") {
-    box.append(
-      line(doc, "nimbus-related__status", `Fetching from ${PRODUCT_NAMES[state.product]}…`),
-    );
+    box.append(line(doc, "nimbus-related__status", `Fetching from ${productName(state.product)}…`));
     return box;
   }
 
