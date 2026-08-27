@@ -81,6 +81,7 @@ import {
   markStale,
   setConnection,
 } from "./connection-store.ts";
+import { readConnectorHealth as storeReadConnectorHealth } from "./connector-health-store.ts";
 import { listEgress, proveEgressWindow, verifyEgress } from "./egress-client.ts";
 import {
   type EgressDeps,
@@ -93,6 +94,7 @@ import {
   confirmPair,
   fetchItem,
   getAgentRun,
+  getConnectors,
   invokeAgent,
   postClip,
   postRelated,
@@ -247,6 +249,13 @@ const agentRunDeps = {
 };
 
 const agentStateDeps = { getOrigins, getConnection, resolveItem, ...agentStoreDeps };
+
+// `readConnectorHealth` (connector-health-store.ts) takes `(deps, origin, nowMs)`;
+// `handleResolve`'s dep takes the origin alone. This is the one place the store's
+// own deps and the clock are bound, so a handler test can inject a one-argument
+// fake and never has to know the store exists.
+const readConnectorHealth = (origin: string) =>
+  storeReadConnectorHealth({ getConnectors }, origin, Date.now());
 
 // Runs currently being polled by an in-worker loop, keyed by runId. Lets the
 // alarm's resume skip a run already being handled locally: unlike the eviction
@@ -1107,7 +1116,7 @@ function routeIndexReads(message: unknown, respond: Respond): Routed {
     return true;
   }
   if (isResolveRequest(message)) {
-    handleResolve({ getConnection, getOrigins, resolveItem }, message)
+    handleResolve({ getConnection, getOrigins, resolveItem, readConnectorHealth }, message)
       .then(respond)
       .catch(() => {
         respond({
@@ -1343,7 +1352,10 @@ const ambientDeps: AmbientDeps = {
   getOrigins,
   lastCued: (tabId) => lastCuedByTab.get(tabId),
   resolve: (pageUrl) =>
-    handleResolve({ getConnection, getOrigins, resolveItem }, { kind: "resolve", pageUrl }),
+    handleResolve(
+      { getConnection, getOrigins, resolveItem, readConnectorHealth },
+      { kind: "resolve", pageUrl },
+    ),
   currentUrl: tabUrl,
 };
 

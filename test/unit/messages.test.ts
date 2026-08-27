@@ -446,6 +446,67 @@ describe("isResolveResponse", () => {
       expect(isResolveResponse({ kind: "resolve", ok: true, recognition, outcome })).toBe(false);
     }
   });
+
+  it("accepts an ok arm with no connector at all — every non-dashboard response omits it", () => {
+    const outcome = { kind: "not-indexed", fetchable: true };
+    expect(isResolveResponse({ kind: "resolve", ok: true, recognition, outcome })).toBe(true);
+  });
+
+  it("accepts a well-formed connector, including the client's own 'unknown' state", () => {
+    const outcome = { kind: "not-indexed", fetchable: true };
+    expect(
+      isResolveResponse({
+        kind: "resolve",
+        ok: true,
+        recognition,
+        outcome,
+        connector: { state: "healthy" },
+      }),
+    ).toBe(true);
+    // `unknown` is a state this client itself produces (a failed read, or a
+    // gateway too old to list a row for the connector) — a guard that rejected
+    // it would break the exact case it exists to report.
+    expect(
+      isResolveResponse({
+        kind: "resolve",
+        ok: true,
+        recognition,
+        outcome,
+        connector: { state: "unknown" },
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a connector whose state is outside CONNECTOR_STATES, or that is not an object", () => {
+    const outcome = { kind: "not-indexed", fetchable: true };
+    for (const connector of [{ state: "not-a-real-state" }, "healthy", null, {}]) {
+      expect(
+        isResolveResponse({ kind: "resolve", ok: true, recognition, outcome, connector }),
+      ).toBe(false);
+    }
+  });
+
+  it("rejects a connector whose lastSuccessfulSyncMs is not finite", () => {
+    // `typeof NaN === "number"`, and so is `Infinity`/`-Infinity` — a guard that
+    // only checked `typeof` would let all three through to `formatAge` in the
+    // panel, rendering a nonsense or misleading sync age.
+    const outcome = { kind: "not-indexed", fetchable: true };
+    for (const lastSuccessfulSyncMs of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      expect(
+        isResolveResponse({
+          kind: "resolve",
+          ok: true,
+          recognition,
+          outcome,
+          connector: { state: "healthy", lastSuccessfulSyncMs },
+        }),
+      ).toBe(false);
+    }
+  });
 });
 
 describe("isFetchResponse", () => {

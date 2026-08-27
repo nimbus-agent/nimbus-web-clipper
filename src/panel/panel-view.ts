@@ -3,6 +3,7 @@
 // written via textContent (never innerHTML) — the indexed content is
 // attacker-influenceable, so plain-text rendering is the XSS backstop.
 import { offersCapture } from "../shared/capture-offer.ts";
+import { type ConnectorHealth, gatePolicy } from "../shared/connector-health.ts";
 import { formatAge } from "../shared/freshness.ts";
 import { buildFetchPreview, type ClipPreview, type FetchPreview } from "../shared/preview.ts";
 import { renderPreview } from "../shared/preview-view.ts";
@@ -148,7 +149,19 @@ export type HeaderState =
    * describes a page that should have resolved and didn't — and which offers a
    * fetch button that would propose indexing a dashboard as an item.
    */
-  | { readonly kind: "service"; readonly surface: string; readonly product: Product }
+  | {
+      readonly kind: "service";
+      readonly surface: string;
+      readonly product: Product;
+      /** Gates the agent lanes below and drives the caveat/withheld copy in this
+       *  header — see `gatePolicy`. Never carries `lastError`: that is free-form
+       *  upstream text bound for a page DOM and is discarded before this arrives
+       *  (see `parseConnectorHealth`'s own doc comment). */
+      readonly connector: ConnectorHealth;
+      /** Frozen at header-build time, exactly like `resolved`'s own `nowMs` —
+       *  so the "Synced … ago" line does not jitter across repaints. */
+      readonly nowMs: number;
+    }
   | {
       readonly kind: "resolved";
       readonly surface: string;
@@ -389,6 +402,68 @@ function chooser(
     list.append(li);
   }
   return list;
+}
+
+/**
+ * The `service` arm of {@link renderHeader} — a product's own dashboard.
+ *
+ * `gatePolicy` decides what the connector's state permits: a healthy or `unknown`
+ * connector gets no caveat, plus the scope line and — for `healthy` only, when the
+ * gateway supplied one — the sync age; `unknown` never gets an age line even when
+ * the gateway supplied one (see below) — it covers both an older gateway and an
+ * unreadable answer, and neither is nagged.
+ * `degraded`/`rate_limited`/`paused` keep the scope line (the lanes below still
+ * run) and add a caveat, plus the sync age when the gateway supplied one — the
+ * age is what tells the reader whether "recent items may be missing" means
+ * minutes or a fortnight. The three withheld states drop the scope line
+ * entirely — the lanes below do not run, so claiming Nimbus "can answer" would
+ * be false — and render only the one honest sentence, with no age line even
+ * when the gateway supplied one: dating a sync whose answers are being
+ * withheld invites the reader to think some answer is still available.
+ */
+function appendServiceHeader(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<HeaderState, { kind: "service" }>,
+): void {
+  const policy = gatePolicy(state.connector.state);
+  if (policy.lanes) {
+    // The scope line, not the host. Stripped of the item link, the freshness
+    // line and the fetch button, this header would otherwise be a bare product
+    // name — and the scope is the one fact needed to read the lanes correctly:
+    // `{service}` spans the whole connector, so the answer covers every indexed
+    // instance, not the one in the address bar.
+    box.append(
+      line(
+        doc,
+        "nimbus-related__status",
+        `Nimbus can answer across all indexed ${PRODUCT_CORPUS[state.product]}.`,
+      ),
+    );
+  }
+  if (policy.note !== null) {
+    box.append(
+      line(doc, "nimbus-related__status", policy.note.replace("%s", productName(state.product))),
+    );
+  }
+  // `unknown` never gets an age line, even when the gateway happened to include
+  // `lastSuccessfulSync` on the row that produced it: `unknown` covers both an
+  // older gateway AND an unrecognised eighth state that carried a real
+  // timestamp, and the byte-identical-to-today guarantee that state exists for
+  // must not depend on which fields the far end happened to send.
+  if (
+    policy.lanes &&
+    state.connector.state !== "unknown" &&
+    state.connector.lastSuccessfulSyncMs !== undefined
+  ) {
+    box.append(
+      line(
+        doc,
+        "nimbus-related__status",
+        `Synced ${formatAge(state.connector.lastSuccessfulSyncMs, state.nowMs)}`,
+      ),
+    );
+  }
 }
 
 /**
@@ -662,18 +737,7 @@ export function renderHeader(
   box.append(line(doc, "nimbus-related__surface", state.surface));
 
   if (state.kind === "service") {
-    // The scope line, not the host. Stripped of the item link, the freshness
-    // line and the fetch button, this header would otherwise be a bare product
-    // name — and the scope is the one fact needed to read the lanes correctly:
-    // `{service}` spans the whole connector, so the answer covers every indexed
-    // instance, not the one in the address bar.
-    box.append(
-      line(
-        doc,
-        "nimbus-related__status",
-        `Nimbus can answer across all indexed ${PRODUCT_CORPUS[state.product]}.`,
-      ),
-    );
+    appendServiceHeader(doc, box, state);
     return box;
   }
 

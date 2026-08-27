@@ -1,4 +1,5 @@
 import { buildClipPayload } from "../shared/clip.ts";
+import type { ConnectorHealth } from "../shared/connector-health.ts";
 import { DISCOVERY_CANDIDATES, type ProbeResult, pickReachable } from "../shared/discovery.ts";
 import { isLoopbackOrigin } from "../shared/gateway.ts";
 import type {
@@ -231,6 +232,18 @@ export interface ResolveDeps {
   readonly getOrigins: () => Promise<readonly ConfiguredOrigin[]>;
   readonly getConnection: GetConnection;
   readonly resolveItem: ResolveItem;
+  /**
+   * Health for the gateway at `origin`, or null when it could not be read.
+   *
+   * NOTE the shape: the store (connector-health-store.ts) exports
+   * `readConnectorHealth(deps, origin, nowMs)`, but the dep declared HERE takes the
+   * origin alone. The store's own deps and the clock are bound once in
+   * `service-worker.ts`, the single place real implementations are wired, so a
+   * handler test injects a one-argument fake and never has to know the store exists.
+   */
+  readonly readConnectorHealth: (
+    origin: string,
+  ) => Promise<ReadonlyMap<string, ConnectorHealth> | null>;
 }
 
 /**
@@ -268,18 +281,26 @@ export async function handleResolve(
     return { kind: "resolve", ok: false, recognition, reason: "not_paired" };
   }
   if (recognition.kind === "home") {
-    // A dashboard has no indexed item and is not supposed to have one, so there
-    // is nothing to ask the gateway. The outcome below is INERT: `headerFrom`
-    // (panel-in-page.ts) branches on `recognition.kind` before it reads an
-    // outcome, so a home page never renders as a miss. It is filled in only
-    // because `ResolveResponse`'s ok arm requires one — the same synthetic the
-    // unrecognised branch above already uses. `fetchable:false` keeps the C3.1
-    // button away from a page that is not a fetch candidate.
+    // A dashboard has no indexed item, so there is still no resolve call — but there
+    // IS now exactly one gateway read: the connector's health, which decides whether
+    // the service lanes can answer at all. Absent that, three lanes run against a
+    // connector nobody configured and return nothing, which reads as "you have no
+    // work" rather than "Nimbus is not connected to this". The outcome below is
+    // otherwise INERT: `headerFrom` (panel-in-page.ts) branches on `recognition.kind`
+    // before it reads an outcome, so a home page never renders as a miss. It is
+    // filled in only because `ResolveResponse`'s ok arm requires one — the same
+    // synthetic the unrecognised branch above already uses. `fetchable:false` keeps
+    // the C3.1 button away from a page that is not a fetch candidate.
+    const health = await deps.readConnectorHealth(conn.origin);
+    const connector = health?.get(PRODUCT_SERVICE_ID[recognition.product]) ?? {
+      state: "unknown" as const,
+    };
     return {
       kind: "resolve",
       ok: true,
       recognition,
       outcome: { kind: "not-indexed", fetchable: false },
+      connector,
     };
   }
   const r = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);

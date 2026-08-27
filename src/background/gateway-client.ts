@@ -1,4 +1,5 @@
 import type { ClipPayload } from "../shared/clip.ts";
+import { type ConnectorHealth, parseConnectorHealth } from "../shared/connector-health.ts";
 import { endpointUrl, type GatewayEndpoint, isLoopbackOrigin } from "../shared/gateway.ts";
 import { parseRelatedHit, type RelatedQuery } from "../shared/related.ts";
 import {
@@ -28,6 +29,7 @@ const RESOLVE_TIMEOUT_MS = 8_000;
 const FETCH_TIMEOUT_MS = 30_000;
 const AGENT_TIMEOUT_MS = 15_000;
 const HEALTH_TIMEOUT_MS = 800;
+const CONNECTORS_TIMEOUT_MS = 2_000;
 
 const DEFAULT_RETRY_AFTER_MS = 60_000; // the gateway's full rate-limit window
 const MAX_RETRY_AFTER_MS = 120_000;
@@ -179,6 +181,37 @@ export async function probeHealth(origin: string, doFetch: FetchLike = fetch): P
   // a catch that can never fire reads as a real failure mode to the next person.
   const data = await readJson(res);
   return isObject(data) && data["status"] === "ok";
+}
+
+/**
+ * `GET /v1/connectors` — the gateway's per-connector health, used to decide whether a
+ * dashboard's service lanes can answer at all.
+ *
+ * Two things differ from every other call here. It takes **no bearer**: upstream
+ * classifies this route `{ kind: "public" }` (`ipc/http-route-auth.ts`), so there is no
+ * token to send and no 401/403 to map. And **every failure is the same failure** — a 404
+ * from a gateway too old to serve it, an unreachable gateway, a timeout, or a body that
+ * fails the guard all return `null`, which the caller renders as today's ungated
+ * behaviour. The gate is an improvement on a working panel, never a new way for one to
+ * break.
+ *
+ * The caller still checks that a pairing exists before calling: pairing is the consent
+ * moment, and an unpaired extension makes no gateway reads.
+ */
+export async function getConnectors(
+  origin: string,
+  doFetch: FetchLike = fetch,
+): Promise<ReadonlyMap<string, ConnectorHealth> | null> {
+  let res: Response;
+  try {
+    res = await getJson(doFetch, origin, "connectors", {}, {}, CONNECTORS_TIMEOUT_MS);
+  } catch {
+    return null;
+  }
+  if (res.status !== 200) {
+    return null;
+  }
+  return parseConnectorHealth(await readJson(res));
 }
 
 export async function postClip(

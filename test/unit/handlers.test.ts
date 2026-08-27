@@ -546,6 +546,7 @@ describe("handleResolve", () => {
           seen.push(url);
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
+        readConnectorHealth: async () => null,
       },
       // Note: recognise() preserves the query string deliberately — the gateway
       // owns canonicalisation, so the recogniser's resolveUrl (asserted below)
@@ -572,6 +573,7 @@ describe("handleResolve", () => {
           label: "MacBook",
         }),
         resolveItem: async () => ({ ok: false, reason: "insufficient_scope" }),
+        readConnectorHealth: async () => null,
       },
       { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
     );
@@ -598,6 +600,7 @@ describe("handleResolve", () => {
           reason: "insufficient_scope",
           scopeGap: { required: "resolve", granted: ["clip", "briefs"] },
         }),
+        readConnectorHealth: async () => null,
       },
       { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
     );
@@ -625,6 +628,7 @@ describe("handleResolve", () => {
           called = true;
           return { ok: false, reason: "server_error" };
         },
+        readConnectorHealth: async () => null,
       },
       { kind: "resolve", pageUrl: "https://example.com/whatever" },
     );
@@ -648,6 +652,7 @@ describe("handleResolve", () => {
           called = true;
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
+        readConnectorHealth: async () => null,
       },
       { kind: "resolve", pageUrl: PR },
     );
@@ -665,6 +670,7 @@ describe("handleResolve", () => {
           sent = url;
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
+        readConnectorHealth: async () => null,
       },
       { kind: "resolve", pageUrl: "https://corp.example/jira/browse/plat-9?x=1" },
     );
@@ -680,6 +686,7 @@ describe("handleResolve", () => {
         resolveCalls += 1;
         return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
       },
+      readConnectorHealth: async () => null,
     };
 
     const res = await handleResolve(deps, {
@@ -705,6 +712,7 @@ describe("handleResolve", () => {
         resolveCalls += 1;
         return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
       },
+      readConnectorHealth: async () => null,
     };
 
     const res = await handleResolve(deps, {
@@ -715,6 +723,91 @@ describe("handleResolve", () => {
 
     expect(resolveCalls).toBe(0);
     expect(res).toMatchObject({ ok: false, reason: "not_paired" });
+  });
+});
+
+describe("handleResolve attaches connector health on a dashboard", () => {
+  const conn = { origin: "http://127.0.0.1:7777", token: "t", label: "dev" };
+  const okOutcome = async () => ({
+    ok: true as const,
+    outcome: { kind: "not-indexed" as const, fetchable: false },
+  });
+
+  it("reports the health of the recognised product's connector", async () => {
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: okOutcome,
+        readConnectorHealth: async () => new Map([["github", { state: "healthy" as const }]]),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/" },
+    );
+    expect(res.ok && res.connector?.state).toBe("healthy");
+  });
+
+  it("reports unknown when the read failed — never a state it did not see", async () => {
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: okOutcome,
+        readConnectorHealth: async () => null,
+      },
+      { kind: "resolve", pageUrl: "https://github.com/" },
+    );
+    expect(res.ok && res.connector?.state).toBe("unknown");
+  });
+
+  it("reports unknown when the gateway listed no row for this connector", async () => {
+    // getAllConnectorHealth returns only connectors with a sync_state row, so a
+    // service the gateway has never touched is absent rather than not_configured.
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: okOutcome,
+        readConnectorHealth: async () => new Map(),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/" },
+    );
+    expect(res.ok && res.connector?.state).toBe("unknown");
+  });
+
+  it("makes no health read on a non-dashboard page", async () => {
+    let calls = 0;
+    await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: okOutcome,
+        readConnectorHealth: async () => {
+          calls++;
+          return null;
+        },
+      },
+      { kind: "resolve", pageUrl: "https://github.com/acme/web/pull/1" },
+    );
+    expect(calls).toBe(0);
+  });
+
+  it("makes no health read when unpaired", async () => {
+    // Pairing is the consent moment; an unpaired extension makes no gateway reads.
+    let calls = 0;
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => null,
+        resolveItem: okOutcome,
+        readConnectorHealth: async () => {
+          calls++;
+          return null;
+        },
+      },
+      { kind: "resolve", pageUrl: "https://github.com/" },
+    );
+    expect(res.ok).toBe(false);
+    expect(calls).toBe(0);
   });
 });
 

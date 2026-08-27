@@ -73,7 +73,15 @@ describe("offersCapture", () => {
         nowMs: 1_700_000_000_000,
       }),
     ).toBe(false);
-    expect(offersCapture({ kind: "service", surface: SURFACE, product: "github" })).toBe(false);
+    expect(
+      offersCapture({
+        kind: "service",
+        surface: SURFACE,
+        product: "github",
+        connector: { state: "healthy" },
+        nowMs: 1_700_000_000_000,
+      }),
+    ).toBe(false);
   });
 });
 

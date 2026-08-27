@@ -1195,6 +1195,85 @@ rewords a sentence.
 
 Full reasoning: `docs/superpowers/specs/2026-08-13-c2-3-service-lanes-design.md`.
 
+### The connector-health gate
+
+The service lanes above answer about a whole connector — but until this gate, they
+answered *unconditionally*: a dashboard rendered its three lanes whether or not the
+gateway held a working credential for that connector, so an unconfigured GitHub or
+Jira connector produced three real invocations that each came back with nothing,
+which reads as "you have no work" rather than "Nimbus isn't connected to this". The
+gate makes `handleResolve` (`handlers.ts`, above) read the connector's own health on a
+dashboard and attach it as `connector` on the resolve response, and lets one pure
+function — `gatePolicy`, applied by the panel — decide what the panel does with the
+answer before it ever offers the service lanes.
+
+**The read.** `readConnectorHealth` (`src/background/connector-health-store.ts`)
+wraps `getConnectors` (`gateway-client.ts`), a second tokenless call alongside the
+health probe (see "The health probe is the one tokenless call" above) that reads
+`GET /v1/connectors` and returns a `connectorId → ConnectorHealth` map — or `null`
+on anything short of a clean 200: a 404 (a gateway that does not serve the route
+yet), an unreachable origin, a timeout, or a body `parseConnectorHealth` cannot
+parse. `resolveForAgent` treats `null` and a map with no row for this connector
+identically — both fall back to `{state: "unknown"}` (`gatePolicy("unknown")`
+renders exactly like `healthy`: lanes on, no note) — so a gateway that predates this
+route, one that is briefly unreachable, and a connector the gateway has simply never
+heard of are indistinguishable to the panel, and every one of them renders **exactly
+the panel that shipped before this gate existed, with nothing said about it.**
+
+**The 60-second dedupe.** `connector-health-store.ts` caches one read per gateway
+origin for `CONNECTOR_HEALTH_TTL_MS` (60s) so that one panel sitting costs one
+`/v1/connectors` request, not one per lane check. It is a dedupe, not a memory: a
+failed read (`null`) is never cached, and the TTL is kept short and is never raised
+for efficiency, because the sequence that matters is remedial — a user told a
+connector is unconfigured leaves, configures it, and reopens the panel, and that
+reopen must see the fix. Full reasoning, including why the in-flight reader is keyed
+per origin rather than held as one slot, is in that file's module doc.
+
+**The seven states upstream defines, plus this client's own eighth.**
+`CONNECTOR_STATES` (`src/shared/connector-health.ts`) lists upstream's seven —
+`healthy`, `not_configured`, `degraded`, `error`, `rate_limited`, `unauthenticated`,
+`paused` — and adds `unknown` for a row this client cannot parse, or a ninth state
+upstream adds later that this client does not recognise yet: coercing to `unknown`
+rather than throwing is what keeps an old panel working against a newer gateway.
+`gatePolicy` maps each to what the panel renders:
+
+| State | Lanes | What's shown |
+| --- | --- | --- |
+| `healthy` | on | scope line, no caveat, plus a "Synced n ago" age line when the gateway supplied `lastSuccessfulSync` |
+| `unknown` | on | same two lines as `healthy` with no sync time — never an age line, even with a timestamp (see below) |
+| `degraded` / `rate_limited` / `paused` | on | scope line, a state-specific caveat, and a "Synced n ago" age line when the gateway supplied `lastSuccessfulSync` |
+| `not_configured` | **off** | one line: never synced, not "never configured" (see below) |
+| `unauthenticated` | **off** | one line: the credential was rejected |
+| `error` | **off** | one line: the last sync failed |
+
+Rendering itself — the exact header lines, and why the note and age line live in
+the `service` arm of `renderHeader` rather than at the lane-gating site in
+`panel-in-page.ts` — is `appendServiceHeader`'s own doc comment (`panel-view.ts`);
+this section does not repeat it.
+
+**Four rules the design turns on, each enforced at the point closest to the risk
+it guards against:**
+
+- **`lastError` never reaches the page.** Upstream's row can carry a free-form
+  string that includes a URL with a credential in it. `parseConnectorHealth` reads
+  it off the wire and discards it before it ever becomes part of a
+  `ConnectorHealth` — the type has no field for it, so no later caller can forward
+  it into the DOM even by accident. Pinned by `connector-health.test.ts`, which
+  serialises the whole parsed map and asserts the string is absent from it.
+- **No note names a command.** `/v1/connectors` carries no remedy string, and
+  `gatePolicy`'s copy does not invent one — the same rule `parseScopeGap` already
+  holds to for scope-gap text.
+- **`not_configured` does not assert what the user did.** Its copy reads "Nimbus
+  has never synced X", not "you haven't set this up" — upstream returns this same
+  state for a connector with no credential ever stored *and* for one configured a
+  minute ago whose first sync has not landed, and the client has no way to tell
+  which. Saying more than that would sometimes be a lie.
+- **Every failure degrades silently to `unknown`, never to an error state.** A 404,
+  an unreachable gateway, a timeout and a malformed body all become "no data for
+  this connector" — rendered identically to `healthy` — rather than something that
+  reads as broken. This is also what makes a pre-gate gateway invisible: nothing
+  about its panel changes.
+
 ## Research briefs
 
 One question across several tabs you have open, answered by the gateway reading

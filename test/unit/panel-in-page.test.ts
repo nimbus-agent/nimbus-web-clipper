@@ -2849,6 +2849,63 @@ describe("the dashboard panel", () => {
     const root = await mountPanelWithResolve(PR_RESOLVE);
     expect(laneIds(root)).toEqual(["related", "impact", "expert", "why"]);
   });
+
+  // `HOME_RESOLVE` above carries no `connector` at all — the shape an older
+  // gateway (no `/v1/connectors`) sends. That is `unknown`'s OTHER source (the
+  // other being an unreadable answer), so the very first test in this describe
+  // block is already the regression guard the brief calls out: no note, no
+  // "Synced" line, three lanes — byte-identical to what this panel rendered
+  // before this feature existed. It is asserted again here, explicitly, so a
+  // future edit to the gate cannot silently change that fixture's meaning.
+  it("an unrecognised/unreadable connector state renders ungated, with no note", async () => {
+    const root = await mountPanelWithResolve(HOME_RESOLVE);
+    expect(laneIds(root)).toEqual(["catchup", "decisions", "ownership"]);
+    expect(headerText()).not.toContain("Synced");
+    expect(headerText()).not.toMatch(/degraded|rate-limit|paused|never synced|rejected|failed/i);
+  });
+
+  it("a healthy connector renders three lanes and no note", async () => {
+    const root = await mountPanelWithResolve({ ...HOME_RESOLVE, connector: { state: "healthy" } });
+    expect(laneIds(root)).toEqual(["catchup", "decisions", "ownership"]);
+    expect(headerText()).not.toContain("Synced");
+    expect(headerText()).not.toMatch(/degraded|rate-limit|paused|never synced|rejected|failed/i);
+  });
+
+  it("an unconfigured connector renders the note and zero agent lanes", async () => {
+    const root = await mountPanelWithResolve({
+      ...HOME_RESOLVE,
+      connector: { state: "not_configured" },
+    });
+    expect(laneIds(root)).toEqual([]);
+    expect(headerText()).toMatch(/never synced/i);
+    expect(headerText()).not.toContain("Nimbus can answer");
+  });
+
+  it("a degraded connector renders three lanes AND the caveat", async () => {
+    const root = await mountPanelWithResolve({ ...HOME_RESOLVE, connector: { state: "degraded" } });
+    expect(laneIds(root)).toEqual(["catchup", "decisions", "ownership"]);
+    expect(headerText()).toContain("Nimbus can answer");
+    expect(headerText()).toMatch(/degraded/i);
+  });
+
+  it("a degraded connector with a sync time renders the age line as well as the caveat", async () => {
+    const root = await mountPanelWithResolve({
+      ...HOME_RESOLVE,
+      connector: { state: "degraded", lastSuccessfulSyncMs: Date.now() - 3 * 24 * 60 * 60 * 1000 },
+    });
+    expect(laneIds(root)).toEqual(["catchup", "decisions", "ownership"]);
+    expect(headerText()).toMatch(/degraded/i);
+    expect(headerText()).toMatch(/Synced .*ago/);
+  });
+
+  it("a withheld state renders no age line even when the gateway supplied a sync time", async () => {
+    await mountPanelWithResolve({
+      ...HOME_RESOLVE,
+      connector: { state: "error", lastSuccessfulSyncMs: Date.now() - 3 * 24 * 60 * 60 * 1000 },
+    });
+    expect(headerText()).not.toContain("Synced");
+    expect(headerText()).not.toMatch(/ago/);
+  });
 });
 
 describe("the glossary lane", () => {

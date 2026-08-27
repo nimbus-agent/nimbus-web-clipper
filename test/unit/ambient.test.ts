@@ -255,6 +255,7 @@ describe("a home page", () => {
             resolveItemCalls += 1;
             throw new Error("resolveItem must not be called on a home page");
           },
+          readConnectorHealth: async () => null,
         },
         { kind: "resolve", pageUrl },
       );

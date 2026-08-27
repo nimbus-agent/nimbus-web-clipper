@@ -4,6 +4,7 @@
 
 import { isCanonicalRejection } from "./canonical.ts";
 import { isSourceShape } from "./clip.ts";
+import { CONNECTOR_STATES, type ConnectorHealth } from "./connector-health.ts";
 import type {
   EgressError,
   EgressPartition,
@@ -453,6 +454,14 @@ export type ResolveResponse =
       readonly ok: true;
       readonly recognition: Recognition;
       readonly outcome: ResolveOutcome;
+      /**
+       * The health of the connector behind a recognised DASHBOARD, and only there —
+       * absent on every other surface, because only the service lanes are gated on it.
+       * `unknown` covers both "the read failed" and "the gateway listed no row for this
+       * connector", which are indistinguishable from here and mean the same thing to the
+       * panel: do not claim to know.
+       */
+      readonly connector?: ConnectorHealth;
     }
   | {
       readonly kind: "resolve";
@@ -726,6 +735,27 @@ function isRecognition(v: unknown): v is Recognition {
   return v["ok"] === false && typeof v["reason"] === "string";
 }
 
+/**
+ * Unlike `parseConnectorHealth` (which COERCES an unrecognised upstream state to
+ * `"unknown"`, because that side reads the gateway's own HTTP body), this guard
+ * REJECTS a `state` outside `CONNECTOR_STATES` outright. The producer here is our
+ * own service worker, not an external gateway, so a `connector.state` this guard
+ * has never seen means a bug in this client, not an older or unfamiliar gateway —
+ * and a bug is exactly what a boundary guard must refuse, not paper over.
+ */
+function isConnectorHealth(v: unknown): v is ConnectorHealth {
+  if (!isObject(v) || typeof v["state"] !== "string") {
+    return false;
+  }
+  if (!(CONNECTOR_STATES as readonly string[]).includes(v["state"])) {
+    return false;
+  }
+  return (
+    v["lastSuccessfulSyncMs"] === undefined ||
+    (typeof v["lastSuccessfulSyncMs"] === "number" && Number.isFinite(v["lastSuccessfulSyncMs"]))
+  );
+}
+
 /** The recognition is required on BOTH arms: a gateway failure must not erase
  *  the fact that the client knows what page this is. */
 export function isResolveResponse(v: unknown): v is ResolveResponse {
@@ -733,7 +763,10 @@ export function isResolveResponse(v: unknown): v is ResolveResponse {
     return false;
   }
   if (v["ok"] === true) {
-    return isResolveOutcome(v["outcome"]);
+    return (
+      isResolveOutcome(v["outcome"]) &&
+      (v["connector"] === undefined || isConnectorHealth(v["connector"]))
+    );
   }
   return (
     v["ok"] === false &&
