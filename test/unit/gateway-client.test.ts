@@ -3,6 +3,7 @@ import {
   confirmPair,
   fetchItem,
   getAgentRun,
+  getConnectors,
   invokeAgent,
   parseRetryAfterMs,
   postClip,
@@ -962,5 +963,43 @@ describe("probeHealth", () => {
     };
     expect(await probeHealth("http://127.0.0.1.attacker.com", doFetch)).toBe(false);
     expect(called).toBe(false);
+  });
+});
+
+describe("getConnectors", () => {
+  it("returns the parsed map on 200", async () => {
+    const doFetch = async () =>
+      new Response(JSON.stringify({ data: [{ connectorId: "github", state: "healthy" }] }), {
+        status: 200,
+      });
+    const map = await getConnectors("http://127.0.0.1:7777", doFetch);
+    expect(map?.get("github")?.state).toBe("healthy");
+  });
+
+  it("sends no Authorization header — the route is public upstream", async () => {
+    let seen: HeadersInit | undefined;
+    const doFetch = async (_url: string, init?: RequestInit) => {
+      seen = init?.headers;
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    };
+    await getConnectors("http://127.0.0.1:7777", doFetch);
+    expect(JSON.stringify(seen ?? {})).not.toContain("Bearer");
+  });
+
+  it("returns null on 404 — a gateway too old to serve the route", async () => {
+    const doFetch = async () => new Response("", { status: 404 });
+    expect(await getConnectors("http://127.0.0.1:7777", doFetch)).toBeNull();
+  });
+
+  it("returns null when the gateway is unreachable", async () => {
+    const doFetch = async () => {
+      throw new Error("ECONNREFUSED");
+    };
+    expect(await getConnectors("http://127.0.0.1:7777", doFetch)).toBeNull();
+  });
+
+  it("returns null on a body the guard rejects", async () => {
+    const doFetch = async () => new Response(JSON.stringify({ nope: true }), { status: 200 });
+    expect(await getConnectors("http://127.0.0.1:7777", doFetch)).toBeNull();
   });
 });

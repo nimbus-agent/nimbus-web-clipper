@@ -69,6 +69,12 @@ export const GATEWAY_PATHS = {
   egressHead: "/v1/egress/head",
   egressVerify: "/v1/egress/verify",
   egressProve: "/v1/egress/prove",
+  /**
+   * Per-connector health — `{ kind: "public" }` upstream (`ipc/http-route-auth.ts`),
+   * so this is the second route (after `health`) this client calls without a
+   * bearer token.
+   */
+  connectors: "/v1/connectors",
 } as const;
 
 export type GatewayEndpoint = keyof typeof GATEWAY_PATHS;
