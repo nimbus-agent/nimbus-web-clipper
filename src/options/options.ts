@@ -21,7 +21,7 @@ import {
   upsertOrigin,
 } from "../shared/origins.ts";
 import { BUILT_IN_SURFACES } from "../shared/recognise/index.ts";
-import { SELF_HOSTABLE_PRODUCTS } from "../shared/recognise/registry.ts";
+import { RULE_BY_PRODUCT, SELF_HOSTABLE_PRODUCTS } from "../shared/recognise/registry.ts";
 import type { ConfiguredOrigin } from "../shared/types.ts";
 import { renderBriefLog } from "./brief-log-view.ts";
 import { renderLedgerSummary } from "./ledger-summary-view.ts";
@@ -412,6 +412,16 @@ async function addSurface(): Promise<void> {
     return;
   }
   if (!isProduct(productEl.value)) {
+    setSurfaceStatus("Pick what this instance is running.");
+    return;
+  }
+  // The picker only ever renders SELF_HOSTABLE_PRODUCTS, so this cannot fire
+  // through the UI today — but `isProduct` alone accepts any registered
+  // product, including a SaaS-only one like Linear. `selfHostable`'s whole
+  // purpose is refusing an origin that cannot exist, and a check that lives
+  // only in what the picker renders is not that: enforce it here too, not
+  // just at render.
+  if (!RULE_BY_PRODUCT[productEl.value].selfHostable) {
     setSurfaceStatus("Pick what this instance is running.");
     return;
   }

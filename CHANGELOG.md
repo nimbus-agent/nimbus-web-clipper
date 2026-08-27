@@ -10,6 +10,14 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Fixed
 
+- **Linear's dashboard match keyed only on the second path segment, so any
+  first segment satisfied it — including Linear's own published documentation
+  pages.** `linear.app/docs/inbox` and `linear.app/docs/my-issues` are real
+  Linear docs articles, not a workspace called "docs", but both were
+  recognised as a workspace dashboard and shown the three connector-scoped
+  agent lanes. The matcher now declines a fixed set of reserved first
+  segments (`docs`, `settings`, `login`, and others no workspace can be
+  named) before treating one as a workspace slug.
 - **A dashboard for a connector Nimbus had no credential for still offered three
   agent lanes — and answered all three with nothing, which read as "you have no
   work" rather than "Nimbus isn't connected to this".** On a recognised product

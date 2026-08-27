@@ -6,11 +6,43 @@ import { homeMatch, type Match, type ProductRule } from "./rule.ts";
 // header — so this deliberately declines it rather than widening to match.
 const LINEAR_KEY = /^[A-Za-z]\w*-\d+$/;
 
+// Linear's own marketing/docs site lives on the same host, one path segment
+// where a workspace slug would go — `linear.app/docs/inbox` and
+// `linear.app/docs/my-issues` are real, currently-published Linear
+// documentation pages, not a workspace called "docs". Keying the dashboard
+// match purely on the SECOND segment (`inbox` / `my-issues`) let both collide
+// with the modelled slugs and get recognised as a workspace dashboard, which
+// is exactly the "wrong header" failure this module exists to refuse.
+// A future reader must not "simplify" this away — /docs/inbox is the
+// motivating case, verified live.
+const RESERVED_FIRST_SEGMENTS: ReadonlySet<string> = new Set([
+  "docs",
+  "blog",
+  "changelog",
+  "pricing",
+  "integrations",
+  "security",
+  "method",
+  "customers",
+  "careers",
+  "contact",
+  "homepage",
+  "switch",
+  "join",
+  "login",
+  "signup",
+  "settings",
+  "developers",
+]);
+
 function match(s: readonly string[]): Match | null {
   const [workspace, section, key, ...rest] = s;
   // The workspace segment is what makes a Linear URL a workspace's — the bare
   // `linear.app` root (no workspace) is the marketing site, not a dashboard.
   if (workspace === undefined || section === undefined) {
+    return null;
+  }
+  if (RESERVED_FIRST_SEGMENTS.has(workspace)) {
     return null;
   }
   if (section === "issue") {

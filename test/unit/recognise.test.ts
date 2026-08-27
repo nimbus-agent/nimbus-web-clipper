@@ -510,15 +510,23 @@ describe("CircleCI", () => {
 
   it("declines paths it does not model", () => {
     // A wrong header is worse than no header: settings, insights and a
-    // non-numeric pipeline id are all misses, not guesses.
+    // non-numeric pipeline id are all misses, not guesses. Asserted with
+    // `reason`, not just `.ok` (Linear's equivalent test already does this) —
+    // a bare `.ok === false` cannot tell an unknown host apart from a
+    // recognised host with an unmodelled path, so it would still pass even if
+    // the CircleCI host rule vanished entirely.
     for (const url of [
       "https://app.circleci.com/settings/organization",
       "https://app.circleci.com/insights/github/acme/web",
       "https://app.circleci.com/pipelines/github/acme/web/not-a-number",
-      "https://circleci.com/pipelines/github/acme/web/482",
     ]) {
-      expect(recognise(url, NONE).ok).toBe(false);
+      expect(recognise(url, NONE)).toEqual({ ok: false, reason: "unrecognised-path" });
     }
+    // Not `app.circleci.com` — this host is not built in at all.
+    expect(recognise("https://circleci.com/pipelines/github/acme/web/482", NONE)).toEqual({
+      ok: false,
+      reason: "unknown-host",
+    });
   });
 
   it("declines the org- and repo-scoped pipeline lists — they are not the connector's scope", () => {
@@ -586,6 +594,26 @@ describe("Linear", () => {
       ok: false,
       reason: "unrecognised-path",
     });
+  });
+
+  it("does not claim Linear's own docs pages as a workspace dashboard", () => {
+    // `/docs/inbox` and `/docs/my-issues` are real, currently-published Linear
+    // documentation pages — "docs" sits exactly where a workspace slug goes,
+    // and the second segment ("inbox" / "my-issues") is a real dashboard slug.
+    // The existing `/acme/settings/members` miss above does NOT pin this: its
+    // SECOND segment ("settings") is not a dashboard slug at all, so it would
+    // decline even without this rule. This case needs the second segment to be
+    // one of the modelled dashboard slugs for the collision to be live.
+    for (const url of ["https://linear.app/docs/inbox", "https://linear.app/docs/my-issues"]) {
+      expect(recognise(url, NONE)).toEqual({ ok: false, reason: "unrecognised-path" });
+    }
+  });
+
+  it("still recognises a genuine workspace dashboard", () => {
+    // Pins that the reserved-segment fix declines only the reserved slugs
+    // above, not workspace slugs in general.
+    const r = recognise("https://linear.app/acme/inbox", NONE);
+    expect(r.ok && r.kind).toBe("home");
   });
 });
 

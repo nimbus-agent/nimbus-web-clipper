@@ -59,10 +59,12 @@ export interface ProductRule {
   /**
    * Does this product have a self-hosted edition a user could point Nimbus at?
    *
-   * Gates the Options page's self-hosted product picker, and nothing else. A
-   * SaaS-only product offered there is an invitation to configure something that
-   * cannot exist — the user types an origin, the entry stores, and recognition
-   * then matches a host the vendor does not run.
+   * Gates the Options page's self-hosted product picker AND the submit path
+   * behind it (`addSurface` in `options.ts` re-checks it before storing an
+   * entry, not just at render). A SaaS-only product offered there is an
+   * invitation to configure something that cannot exist — the user types an
+   * origin, the entry stores, and recognition then matches a host the vendor
+   * does not run.
    */
   readonly selfHostable: boolean;
   match(segments: readonly string[]): Match | null;
