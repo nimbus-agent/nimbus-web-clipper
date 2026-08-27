@@ -40,3 +40,21 @@ export const PRODUCT_RULES: readonly ProductRule[] = Object.values(RULE_BY_PRODU
 export function productName(product: Product): string {
   return RULE_BY_PRODUCT[product].name;
 }
+
+/**
+ * The gateway's connector id for each recognised product.
+ *
+ * MIRRORS upstream's per-connector `SERVICE_ID` constants
+ * (packages/gateway/src/connectors/<product>-sync.ts) — the value written to
+ * `item.service` and the value `agents.catchup`/`decisions`/`ownership` filter
+ * on. The agreement between these strings and those constants is CONVENTION
+ * BETWEEN TWO REPOSITORIES, not contract: an upstream rename would keep this
+ * typechecking green while every lane for that product quietly asked about a
+ * connector that no longer exists.
+ *
+ * Derived from the rules so the id lives beside the product that owns it, in one
+ * place, instead of in a second table a new product could be added to without.
+ */
+export const PRODUCT_SERVICE_ID: Record<Product, string> = Object.fromEntries(
+  PRODUCT_RULES.map((rule) => [rule.product, rule.serviceId]),
+) as Record<Product, string>;

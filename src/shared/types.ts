@@ -147,32 +147,6 @@ export const PRODUCT_IDS = ["bitbucket", "github", "gitlab", "jenkins", "jira"] 
 export type Product = (typeof PRODUCT_IDS)[number];
 
 /**
- * The gateway's connector id for each recognised product.
- *
- * MIRRORS upstream's per-connector `SERVICE_ID` constants
- * (packages/gateway/src/connectors/<product>-sync.ts) — the value written to
- * `item.service` and the value `agents.catchup`/`decisions`/`ownership` filter
- * on. Today it is an identity map, and it is written out anyway on purpose:
- * the agreement between this union and those constants is CONVENTION BETWEEN
- * TWO REPOSITORIES, not contract.
- *
- * What this buys is discoverability, NOT enforcement. The type only checks that
- * every `Product` has an entry — if upstream renamed "jenkins" to "jenkins-ci",
- * this map would keep typechecking green while every Jenkins lane quietly asked
- * about a service that no longer exists. Validating against
- * `GET /v1/connectors` was considered and rejected: it reads the `sync_state`
- * table, so an unconfigured connector is absent from it exactly like a renamed
- * one, and it cannot tell the two apart.
- */
-export const PRODUCT_SERVICE_ID: Record<Product, string> = {
-  bitbucket: "bitbucket",
-  github: "github",
-  gitlab: "gitlab",
-  jenkins: "jenkins",
-  jira: "jira",
-};
-
-/**
  * What kind of item a recognised page is.
  *
  * `home` is the odd one out and deliberately so: it is a page the recogniser

@@ -28,6 +28,7 @@ import type {
 import { buildClipPreview } from "../shared/preview.ts";
 import { enqueue, type QueuedClip, removeFromQueue, toView } from "../shared/queue.ts";
 import { recognise } from "../shared/recognise/index.ts";
+import { PRODUCT_SERVICE_ID } from "../shared/recognise/registry.ts";
 import { buildRelatedQuery, type RelatedQuery } from "../shared/related.ts";
 import {
   type AgentError,
@@ -41,7 +42,6 @@ import {
   type LaneState,
   laneBelongsOnSurface,
   type PairError,
-  PRODUCT_SERVICE_ID,
   type RelatedError,
   type RelatedHit,
   type ResolveCandidate,

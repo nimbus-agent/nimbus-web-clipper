@@ -17,7 +17,7 @@ import {
   handleUnpair,
 } from "../../src/background/handlers.ts";
 import type { QueuedClip } from "../../src/shared/queue.ts";
-import { type Connection, PRODUCT_SERVICE_ID } from "../../src/shared/types.ts";
+import type { Connection } from "../../src/shared/types.ts";
 
 const conn: Connection = {
   origin: "http://127.0.0.1:8765",
@@ -1616,15 +1616,6 @@ describe("service lanes on a home page", () => {
 
     expect(invokes).toBe(0);
     expect(res.state).toEqual({ kind: "done", brief: "Yesterday: 3 merges." });
-  });
-
-  it("maps every product to a distinct service id", () => {
-    // The one mistake in this map a compiler cannot see: a copy-paste typo
-    // like `github: "gitlab"` typechecks fine and silently asks the wrong
-    // connector. An upstream RENAME is still undetectable here — see the map's
-    // own doc comment — so this asserts distinctness, not correctness.
-    const ids = Object.values(PRODUCT_SERVICE_ID);
-    expect(new Set(ids).size).toBe(ids.length);
   });
 
   it("refuses a service lane when the page is not recognised", async () => {

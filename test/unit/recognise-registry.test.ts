@@ -4,6 +4,7 @@ import { hostPermissionPattern } from "../../src/shared/origins.ts";
 import { BUILT_IN_ORIGINS, BUILT_IN_SURFACES } from "../../src/shared/recognise/index.ts";
 import {
   PRODUCT_RULES,
+  PRODUCT_SERVICE_ID,
   productName,
   RULE_BY_PRODUCT,
 } from "../../src/shared/recognise/registry.ts";
@@ -91,5 +92,13 @@ describe("productName", () => {
     expect(productName("bitbucket")).toBe("Bitbucket");
     expect(productName("jenkins")).toBe("Jenkins");
     expect(productName("jira")).toBe("Jira");
+  });
+});
+
+describe("PRODUCT_SERVICE_ID", () => {
+  it("is each rule's own service id", () => {
+    for (const rule of PRODUCT_RULES) {
+      expect(PRODUCT_SERVICE_ID[rule.product]).toBe(rule.serviceId);
+    }
   });
 });
