@@ -49,6 +49,10 @@ export interface GatePolicy {
  *
  * No note names a command: `/v1/connectors` carries no remedy string, and inventing
  * one is the failure `parseScopeGap` already refuses.
+ *
+ * This table says nothing about the sync-age line: that further exception —
+ * `unknown` renders no age line even when the row carried a `lastSuccessfulSync` —
+ * lives in `appendServiceHeader` (`src/panel/panel-view.ts`), not here.
  */
 const POLICIES: Record<ConnectorState, GatePolicy> = {
   healthy: { lanes: true, note: null },

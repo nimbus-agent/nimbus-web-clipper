@@ -8,6 +8,24 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Fixed
+
+- **A dashboard for a connector Nimbus had no credential for still offered three
+  agent lanes — and answered all three with nothing, which read as "you have no
+  work" rather than "Nimbus isn't connected to this".** On a recognised product
+  dashboard (a GitHub home page, Jira's "Your work"), *catch me up*, *what
+  changed while I was away* and *what's mine* ran unconditionally, scoped to the
+  whole connector, with no check that the connector could answer at all. The
+  panel now reads the gateway's per-connector health before offering them: a
+  healthy connector still gets its three lanes; a degraded, rate-limited or
+  paused one keeps them with a caveat, and a sync time when the gateway
+  supplied one; a connector that has never synced, whose credential was
+  rejected, or whose last sync failed gets one honest sentence instead — and no
+  lanes to answer nothing from. This needs a gateway that serves
+  `GET /v1/connectors`; one that does not — a 404, or unreachable — leaves the
+  panel exactly as it rendered before this change, silently, with no lanes
+  withheld and nothing said about it.
+
 ## [0.5.0] - 2026-08-24
 
 The release in which the clipper became a client. Alongside capture, the
