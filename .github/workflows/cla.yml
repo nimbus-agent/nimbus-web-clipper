@@ -25,7 +25,23 @@ jobs:
       (github.event.issue.pull_request && contains(fromJSON('["I have read the CLA Document and I hereby sign the CLA","recheck"]'), github.event.comment.body))
       || github.event_name == 'pull_request_target'
     steps:
+      # Dependabot-triggered runs get a read-only token and NO access to Actions secrets —
+      # the restriction applies to pull_request_target too. So the token mint below fails
+      # with "client-id must be non-empty" and takes the whole job with it. Because this job
+      # IS the required `cla` check, that makes every Dependabot PR unmergeable.
+      #
+      # Skipping is correct rather than merely convenient: a bot cannot sign a CLA, and the
+      # action's own allowlist already covers bots — a run that DID have secrets would pass
+      # anyway. Skipped steps still conclude the job as success, so the check reports.
+      #
+      # nimbus-sdk and create-nimbus-connector solve this differently and need no guard:
+      # their job is named `cla-assistant`, with a separate secret-free job posting `cla`.
+      - name: Skip — a bot cannot sign a CLA
+        if: github.event.pull_request.user.login == 'dependabot[bot]'
+        run: echo "Dependabot PR — CLA not applicable (the action's allowlist covers bots)."
+
       - name: Mint CLA App token
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         id: apptoken
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
@@ -34,6 +50,7 @@ jobs:
           owner: nimbus-agent
           repositories: ${{ github.event.repository.name }},.github
       - name: CLA Assistant
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
         uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
         env:
           GITHUB_TOKEN: ${{ github.token }}
