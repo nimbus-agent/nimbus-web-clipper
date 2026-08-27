@@ -5,6 +5,14 @@
 > `GET /v1/items/resolve`, `POST /v1/agents/*`). Nothing here proposes a gateway
 > contract. Six slices; slice 1 is a pure refactor and slice 2 is the only one
 > that changes behaviour on a shipped surface.
+>
+> **Shipped so far:** slice 1, the registry (#74, `a373c10`); slice 2, the
+> connector-health gate (#76, `33b2f34`). Both landed before this document did,
+> so read it as the design they were built from rather than as a proposal. Two
+> things settled under review and are corrected in place in §4: `unknown` renders
+> no freshness line even when the gateway supplies a timestamp, and the reasoning
+> behind which states withhold lanes is now written down rather than assumed.
+> Slices 3-6 are unbuilt.
 
 ## What this delivers
 
@@ -233,6 +241,43 @@ On a recognised dashboard, the state decides what renders:
 | `not_configured` | No lanes; one line saying Nimbus has never synced this service |
 | `unauthenticated` | No lanes; the credential was rejected — a different problem, a different remedy |
 | `error` | No lanes; the last sync failed |
+| `unknown` | Three lanes, no note, **no freshness line** — byte-identical to a client without this gate |
+
+**The freshness line follows the lanes, with one exception.** It renders whenever
+the lanes render and the gateway supplied a `lastSuccessfulSync` — including the
+three impaired states, where the age is what tells a reader whether "possibly
+missing recent items" means minutes or a fortnight. It does *not* render on the
+three withheld states even when a timestamp exists: those pages are one honest
+sentence, and dating a sync whose answers are being withheld invites the reader
+to think some answer is still available. And it never renders on `unknown`, which
+is the exception that matters: `parseConnectorHealth` keeps a timestamp while
+coercing an unrecognised state, so without this rule a gateway that grew an
+eighth state would show a line no older gateway does — and `unknown`'s whole job
+is to be indistinguishable from a client that never had this gate.
+
+**Why `error` and `unauthenticated` withhold lanes, when `degraded` and `paused`
+do not.** This was challenged during slice 2's review, on a fair argument: a
+connector whose *last* sync failed still holds everything it indexed before that,
+so the lanes would have answered — with real data. By the row above it, that
+looks like the same case as `degraded`.
+
+It is not, and the difference is what these three lanes are *for*. `catchup`,
+`decisions` and `ownership` are recency questions — "what changed while I was
+away" is not partially wrong when the feed behind it stopped at an unknown point;
+it is wrong. `degraded`, `rate_limited` and `paused` describe a connector that is
+still working: impaired, self-healing or deliberately stopped, missing a bounded
+recent window that the freshness line quantifies. `error` and `unauthenticated`
+describe a connector that is **broken and needs the owner to act** — and the size
+of what is missing is exactly what nobody can know. Answering a recency question
+from an index that silently stopped is the one place staleness misleads most.
+
+So the split is not severity, it is answerability: **withhold when an answer
+would be confidently wrong, caveat when it would merely be incomplete.** The
+alternative — lanes plus a caveat whenever a `lastSuccessfulSync` exists — was
+considered and rejected on that reasoning. What the review *did* find, and what
+was a genuine defect, was `error`'s copy claiming Nimbus "cannot answer from that
+connector right now"; it now says only that the last sync failed, so anything
+since then is missing.
 
 Four rules govern the copy and the failure paths:
 
