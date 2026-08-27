@@ -40,5 +40,7 @@ export const bitbucketRule: ProductRule = {
   serviceId: "bitbucket",
   name: "Bitbucket",
   hosts: [{ kind: "origin", origin: "https://bitbucket.org" }],
+  corpus: "Bitbucket repositories",
+  selfHostable: true,
   match,
 };

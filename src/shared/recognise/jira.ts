@@ -24,5 +24,7 @@ export const jiraRule: ProductRule = {
   // Every Jira Cloud tenant is its own host (`acme.atlassian.net`), so the hosts
   // cannot be enumerated and the grant is a subdomain wildcard.
   hosts: [{ kind: "suffix", suffix: ".atlassian.net", pattern: "https://*.atlassian.net/*" }],
+  corpus: "Jira projects",
+  selfHostable: true,
   match,
 };

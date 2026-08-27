@@ -31,10 +31,7 @@ const FIXTURE = `
   </section>
   <section id="stage-sites">
     <input id="surface-origin" type="text" />
-    <select id="surface-product">
-      <option value="jenkins">Jenkins</option>
-      <option value="jira">Jira</option>
-    </select>
+    <select id="surface-product"></select>
     <button id="surface-add" type="button">Add surface</button>
     <output id="surface-status"></output>
     <div id="surface-list"></div>
@@ -363,6 +360,18 @@ describe("onUnpairClick() / disarmUnpair()", () => {
 });
 
 describe("recognised surfaces", () => {
+  test("the product picker is populated from the registry, not the fixture", async () => {
+    await boot();
+
+    expect([...select("surface-product").options].map((o) => o.value)).toEqual([
+      "bitbucket",
+      "github",
+      "gitlab",
+      "jenkins",
+      "jira",
+    ]);
+  });
+
   test("adding a valid origin stores it and renders a row", async () => {
     await boot();
     input("surface-origin").value = "https://corp.example/jenkins";

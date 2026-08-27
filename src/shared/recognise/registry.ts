@@ -62,3 +62,19 @@ export function productName(product: Product): string {
 export const PRODUCT_SERVICE_ID: Record<Product, string> = Object.fromEntries(
   PRODUCT_RULES.map((rule) => [rule.product, rule.serviceId]),
 ) as Record<Product, string>;
+
+/** See `ProductRule.corpus`. Was a third `Record<Product, string>` in `panel-view.ts`. */
+export function productCorpus(product: Product): string {
+  return RULE_BY_PRODUCT[product].corpus;
+}
+
+/**
+ * The products the Options page may offer as self-hosted instances.
+ *
+ * Derived so a SaaS-only product cannot reach the picker by omission, and so a
+ * self-hostable one cannot be left out of it by omission either — the failure this
+ * replaces was silent in both directions.
+ */
+export const SELF_HOSTABLE_PRODUCTS: readonly ProductRule[] = PRODUCT_RULES.filter(
+  (rule) => rule.selfHostable,
+);

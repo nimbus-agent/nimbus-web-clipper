@@ -6,6 +6,7 @@ import {
   PRODUCT_SERVICE_ID,
   productName,
   RULE_BY_PRODUCT,
+  SELF_HOSTABLE_PRODUCTS,
 } from "../../src/shared/recognise/registry.ts";
 import { PRODUCT_IDS } from "../../src/shared/types.ts";
 
@@ -119,5 +120,26 @@ describe("PRODUCT_SERVICE_ID", () => {
       jenkins: "jenkins",
       jira: "jira",
     });
+  });
+});
+
+describe("the self-hosted product picker is derived, not hand-written", () => {
+  it("offers exactly the products that have a self-hosted edition", () => {
+    // Asserted as literal ids, not by re-running the filter: a test that
+    // recomputes the derivation passes for any implementation, including a
+    // wrong one.
+    expect(SELF_HOSTABLE_PRODUCTS.map((r) => r.product)).toEqual([
+      "bitbucket",
+      "github",
+      "gitlab",
+      "jenkins",
+      "jira",
+    ]);
+  });
+
+  it("gives every product a corpus noun", () => {
+    for (const rule of PRODUCT_RULES) {
+      expect(rule.corpus).not.toBe("");
+    }
   });
 });

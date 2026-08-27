@@ -19,5 +19,7 @@ export const githubRule: ProductRule = {
   serviceId: "github",
   name: "GitHub",
   hosts: [{ kind: "origin", origin: "https://github.com" }],
+  corpus: "GitHub repositories",
+  selfHostable: true,
   match,
 };

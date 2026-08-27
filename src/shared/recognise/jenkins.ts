@@ -32,5 +32,7 @@ export const jenkinsRule: ProductRule = {
   // Jenkins is self-hosted only; it has no built-in host and reaches recognise()
   // solely through a user-configured origin.
   hosts: [],
+  corpus: "Jenkins builds",
+  selfHostable: true,
   match,
 };
