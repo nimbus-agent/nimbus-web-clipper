@@ -118,8 +118,9 @@ monorepo's git history.)
 - `src/shared/` — pure modules shared across entries (`types.ts` cross-module
   types, `clip.ts` tag parsing + payload builder, `gateway.ts` endpoints +
   loopback origin validation, `messages.ts` typed message envelope + guards,
-  `queue.ts`, `related.ts`, `recognise.ts` + `origins.ts` page recognition,
-  `canonical.ts`, `preview.ts`, `brief.ts`, `passage.ts`, `egress.ts`, …) —
+  `queue.ts`, `related.ts`, `origins.ts` + `recognise/` (page recognition —
+  one module per product behind a registry table), `canonical.ts`,
+  `preview.ts`, `brief.ts`, `passage.ts`, `egress.ts`, …) —
   `ls src/shared` is the current list, not this parenthesis
 - `test/unit/` — Vitest unit tests (node env; DOM tests opt into jsdom via a docblock)
 - `test/e2e/` — Playwright suites (`bun run test:e2e`), run by the `e2e` job in

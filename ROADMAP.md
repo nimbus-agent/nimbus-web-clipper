@@ -344,7 +344,7 @@ is worthless without this — and half of C1 is buildable today.*
 > type, id) — or an honest miss.
 > **Why it wows** The panel stops guessing. Naming the item it resolved to is
 > the whole difference between a search box and a client that knows the page.
-> **Touches** `src/shared/recognise.ts`, `src/background/gateway-client.ts`,
+> **Touches** `src/shared/recognise/`, `src/background/gateway-client.ts`,
 > `src/shared/messages.ts`, `src/panel/panel-view.ts` (header states + the
 > ambiguous-candidate chooser).
 > **Approach** Send the page URL, get back at most one item, an honest miss, or
@@ -373,7 +373,7 @@ is worthless without this — and half of C1 is buildable today.*
 > C1.1.
 > **Why it wows** The panel is right about where you are before it says
 > anything, and being wrong is cheap to fix in one pure file.
-> **Touches** a new `src/shared/recognise.ts` (pure, unit-tested), consumed by
+> **Touches** a new `src/shared/recognise/` (pure, unit-tested), consumed by
 > `src/panel/` and `src/popup/`; `src/options/` for the origin list.
 > **Approach** Origin + path patterns → a `SurfaceKind`. Bitbucket, Jenkins and
 > Jira are routinely self-hosted, so hostnames cannot be hardcoded — the user's
@@ -1497,9 +1497,10 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 New here? These are small, self-contained, high-value, and need nothing from
 another repo — ideal first contributions:
 
-- **Add a surface recogniser** — `src/shared/recognise.ts` is one table entry plus
-  fixtures per product; the cleanest entry point into the reframe now that C1.2
-  has shipped the scaffolding.
+- **Add a surface recogniser** — `src/shared/recognise/` is one new product
+  module plus its entry in `registry.ts`, plus fixtures per product; the
+  cleanest entry point into the reframe now that C1.2 has shipped the
+  scaffolding.
 - **2.4 Full-page vs. readable toggle** — one setting, one capture branch.
 - **3.2 One-press undo** — a toast affordance + a short window (mind the gateway
   note).

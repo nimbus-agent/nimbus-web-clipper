@@ -135,10 +135,12 @@ check that constant rather than this diagram when the two could disagree.
 - **`src/shared/`** — pure modules shared across every entry: `types.ts`
   (cross-module types), `clip.ts` (tag parsing + payload builder), `gateway.ts`
   (endpoints + loopback origin validation), `messages.ts` (typed envelope +
-  guards), `queue.ts`, `related.ts`, `origins.ts` + `recognise.ts` (page
-  recognition — see below), and one module per later surface (`canonical.ts`,
-  `preview.ts`, `brief.ts`, `passage.ts`, `egress.ts`, …). `ls src/shared` is the
-  current list; this sentence is a sketch of it.
+  guards), `queue.ts`, `related.ts`, `origins.ts` + `recognise/` (page
+  recognition — one module per product, its hosts, connector id, display name
+  and path matcher, behind the one registry table; see below), and one module
+  per later surface (`canonical.ts`, `preview.ts`, `brief.ts`, `passage.ts`,
+  `egress.ts`, …). `ls src/shared` is the current list; this sentence is a
+  sketch of it.
 
 ## The message envelope
 
@@ -367,7 +369,7 @@ panel-in-page.ts  ──{ kind:"resolve", pageUrl: location.href }──►  ser
                                                                         │
                             getOrigins()  ◄── the user's self-hosted instances (storage)
                                    │
-                            recognise(url, origins)   shared/recognise.ts — PURE
+                            recognise(url, origins)     shared/recognise/ — PURE
                                    │
                     ┌──────────────┴───────────────┐
                     │                              │
@@ -712,22 +714,21 @@ decideAmbient (src/background/ambient.ts) — PURE, the whole decision
   than a guarantee (see the design spec's framing of the same point).
 
 - **Why the dedupe map is in memory, keyed by item rather than URL.**
-  `lastCuedByTab` (`service-worker.ts`, a module-scope
-  `Map<tabId, Recognition>`) is cleared on `chrome.tabs.onRemoved` and never
-  written to `chrome.storage.local`. Not persisting it is deliberate: a
-  service-worker eviction re-cues the same item once, and that is a better
-  failure than a suppression that outlives the reason for it — the same
-  reasoning decision 4 in the design spec applies to permanent dismissal.
-  It is keyed by `sameItem` (`product` + `kind` + `ref`, from
-  `shared/recognise.ts`) rather than by URL because `resolveUrl` deliberately
-  keeps sub-tab path segments and the query string (see "the recognition
-  pipeline" above) — a pull request's *Files changed* tab is a different URL
-  and the same item. Keying the dedupe map by URL would re-cue on every
-  sub-tab switch, which is precisely the nagging the per-item key exists to
-  prevent. The entry is written only **after** `showCue` actually mounts the
-  cue, never when an attempt merely starts — so a run abandoned because the
-  tab closed or navigated mid-resolve leaves no trace, and the very next
-  landing on that item still gets a cue.
+  `lastCuedByTab` (`service-worker.ts`, a module-scope `Map<tabId,
+  Recognition>`) is cleared on `chrome.tabs.onRemoved` and never written to
+  `chrome.storage.local`. Not persisting it is deliberate: a service-worker
+  eviction re-cues the same item once, and that is a better failure than a
+  suppression that outlives the reason for it — the same reasoning decision 4
+  in the design spec applies to permanent dismissal. It is keyed by `sameItem`
+  (`product` + `kind` + `ref`, from `shared/recognise/index.ts`) rather than by
+  URL because `resolveUrl` deliberately keeps sub-tab path segments and the
+  query string (see "the recognition pipeline" above) — a pull request's *Files
+  changed* tab is a different URL and the same item. Keying the dedupe map by
+  URL would re-cue on every sub-tab switch, which is precisely the nagging the
+  per-item key exists to prevent. The entry is written only **after** `showCue`
+  actually mounts the cue, never when an attempt merely starts — so a run
+  abandoned because the tab closed or navigated mid-resolve leaves no trace,
+  and the very next landing on that item still gets a cue.
 
 - **The generation counter, not cancellation.** A per-tab
   `ambientGeneration` counter increments on every navigation; after the
