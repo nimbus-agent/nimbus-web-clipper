@@ -148,6 +148,7 @@ export const PRODUCT_IDS = [
   "gitlab",
   "jenkins",
   "jira",
+  "linear",
 ] as const;
 
 /** A product whose pages the client can recognise. */

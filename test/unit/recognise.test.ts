@@ -290,6 +290,7 @@ describe("BUILT_IN_SURFACES", () => {
       github: "https://github.com/acme/web/pull/482",
       gitlab: "https://gitlab.com/acme/web/-/merge_requests/9",
       jira: "https://acme.atlassian.net/browse/ABC-1",
+      linear: "https://linear.app/acme/issue/ENG-123/fix-the-thing",
     };
     for (const surface of BUILT_IN_SURFACES) {
       const page = pages[surface.product];
@@ -535,6 +536,56 @@ describe("CircleCI", () => {
     ]) {
       expect(recognise(url, NONE).ok).toBe(false);
     }
+  });
+});
+
+describe("Linear", () => {
+  it("recognises an issue", () => {
+    expectItem("https://linear.app/acme/issue/ENG-123/fix-the-thing", NONE, {
+      product: "linear",
+      kind: "issue",
+      ref: "ENG-123",
+      resolveUrl: "https://linear.app/acme/issue/ENG-123/fix-the-thing",
+    });
+  });
+
+  it("normalises the issue key so one issue has one resolveUrl", () => {
+    // Same rule Jira's matcher follows: the ladder upstream is case-sensitive.
+    const r = recognise("https://linear.app/acme/issue/eng-123/fix-the-thing", NONE);
+    expect(r.ok && r.ref).toBe("ENG-123");
+  });
+
+  it("recognises both dashboards", () => {
+    for (const url of ["https://linear.app/acme/inbox", "https://linear.app/acme/my-issues"]) {
+      const r = recognise(url, NONE);
+      expect(r.ok && r.kind).toBe("home");
+    }
+  });
+
+  it("declines paths it does not model", () => {
+    // Asserted with `reason`, not just `.ok`, so this test can tell an unknown
+    // host apart from a known host with an unmodelled path — a bare `linear.app`
+    // root and a `/settings/members` path fail for different reasons, and a test
+    // that could not tell them apart would pass even if the host rule vanished.
+    expect(recognise("https://linear.app/acme/settings/members", NONE)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+    expect(recognise("https://linear.app/acme/team/ENG/all", NONE)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+    expect(recognise("https://linear.app/acme/issue/not-a-key/slug", NONE)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+    // The bare root has no workspace segment — the segment is what makes a
+    // Linear URL a workspace's, and the marketing root is not a dashboard. The
+    // host still matches (linear.app is built in), so this is a path miss too.
+    expect(recognise("https://linear.app", NONE)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
   });
 });
 

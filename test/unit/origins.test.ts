@@ -230,10 +230,11 @@ describe("isProduct is derived from the declared product ids", () => {
   });
 
   it("rejects a product this client does not recognise yet", () => {
-    // "linear" is a real gateway connector and a planned product (slice 3). It must
-    // be false TODAY — otherwise the guard is accepting arbitrary strings and the
+    // "confluence" is a real gateway connector and a planned product (slice 4,
+    // sharing Jira Cloud's `*.atlassian.net` host — see registry.ts). It must be
+    // false TODAY — otherwise the guard is accepting arbitrary strings and the
     // stored-origin validation it backs is decorative.
-    expect(isProduct("linear")).toBe(false);
+    expect(isProduct("confluence")).toBe(false);
     expect(isProduct("")).toBe(false);
     expect(isProduct(undefined)).toBe(false);
   });

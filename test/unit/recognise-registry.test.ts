@@ -56,6 +56,7 @@ describe("the built-in tables are derived, not copied", () => {
       { origin: "https://app.circleci.com", product: "circleci" },
       { origin: "https://github.com", product: "github" },
       { origin: "https://gitlab.com", product: "gitlab" },
+      { origin: "https://linear.app", product: "linear" },
     ]);
   });
 
@@ -69,6 +70,7 @@ describe("the built-in tables are derived, not copied", () => {
       { label: "github.com", product: "github", pattern: "https://github.com/*" },
       { label: "gitlab.com", product: "gitlab", pattern: "https://gitlab.com/*" },
       { label: "*.atlassian.net", product: "jira", pattern: "https://*.atlassian.net/*" },
+      { label: "linear.app", product: "linear", pattern: "https://linear.app/*" },
     ]);
   });
 
@@ -93,10 +95,10 @@ describe("the built-in tables are derived, not copied", () => {
     expect(BUILT_IN_SURFACES.find((s) => s.product === "jenkins")).toBeUndefined();
   });
 
-  it("derives exactly five rows — no product invents one", () => {
-    // Jenkins has no built-in host, so six products yield five rows. A derivation
-    // that mapped over products instead of over their hosts would produce six.
-    expect(BUILT_IN_SURFACES).toHaveLength(5);
+  it("derives exactly six rows — no product invents one", () => {
+    // Jenkins has no built-in host, so seven products yield six rows. A derivation
+    // that mapped over products instead of over their hosts would produce seven.
+    expect(BUILT_IN_SURFACES).toHaveLength(6);
   });
 });
 
@@ -108,6 +110,7 @@ describe("productName", () => {
     expect(productName("bitbucket")).toBe("Bitbucket");
     expect(productName("jenkins")).toBe("Jenkins");
     expect(productName("jira")).toBe("Jira");
+    expect(productName("linear")).toBe("Linear");
   });
 });
 
@@ -123,6 +126,7 @@ describe("PRODUCT_SERVICE_ID", () => {
       gitlab: "gitlab",
       jenkins: "jenkins",
       jira: "jira",
+      linear: "linear",
     });
   });
 });
@@ -146,5 +150,12 @@ describe("the self-hosted product picker is derived, not hand-written", () => {
     for (const rule of PRODUCT_RULES) {
       expect(rule.corpus).not.toBe("");
     }
+  });
+
+  it("keeps a SaaS-only product out of the self-hosted picker", () => {
+    // Linear has no self-hosted edition. Offering it would invite a user to
+    // configure an origin that cannot exist.
+    expect(SELF_HOSTABLE_PRODUCTS.map((r) => r.product)).not.toContain("linear");
+    expect(RULE_BY_PRODUCT.linear.selfHostable).toBe(false);
   });
 });

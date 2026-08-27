@@ -6,6 +6,7 @@ import { githubRule } from "./github.ts";
 import { gitlabRule } from "./gitlab.ts";
 import { jenkinsRule } from "./jenkins.ts";
 import { jiraRule } from "./jira.ts";
+import { linearRule } from "./linear.ts";
 import type { ProductRule } from "./rule.ts";
 
 /**
@@ -20,6 +21,7 @@ export const RULE_BY_PRODUCT: Record<Product, ProductRule> = {
   gitlab: gitlabRule,
   jenkins: jenkinsRule,
   jira: jiraRule,
+  linear: linearRule,
 };
 
 /**
