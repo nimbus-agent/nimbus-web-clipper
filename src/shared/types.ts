@@ -132,8 +132,19 @@ export interface CueState {
   readonly ref: string;
 }
 
+/**
+ * Every product whose pages the client can recognise, as data.
+ *
+ * The array is the source and `Product` is derived from it, not the other way
+ * round: `origins.ts` needs the ids at RUNTIME to validate a stored entry, and a
+ * hand-written second copy of a union is the drift this slice exists to delete.
+ * Keep it `as const` — widening to `string[]` silently widens `Product` to
+ * `string` and every `Record<Product, …>` exhaustiveness check with it.
+ */
+export const PRODUCT_IDS = ["bitbucket", "github", "gitlab", "jenkins", "jira"] as const;
+
 /** A product whose pages the client can recognise. */
-export type Product = "bitbucket" | "github" | "gitlab" | "jenkins" | "jira";
+export type Product = (typeof PRODUCT_IDS)[number];
 
 /**
  * The gateway's connector id for each recognised product.
