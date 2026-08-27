@@ -735,8 +735,14 @@ function isRecognition(v: unknown): v is Recognition {
   return v["ok"] === false && typeof v["reason"] === "string";
 }
 
-/** The wire's `state` may be any string upstream ever emits; `unknown` covers an
- *  unrecognised one exactly as `parseConnectorHealth` does for the HTTP body. */
+/**
+ * Unlike `parseConnectorHealth` (which COERCES an unrecognised upstream state to
+ * `"unknown"`, because that side reads the gateway's own HTTP body), this guard
+ * REJECTS a `state` outside `CONNECTOR_STATES` outright. The producer here is our
+ * own service worker, not an external gateway, so a `connector.state` this guard
+ * has never seen means a bug in this client, not an older or unfamiliar gateway —
+ * and a bug is exactly what a boundary guard must refuse, not paper over.
+ */
 function isConnectorHealth(v: unknown): v is ConnectorHealth {
   if (!isObject(v) || typeof v["state"] !== "string") {
     return false;
