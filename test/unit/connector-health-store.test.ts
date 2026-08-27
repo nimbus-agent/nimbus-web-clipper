@@ -3,14 +3,16 @@ import {
   CONNECTOR_HEALTH_TTL_MS,
   readConnectorHealth,
 } from "../../src/background/connector-health-store.ts";
-import { installChromeMock } from "./helpers/chrome-mock.ts";
+import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
 const ORIGIN = "http://127.0.0.1:7777";
 const HEALTHY = new Map([["github", { state: "healthy" as const }]]);
 
 describe("readConnectorHealth", () => {
+  let harness: ChromeHarness;
+
   beforeEach(() => {
-    installChromeMock();
+    harness = installChromeMock();
   });
 
   it("makes one request for two reads inside the TTL", async () => {
@@ -105,6 +107,57 @@ describe("readConnectorHealth", () => {
     expect(seen).toHaveLength(2);
     expect(a?.has("github")).toBe(true);
     expect(b?.has("jira")).toBe(true);
+  });
+
+  it("treats a rejected storage read as a cache miss and still returns the fetched map", async () => {
+    // Quota, or a transient Firefox failure, must not propagate: that would reject
+    // readConnectorHealth, then handleResolve, and surface the whole resolve as a
+    // server_error — the gate becoming a new way for a working panel to break.
+    harness.storageGet.mockRejectedValueOnce(new Error("boom"));
+    let calls = 0;
+    const deps = {
+      getConnectors: async () => {
+        calls++;
+        return HEALTHY;
+      },
+    };
+    const result = await readConnectorHealth(deps, ORIGIN, 1_000);
+    expect(calls).toBe(1);
+    expect(result?.has("github")).toBe(true);
+  });
+
+  it("treats a rejected storage write as non-fatal and still returns the fetched map", async () => {
+    // The fetch already succeeded — a cache that cannot save is still a correct
+    // answer, so a failed persist must not fail the whole read.
+    harness.storageSet.mockRejectedValueOnce(new Error("boom"));
+    const deps = {
+      getConnectors: async () => HEALTHY,
+    };
+    const result = await readConnectorHealth(deps, ORIGIN, 1_000);
+    expect(result?.has("github")).toBe(true);
+  });
+
+  it("treats a stored lastSuccessfulSyncMs that is not a finite number as a cache miss", async () => {
+    // isCachedHealth never validated this field: a hand-edited (or corrupted)
+    // `{state:"healthy", lastSuccessfulSyncMs:"x"}` used to pass it, reach
+    // isConnectorHealth in shared/messages.ts, and fail THAT guard — rejecting the
+    // entire resolve response, so the panel errors for the rest of the TTL instead
+    // of the bad value being quietly discarded as a cache miss.
+    harness.storage.set("connectorHealth", {
+      origin: ORIGIN,
+      fetchedAtMs: 1_000,
+      entries: [["github", { state: "healthy", lastSuccessfulSyncMs: "x" }]],
+    });
+    let calls = 0;
+    const deps = {
+      getConnectors: async () => {
+        calls++;
+        return HEALTHY;
+      },
+    };
+    const result = await readConnectorHealth(deps, ORIGIN, 1_050);
+    expect(calls).toBe(1);
+    expect(result?.get("github")).toEqual({ state: "healthy" });
   });
 
   it("survives a service-worker restart within the TTL", async () => {

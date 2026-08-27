@@ -1049,6 +1049,19 @@ describe("the service header", () => {
     ]);
   });
 
+  it("a healthy connector with a sync time renders its age line", () => {
+    // The doc comment on `appendServiceHeader` used to claim `healthy` renders "no
+    // age" — false: the age gate keys only on the state not being `unknown`, so a
+    // healthy connector with a `lastSuccessfulSyncMs` renders it too. The other
+    // healthy test above uses a connector with no sync time, so this case was
+    // previously unpinned.
+    const el = renderHeader(document, {
+      ...base,
+      connector: { state: "healthy", lastSuccessfulSyncMs: NOW - 3 * 60_000 },
+    });
+    expect(el.textContent).toContain("Synced 3 min ago");
+  });
+
   it("a degraded connector keeps the scope line and adds a caveat naming the product", () => {
     const el = renderHeader(document, { ...base, connector: { state: "degraded" } });
     expect(el.textContent).toContain("Nimbus can answer across all indexed Jenkins builds.");

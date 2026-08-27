@@ -408,8 +408,10 @@ function chooser(
  * The `service` arm of {@link renderHeader} — a product's own dashboard.
  *
  * `gatePolicy` decides what the connector's state permits: a healthy or `unknown`
- * connector gets exactly today's two lines (scope, no caveat, no age) — `unknown`
- * covers both an older gateway and an unreadable answer, and neither is nagged.
+ * connector gets no caveat, plus the scope line and — for `healthy` only, when the
+ * gateway supplied one — the sync age; `unknown` never gets an age line even when
+ * the gateway supplied one (see below) — it covers both an older gateway and an
+ * unreadable answer, and neither is nagged.
  * `degraded`/`rate_limited`/`paused` keep the scope line (the lanes below still
  * run) and add a caveat, plus the sync age when the gateway supplied one — the
  * age is what tells the reader whether "recent items may be missing" means

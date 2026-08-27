@@ -81,7 +81,7 @@ const POLICIES: Record<ConnectorState, GatePolicy> = {
   },
   error: {
     lanes: false,
-    note: "Nimbus's last sync of %s failed, so it cannot answer from that connector right now.",
+    note: "Nimbus's last sync of %s failed, so anything since then is missing.",
   },
 };
 

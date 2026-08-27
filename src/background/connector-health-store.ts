@@ -39,7 +39,6 @@ export const CONNECTOR_HEALTH_TTL_MS = 60_000;
 
 export interface HealthDeps {
   readonly getConnectors: typeof getConnectors;
-  readonly now?: () => number;
 }
 
 interface CachedHealth {
@@ -58,15 +57,26 @@ function isCachedHealth(v: unknown): v is CachedHealth {
   const rec = v as Record<string, unknown>;
   if (typeof rec["origin"] !== "string" || typeof rec["fetchedAtMs"] !== "number") return false;
   if (!Number.isFinite(rec["fetchedAtMs"]) || !Array.isArray(rec["entries"])) return false;
-  return rec["entries"].every(
-    (pair) =>
-      Array.isArray(pair) &&
-      pair.length === 2 &&
-      typeof pair[0] === "string" &&
-      typeof pair[1] === "object" &&
-      pair[1] !== null &&
-      CONNECTOR_STATES.includes((pair[1] as { state?: unknown }).state as ConnectorState),
-  );
+  return rec["entries"].every((pair) => {
+    if (
+      !Array.isArray(pair) ||
+      pair.length !== 2 ||
+      typeof pair[0] !== "string" ||
+      typeof pair[1] !== "object" ||
+      pair[1] === null
+    ) {
+      return false;
+    }
+    const health = pair[1] as { state?: unknown; lastSuccessfulSyncMs?: unknown };
+    if (!CONNECTOR_STATES.includes(health.state as ConnectorState)) {
+      return false;
+    }
+    return (
+      health.lastSuccessfulSyncMs === undefined ||
+      (typeof health.lastSuccessfulSyncMs === "number" &&
+        Number.isFinite(health.lastSuccessfulSyncMs))
+    );
+  });
 }
 
 // `singleFlight` holds ONE in-flight slot for the whole module — wrapping the
@@ -116,7 +126,11 @@ export async function readConnectorHealth(
   origin: string,
   nowMs: number,
 ): Promise<ReadonlyMap<string, ConnectorHealth> | null> {
-  const cached = await storageGet(STORE_KEY);
+  // A rejected read (quota, a transient Firefox failure) must not propagate: it
+  // would reject `readConnectorHealth`, then `handleResolve`, then surface the
+  // whole resolve as a `server_error` — turning the gate into a new way for an
+  // otherwise-working panel to break. Treat it as a cache miss instead.
+  const cached = await storageGet(STORE_KEY).catch(() => undefined);
   if (
     isCachedHealth(cached) &&
     cached.origin === origin &&
@@ -135,6 +149,9 @@ export async function readConnectorHealth(
     fetchedAtMs: nowMs,
     entries: Array.from(result.entries()),
   };
-  await storageSet(STORE_KEY, toStore);
+  // A failed write is non-fatal: the fetch already succeeded, so the fetched
+  // map is still a correct answer even though this sitting won't get to reuse
+  // it from storage. Losing the persist must not lose the answer.
+  await storageSet(STORE_KEY, toStore).catch(() => undefined);
   return result;
 }

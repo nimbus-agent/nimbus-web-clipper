@@ -1238,8 +1238,8 @@ rather than throwing is what keeps an old panel working against a newer gateway.
 
 | State | Lanes | What's shown |
 | --- | --- | --- |
-| `healthy` | on | scope line only, no caveat, no age |
-| `unknown` | on | same two lines as `healthy` — never an age line, even with a timestamp (see below) |
+| `healthy` | on | scope line, no caveat, plus a "Synced n ago" age line when the gateway supplied `lastSuccessfulSync` |
+| `unknown` | on | same two lines as `healthy` with no sync time — never an age line, even with a timestamp (see below) |
 | `degraded` / `rate_limited` / `paused` | on | scope line, a state-specific caveat, and a "Synced n ago" age line when the gateway supplied `lastSuccessfulSync` |
 | `not_configured` | **off** | one line: never synced, not "never configured" (see below) |
 | `unauthenticated` | **off** | one line: the credential was rejected |
