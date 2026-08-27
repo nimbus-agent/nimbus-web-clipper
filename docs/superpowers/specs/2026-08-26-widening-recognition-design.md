@@ -86,6 +86,36 @@ One subtlety with teeth: `buildSnapshot` returns `not_configured` for a **missin
 row** (`health.ts:411-418`), which is also the state of a connector configured
 moments ago that has not yet ticked. The copy must survive both readings.
 
+**And an absent row is the common case, not an edge one — this is a correction.**
+The only production insert into `sync_state` lives inside `transitionHealth`
+(`health.ts:139`), which the scheduler reaches on sync success, on pause/resume
+and on error paths. A connector the scheduler has never touched therefore has no
+row at all, and `getAllConnectorHealth` — which selects `FROM sync_state` — simply
+omits it. That is exactly the never-configured connector this whole gate exists
+for.
+
+So **a successful read whose map omits our service id means `not_configured`, not
+`unknown`.** Upstream says as much in its own code: `getConnectorHealth`, the
+single-connector accessor, answers `not_configured` for that missing row, and
+`engine/connector-health-caveat.ts` consumes it that way. Reading the *list*
+endpoint and inventing a different meaning for absence than the gateway's own
+per-service accessor gives was the error.
+
+`unknown` narrows accordingly, and is better for it: it now means **the read
+itself failed** — 404, unreachable, timeout, malformed body — which is the one
+situation where ungating is right, because the gate is unavailable rather than
+answered. Conflating "answered, and this connector is absent" with "could not
+ask" cost the feature its most common case.
+
+The residual risk is named under Risks below and is unchanged in kind: if our
+service id is wrong, absence now says "never synced" instead of showing three
+lanes. That is not worse — with a wrong id those lanes answer nothing anyway —
+and it surfaces the problem instead of hiding it.
+
+> **Status:** slice 2 shipped the earlier reading (absence → `unknown`). The
+> correction above is spec-level; the code change is a follow-up, tracked
+> separately, and is small: one branch in `handleResolve` plus its tests.
+
 ### F5 — six parallel tables keyed by one union
 
 `PRODUCT_NAMES`, `PRODUCT_SERVICE_ID` (`shared/types.ts:156`), `BUILT_IN_ORIGINS`,
@@ -189,6 +219,22 @@ this by matching `/jira/your-work` and `/secure/Dashboard.jspa` rather than `/`;
 this makes the dodge a rule. `origin` rules may still claim `/`, because a single
 named host has no sibling subdomains to be confused with.
 
+**Specific paths are necessary and not sufficient — the host must be constrained
+too.** That rule alone still admits `status.pagerduty.com/incidents` and
+`blog.sentry.io/issues/`: the suffix matches the host and the path is a
+recognised dashboard, so both checks pass and the header is wrong again. A
+must-not-match fixture for the bare root would not catch either, because neither
+is the root. So a `suffix` rule additionally carries an **excluded-label list**
+— `www`, `status`, `support`, `blog`, `docs`, `help` — checked against the
+leftmost label, and every product's fixtures must include at least one helper
+subdomain **on a recognised path**, not merely on `/`.
+
+A denylist is the honest instrument here rather than a tenant-shaped pattern:
+tenant labels are arbitrary customer strings with no structure to match on, so
+there is nothing to allowlist. It will not be exhaustive, and it does not have to
+be — it removes the handful of subdomains a vendor predictably publishes, and
+anything it misses fails the way an unknown host already fails.
+
 **Sentry is `incident`, not `issue`, despite Sentry's own wording.** The kind
 exists to gate lanes, and an error group poses the operational question a
 PagerDuty incident poses, not the planning question a Jira or Linear ticket
@@ -219,15 +265,24 @@ unpaired extension makes no gateway reads. Results are cached in
 `agent-run-store.ts`, because the service worker is evicted — and concurrent
 reads share one request through the existing `single-flight.ts`.
 
-**The cache exists to dedupe, not to persist: every panel open on a dashboard
-reads fresh.** The TTL is **60 seconds**, and its only job is to collapse the
-reads a single sitting produces — a panel reopened twice in a minute, or two
-tabs opening panels at once — into one loopback request. It deliberately does
-*not* survive as a rendering source across sittings, because the sequence that
-matters is the remedial one: a user told "Nimbus has never synced Linear" leaves,
-configures the connector, and comes back. Their next panel open must reflect
-that, and with a 60-second dedupe window and a gateway on `127.0.0.1` it does,
-without a revalidation dance. Stale-while-revalidate was considered and rejected
+**The cache exists to dedupe, not to persist.** The TTL is **60 seconds**, and
+its only job is to collapse the reads a single sitting produces — a panel
+reopened twice in a minute, or two tabs opening panels at once — into one
+loopback request. It deliberately does not survive as a rendering source beyond
+that, because the sequence that matters is the remedial one: a user told "Nimbus
+has never synced Linear" leaves, configures the connector, and comes back.
+
+**Stated precisely, because the obvious phrasing overclaims:** that user's next
+panel open reflects the change *once the entry has aged past 60 seconds* — not
+unconditionally. Someone who configures a connector and returns within the same
+minute can see the stale answer one more time. That is a deliberate ceiling on
+the staleness, not an accident, and the alternative was rejected: invalidating
+on configuration would mean the client watching for an event the gateway does not
+emit to it, and a forced refresh on every open discards the dedupe the cache
+exists for. Sixty seconds is the whole exposure, it self-heals with no user
+action, and no other reading of "reflect that" is true.
+
+Stale-while-revalidate was considered and rejected
 for the same reason it usually is on a fast local read: it buys milliseconds and
 pays for them with a panel that changes shape after the user has begun reading
 it.
@@ -374,7 +429,10 @@ Six PRs, each independently reviewable:
   (`health.ts:336-343`), so a service id we got **wrong** and a service that has
   simply **never synced** are indistinguishable from here. Detectable drift, not
   preventable drift — documented rather than guarded, because a guard that
-  cannot tell those apart would lie.
+  cannot tell those apart would lie. Per F4's correction, absence resolves to
+  `not_configured`, so the drift case now reads as "Nimbus has never synced X"
+  rather than as three empty lanes: still wrong if the id is wrong, but wrong out
+  loud instead of quietly.
 
   Two mitigations were considered and **rejected**. A checked-in JSON fixture of
   upstream connector ids is a second hand-maintained copy of an upstream list —
