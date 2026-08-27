@@ -1131,11 +1131,13 @@ branches on `recognition.kind === "home"` before ever calling `resolveItem`,
 and returns a `service`-scoped result straight from the recogniser. There is no
 item to resolve and no `found` outcome to require, which also means a service
 lane works on a pairing that never received the `resolve` scope — it needs only
-`agents`. `PRODUCT_SERVICE_ID` (`src/shared/types.ts`) is the map from
-`Product` to that connector id. It is written out rather than cast so the
-coupling between this client's `Product` union and the gateway's connector ids
-— convention between two repositories, not contract — is greppable from both
-sides. That buys **discoverability, not enforcement**: the map only checks that
+`agents`. Each product's own `ProductRule` (`src/shared/recognise/<product>.ts`)
+carries that connector id as its `serviceId` field, and `PRODUCT_SERVICE_ID`
+(`src/shared/recognise/registry.ts`) derives the `Product → connector id` map
+from those rules with a cast. The cast is safe to write because the coupling
+between this client's `Product` union and the gateway's connector ids —
+convention between two repositories, not contract — is greppable from both
+sides regardless. That buys **discoverability, not enforcement**: the map only checks that
 every `Product` has an entry, so an upstream connector rename (e.g.
 `"jenkins"` → `"jenkins-ci"`) would keep it typechecking green while every
 Jenkins lane quietly answered about a service that no longer exists.

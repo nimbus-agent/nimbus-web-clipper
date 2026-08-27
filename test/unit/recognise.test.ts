@@ -476,9 +476,16 @@ describe("self-hosted origins stay siloed by product", () => {
   });
 
   it("does not run one product's matcher under the other's prefix", () => {
-    // A Jenkins-shaped path under the Jira entry must be unrecognised, not a build.
-    const r = recognise("https://internal.corp/jira/job/web/482", TWO_ON_ONE_HOST);
-    expect(r.ok).toBe(false);
+    // A Jenkins-shaped path under the Jira entry must be unrecognised, not a
+    // build. `matchOrigin` selects the `/jira` entry (the longer, more specific
+    // prefix) and the Jira matcher declines the Jenkins-shaped segments — so the
+    // miss must be `unrecognised-path`, not `unknown-host` (which would also
+    // pass if the origin had stopped matching at all, the opposite of what this
+    // test exists to catch).
+    expect(recognise("https://internal.corp/jira/job/web/482", TWO_ON_ONE_HOST)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
   });
 });
 

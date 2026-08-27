@@ -1497,10 +1497,11 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 New here? These are small, self-contained, high-value, and need nothing from
 another repo — ideal first contributions:
 
-- **Add a surface recogniser** — `src/shared/recognise/` is one new product
-  module plus its entry in `registry.ts`, plus fixtures per product; the
-  cleanest entry point into the reframe now that C1.2 has shipped the
-  scaffolding.
+- **Add a surface recogniser** — a new product module under
+  `src/shared/recognise/`, its entry in `RULE_BY_PRODUCT` in `registry.ts`, its
+  id in `PRODUCT_IDS` in `src/shared/types.ts`, an entry in `PRODUCT_CORPUS` in
+  `src/panel/panel-view.ts`, and fixtures; the cleanest entry point into the
+  reframe now that C1.2 has shipped the scaffolding.
 - **2.4 Full-page vs. readable toggle** — one setting, one capture branch.
 - **3.2 One-press undo** — a toast affordance + a short window (mind the gateway
   note).

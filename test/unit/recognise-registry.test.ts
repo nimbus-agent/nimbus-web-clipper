@@ -1,6 +1,5 @@
 // The guards that replace a human's diligence now that six tables are one.
 import { describe, expect, it } from "vitest";
-import { hostPermissionPattern } from "../../src/shared/origins.ts";
 import { BUILT_IN_ORIGINS, BUILT_IN_SURFACES } from "../../src/shared/recognise/index.ts";
 import {
   PRODUCT_RULES,
@@ -58,12 +57,25 @@ describe("the built-in tables are derived, not copied", () => {
     ]);
   });
 
-  it("gives every built-in host a surfaces row carrying its exact pattern", () => {
-    for (const entry of BUILT_IN_ORIGINS) {
-      const row = BUILT_IN_SURFACES.find((s) => s.product === entry.product);
-      expect(row).toBeDefined();
-      expect(row?.pattern).toBe(hostPermissionPattern(entry.origin));
-    }
+  it("lists exactly these built-in surfaces rows", () => {
+    // Asserted as literal values, NOT by re-running the derivation
+    // (`hostPermissionPattern`) — a test that recomputes what it is checking
+    // passes for any implementation, including a wrong one.
+    expect([...BUILT_IN_SURFACES]).toEqual([
+      { label: "bitbucket.org", product: "bitbucket", pattern: "https://bitbucket.org/*" },
+      { label: "github.com", product: "github", pattern: "https://github.com/*" },
+      { label: "gitlab.com", product: "gitlab", pattern: "https://gitlab.com/*" },
+      { label: "*.atlassian.net", product: "jira", pattern: "https://*.atlassian.net/*" },
+    ]);
+  });
+
+  it("gives every built-in surface a distinct label", () => {
+    // options.ts's onSurfaceClick routes a grant/revoke click by
+    // `BUILT_IN_SURFACES.find((s) => s.label === origin)` — two products
+    // declaring the same host would silently route one product's button to the
+    // other's pattern.
+    const labels = BUILT_IN_SURFACES.map((s) => s.label);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 
   it("carries a row for a suffix host too, which has no origin to derive from", () => {
@@ -97,8 +109,15 @@ describe("productName", () => {
 
 describe("PRODUCT_SERVICE_ID", () => {
   it("is each rule's own service id", () => {
-    for (const rule of PRODUCT_RULES) {
-      expect(PRODUCT_SERVICE_ID[rule.product]).toBe(rule.serviceId);
-    }
+    // Asserted as a literal value, NOT by re-deriving it from `PRODUCT_RULES` —
+    // a test that recomputes the map from the same rules it is checking cannot
+    // fail, and it pins nothing about what each service id actually is.
+    expect(PRODUCT_SERVICE_ID).toEqual({
+      bitbucket: "bitbucket",
+      github: "github",
+      gitlab: "gitlab",
+      jenkins: "jenkins",
+      jira: "jira",
+    });
   });
 });

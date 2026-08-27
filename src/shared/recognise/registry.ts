@@ -23,10 +23,14 @@ export const RULE_BY_PRODUCT: Record<Product, ProductRule> = {
 /**
  * The rules in declaration order.
  *
- * Order is not load-bearing today — no two products claim the same host — and it
- * becomes load-bearing the first time two do (Confluence under `*.atlassian.net`,
- * slice 4). When that lands, the sharing pair needs an explicit ordering test
- * rather than a reliance on this object's key order.
+ * Order IS load-bearing: `BUILT_IN_ORIGINS` and `BUILT_IN_SURFACES` (both in
+ * `index.ts`) are derived by flat-mapping over this array, so `RULE_BY_PRODUCT`'s
+ * key order sets both the order `matchOrigin` sees built-in origins in and the
+ * order the Options page renders its built-in rows. The keys above are
+ * alphabetical — keep them that way. It becomes load-bearing in a sharper sense
+ * the first time two products claim the same host (Confluence under
+ * `*.atlassian.net`, slice 4): when that lands, the sharing pair needs an
+ * explicit ordering test rather than a reliance on this object's key order.
  */
 export const PRODUCT_RULES: readonly ProductRule[] = Object.values(RULE_BY_PRODUCT);
 
