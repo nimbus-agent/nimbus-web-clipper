@@ -1065,6 +1065,52 @@ describe("the service header", () => {
     expect(el.textContent).toContain("Synced 3 min ago");
   });
 
+  it("a rate-limited connector keeps the lanes and names the specific caveat", () => {
+    const el = renderHeader(document, { ...base, connector: { state: "rate_limited" } });
+    expect(el.textContent).toContain("Nimbus can answer across all indexed Jenkins builds.");
+    expect(el.textContent).toContain(
+      "Jenkins is rate-limiting Nimbus, so recent items may be missing.",
+    );
+  });
+
+  it("a paused connector keeps the lanes and names the specific caveat", () => {
+    const el = renderHeader(document, { ...base, connector: { state: "paused" } });
+    expect(el.textContent).toContain("Nimbus can answer across all indexed Jenkins builds.");
+    expect(el.textContent).toContain("Syncing Jenkins is paused, so recent items may be missing.");
+  });
+
+  it("rate_limited and paused read differently from each other and from degraded", () => {
+    // Policy-level tests only assert lanes===true and note!==null for this trio —
+    // this is the coverage that would catch the three notes getting swapped.
+    const degraded = renderHeader(document, {
+      ...base,
+      connector: { state: "degraded" },
+    }).textContent;
+    const rateLimited = renderHeader(document, {
+      ...base,
+      connector: { state: "rate_limited" },
+    }).textContent;
+    const paused = renderHeader(document, { ...base, connector: { state: "paused" } }).textContent;
+    expect(new Set([degraded, rateLimited, paused]).size).toBe(3);
+  });
+
+  it("an unknown connector renders no age line even when the gateway supplied a sync time", () => {
+    // `unknown` covers both an older gateway and an unrecognised eighth state —
+    // `parseConnectorHealth` keeps a real `lastSuccessfulSync` even while
+    // coercing the state to `unknown`, and the byte-identical-to-today guarantee
+    // must not depend on which fields that far end happened to send.
+    const el = renderHeader(document, {
+      ...base,
+      connector: { state: "unknown", lastSuccessfulSyncMs: NOW - 3 * 60_000 },
+    });
+    const lines = [...el.children].map((c) => c.textContent);
+    expect(lines).toEqual([
+      "Jenkins dashboard",
+      "Nimbus can answer across all indexed Jenkins builds.",
+    ]);
+    expect(el.textContent).not.toContain("Synced");
+  });
+
   it("an unconfigured connector withholds the scope line and renders only the note", () => {
     const el = renderHeader(document, { ...base, connector: { state: "not_configured" } });
     const lines = [...el.children].map((c) => c.textContent);

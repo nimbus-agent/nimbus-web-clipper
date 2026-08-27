@@ -1338,9 +1338,11 @@ function createPanel(body: HTMLElement): {
     // connector's health (`gatePolicy`): three lanes that can only ever come back
     // empty read as "you have no work", not as "Nimbus cannot ask this connector
     // anything". `shown.kind === "service"` whenever `surfaceKind === "home"` —
-    // see `headerFrom` — so the empty-array arm below is exhaustive in practice,
-    // never a silent drop of lanes for a page that has some other header.
-    const homeLanes = shown.kind === "service" && gatePolicy(shown.connector.state).lanes;
+    // see `headerFrom` — so the `!== "service"` arm below is unreachable in
+    // practice. It is written to FAIL OPEN on purpose: this feature's own rule is
+    // that "we don't know" means ungated, never blank, so a `shown` of some other
+    // kind must not silently blank the lanes if that invariant ever stops holding.
+    const homeLanes = shown.kind !== "service" || gatePolicy(shown.connector.state).lanes;
     const lanes: Lane[] =
       surfaceKind === "home"
         ? homeLanes

@@ -28,17 +28,6 @@ function isObject(v: unknown): v is Record<string, unknown> {
 
 const KNOWN: ReadonlySet<string> = new Set(CONNECTOR_STATES);
 
-/**
- * Narrows `GET /v1/connectors`' body into one entry per connector.
- *
- * Returns null only when the body is not the documented envelope at all. A single
- * malformed ROW is skipped instead — one bad row must not cost the user every other
- * connector's status.
- *
- * `lastError` is read and DISCARDED, deliberately: it is free-form upstream text
- * headed for an injected page DOM, and an error string can carry a URL with a
- * credential in it.
- */
 export interface GatePolicy {
   /** Render the service lanes at all? */
   readonly lanes: boolean;
@@ -88,7 +77,7 @@ const POLICIES: Record<ConnectorState, GatePolicy> = {
   },
   error: {
     lanes: false,
-    note: "Nimbus's last sync of %s failed, so its answers would be incomplete.",
+    note: "Nimbus's last sync of %s failed, so it cannot answer from that connector right now.",
   },
 };
 
@@ -96,6 +85,17 @@ export function gatePolicy(state: ConnectorState): GatePolicy {
   return POLICIES[state];
 }
 
+/**
+ * Narrows `GET /v1/connectors`' body into one entry per connector.
+ *
+ * Returns null only when the body is not the documented envelope at all. A single
+ * malformed ROW is skipped instead — one bad row must not cost the user every other
+ * connector's status.
+ *
+ * `lastError` is read and DISCARDED, deliberately: it is free-form upstream text
+ * headed for an injected page DOM, and an error string can carry a URL with a
+ * credential in it.
+ */
 export function parseConnectorHealth(body: unknown): ReadonlyMap<string, ConnectorHealth> | null {
   if (!isObject(body) || !Array.isArray(body["data"])) {
     return null;

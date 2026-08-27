@@ -444,7 +444,16 @@ function appendServiceHeader(
       line(doc, "nimbus-related__status", policy.note.replace("%s", productName(state.product))),
     );
   }
-  if (policy.lanes && state.connector.lastSuccessfulSyncMs !== undefined) {
+  // `unknown` never gets an age line, even when the gateway happened to include
+  // `lastSuccessfulSync` on the row that produced it: `unknown` covers both an
+  // older gateway AND an unrecognised eighth state that carried a real
+  // timestamp, and the byte-identical-to-today guarantee that state exists for
+  // must not depend on which fields the far end happened to send.
+  if (
+    policy.lanes &&
+    state.connector.state !== "unknown" &&
+    state.connector.lastSuccessfulSyncMs !== undefined
+  ) {
     box.append(
       line(
         doc,
