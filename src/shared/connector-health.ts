@@ -1,8 +1,6 @@
 // What the gateway says about one connector, and what the panel should do about it.
 // Pure: no chrome.*, no fetch. The wire body is `unknown` until this guard has run.
 
-import { isObject } from "../background/http-json.ts";
-
 /** Upstream's seven, plus this client's `unknown` for an unreadable or unrecognised answer. */
 export const CONNECTOR_STATES = [
   "healthy",
@@ -22,6 +20,10 @@ export interface ConnectorHealth {
   /** From `lastSuccessfulSync`. Absent when the connector has never synced, or
    *  when the value did not parse — never guessed. */
   readonly lastSuccessfulSyncMs?: number;
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 const KNOWN: ReadonlySet<string> = new Set(CONNECTOR_STATES);
