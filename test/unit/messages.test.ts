@@ -485,6 +485,28 @@ describe("isResolveResponse", () => {
       ).toBe(false);
     }
   });
+
+  it("rejects a connector whose lastSuccessfulSyncMs is not finite", () => {
+    // `typeof NaN === "number"`, and so is `Infinity`/`-Infinity` — a guard that
+    // only checked `typeof` would let all three through to `formatAge` in the
+    // panel, rendering a nonsense or misleading sync age.
+    const outcome = { kind: "not-indexed", fetchable: true };
+    for (const lastSuccessfulSyncMs of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      expect(
+        isResolveResponse({
+          kind: "resolve",
+          ok: true,
+          recognition,
+          outcome,
+          connector: { state: "healthy", lastSuccessfulSyncMs },
+        }),
+      ).toBe(false);
+    }
+  });
 });
 
 describe("isFetchResponse", () => {

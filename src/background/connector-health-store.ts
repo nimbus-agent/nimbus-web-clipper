@@ -115,11 +115,12 @@ function readerFor(
 }
 
 /**
- * A cached entry is used only when its `origin` matches AND it was fetched
- * less than `CONNECTOR_HEALTH_TTL_MS` ago. Anything else — no entry, a
- * different origin, an expired one, or one that fails `isCachedHealth` — is a
- * cache miss: fetch, and on success (never on `null`) persist the fresh
- * answer.
+ * A cached entry is used only when its `origin` matches AND it was fetched no
+ * later than `nowMs` AND less than `CONNECTOR_HEALTH_TTL_MS` ago. Anything
+ * else — no entry, a different origin, a future-dated `fetchedAtMs` (clock
+ * skew or a corrupted value), an expired one, or one that fails
+ * `isCachedHealth` — is a cache miss: fetch, and on success (never on `null`)
+ * persist the fresh answer.
  */
 export async function readConnectorHealth(
   deps: HealthDeps,
@@ -134,6 +135,7 @@ export async function readConnectorHealth(
   if (
     isCachedHealth(cached) &&
     cached.origin === origin &&
+    cached.fetchedAtMs <= nowMs &&
     nowMs - cached.fetchedAtMs < CONNECTOR_HEALTH_TTL_MS
   ) {
     return new Map(cached.entries);

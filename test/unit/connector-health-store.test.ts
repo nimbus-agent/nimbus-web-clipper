@@ -160,6 +160,28 @@ describe("readConnectorHealth", () => {
     expect(result?.get("github")).toEqual({ state: "healthy" });
   });
 
+  it("treats a future-dated fetchedAtMs as a cache miss", async () => {
+    // `nowMs - fetchedAtMs < TTL` is also satisfied by a NEGATIVE elapsed value, so
+    // an entry stamped in the future (clock skew, or a corrupted value) would stay
+    // "valid" until the clock caught up — keeping stale connector state active well
+    // past the 60s TTL. Requiring fetchedAtMs <= nowMs closes that.
+    harness.storage.set("connectorHealth", {
+      origin: ORIGIN,
+      fetchedAtMs: 2_000,
+      entries: [["github", { state: "healthy" }]],
+    });
+    let calls = 0;
+    const deps = {
+      getConnectors: async () => {
+        calls++;
+        return HEALTHY;
+      },
+    };
+    const result = await readConnectorHealth(deps, ORIGIN, 1_000);
+    expect(calls).toBe(1);
+    expect(result?.get("github")).toEqual({ state: "healthy" });
+  });
+
   it("survives a service-worker restart within the TTL", async () => {
     // The store persists to chrome.storage.local precisely because the worker is
     // evicted between one panel open and the next.

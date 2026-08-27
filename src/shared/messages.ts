@@ -750,7 +750,10 @@ function isConnectorHealth(v: unknown): v is ConnectorHealth {
   if (!(CONNECTOR_STATES as readonly string[]).includes(v["state"])) {
     return false;
   }
-  return v["lastSuccessfulSyncMs"] === undefined || typeof v["lastSuccessfulSyncMs"] === "number";
+  return (
+    v["lastSuccessfulSyncMs"] === undefined ||
+    (typeof v["lastSuccessfulSyncMs"] === "number" && Number.isFinite(v["lastSuccessfulSyncMs"]))
+  );
 }
 
 /** The recognition is required on BOTH arms: a gateway failure must not erase

@@ -1202,9 +1202,10 @@ answered *unconditionally*: a dashboard rendered its three lanes whether or not 
 gateway held a working credential for that connector, so an unconfigured GitHub or
 Jira connector produced three real invocations that each came back with nothing,
 which reads as "you have no work" rather than "Nimbus isn't connected to this". The
-gate makes `resolveForAgent` (`handlers.ts`, above) check the connector's own health
-before it ever returns a `service`-scoped result, and lets one pure function decide
-what the panel does with the answer.
+gate makes `handleResolve` (`handlers.ts`, above) read the connector's own health on a
+dashboard and attach it as `connector` on the resolve response, and lets one pure
+function — `gatePolicy`, applied by the panel — decide what the panel does with the
+answer before it ever offers the service lanes.
 
 **The read.** `readConnectorHealth` (`src/background/connector-health-store.ts`)
 wraps `getConnectors` (`gateway-client.ts`), a second tokenless call alongside the
