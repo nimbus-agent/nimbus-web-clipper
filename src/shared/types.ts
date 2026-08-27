@@ -132,34 +132,19 @@ export interface CueState {
   readonly ref: string;
 }
 
-/** A product whose pages the client can recognise. */
-export type Product = "bitbucket" | "github" | "gitlab" | "jenkins" | "jira";
-
 /**
- * The gateway's connector id for each recognised product.
+ * Every product whose pages the client can recognise, as data.
  *
- * MIRRORS upstream's per-connector `SERVICE_ID` constants
- * (packages/gateway/src/connectors/<product>-sync.ts) — the value written to
- * `item.service` and the value `agents.catchup`/`decisions`/`ownership` filter
- * on. Today it is an identity map, and it is written out anyway on purpose:
- * the agreement between this union and those constants is CONVENTION BETWEEN
- * TWO REPOSITORIES, not contract.
- *
- * What this buys is discoverability, NOT enforcement. The type only checks that
- * every `Product` has an entry — if upstream renamed "jenkins" to "jenkins-ci",
- * this map would keep typechecking green while every Jenkins lane quietly asked
- * about a service that no longer exists. Validating against
- * `GET /v1/connectors` was considered and rejected: it reads the `sync_state`
- * table, so an unconfigured connector is absent from it exactly like a renamed
- * one, and it cannot tell the two apart.
+ * The array is the source and `Product` is derived from it, not the other way
+ * round: `origins.ts` needs the ids at RUNTIME to validate a stored entry, and a
+ * hand-written second copy of a union is the drift this slice exists to delete.
+ * Keep it `as const` — widening to `string[]` silently widens `Product` to
+ * `string` and every `Record<Product, …>` exhaustiveness check with it.
  */
-export const PRODUCT_SERVICE_ID: Record<Product, string> = {
-  bitbucket: "bitbucket",
-  github: "github",
-  gitlab: "gitlab",
-  jenkins: "jenkins",
-  jira: "jira",
-};
+export const PRODUCT_IDS = ["bitbucket", "github", "gitlab", "jenkins", "jira"] as const;
+
+/** A product whose pages the client can recognise. */
+export type Product = (typeof PRODUCT_IDS)[number];
 
 /**
  * What kind of item a recognised page is.
@@ -210,7 +195,7 @@ export type Recognition =
       /**
        * The URL sent to the gateway as the resolution key: the address-bar URL with
        * identity normalisation only. The gateway owns canonicalisation — see
-       * shared/recognise.ts.
+       * shared/recognise/index.ts.
        */
       readonly resolveUrl: string;
     }

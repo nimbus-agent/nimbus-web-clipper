@@ -2,7 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { type AmbientDeps, decideAmbient } from "../../src/background/ambient.ts";
 import { handleResolve } from "../../src/background/handlers.ts";
 import type { ResolveResponse } from "../../src/shared/messages.ts";
-import { recognise } from "../../src/shared/recognise.ts";
+import { recognise } from "../../src/shared/recognise/index.ts";
 
 const PR = "https://github.com/acme/web/pull/482";
 const PR_FILES = "https://github.com/acme/web/pull/482/files";

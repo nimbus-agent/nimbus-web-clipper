@@ -1,8 +1,9 @@
 // test/unit/origins.test.ts
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import {
   hostPermissionPattern,
   isConfiguredOrigin,
+  isProduct,
   matchOrigin,
   parseConfiguredOrigin,
   patternMatchesUrl,
@@ -11,6 +12,7 @@ import {
   upsertOrigin,
 } from "../../src/shared/origins.ts";
 import type { ConfiguredOrigin } from "../../src/shared/types.ts";
+import { PRODUCT_IDS } from "../../src/shared/types.ts";
 
 describe("parseConfiguredOrigin", () => {
   test("normalises case, drops the trailing slash, keeps the port", () => {
@@ -217,5 +219,22 @@ describe("patternMatchesUrl", () => {
 
   test("a non-URL never matches", () => {
     expect(patternMatchesUrl("https://github.com/*", "not a url")).toBe(false);
+  });
+});
+
+describe("isProduct is derived from the declared product ids", () => {
+  it("accepts every declared id", () => {
+    for (const id of PRODUCT_IDS) {
+      expect(isProduct(id)).toBe(true);
+    }
+  });
+
+  it("rejects a product this client does not recognise yet", () => {
+    // "linear" is a real gateway connector and a planned product (slice 3). It must
+    // be false TODAY — otherwise the guard is accepting arbitrary strings and the
+    // stored-origin validation it backs is decorative.
+    expect(isProduct("linear")).toBe(false);
+    expect(isProduct("")).toBe(false);
+    expect(isProduct(undefined)).toBe(false);
   });
 });

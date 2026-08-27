@@ -9,7 +9,7 @@
 // a cue that leads nowhere. See the design spec's "Error handling".
 import type { TabNavigation } from "../browser/tabs.ts";
 import type { ResolveResponse } from "../shared/messages.ts";
-import { recognise, sameItem } from "../shared/recognise.ts";
+import { recognise, sameItem } from "../shared/recognise/index.ts";
 import type { ConfiguredOrigin, CueState, Recognition } from "../shared/types.ts";
 import { isAmbientUrl } from "./ambient-prefs.ts";
 

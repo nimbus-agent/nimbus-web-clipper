@@ -7,8 +7,9 @@
 // a different axis entirely. Sharing a helper between the two would invite a
 // change that quietly relaxes one by editing the other.
 import type { ConfiguredOrigin, Product } from "./types.ts";
+import { PRODUCT_IDS } from "./types.ts";
 
-const PRODUCTS: ReadonlySet<string> = new Set(["bitbucket", "github", "gitlab", "jenkins", "jira"]);
+const PRODUCTS: ReadonlySet<string> = new Set<string>(PRODUCT_IDS);
 
 export function isProduct(v: unknown): v is Product {
   return typeof v === "string" && PRODUCTS.has(v);

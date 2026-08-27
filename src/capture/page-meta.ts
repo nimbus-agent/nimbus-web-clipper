@@ -6,7 +6,7 @@
 // fallback.ts, it stays a pure function of a Document, so its cases can be
 // driven directly instead of through a full Readability parse.
 //
-// It does NOT canonicalise (see `src/shared/recognise.ts:253`) and it does NOT
+// It does NOT canonicalise (see `src/shared/recognise/index.ts`) and it does NOT
 // bound. Bounding happens at the trust boundary in `buildClipPayload`, because
 // a hostile page can inject a `source` object past this module entirely by
 // overwriting `__nimbusCapture` — so a bound applied only here would be a

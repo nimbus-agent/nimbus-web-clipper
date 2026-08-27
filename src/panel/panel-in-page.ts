@@ -16,7 +16,7 @@ import {
 } from "../shared/messages.ts";
 import { PANEL_HOST_ID, type PanelSelection } from "../shared/panel-host.ts";
 import type { ClipPreview } from "../shared/preview.ts";
-import { sameItem, surfaceLine } from "../shared/recognise.ts";
+import { sameItem, surfaceLine } from "../shared/recognise/index.ts";
 import {
   AGENT_LANES,
   type AgentLane,

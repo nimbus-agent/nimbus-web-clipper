@@ -352,7 +352,7 @@ function parseResolveBody(data: unknown): ResolveOutcome | null {
  *
  * Sends the page URL as the recogniser normalised it and lets the gateway's
  * canonicalizeUrl + match ladder do the rest; this client does no canonicalisation
- * of its own (see shared/recognise.ts).
+ * of its own (see shared/recognise/index.ts).
  *
  * The 403 mapping is the load-bearing one: LEGACY_SCOPES is ["clip","briefs"], so
  * every browser paired before scopes lacks `resolve` and lands here first. Folding

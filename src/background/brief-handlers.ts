@@ -14,7 +14,7 @@ import { type BriefReport, countIndexHits } from "../shared/brief-report.ts";
 import type { BriefPick, BriefStartRequest } from "../shared/messages.ts";
 import type { Passage, PassageGroup } from "../shared/passage.ts";
 import { groupCapturedAt, groupKey, groupPassages, stitch } from "../shared/passage.ts";
-import { recognise } from "../shared/recognise.ts";
+import { recognise } from "../shared/recognise/index.ts";
 import type { ConfiguredOrigin, Recognition } from "../shared/types.ts";
 import type * as briefClient from "./brief-client.ts";
 import { BRIEF_RUN_TTL_MS, type StoredBrief } from "./brief-run-store.ts";
