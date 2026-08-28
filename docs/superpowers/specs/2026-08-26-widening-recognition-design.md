@@ -8,13 +8,13 @@
 >
 > **Shipped so far:** slice 1, the registry (#74, `a373c10`); slice 2, the
 > connector-health gate (#76, `33b2f34`); slice 3, Linear + CircleCI (#87,
-> `4a7cf52`); slice 4, Confluence + PagerDuty (commits `1739294`, `736b32b`,
-> `177bd51`, `206a3b2` on this branch — PR not yet opened at the time of
-> writing). All four landed before or alongside this document's own edits, so
-> read slices 1-4 as the design they were built from rather than as a
-> proposal. Two things settled under review are corrected in place in §4:
-> `unknown` renders no freshness line even when the gateway supplies a
-> timestamp, and the reasoning behind which states withhold lanes is now
+> `4a7cf52`); slice 4, Confluence + PagerDuty (feature commits only:
+> `1739294`, `736b32b`, `177bd51`, `206a3b2` on this branch — PR not yet
+> opened at the time of writing). All four landed before or alongside this
+> document's own edits, so read slices 1-4 as the design they were built from
+> rather than as a proposal. Two things settled under review are corrected in
+> place in §4: `unknown` renders no freshness line even when the gateway
+> supplies a timestamp, and the reasoning behind which states withhold lanes is now
 > written down rather than assumed. Slice 4 amends its own letter in three
 > places and records a gateway-side gap — see the subsection after §3's table.
 > Slices 5-6 are unbuilt.

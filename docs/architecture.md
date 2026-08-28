@@ -1123,7 +1123,9 @@ recognised as `SurfaceKind: "home"` (GitHub root; GitLab root or `/dashboard`;
 Bitbucket `/dashboard/*`; Jira Cloud `/jira/your-work` and Server
 `/secure/Dashboard.jspa`; Jenkins instance root, past any configured path
 prefix; CircleCI `/pipelines` and `/home`; a Linear workspace's `/inbox` and
-`/my-issues`).
+`/my-issues`; a Confluence site's `/wiki`, `/wiki/home` and
+`/wiki/dashboard.action`, relative to the `/wiki` path prefix on
+`*.atlassian.net`; PagerDuty's `/incidents`, and nothing else).
 
 **A service lane makes no resolve call.** `Recognition.product` already IS the
 gateway's connector id — the nine `Product` values are exactly upstream's
