@@ -1126,7 +1126,7 @@ prefix; CircleCI `/pipelines` and `/home`; a Linear workspace's `/inbox` and
 `/my-issues`).
 
 **A service lane makes no resolve call.** `Recognition.product` already IS the
-gateway's connector id — the seven `Product` values are exactly upstream's
+gateway's connector id — the nine `Product` values are exactly upstream's
 per-connector `SERVICE_ID` constants — so `resolveForAgent` (`handlers.ts`)
 branches on `recognition.kind === "home"` before ever calling `resolveItem`,
 and returns a `service`-scoped result straight from the recogniser. There is no
@@ -1153,6 +1153,28 @@ hardcoded `<option>` markup. The picker is now `SELF_HOSTABLE_PRODUCTS`
 (`PRODUCT_RULES` filtered on `selfHostable`), rendered into the `<select>` on
 load. See `src/shared/recognise/registry.ts` for both derivations; this file
 does not restate their reasoning.
+
+**Two more surface kinds carry no lane, by construction.** `SurfaceKind` gained
+`doc` (a Confluence page) and `incident` (a PagerDuty incident); `LANE_RULES`
+names only `pr` and `home`, so `laneBelongsOnSurface` is false for both on
+every lane — the panel renders exactly what a Jira issue renders today:
+header, freshness, Related, the `glossary` term lane. `SurfaceKind` is itself
+now derived from a `SURFACE_KINDS` `as const` array, mirroring `PRODUCT_IDS`,
+so a kind added to the array and left out of some `Record<SurfaceKind, …>` is
+a compile error rather than a hand-written list that silently under-covers it.
+
+**A `suffix` host may share its host with another product, split by path.**
+`HostRule`'s suffix arm can carry a `pathPrefix` — Confluence owns `/wiki` on
+the `*.atlassian.net` host Jira takes the rest of — and the split is decided by
+`matchOrigin`'s longest-matching-prefix rule, the same rule that already
+settles two self-hosted products on one origin; registry key order plays no
+part. It can also carry `excludedLabels`: leftmost host labels that are the
+vendor's own subdomains, not tenants. `status.pagerduty.com/incidents/<id>` is
+a real Statuspage page that would otherwise match PagerDuty's suffix and its
+own item path at once, so PagerDuty's rule excludes `status` and ten other
+vendor-published subdomains. The list is per rule, not shared, because
+`www.atlassian.net` is a real Jira Cloud tenant — a list built for PagerDuty
+would break Jira if applied there too.
 
 **The run store keys on scope, not just on an item.** `StoredRun`'s subject is
 a `RunSubject` — `{kind:"item", id}` or `{kind:"service", service}` — and

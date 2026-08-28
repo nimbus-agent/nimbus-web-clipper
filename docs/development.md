@@ -209,22 +209,30 @@ resolved path reproducibly, run `bun run mock-gateway` and pair against
 5. **Self-hosted with a path prefix:** in Options → **Recognised surfaces**, add
    `https://corp.example/jira` as *Jira*. → A page at `/jira/browse/PLAT-9` is
    recognised as `Jira issue · PLAT-9`; a page at `/wiki/Home` on the same host
-   is not.
-6. **Case sensitivity:** add the same instance as `/Jira` instead. → Pages under
+   is not — the built-in `/wiki` prefix belongs to Confluence on
+   `*.atlassian.net` only, and a product's built-in hosts never widen what a
+   user's own entry matches.
+6. **Two products, one self-hosted host:** add `https://corp.example/wiki` as
+   *Confluence* alongside the Jira entry above. → `/wiki/spaces/ENG/pages/1/Title`
+   is `Confluence doc · ENG/1` and `/jira/browse/PLAT-9` is still
+   `Jira issue · PLAT-9`; neither claims the other's paths. Longest matching
+   prefix wins, which is the same rule that splits Confluence from Jira on
+   `*.atlassian.net`.
+7. **Case sensitivity:** add the same instance as `/Jira` instead. → Pages under
    `/jira` are **not** recognised. This is deliberate: the prefix is carried
    verbatim into the resolve key.
-7. **Recognition works before any grant:** with no origin granted, steps 1–5 all
+8. **Recognition works before any grant:** with no origin granted, steps 1–5 all
    still work — the `Alt+Shift+R` gesture supplies `activeTab`.
-8. **Grant / revoke, in BOTH Chrome and Firefox:** click **Grant page access** on
+9. **Grant / revoke, in BOTH Chrome and Firefox:** click **Grant page access** on
    a row. → The browser's permission prompt appears; accepting flips the row to
    **Revoke page access**; declining leaves it on **Grant** with the status
    *"Page access was not granted."*; **Revoke** flips it back. Run this on both
    targets — the prompt and its gesture rules are the browser's, not ours, and a
    grant that silently resolved `false` on one would otherwise only show up in
    the wild.
-9. **Shared-host note:** add two prefixed entries on one host (`/jira` and
-   `/jenkins`), grant, then revoke one. → The status names the sibling origin the
-   revoke also affects (grants are per host, not per prefix).
+10. **Shared-host note:** add two prefixed entries on one host (`/jira` and
+    `/jenkins`), grant, then revoke one. → The status names the sibling origin the
+    revoke also affects (grants are per host, not per prefix).
 
 **Known limitation, confirm rather than fix:** on a client-side (SPA) navigation
 — clicking from one PR to another without a page load — an open panel keeps

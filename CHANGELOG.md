@@ -40,15 +40,38 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   either — a Linear issue or a CircleCI pipeline was just a tab, and their
   dashboards offered none of the three connector-scoped lanes GitHub's or
   Jira's already did. Both now resolve: an issue or a pipeline page gets its
-  indexed item, Related, and a targeted fetch on a miss, the same as any other
-  recognised item page. Open the connector's own dashboard instead — CircleCI's
-  `/pipelines` or `/home`, a Linear workspace's Inbox or My Issues — and the
-  panel offers *catch me up*, *what changed while I was away* and *what's
-  mine*, gated on the connector's health exactly as every other dashboard's
-  lanes are. An issue or pipeline page itself gets none of the three: they
-  answer about the whole connector, not one item, so they stay where that scope
-  is honest. CircleCI can be added as a self-hosted origin — CircleCI Server
-  exists; Linear has no self-hosted edition, so it is not offered there.
+  indexed item and Related, the same as any other recognised item page.
+  Neither offers a targeted fetch on a miss — the gateway's fetch boundary
+  covers GitHub, GitLab, Bitbucket, Jenkins and Jira only, so a miss on these
+  products stays a miss. Open the connector's own dashboard instead —
+  CircleCI's `/pipelines` or `/home`, a Linear workspace's Inbox or My Issues —
+  and the panel offers *catch me up*, *what changed while I was away* and
+  *what's mine*, gated on the connector's health exactly as every other
+  dashboard's lanes are. An issue or pipeline page itself gets none of the
+  three: they answer about the whole connector, not one item, so they stay
+  where that scope is honest. CircleCI can be added as a self-hosted origin —
+  CircleCI Server exists; Linear has no self-hosted edition, so it is not
+  offered there.
+
+- **Confluence pages and PagerDuty incidents are now recognised.** A Confluence
+  page and a PagerDuty incident were each just a tab; both now get the panel's
+  header, freshness, Related and the glossary lane, and a Confluence site's
+  home or a PagerDuty incidents list gets *catch me up*, *what changed while I
+  was away* and *what's mine*, gated on the connector's health like every other
+  dashboard. Neither offers a targeted fetch on a miss: the gateway's fetch
+  boundary covers GitHub, GitLab, Bitbucket, Jenkins and Jira only. Neither
+  offers an agent lane on the item page itself — those three questions answer
+  about a whole connector, not one document or one incident.
+
+  Confluence shares `*.atlassian.net` with Jira and is told apart by its `/wiki`
+  path, so no new page-access grant is involved: granting either grants both,
+  because a browser permission is per host. A self-hosted Confluence Data
+  Center instance can be added from Options like any other self-hosted product.
+
+  **A known gap, and it is the gateway's to close:** the gateway indexes a
+  Confluence page under `…/wiki/pages/viewpage.action?pageId=<id>`, which is not
+  a URL a browser is ever on, so a Confluence page reports *not indexed* even
+  when Nimbus has it. Related still answers, because it matches on the title.
 
 ## [0.5.0] - 2026-08-24
 

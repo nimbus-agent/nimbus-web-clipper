@@ -7,12 +7,17 @@
 > that changes behaviour on a shipped surface.
 >
 > **Shipped so far:** slice 1, the registry (#74, `a373c10`); slice 2, the
-> connector-health gate (#76, `33b2f34`). Both landed before this document did,
-> so read it as the design they were built from rather than as a proposal. Two
-> things settled under review and are corrected in place in §4: `unknown` renders
-> no freshness line even when the gateway supplies a timestamp, and the reasoning
-> behind which states withhold lanes is now written down rather than assumed.
-> Slices 3-6 are unbuilt.
+> connector-health gate (#76, `33b2f34`); slice 3, Linear + CircleCI (#87,
+> `4a7cf52`); slice 4, Confluence + PagerDuty (commits `1739294`, `736b32b`,
+> `177bd51`, `206a3b2` on this branch — PR not yet opened at the time of
+> writing). All four landed before or alongside this document's own edits, so
+> read slices 1-4 as the design they were built from rather than as a
+> proposal. Two things settled under review are corrected in place in §4:
+> `unknown` renders no freshness line even when the gateway supplies a
+> timestamp, and the reasoning behind which states withhold lanes is now
+> written down rather than assumed. Slice 4 amends its own letter in three
+> places and records a gateway-side gap — see the subsection after §3's table.
+> Slices 5-6 are unbuilt.
 
 ## What this delivers
 
@@ -253,6 +258,56 @@ picker.
 `["http://*/*", "https://*/*"]` (`src/manifest/manifest.ts:111`), granted
 per-origin at runtime. New built-in products are `BUILT_IN_SURFACES` rows, not
 new static permissions.
+
+#### Amendments (Slice 4)
+
+Slice 4 shipped Confluence and PagerDuty largely as designed, with three
+corrections the evidence gathered while building it forced, plus one gap that
+belongs to the gateway rather than to this design.
+
+- **Amendment 1 — the "no lane" guarantee is a derived array, not a
+  hand-written union.** §2 said the absence of a lane on `doc`/`incident` must
+  be "expressed in the type system, not in a comment", but the spec's own
+  `SurfaceKind` was still a plain union literal. A plain union lets a second,
+  hand-written kind list — `lane-rules.test.ts`'s `ALL_KINDS` — typecheck
+  while incomplete, which is exactly how a new kind could have arrived with no
+  lane-coverage test at all. `SurfaceKind` is now derived from a
+  `SURFACE_KINDS` `as const` array, the same pattern `PRODUCT_IDS` already
+  used, so every `Record<SurfaceKind, …>` — including the test's own kind
+  list — is a compile error the day it falls behind.
+- **Amendment 2 — `excludedLabels` is per rule, not one shared list.** §3
+  proposed one denylist (`www`, `status`, `support`, `blog`, `docs`, `help`)
+  applied to every `suffix` rule. `www.atlassian.net` is verified live as a
+  real Jira Cloud tenant — it 302s to `id.atlassian.com` carrying a live site
+  ARI — so a shared list containing `www` would have made Jira stop
+  recognising a genuine customer's site the moment Confluence needed a
+  denylist for something else. The set of subdomains a vendor reserves is a
+  fact about that vendor, so `excludedLabels` lives on the `HostRule` that
+  needs it, and Confluence's own rule declares none.
+- **Amendment 3 — the split is longest-matching-prefix via `matchOrigin`, not
+  registry order.** §1 said two products sharing a host "resolve through
+  `pathPrefix` plus registry order". Registry order does no such thing:
+  `suffixEntry` turns every matching `suffix` rule into a candidate
+  `ConfiguredOrigin` carrying its own `pathPrefix` and hands all of them to
+  `matchOrigin`, which already picks the longest matching prefix for
+  self-hosted siloing. Reusing it gets the `${prefix}/` boundary check for
+  free — the reason `/wiki` cannot claim `/wikifoo` — and removes
+  `RULE_BY_PRODUCT`'s key order from the load-bearing set entirely; the
+  ordering test in `recognise.test.ts` asserts the outcome on both sides of
+  the split rather than the order of the table.
+
+**A known gap, and it is the gateway's to close.** `confluence-sync.ts` indexes
+a page under `<site>/wiki/pages/viewpage.action?pageId=<id>` — a valid
+Confluence address, but not one Cloud's own UI ever serves; Cloud renders
+`/wiki/spaces/<KEY>/pages/<id>/<Title>`. `GET /v1/items/resolve`'s match
+ladder is resolve-key based (exact, query-stripped, then trimmed trailing path
+segments) and cannot bridge the two shapes, so a Confluence page this client
+recognises correctly still reports *not indexed* even when the gateway holds
+it — Related still answers, because it matches on the title, not the URL. The
+fix is upstream and outside this design's scope: preferring the Confluence
+API's own `_links.webui` (site-relative, already the shape a browser shows)
+over the constructed `viewpage.action` URL, tracked as a follow-up in the
+gateway repo.
 
 ### 4 · The connector-health gate
 

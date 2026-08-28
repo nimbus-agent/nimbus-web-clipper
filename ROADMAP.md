@@ -1503,10 +1503,11 @@ another repo — ideal first contributions:
   `ProductRule` carries its display name, its dashboard-scope noun (`corpus`)
   and its self-hosted-picker eligibility (`selfHostable`), so nothing derives
   from a separate table anymore. For an `origin`-kind host (a SaaS product
-  recognised on a fixed hostname — every shipped product except Jira, which is
-  `suffix`-kind), that is not the whole cost: it also forces a conscious edit
-  to **seven literal test lists**, pinned on purpose so a product cannot land
-  silently under-tested: `BUILT_IN_ORIGINS`, `BUILT_IN_SURFACES`, its
+  recognised on a fixed hostname — every shipped product except Jira,
+  Confluence and PagerDuty, which are `suffix`-kind), that is not the whole
+  cost: it also forces a conscious edit to **seven literal test lists**, pinned
+  on purpose so a product cannot land silently under-tested:
+  `BUILT_IN_ORIGINS`, `BUILT_IN_SURFACES`, its
   built-in-row count, and `PRODUCT_SERVICE_ID` (all in
   `recognise-registry.test.ts`); the per-product `pages` fixture in
   `recognise.test.ts`'s "every surface pattern matches a real page URL" case;
