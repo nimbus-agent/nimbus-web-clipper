@@ -25,9 +25,14 @@ export const BUILT_IN_ORIGINS: readonly ConfiguredOrigin[] = PRODUCT_RULES.flatM
  *
  * DERIVED from the registry's host rules. An `origin` host's label is its
  * hostname and its pattern is `hostPermissionPattern(origin)`; a `suffix` host
- * has no origin at all, so it labels itself `*<suffix>` and carries the wildcard
- * pattern its rule declares. A product with no built-in host (Jenkins)
- * contributes no row.
+ * has no origin at all, so it labels itself `*<suffix>` — plus its `pathPrefix`
+ * when it declares one, e.g. `*.atlassian.net/wiki` — and carries the wildcard
+ * pattern its rule declares. The prefix has to be part of the label because two
+ * products can share one suffix (Confluence and Jira both on
+ * `*.atlassian.net`): without it their rows would carry identical labels, and
+ * `options.ts` routes a grant/revoke click by matching the clicked row's label,
+ * so it could not tell the two rows apart. A product with no built-in host
+ * (Jenkins) contributes no row.
  */
 export interface BuiltInSurface {
   /** Shown in Options. Not an origin: Jira Cloud's is a host pattern. */
@@ -44,7 +49,21 @@ export const BUILT_IN_SURFACES: readonly BuiltInSurface[] = PRODUCT_RULES.flatMa
           product: rule.product,
           pattern: hostPermissionPattern(host.origin) ?? host.origin,
         }
-      : { label: `*${host.suffix}`, product: rule.product, pattern: host.pattern },
+      : {
+          // The prefix is part of the LABEL because two products can share one
+          // suffix, and `options.ts` routes a grant/revoke click by finding the
+          // row whose label equals the clicked row's — identical labels would
+          // route one product's button to the other's pattern. The `pattern` is
+          // deliberately NOT prefixed: a WebExtension host permission is
+          // host-scoped, so both rows share one grant, and revoking from either
+          // withdraws page access for both. `sharedHostNote` in
+          // `surfaces-view.ts` says so on the revoke — it keys built-in rows by
+          // this `pattern` precisely because their `origin` is the label above
+          // and does not parse as a URL.
+          label: `*${host.suffix}${host.pathPrefix ?? ""}`,
+          product: rule.product,
+          pattern: host.pattern,
+        },
   ),
 );
 
@@ -53,6 +72,8 @@ const KIND_NAMES: Record<SurfaceKind, string> = {
   build: "build",
   issue: "issue",
   home: "dashboard",
+  doc: "doc",
+  incident: "incident",
 };
 
 function labelFor(product: Product, kind: SurfaceKind): string {
@@ -69,16 +90,38 @@ function labelFor(product: Product, kind: SurfaceKind): string {
  * is its own host, so the hosts cannot be enumerated and cannot appear in
  * `BUILT_IN_ORIGINS`. Checked only AFTER `matchOrigin`, so a user-configured
  * entry on such a host still wins.
+ *
+ * Two products may claim one suffix (Confluence owns `/wiki` on the host Jira
+ * takes the rest of). Rather than settle that by iteration order, every matching
+ * rule becomes a candidate `ConfiguredOrigin` carrying its own `pathPrefix`, and
+ * `matchOrigin` picks the longest matching prefix — the same longest-prefix rule
+ * that already settles two self-hosted products on one host, and the same one
+ * whose `${prefix}/` boundary check stops `/wiki` matching `/wikifoo`.
  */
 function suffixEntry(url: URL): ConfiguredOrigin | null {
+  // The leftmost label only. `split(".")[0]` on a hostname is always present and
+  // always lower-case, so no normalisation is needed on either side.
+  const [label = ""] = url.hostname.split(".");
+  const candidates: ConfiguredOrigin[] = [];
   for (const rule of PRODUCT_RULES) {
     for (const host of rule.hosts) {
-      if (host.kind === "suffix" && url.hostname.endsWith(host.suffix)) {
-        return { origin: url.origin, product: rule.product };
+      if (host.kind !== "suffix" || !url.hostname.endsWith(host.suffix)) {
+        continue;
       }
+      if (host.excludedLabels?.includes(label) === true) {
+        continue;
+      }
+      // Shorter than the vendor's documented minimum subdomain length, so the
+      // label cannot be a customer at all. Checked alongside the denylist rather
+      // than inside it: same effect, but derived from a published rule instead of
+      // from somebody having heard of the name.
+      if (host.minTenantLabelLength !== undefined && label.length < host.minTenantLabelLength) {
+        continue;
+      }
+      candidates.push({ origin: `${url.origin}${host.pathPrefix ?? ""}`, product: rule.product });
     }
   }
-  return null;
+  return matchOrigin(candidates, url);
 }
 
 export function recognise(url: string, origins: readonly ConfiguredOrigin[]): Recognition {

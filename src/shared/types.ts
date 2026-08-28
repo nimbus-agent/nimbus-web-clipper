@@ -144,11 +144,13 @@ export interface CueState {
 export const PRODUCT_IDS = [
   "bitbucket",
   "circleci",
+  "confluence",
   "github",
   "gitlab",
   "jenkins",
   "jira",
   "linear",
+  "pagerduty",
 ] as const;
 
 /** A product whose pages the client can recognise. */
@@ -162,8 +164,21 @@ export type Product = (typeof PRODUCT_IDS)[number];
  * because the service-scoped agents (`catchup`/`decisions`/`ownership`) answer
  * about a whole connector, so they need a page whose scope matches that answer.
  * See LANE_RULES below.
+ *
+ * `doc` and `incident` carry NO lane at all — `LANE_RULES` names `pr` and `home`
+ * only, so `laneBelongsOnSurface` is false for every lane on both. That is the
+ * design, not an omission: a Confluence page and a PagerDuty incident get the
+ * header, freshness, Related and the `glossary` term lane, exactly as a Jira
+ * issue does today.
+ *
+ * Keep this `as const` and keep `SurfaceKind` derived from it. A hand-written
+ * second copy of the union is what let `lane-rules.test.ts` hold an incomplete
+ * `ALL_KINDS` list that still typechecked — the same drift `PRODUCT_IDS` exists
+ * to prevent one union over.
  */
-export type SurfaceKind = "pr" | "build" | "issue" | "home";
+export const SURFACE_KINDS = ["pr", "build", "issue", "home", "doc", "incident"] as const;
+
+export type SurfaceKind = (typeof SURFACE_KINDS)[number];
 
 /**
  * An origin whose pages may be recognised, declared by the user (or built in for

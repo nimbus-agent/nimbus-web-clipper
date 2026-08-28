@@ -287,10 +287,12 @@ describe("BUILT_IN_SURFACES", () => {
     const pages: Record<string, string> = {
       bitbucket: "https://bitbucket.org/acme/web/pull-requests/7",
       circleci: "https://app.circleci.com/pipelines/github/acme/web/482",
+      confluence: "https://acme.atlassian.net/wiki/spaces/ENG/pages/22970764/Getting+Started",
       github: "https://github.com/acme/web/pull/482",
       gitlab: "https://gitlab.com/acme/web/-/merge_requests/9",
       jira: "https://acme.atlassian.net/browse/ABC-1",
       linear: "https://linear.app/acme/issue/ENG-123/fix-the-thing",
+      pagerduty: "https://acmeco.pagerduty.com/incidents/PT4KHLK",
     };
     for (const surface of BUILT_IN_SURFACES) {
       const page = pages[surface.product];
@@ -617,6 +619,293 @@ describe("Linear", () => {
   });
 });
 
+describe("Confluence", () => {
+  it("recognises a page", () => {
+    // The shape verified live on 2026-08-28 against
+    // lf-toip.atlassian.net/wiki/spaces/HOME/pages/22970764/Getting+Started+with+Confluence+Wiki
+    expectItem("https://acme.atlassian.net/wiki/spaces/ENG/pages/22970764/Getting+Started", NONE, {
+      product: "confluence",
+      kind: "doc",
+      ref: "ENG/22970764",
+      resolveUrl: "https://acme.atlassian.net/wiki/spaces/ENG/pages/22970764/Getting+Started",
+    });
+  });
+
+  it("gives a page one identity whether or not the title segment is present", () => {
+    // Confluence serves the same page with and without the trailing title, and
+    // rewrites the title when the page is renamed. `sameItem` keys on the ref,
+    // so both must produce the same one or the panel would announce a change
+    // the user cannot see.
+    const withTitle = recognise(
+      "https://acme.atlassian.net/wiki/spaces/ENG/pages/22970764/Getting+Started",
+      NONE,
+    );
+    const without = recognise("https://acme.atlassian.net/wiki/spaces/ENG/pages/22970764", NONE);
+    expect(sameItem(withTitle, without)).toBe(true);
+  });
+
+  it("recognises a personal space, whose key is an account id", () => {
+    // Personal spaces are `~<accountId>`. The space key is accepted as any
+    // non-empty segment rather than pattern-matched: the `spaces/<x>/pages/<digits>`
+    // structure is already specific, and a key pattern would only add false
+    // negatives on a shape Atlassian chose, not ours.
+    expectItem("https://acme.atlassian.net/wiki/spaces/~712020abc/pages/551/Notes", NONE, {
+      product: "confluence",
+      kind: "doc",
+      ref: "~712020abc/551",
+      resolveUrl: "https://acme.atlassian.net/wiki/spaces/~712020abc/pages/551/Notes",
+    });
+  });
+
+  it("recognises all three dashboards", () => {
+    // `/wiki/home` verified live (rtulv.atlassian.net/wiki/home);
+    // `/wiki/dashboard.action` is documented in Atlassian Support's
+    // "Change the landing page". The bare `/wiki` is the product root.
+    for (const url of [
+      "https://acme.atlassian.net/wiki",
+      "https://acme.atlassian.net/wiki/",
+      "https://acme.atlassian.net/wiki/home",
+      "https://acme.atlassian.net/wiki/dashboard.action",
+    ]) {
+      const r = recognise(url, NONE);
+      expect(r.ok && r.kind, url).toBe("home");
+      expect(r.ok && r.product, url).toBe("confluence");
+    }
+  });
+
+  it("labels a page a doc and offers it no lane", () => {
+    const r = recognise("https://acme.atlassian.net/wiki/spaces/ENG/pages/1/T", NONE);
+    expect(r.ok && r.label).toBe("Confluence doc");
+  });
+
+  it("declines paths it does not model", () => {
+    // A space overview and a blog post are real Confluence pages that this
+    // matcher deliberately does not claim; a non-numeric page id is a guess it
+    // refuses. All three are misses, asserted with `reason` so the test cannot
+    // pass by the host rule vanishing.
+    for (const url of [
+      // The bare spaces LIST, with no key at all: the one URL for which
+      // `spaceKey !== undefined` is the deciding condition — every other shape
+      // here is settled by `pages === "pages"` before it is reached.
+      "https://acme.atlassian.net/wiki/spaces",
+      "https://acme.atlassian.net/wiki/spaces/ENG",
+      "https://acme.atlassian.net/wiki/spaces/ENG/overview",
+      "https://acme.atlassian.net/wiki/spaces/ENG/blog/2020/01/01/551/Post",
+      "https://acme.atlassian.net/wiki/spaces/ENG/pages/not-a-number/T",
+      "https://acme.atlassian.net/wiki/people/712020abc",
+    ]) {
+      expect(recognise(url, NONE), url).toEqual({ ok: false, reason: "unrecognised-path" });
+    }
+  });
+
+  it("does not let the /wiki prefix bleed into a neighbouring path", () => {
+    // matchOrigin's `${prefix}/` boundary check. `/wikifoo` is Jira's, not
+    // Confluence's — and Jira does not model it either, so it is a miss on
+    // Jira's matcher rather than a Confluence page.
+    expect(recognise("https://acme.atlassian.net/wikifoo/spaces/ENG/pages/1/T", NONE)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+  });
+});
+
+describe("Confluence and Jira share one tenant host", () => {
+  it("gives /wiki to Confluence and everything else to Jira", () => {
+    expectItem("https://acme.atlassian.net/wiki/spaces/ENG/pages/1/T", NONE, {
+      product: "confluence",
+      kind: "doc",
+      ref: "ENG/1",
+      resolveUrl: "https://acme.atlassian.net/wiki/spaces/ENG/pages/1/T",
+    });
+    expectItem("https://acme.atlassian.net/browse/ENG-1", NONE, {
+      product: "jira",
+      kind: "issue",
+      ref: "ENG-1",
+      resolveUrl: "https://acme.atlassian.net/browse/ENG-1",
+    });
+    const jiraHome = recognise("https://acme.atlassian.net/jira/your-work", NONE);
+    expect(jiraHome.ok && jiraHome.product).toBe("jira");
+  });
+
+  it("is decided by the longest path prefix, not by registry order", () => {
+    // The ordering assertion the registry's doc comment asked for when this
+    // slice landed. It must hold regardless of RULE_BY_PRODUCT's key order, so
+    // it asserts the OUTCOME on both sides of the split rather than the order of
+    // the table — a test that read the table would pass for a wrong table.
+    const wiki = recognise("https://acme.atlassian.net/wiki/home", NONE);
+    const jira = recognise("https://acme.atlassian.net/secure/Dashboard.jspa", NONE);
+    expect(wiki.ok && wiki.product).toBe("confluence");
+    expect(jira.ok && jira.product).toBe("jira");
+  });
+
+  it("keeps a user's Jira Server entry from claiming Confluence-shaped paths", () => {
+    // The registry's `hosts` list governs BUILT-IN hosts only; it never widens
+    // what a user's own entry matches. A Confluence-shaped path under a
+    // Jira-only entry stays unrecognised rather than becoming a Confluence page.
+    const jiraOnly: readonly ConfiguredOrigin[] = [
+      { origin: "https://corp.example/jira", product: "jira" },
+    ];
+    expect(recognise("https://corp.example/jira/wiki/spaces/ENG/pages/1/T", jiraOnly)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+  });
+
+  it("keeps two self-hosted products on one host siloed", () => {
+    // matchOrigin's longest-prefix rule, pinned from the recogniser's side.
+    const both: readonly ConfiguredOrigin[] = [
+      { origin: "https://internal.corp/jira", product: "jira" },
+      { origin: "https://internal.corp/wiki", product: "confluence" },
+    ];
+    expectItem("https://internal.corp/jira/browse/ENG-1", both, {
+      product: "jira",
+      kind: "issue",
+      ref: "ENG-1",
+      resolveUrl: "https://internal.corp/jira/browse/ENG-1",
+    });
+    expectItem("https://internal.corp/wiki/spaces/ENG/pages/1/T", both, {
+      product: "confluence",
+      kind: "doc",
+      ref: "ENG/1",
+      resolveUrl: "https://internal.corp/wiki/spaces/ENG/pages/1/T",
+    });
+    // Neither matches the other's paths.
+    expect(recognise("https://internal.corp/jira/spaces/ENG/pages/1/T", both).ok).toBe(false);
+    expect(recognise("https://internal.corp/wiki/browse/ENG-1", both).ok).toBe(false);
+  });
+});
+
+describe("PagerDuty", () => {
+  it("recognises an incident", () => {
+    expectItem("https://acmeco.pagerduty.com/incidents/PT4KHLK", NONE, {
+      product: "pagerduty",
+      kind: "incident",
+      ref: "PT4KHLK",
+      resolveUrl: "https://acmeco.pagerduty.com/incidents/PT4KHLK",
+    });
+  });
+
+  it("recognises an EU-region tenant", () => {
+    // EU accounts are `<sub>.eu.pagerduty.com` (PagerDuty Support, "Service
+    // Regions"). The suffix covers them and the leftmost label is still the
+    // tenant, so nothing special is needed — but it is pinned because a future
+    // tightening of the host rule could quietly drop a whole region.
+    expectItem("https://acmeco.eu.pagerduty.com/incidents/PT4KHLK", NONE, {
+      product: "pagerduty",
+      kind: "incident",
+      ref: "PT4KHLK",
+      resolveUrl: "https://acmeco.eu.pagerduty.com/incidents/PT4KHLK",
+    });
+  });
+
+  it("recognises the incidents dashboard", () => {
+    const r = recognise("https://acmeco.pagerduty.com/incidents", NONE);
+    expect(r.ok && r.kind).toBe("home");
+    expect(r.ok && r.product).toBe("pagerduty");
+  });
+
+  it("labels an incident an incident and offers it no lane", () => {
+    const r = recognise("https://acmeco.pagerduty.com/incidents/PT4KHLK", NONE);
+    expect(r.ok && r.label).toBe("PagerDuty incident");
+  });
+
+  it("does not claim PagerDuty's own status page — the slice-3 defect in suffix form", () => {
+    // Each of these is a host PagerDuty publishes for ITSELF, and each matches
+    // the `.pagerduty.com` suffix, so a specific path is necessary and NOT
+    // sufficient — the host has to be constrained too. This is the exact shape of
+    // the linear.app/docs/inbox defect: a host being right does not make the page
+    // the product's own.
+    //
+    // What this pins is the HOST-RESOLUTION refusal, which is the whole defence:
+    // the reason is `unknown-host`, not `unrecognised-path`, because
+    // `excludedLabels` (and `minTenantLabelLength`, which is what refuses `www`)
+    // is checked in `suffixEntry` before any matcher sees the path. So one entry
+    // covers the item arm and the dashboard arm at once, rather than each matcher
+    // having to remember it — and nothing downstream re-checks it, so an id shape
+    // is not a backstop here.
+    //
+    // `status.pagerduty.com` is PagerDuty's own status-page product, NOT an
+    // Atlassian Statuspage (`/api/v2/summary.json` is a 404 there) and its
+    // incident routes are `/incident_details/:id`; every path on it answers 200
+    // from one SPA shell, so a fetch against it proves nothing either way. The
+    // `/incidents/<id>` URL below is kept as an adversarial input rather than as
+    // a claim that the page exists.
+    for (const url of [
+      "https://status.pagerduty.com/incidents",
+      "https://status.pagerduty.com/incidents/hbjm8pfyzs7q",
+      "https://status.pagerduty.com/",
+      "https://www.pagerduty.com/incidents",
+      "https://support.pagerduty.com/incidents",
+      "https://developer.pagerduty.com/incidents",
+      "https://community.pagerduty.com/incidents",
+      "https://response.pagerduty.com/incidents",
+    ]) {
+      expect(recognise(url, NONE), url).toEqual({ ok: false, reason: "unknown-host" });
+    }
+  });
+
+  it("declines a lower-case id even on a genuine tenant host", () => {
+    // NOT a backstop for the denylist — PagerDuty's own status page mints
+    // upper-case `P`-prefixed ids (`PV31RQ5`), the same shape as a tenant's, so
+    // the id pattern would let a missed vendor host straight through. What it
+    // buys is narrowness on a host that IS a tenant: a segment under
+    // `/incidents/` that is not an id shape at all must not become an incident
+    // header. Every documented PagerDuty id is upper-case alphanumeric.
+    expect(recognise("https://acmeco.pagerduty.com/incidents/hbjm8pfyzs7q", NONE)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+  });
+
+  it("refuses a label too short to be an account, without it being listed", () => {
+    // PagerDuty Support's "Account Subdomains": "There is a minimum of five
+    // characters for PagerDuty subdomains." `app.pagerduty.com` is PagerDuty's
+    // DOCUMENTED login host and `go.pagerduty.com` a live first-party redirector;
+    // neither appears in `excludedLabels`, and neither has to, because
+    // `minTenantLabelLength` refuses every leftmost label under five characters.
+    // That is the half of the guard that covers hosts nobody has enumerated.
+    //
+    // `unknown-host` again, for the same reason as the denylist above: the check
+    // is at host resolution, before the matcher.
+    for (const url of [
+      "https://app.pagerduty.com/incidents",
+      "https://app.pagerduty.com/incidents/PT4KHLK",
+      "https://go.pagerduty.com/incidents",
+      "https://api.pagerduty.com/incidents",
+      "https://help.pagerduty.com/incidents",
+    ]) {
+      expect(recognise(url, NONE), url).toEqual({ ok: false, reason: "unknown-host" });
+    }
+  });
+
+  it("still recognises a tenant of exactly the documented minimum length", () => {
+    // The floor is five, so a five-character account is a real customer and must
+    // survive the rule that removes `app` and `go`. Pinned because an off-by-one
+    // here silences every shortest-possible tenant with no other symptom.
+    expectItem("https://acmes.pagerduty.com/incidents/PT4KHLK", NONE, {
+      product: "pagerduty",
+      kind: "incident",
+      ref: "PT4KHLK",
+      resolveUrl: "https://acmes.pagerduty.com/incidents/PT4KHLK",
+    });
+  });
+
+  it("declines paths it does not model, and the apex", () => {
+    for (const url of [
+      "https://acmeco.pagerduty.com/service-directory",
+      "https://acmeco.pagerduty.com/incidents/new",
+      "https://acmeco.pagerduty.com/",
+    ]) {
+      expect(recognise(url, NONE), url).toEqual({ ok: false, reason: "unrecognised-path" });
+    }
+    // The apex is not a tenant. `endsWith(".pagerduty.com")` is false for it.
+    expect(recognise("https://pagerduty.com/incidents/PT4KHLK", NONE)).toEqual({
+      ok: false,
+      reason: "unknown-host",
+    });
+  });
+});
+
 describe("a built-in suffix host is matched by suffix, not by origin", () => {
   it("recognises any Jira Cloud tenant", () => {
     expectItem("https://acme.atlassian.net/browse/ABC-1", NONE, {
@@ -637,5 +926,19 @@ describe("a built-in suffix host is matched by suffix, not by origin", () => {
   it("does not recognise the apex domain as a tenant", () => {
     // `atlassian.net` itself is not somebody's Jira. Subdomains only.
     expect(recognise("https://atlassian.net/browse/ABC-1", NONE).ok).toBe(false);
+  });
+
+  it("does not treat `www` on a tenant host as a vendor subdomain", () => {
+    // Verified 2026-08-28: www.atlassian.net is a REAL Jira Cloud site — it 302s
+    // to id.atlassian.com carrying a live site ARI. It is the reason
+    // `excludedLabels` lives on the rule that needs it instead of being one
+    // shared list applied to every suffix host: a shared list containing "www"
+    // would make Jira stop recognising a real customer.
+    expectItem("https://www.atlassian.net/browse/ENG-1", NONE, {
+      product: "jira",
+      kind: "issue",
+      ref: "ENG-1",
+      resolveUrl: "https://www.atlassian.net/browse/ENG-1",
+    });
   });
 });

@@ -4,10 +4,13 @@ import {
   AGENT_LANES,
   LANE_RULES,
   laneBelongsOnSurface,
-  type SurfaceKind,
+  SURFACE_KINDS,
 } from "../../src/shared/types.ts";
 
-const ALL_KINDS: readonly SurfaceKind[] = ["pr", "build", "issue", "home"];
+// DERIVED, not hand-written. A literal list here typechecks while incomplete,
+// so a new SurfaceKind would silently escape every test in this file — which is
+// exactly how `doc` and `incident` would have arrived with no coverage at all.
+const ALL_KINDS = SURFACE_KINDS;
 
 describe("LANE_RULES", () => {
   it("covers every lane", () => {
@@ -38,8 +41,12 @@ describe("LANE_RULES", () => {
     expect(LANE_RULES.expert).toEqual({ input: "page", surfaces: ["pr"] });
   });
 
-  it("offers no page lane on a build or an issue", () => {
-    for (const kind of ["build", "issue"] as const) {
+  it("offers no page lane on any item surface — only a dashboard and a PR carry lanes", () => {
+    // `doc` and `incident` join `build` and `issue` here rather than in a comment:
+    // LANE_RULES names `pr` and `home` only, so a Confluence page and a PagerDuty
+    // incident get the header, freshness, Related and the `glossary` term lane —
+    // and no service lane claiming to answer about the whole connector.
+    for (const kind of ["build", "issue", "doc", "incident"] as const) {
       expect(AGENT_LANES.filter((lane) => laneBelongsOnSurface(lane, kind))).toEqual([]);
     }
   });
@@ -55,6 +62,12 @@ describe("LANE_RULES", () => {
     // widen impact's and expert's too, or explain why the three diverged.
     expect(LANE_RULES.why).toEqual(LANE_RULES.impact);
     expect(LANE_RULES.why).toEqual(LANE_RULES.expert);
+  });
+
+  it("names every surface kind the recogniser can produce", () => {
+    // Pins the derivation itself: if `SurfaceKind` ever stops being derived from
+    // `SURFACE_KINDS`, this list and the union can drift apart again.
+    expect([...SURFACE_KINDS]).toEqual(["pr", "build", "issue", "home", "doc", "incident"]);
   });
 });
 

@@ -366,6 +366,7 @@ describe("recognised surfaces", () => {
     expect([...select("surface-product").options].map((o) => o.value)).toEqual([
       "bitbucket",
       "circleci",
+      "confluence",
       "github",
       "gitlab",
       "jenkins",
@@ -527,6 +528,25 @@ describe("built-in surfaces in the list", () => {
     expect(harness.permissionsRequest).toHaveBeenCalledWith({
       origins: ["https://*.atlassian.net/*"],
     });
+  });
+
+  test("revoking Confluence warns that Jira loses page access too", async () => {
+    // Confluence and Jira are the first built-in pair to SHARE one host
+    // permission (`https://*.atlassian.net/*`), so revoking either row withdraws
+    // page access for both. The note has to say so — and it nearly did not: a
+    // built-in row's `origin` is its display label (`*.atlassian.net/wiki`),
+    // which `splitOrigin` cannot parse, so keying siblings off the parsed host
+    // alone found none and the warning silently never fired.
+    harness = installChromeMock();
+    harness.grantedOrigins.add("https://*.atlassian.net/*");
+    await bootOptions();
+
+    clickFor("revoke", "*.atlassian.net/wiki");
+    await flush();
+
+    const status = el("surface-status").textContent ?? "";
+    expect(status).toContain("Page access is granted per host");
+    expect(status).toContain("*.atlassian.net");
   });
 
   test("the remove action is inert for a built-in row even if a crafted click reaches it", async () => {

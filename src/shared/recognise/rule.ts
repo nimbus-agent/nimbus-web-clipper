@@ -37,6 +37,63 @@ export type HostRule =
        */
       readonly suffix: `.${string}`;
       readonly pattern: string;
+      /**
+       * The path prefix this product owns on a host it SHARES with another
+       * product. Confluence is `/wiki` on the `*.atlassian.net` host Jira also
+       * claims; Jira declares no prefix and takes everything else.
+       *
+       * `suffixEntry` appends this to the page's origin and hands the candidates
+       * to `matchOrigin`, so the winner is the LONGEST matching prefix — the same
+       * rule that already settles two self-hosted products on one host, and the
+       * same rule that gives `/wiki` its `${prefix}/` boundary check so it cannot
+       * claim `/wikifoo`. Registry key order does not decide this and must not be
+       * made to.
+       */
+      readonly pathPrefix?: string;
+      /**
+       * Leftmost host labels that are the VENDOR's own subdomains, not tenants.
+       *
+       * A suffix matches every subdomain, including the ones a vendor publishes
+       * for itself, and those hosts serve the product's own paths:
+       * `status.pagerduty.com/incidents` matches PagerDuty's suffix and a
+       * recognised dashboard path at once. So a specific path is necessary and
+       * not sufficient — the host has to be constrained too, and this is the
+       * only place that happens. `suffixEntry` checks it BEFORE any matcher
+       * runs, which is why one entry covers the item arm and the dashboard arm
+       * together.
+       *
+       * PER-RULE, and that is load-bearing rather than incidental: the names a
+       * vendor reserves are a fact about that vendor. `www.atlassian.net` is a
+       * REAL Jira Cloud site, so one shared list containing "www" would break a
+       * genuine tenant. `.atlassian.net` therefore declares none.
+       *
+       * A denylist cannot be exhaustive — tenant labels are arbitrary customer
+       * strings with no structure to allowlist against — and nothing downstream
+       * makes up for what it misses. A missed vendor label is treated as a
+       * tenant, and the product's own matcher is then the last thing standing
+       * between that page and a wrong header, so do not reason about an id
+       * pattern as a second line of defence: a vendor's own ids look like the
+       * product's own. Where the vendor documents a minimum subdomain length,
+       * `minTenantLabelLength` carries the short labels structurally and this
+       * list only has to name the long ones.
+       */
+      readonly excludedLabels?: readonly string[];
+      /**
+       * The vendor's DOCUMENTED minimum subdomain length. A leftmost label
+       * shorter than this cannot be a customer tenant, so `suffixEntry` refuses
+       * the host — the same effect as an `excludedLabels` entry, but derived
+       * from a published rule rather than from someone having heard of the name,
+       * so it also refuses the short vendor hosts nobody has enumerated.
+       *
+       * Declare it ONLY where the vendor publishes the rule. PagerDuty does
+       * (Support, "Account Subdomains": "a minimum of five characters"), so its
+       * rule says 5 and `go`, `app`, `api` and `www` need no entry in the list.
+       * Atlassian publishes no such rule and `www.atlassian.net` is a real
+       * tenant, so `.atlassian.net` declares nothing — a guessed floor there
+       * would silence a genuine customer's site, which is the failure this whole
+       * mechanism is trying to avoid in the other direction.
+       */
+      readonly minTenantLabelLength?: number;
     };
 
 /** One product, as the registry sees it. */

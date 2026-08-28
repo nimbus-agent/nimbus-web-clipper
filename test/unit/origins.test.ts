@@ -230,11 +230,17 @@ describe("isProduct is derived from the declared product ids", () => {
   });
 
   it("rejects a product this client does not recognise yet", () => {
-    // "confluence" is a real gateway connector and a planned product (slice 4,
-    // sharing Jira Cloud's `*.atlassian.net` host — see registry.ts). It must be
-    // false TODAY — otherwise the guard is accepting arbitrary strings and the
-    // stored-origin validation it backs is decorative.
-    expect(isProduct("confluence")).toBe(false);
+    // "slack" is a real bundled gateway connector (see
+    // Nimbus/packages/gateway/src/connectors/bundled-connector-registry.ts) but
+    // no roadmap slice plans a Slack recogniser — not for want of a URL to
+    // recognise: slack-sync.ts stores `<team>.slack.com/archives/<C…>/p<ts>` as
+    // each message's canonicalUrl, structurally the same tenant-suffix shape as
+    // PagerDuty's. It is simply not planned, which makes it the right subject
+    // here: "confluence" and "pagerduty" were this same placeholder in earlier
+    // slices until each got a rule. It must be false TODAY — otherwise the guard
+    // is accepting arbitrary strings and the stored-origin validation it backs
+    // is decorative.
+    expect(isProduct("slack")).toBe(false);
     expect(isProduct("")).toBe(false);
     expect(isProduct(undefined)).toBe(false);
   });

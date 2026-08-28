@@ -44,6 +44,49 @@ describe("the registry covers exactly the declared products", () => {
     const ids = PRODUCT_RULES.map((r) => r.serviceId);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it("declares every suffix path prefix as a rooted, unslashed path", () => {
+    // `suffixEntry` appends this to `url.origin` and hands the result to
+    // `splitOrigin`, which strips trailing slashes — so a prefix like "wiki" or
+    // "/wiki/" would either not be a path at all or normalise to something the
+    // author did not write. Neither is a compile error, so it is pinned here.
+    for (const rule of PRODUCT_RULES) {
+      for (const host of rule.hosts) {
+        if (host.kind !== "suffix" || host.pathPrefix === undefined) continue;
+        expect(host.pathPrefix.startsWith("/")).toBe(true);
+        expect(host.pathPrefix.endsWith("/")).toBe(false);
+      }
+    }
+  });
+
+  it("declares every minimum tenant label length as a positive integer", () => {
+    // A vendor's documented minimum subdomain length. `suffixEntry` refuses any
+    // shorter leftmost label, so a 0 or a fraction here is a guard that quietly
+    // does nothing, and a negative one is nonsense that still typechecks.
+    for (const rule of PRODUCT_RULES) {
+      for (const host of rule.hosts) {
+        if (host.kind !== "suffix" || host.minTenantLabelLength === undefined) continue;
+        expect(Number.isInteger(host.minTenantLabelLength)).toBe(true);
+        expect(host.minTenantLabelLength).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("declares every excluded label as a bare lower-case host label", () => {
+    // Compared against `url.hostname.split(".")[0]`, which is always lower-case
+    // and never contains a dot. "Status" or "status.pagerduty.com" here would
+    // silently never match, leaving the guard looking present and doing nothing.
+    for (const rule of PRODUCT_RULES) {
+      for (const host of rule.hosts) {
+        if (host.kind !== "suffix" || host.excludedLabels === undefined) continue;
+        for (const label of host.excludedLabels) {
+          expect(label).toBe(label.toLowerCase());
+          expect(label).not.toBe("");
+          expect(label).not.toContain(".");
+        }
+      }
+    }
+  });
 });
 
 describe("the built-in tables are derived, not copied", () => {
@@ -67,10 +110,16 @@ describe("the built-in tables are derived, not copied", () => {
     expect([...BUILT_IN_SURFACES]).toEqual([
       { label: "bitbucket.org", product: "bitbucket", pattern: "https://bitbucket.org/*" },
       { label: "app.circleci.com", product: "circleci", pattern: "https://app.circleci.com/*" },
+      {
+        label: "*.atlassian.net/wiki",
+        product: "confluence",
+        pattern: "https://*.atlassian.net/*",
+      },
       { label: "github.com", product: "github", pattern: "https://github.com/*" },
       { label: "gitlab.com", product: "gitlab", pattern: "https://gitlab.com/*" },
       { label: "*.atlassian.net", product: "jira", pattern: "https://*.atlassian.net/*" },
       { label: "linear.app", product: "linear", pattern: "https://linear.app/*" },
+      { label: "*.pagerduty.com", product: "pagerduty", pattern: "https://*.pagerduty.com/*" },
     ]);
   });
 
@@ -95,10 +144,12 @@ describe("the built-in tables are derived, not copied", () => {
     expect(BUILT_IN_SURFACES.find((s) => s.product === "jenkins")).toBeUndefined();
   });
 
-  it("derives exactly six rows — no product invents one", () => {
-    // Jenkins has no built-in host, so seven products yield six rows. A derivation
-    // that mapped over products instead of over their hosts would produce seven.
-    expect(BUILT_IN_SURFACES).toHaveLength(6);
+  it("derives exactly eight rows — no product invents one", () => {
+    // Jenkins has no built-in host, so nine products yield eight rows. A
+    // derivation that mapped over products instead of over their hosts would
+    // produce nine. Two of these rows share one host: Confluence and Jira both
+    // live on *.atlassian.net, distinguished by Confluence's `/wiki` prefix.
+    expect(BUILT_IN_SURFACES).toHaveLength(8);
   });
 });
 
@@ -122,11 +173,13 @@ describe("PRODUCT_SERVICE_ID", () => {
     expect(PRODUCT_SERVICE_ID).toEqual({
       bitbucket: "bitbucket",
       circleci: "circleci",
+      confluence: "confluence",
       github: "github",
       gitlab: "gitlab",
       jenkins: "jenkins",
       jira: "jira",
       linear: "linear",
+      pagerduty: "pagerduty",
     });
   });
 });
@@ -139,6 +192,7 @@ describe("the self-hosted product picker is derived, not hand-written", () => {
     expect(SELF_HOSTABLE_PRODUCTS.map((r) => r.product)).toEqual([
       "bitbucket",
       "circleci",
+      "confluence",
       "github",
       "gitlab",
       "jenkins",
@@ -157,5 +211,11 @@ describe("the self-hosted product picker is derived, not hand-written", () => {
     // configure an origin that cannot exist.
     expect(SELF_HOSTABLE_PRODUCTS.map((r) => r.product)).not.toContain("linear");
     expect(RULE_BY_PRODUCT.linear.selfHostable).toBe(false);
+  });
+
+  it("keeps PagerDuty out of the self-hosted picker", () => {
+    // PagerDuty is SaaS-only. Offering it there invites the user to configure an
+    // origin that cannot exist.
+    expect(SELF_HOSTABLE_PRODUCTS.map((r) => r.product)).not.toContain("pagerduty");
   });
 });
