@@ -230,11 +230,14 @@ describe("isProduct is derived from the declared product ids", () => {
   });
 
   it("rejects a product this client does not recognise yet", () => {
-    // "pagerduty" is a real gateway connector and a planned product (slice 4,
-    // the task after Confluence — see registry.ts). It must be false TODAY —
-    // otherwise the guard is accepting arbitrary strings and the stored-origin
-    // validation it backs is decorative.
-    expect(isProduct("pagerduty")).toBe(false);
+    // "slack" is a real bundled gateway connector (see
+    // Nimbus/packages/gateway/src/connectors/bundled-connector-registry.ts) but
+    // no roadmap slice plans a Slack recogniser: Slack has no per-item browser
+    // URL the clipper could model, unlike "confluence" and "pagerduty", which
+    // were this same placeholder in earlier slices until each got a rule. It
+    // must be false TODAY — otherwise the guard is accepting arbitrary strings
+    // and the stored-origin validation it backs is decorative.
+    expect(isProduct("slack")).toBe(false);
     expect(isProduct("")).toBe(false);
     expect(isProduct(undefined)).toBe(false);
   });

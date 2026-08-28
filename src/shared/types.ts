@@ -150,6 +150,7 @@ export const PRODUCT_IDS = [
   "jenkins",
   "jira",
   "linear",
+  "pagerduty",
 ] as const;
 
 /** A product whose pages the client can recognise. */

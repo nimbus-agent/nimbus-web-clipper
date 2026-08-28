@@ -106,6 +106,7 @@ describe("the built-in tables are derived, not copied", () => {
       { label: "gitlab.com", product: "gitlab", pattern: "https://gitlab.com/*" },
       { label: "*.atlassian.net", product: "jira", pattern: "https://*.atlassian.net/*" },
       { label: "linear.app", product: "linear", pattern: "https://linear.app/*" },
+      { label: "*.pagerduty.com", product: "pagerduty", pattern: "https://*.pagerduty.com/*" },
     ]);
   });
 
@@ -130,12 +131,12 @@ describe("the built-in tables are derived, not copied", () => {
     expect(BUILT_IN_SURFACES.find((s) => s.product === "jenkins")).toBeUndefined();
   });
 
-  it("derives exactly seven rows — no product invents one", () => {
-    // Jenkins has no built-in host, so eight products yield seven rows. A
+  it("derives exactly eight rows — no product invents one", () => {
+    // Jenkins has no built-in host, so nine products yield eight rows. A
     // derivation that mapped over products instead of over their hosts would
-    // produce eight. Two of these rows share one host: Confluence and Jira both
+    // produce nine. Two of these rows share one host: Confluence and Jira both
     // live on *.atlassian.net, distinguished by Confluence's `/wiki` prefix.
-    expect(BUILT_IN_SURFACES).toHaveLength(7);
+    expect(BUILT_IN_SURFACES).toHaveLength(8);
   });
 });
 
@@ -165,6 +166,7 @@ describe("PRODUCT_SERVICE_ID", () => {
       jenkins: "jenkins",
       jira: "jira",
       linear: "linear",
+      pagerduty: "pagerduty",
     });
   });
 });
@@ -196,5 +198,11 @@ describe("the self-hosted product picker is derived, not hand-written", () => {
     // configure an origin that cannot exist.
     expect(SELF_HOSTABLE_PRODUCTS.map((r) => r.product)).not.toContain("linear");
     expect(RULE_BY_PRODUCT.linear.selfHostable).toBe(false);
+  });
+
+  it("keeps PagerDuty out of the self-hosted picker", () => {
+    // PagerDuty is SaaS-only. Offering it there invites the user to configure an
+    // origin that cannot exist.
+    expect(SELF_HOSTABLE_PRODUCTS.map((r) => r.product)).not.toContain("pagerduty");
   });
 });
