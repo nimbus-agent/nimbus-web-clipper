@@ -44,6 +44,36 @@ describe("the registry covers exactly the declared products", () => {
     const ids = PRODUCT_RULES.map((r) => r.serviceId);
     expect(new Set(ids).size).toBe(ids.length);
   });
+
+  it("declares every suffix path prefix as a rooted, unslashed path", () => {
+    // `suffixEntry` appends this to `url.origin` and hands the result to
+    // `splitOrigin`, which strips trailing slashes — so a prefix like "wiki" or
+    // "/wiki/" would either not be a path at all or normalise to something the
+    // author did not write. Neither is a compile error, so it is pinned here.
+    for (const rule of PRODUCT_RULES) {
+      for (const host of rule.hosts) {
+        if (host.kind !== "suffix" || host.pathPrefix === undefined) continue;
+        expect(host.pathPrefix.startsWith("/")).toBe(true);
+        expect(host.pathPrefix.endsWith("/")).toBe(false);
+      }
+    }
+  });
+
+  it("declares every excluded label as a bare lower-case host label", () => {
+    // Compared against `url.hostname.split(".")[0]`, which is always lower-case
+    // and never contains a dot. "Status" or "status.pagerduty.com" here would
+    // silently never match, leaving the guard looking present and doing nothing.
+    for (const rule of PRODUCT_RULES) {
+      for (const host of rule.hosts) {
+        if (host.kind !== "suffix" || host.excludedLabels === undefined) continue;
+        for (const label of host.excludedLabels) {
+          expect(label).toBe(label.toLowerCase());
+          expect(label).not.toBe("");
+          expect(label).not.toContain(".");
+        }
+      }
+    }
+  });
 });
 
 describe("the built-in tables are derived, not copied", () => {

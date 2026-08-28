@@ -37,6 +37,39 @@ export type HostRule =
        */
       readonly suffix: `.${string}`;
       readonly pattern: string;
+      /**
+       * The path prefix this product owns on a host it SHARES with another
+       * product. Confluence is `/wiki` on the `*.atlassian.net` host Jira also
+       * claims; Jira declares no prefix and takes everything else.
+       *
+       * `suffixEntry` appends this to the page's origin and hands the candidates
+       * to `matchOrigin`, so the winner is the LONGEST matching prefix — the same
+       * rule that already settles two self-hosted products on one host, and the
+       * same rule that gives `/wiki` its `${prefix}/` boundary check so it cannot
+       * claim `/wikifoo`. Registry key order does not decide this and must not be
+       * made to.
+       */
+      readonly pathPrefix?: string;
+      /**
+       * Leftmost host labels that are the VENDOR's own subdomains, not tenants.
+       *
+       * A suffix matches every subdomain, including the ones a vendor publishes
+       * for itself. `status.pagerduty.com/incidents/hbjm8pfyzs7q` is a live
+       * Statuspage incident (verified 2026-08-28) that matches PagerDuty's suffix
+       * AND its item path — so a specific dashboard path is necessary and not
+       * sufficient, and the host has to be constrained too.
+       *
+       * PER-RULE, and that is load-bearing rather than incidental: the names a
+       * vendor reserves are a fact about that vendor. `www.atlassian.net` is a
+       * REAL Jira Cloud site, so one shared list containing "www" would break a
+       * genuine tenant. `.atlassian.net` therefore declares none.
+       *
+       * A denylist cannot be exhaustive and does not need to be — tenant labels
+       * are arbitrary customer strings with no structure to allowlist against, so
+       * this removes the handful a vendor predictably publishes, and anything it
+       * misses fails the way an unknown host already fails.
+       */
+      readonly excludedLabels?: readonly string[];
     };
 
 /** One product, as the registry sees it. */

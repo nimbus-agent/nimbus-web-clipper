@@ -638,4 +638,18 @@ describe("a built-in suffix host is matched by suffix, not by origin", () => {
     // `atlassian.net` itself is not somebody's Jira. Subdomains only.
     expect(recognise("https://atlassian.net/browse/ABC-1", NONE).ok).toBe(false);
   });
+
+  it("does not treat `www` on a tenant host as a vendor subdomain", () => {
+    // Verified 2026-08-28: www.atlassian.net is a REAL Jira Cloud site — it 302s
+    // to id.atlassian.com carrying a live site ARI. It is the reason
+    // `excludedLabels` lives on the rule that needs it instead of being one
+    // shared list applied to every suffix host: a shared list containing "www"
+    // would make Jira stop recognising a real customer.
+    expectItem("https://www.atlassian.net/browse/ENG-1", NONE, {
+      product: "jira",
+      kind: "issue",
+      ref: "ENG-1",
+      resolveUrl: "https://www.atlassian.net/browse/ENG-1",
+    });
+  });
 });

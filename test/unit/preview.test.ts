@@ -10,6 +10,7 @@ import {
   SYNTHESIS_NOTICE,
 } from "../../src/shared/preview.ts";
 import type { FetchTarget } from "../../src/shared/types.ts";
+import { SURFACE_KINDS } from "../../src/shared/types.ts";
 
 const payload: ClipPayload = {
   url: "https://ex.com/p?utm_source=x",
@@ -90,7 +91,7 @@ describe("buildFetchPreview", () => {
   });
 
   test("every surface kind produces a readable type, never a raw blank", () => {
-    for (const surface of ["pr", "build", "issue", "home"] as const) {
+    for (const surface of SURFACE_KINDS) {
       const value = buildFetchPreview({ ...target, surface }).fields[1]?.value;
       expect(value).toBeTruthy();
     }

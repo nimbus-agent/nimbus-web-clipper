@@ -44,7 +44,19 @@ export const BUILT_IN_SURFACES: readonly BuiltInSurface[] = PRODUCT_RULES.flatMa
           product: rule.product,
           pattern: hostPermissionPattern(host.origin) ?? host.origin,
         }
-      : { label: `*${host.suffix}`, product: rule.product, pattern: host.pattern },
+      : {
+          // The prefix is part of the LABEL because two products can share one
+          // suffix, and `options.ts` routes a grant/revoke click by finding the
+          // row whose label equals the clicked row's — identical labels would
+          // route one product's button to the other's pattern. The `pattern` is
+          // deliberately NOT prefixed: a WebExtension host permission is
+          // host-scoped, so both rows share one grant, and revoking from either
+          // withdraws page access for both. `options.ts`'s revoke handler already
+          // says as much for sibling entries.
+          label: `*${host.suffix}${host.pathPrefix ?? ""}`,
+          product: rule.product,
+          pattern: host.pattern,
+        },
   ),
 );
 
@@ -71,16 +83,31 @@ function labelFor(product: Product, kind: SurfaceKind): string {
  * is its own host, so the hosts cannot be enumerated and cannot appear in
  * `BUILT_IN_ORIGINS`. Checked only AFTER `matchOrigin`, so a user-configured
  * entry on such a host still wins.
+ *
+ * Two products may claim one suffix (Confluence owns `/wiki` on the host Jira
+ * takes the rest of). Rather than settle that by iteration order, every matching
+ * rule becomes a candidate `ConfiguredOrigin` carrying its own `pathPrefix`, and
+ * `matchOrigin` picks the longest matching prefix — the same longest-prefix rule
+ * that already settles two self-hosted products on one host, and the same one
+ * whose `${prefix}/` boundary check stops `/wiki` matching `/wikifoo`.
  */
 function suffixEntry(url: URL): ConfiguredOrigin | null {
+  // The leftmost label only. `split(".")[0]` on a hostname is always present and
+  // always lower-case, so no normalisation is needed on either side.
+  const [label = ""] = url.hostname.split(".");
+  const candidates: ConfiguredOrigin[] = [];
   for (const rule of PRODUCT_RULES) {
     for (const host of rule.hosts) {
-      if (host.kind === "suffix" && url.hostname.endsWith(host.suffix)) {
-        return { origin: url.origin, product: rule.product };
+      if (host.kind !== "suffix" || !url.hostname.endsWith(host.suffix)) {
+        continue;
       }
+      if (host.excludedLabels?.includes(label) === true) {
+        continue;
+      }
+      candidates.push({ origin: `${url.origin}${host.pathPrefix ?? ""}`, product: rule.product });
     }
   }
-  return null;
+  return matchOrigin(candidates, url);
 }
 
 export function recognise(url: string, origins: readonly ConfiguredOrigin[]): Recognition {
