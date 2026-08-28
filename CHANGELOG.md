@@ -49,15 +49,6 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   answer about the whole connector, not one item, so they stay where that scope
   is honest. CircleCI can be added as a self-hosted origin — CircleCI Server
   exists; Linear has no self-hosted edition, so it is not offered there.
-- **Confluence is now recognised — the first product to share a host with
-  another.** Every Jira Cloud tenant lives on `<tenant>.atlassian.net`, and
-  Confluence lives on that same host under `/wiki`; the two are now told apart
-  by path prefix, with `/wiki` going to Confluence and everything else on the
-  host staying Jira's. A Confluence page gets its indexed item, Related, and a
-  targeted fetch on a miss; its dashboard (`/wiki`, `/wiki/home` or
-  `/wiki/dashboard.action`) gets the three connector-scoped lanes, gated on
-  connector health like every other dashboard. Confluence Data Center can be
-  added as a self-hosted origin.
 
 ## [0.5.0] - 2026-08-24
 
