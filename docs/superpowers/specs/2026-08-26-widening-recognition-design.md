@@ -341,8 +341,9 @@ recognises correctly still reports *not indexed* even when the gateway holds
 it — Related still answers, because it matches on the title, not the URL. The
 fix is upstream and outside this design's scope: preferring the Confluence
 API's own `_links.webui` (site-relative, already the shape a browser shows)
-over the constructed `viewpage.action` URL, tracked as a follow-up in the
-gateway repo.
+over the constructed `viewpage.action` URL. Shipped as
+[Nimbus#1364](https://github.com/nimbus-agent/Nimbus/pull/1364), opened
+alongside this slice.
 
 ### 4 · The connector-health gate
 

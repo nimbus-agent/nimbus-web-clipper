@@ -74,6 +74,10 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   Confluence page under `…/wiki/pages/viewpage.action?pageId=<id>`, which is not
   a URL a browser is ever on, so a Confluence page reports *not indexed* even
   when Nimbus has it. Related still answers, because it matches on the title.
+  Fixed upstream in [Nimbus#1364](https://github.com/nimbus-agent/Nimbus/pull/1364),
+  which indexes the page under the `_links.webui` URL Confluence itself links
+  to; this client deliberately does not work around it, because canonicalisation
+  is the gateway's job.
 
 ## [0.5.0] - 2026-08-24
 
