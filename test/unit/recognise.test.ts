@@ -292,7 +292,7 @@ describe("BUILT_IN_SURFACES", () => {
       gitlab: "https://gitlab.com/acme/web/-/merge_requests/9",
       jira: "https://acme.atlassian.net/browse/ABC-1",
       linear: "https://linear.app/acme/issue/ENG-123/fix-the-thing",
-      pagerduty: "https://acme.pagerduty.com/incidents/PT4KHLK",
+      pagerduty: "https://acmeco.pagerduty.com/incidents/PT4KHLK",
     };
     for (const surface of BUILT_IN_SURFACES) {
       const page = pages[surface.product];
@@ -684,6 +684,10 @@ describe("Confluence", () => {
     // refuses. All three are misses, asserted with `reason` so the test cannot
     // pass by the host rule vanishing.
     for (const url of [
+      // The bare spaces LIST, with no key at all: the one URL for which
+      // `spaceKey !== undefined` is the deciding condition — every other shape
+      // here is settled by `pages === "pages"` before it is reached.
+      "https://acme.atlassian.net/wiki/spaces",
       "https://acme.atlassian.net/wiki/spaces/ENG",
       "https://acme.atlassian.net/wiki/spaces/ENG/overview",
       "https://acme.atlassian.net/wiki/spaces/ENG/blog/2020/01/01/551/Post",
@@ -773,11 +777,11 @@ describe("Confluence and Jira share one tenant host", () => {
 
 describe("PagerDuty", () => {
   it("recognises an incident", () => {
-    expectItem("https://acme.pagerduty.com/incidents/PT4KHLK", NONE, {
+    expectItem("https://acmeco.pagerduty.com/incidents/PT4KHLK", NONE, {
       product: "pagerduty",
       kind: "incident",
       ref: "PT4KHLK",
-      resolveUrl: "https://acme.pagerduty.com/incidents/PT4KHLK",
+      resolveUrl: "https://acmeco.pagerduty.com/incidents/PT4KHLK",
     });
   });
 
@@ -786,37 +790,46 @@ describe("PagerDuty", () => {
     // Regions"). The suffix covers them and the leftmost label is still the
     // tenant, so nothing special is needed — but it is pinned because a future
     // tightening of the host rule could quietly drop a whole region.
-    expectItem("https://acme.eu.pagerduty.com/incidents/PT4KHLK", NONE, {
+    expectItem("https://acmeco.eu.pagerduty.com/incidents/PT4KHLK", NONE, {
       product: "pagerduty",
       kind: "incident",
       ref: "PT4KHLK",
-      resolveUrl: "https://acme.eu.pagerduty.com/incidents/PT4KHLK",
+      resolveUrl: "https://acmeco.eu.pagerduty.com/incidents/PT4KHLK",
     });
   });
 
   it("recognises the incidents dashboard", () => {
-    const r = recognise("https://acme.pagerduty.com/incidents", NONE);
+    const r = recognise("https://acmeco.pagerduty.com/incidents", NONE);
     expect(r.ok && r.kind).toBe("home");
     expect(r.ok && r.product).toBe("pagerduty");
   });
 
   it("labels an incident an incident and offers it no lane", () => {
-    const r = recognise("https://acme.pagerduty.com/incidents/PT4KHLK", NONE);
+    const r = recognise("https://acmeco.pagerduty.com/incidents/PT4KHLK", NONE);
     expect(r.ok && r.label).toBe("PagerDuty incident");
   });
 
   it("does not claim PagerDuty's own status page — the slice-3 defect in suffix form", () => {
-    // VERIFIED LIVE 2026-08-28: status.pagerduty.com/incidents/hbjm8pfyzs7q is a
-    // real Statuspage incident page. It matches the `.pagerduty.com` suffix AND
-    // the `/incidents/<id>` item path, so a specific path is necessary and NOT
+    // Each of these is a host PagerDuty publishes for ITSELF, and each matches
+    // the `.pagerduty.com` suffix, so a specific path is necessary and NOT
     // sufficient — the host has to be constrained too. This is the exact shape of
     // the linear.app/docs/inbox defect: a host being right does not make the page
     // the product's own.
     //
-    // The reason is `unknown-host`, not `unrecognised-path`: the label check runs
-    // at host resolution, before any matcher sees the path. That is deliberate —
-    // it means the guard covers the item matcher and the dashboard matcher at
-    // once, rather than each matcher having to remember it.
+    // What this pins is the HOST-RESOLUTION refusal, which is the whole defence:
+    // the reason is `unknown-host`, not `unrecognised-path`, because
+    // `excludedLabels` (and `minTenantLabelLength`, which is what refuses `www`)
+    // is checked in `suffixEntry` before any matcher sees the path. So one entry
+    // covers the item arm and the dashboard arm at once, rather than each matcher
+    // having to remember it — and nothing downstream re-checks it, so an id shape
+    // is not a backstop here.
+    //
+    // `status.pagerduty.com` is PagerDuty's own status-page product, NOT an
+    // Atlassian Statuspage (`/api/v2/summary.json` is a 404 there) and its
+    // incident routes are `/incident_details/:id`; every path on it answers 200
+    // from one SPA shell, so a fetch against it proves nothing either way. The
+    // `/incidents/<id>` URL below is kept as an adversarial input rather than as
+    // a claim that the page exists.
     for (const url of [
       "https://status.pagerduty.com/incidents",
       "https://status.pagerduty.com/incidents/hbjm8pfyzs7q",
@@ -832,21 +845,56 @@ describe("PagerDuty", () => {
   });
 
   it("declines a lower-case id even on a genuine tenant host", () => {
-    // Belt to the denylist's brace. PagerDuty ids are upper-case alphanumeric;
-    // Statuspage's are lower-case. The denylist cannot be exhaustive (PagerDuty
-    // publishes no reserved-subdomain list), so the id shape catches a vendor
-    // host the list has not learned about yet.
-    expect(recognise("https://acme.pagerduty.com/incidents/hbjm8pfyzs7q", NONE)).toEqual({
+    // NOT a backstop for the denylist — PagerDuty's own status page mints
+    // upper-case `P`-prefixed ids (`PV31RQ5`), the same shape as a tenant's, so
+    // the id pattern would let a missed vendor host straight through. What it
+    // buys is narrowness on a host that IS a tenant: a segment under
+    // `/incidents/` that is not an id shape at all must not become an incident
+    // header. Every documented PagerDuty id is upper-case alphanumeric.
+    expect(recognise("https://acmeco.pagerduty.com/incidents/hbjm8pfyzs7q", NONE)).toEqual({
       ok: false,
       reason: "unrecognised-path",
     });
   });
 
+  it("refuses a label too short to be an account, without it being listed", () => {
+    // PagerDuty Support's "Account Subdomains": "There is a minimum of five
+    // characters for PagerDuty subdomains." `app.pagerduty.com` is PagerDuty's
+    // DOCUMENTED login host and `go.pagerduty.com` a live first-party redirector;
+    // neither appears in `excludedLabels`, and neither has to, because
+    // `minTenantLabelLength` refuses every leftmost label under five characters.
+    // That is the half of the guard that covers hosts nobody has enumerated.
+    //
+    // `unknown-host` again, for the same reason as the denylist above: the check
+    // is at host resolution, before the matcher.
+    for (const url of [
+      "https://app.pagerduty.com/incidents",
+      "https://app.pagerduty.com/incidents/PT4KHLK",
+      "https://go.pagerduty.com/incidents",
+      "https://api.pagerduty.com/incidents",
+      "https://help.pagerduty.com/incidents",
+    ]) {
+      expect(recognise(url, NONE), url).toEqual({ ok: false, reason: "unknown-host" });
+    }
+  });
+
+  it("still recognises a tenant of exactly the documented minimum length", () => {
+    // The floor is five, so a five-character account is a real customer and must
+    // survive the rule that removes `app` and `go`. Pinned because an off-by-one
+    // here silences every shortest-possible tenant with no other symptom.
+    expectItem("https://acmes.pagerduty.com/incidents/PT4KHLK", NONE, {
+      product: "pagerduty",
+      kind: "incident",
+      ref: "PT4KHLK",
+      resolveUrl: "https://acmes.pagerduty.com/incidents/PT4KHLK",
+    });
+  });
+
   it("declines paths it does not model, and the apex", () => {
     for (const url of [
-      "https://acme.pagerduty.com/service-directory",
-      "https://acme.pagerduty.com/incidents/new",
-      "https://acme.pagerduty.com/",
+      "https://acmeco.pagerduty.com/service-directory",
+      "https://acmeco.pagerduty.com/incidents/new",
+      "https://acmeco.pagerduty.com/",
     ]) {
       expect(recognise(url, NONE), url).toEqual({ ok: false, reason: "unrecognised-path" });
     }

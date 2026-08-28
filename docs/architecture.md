@@ -1170,13 +1170,22 @@ a compile error rather than a hand-written list that silently under-covers it.
 the `*.atlassian.net` host Jira takes the rest of — and the split is decided by
 `matchOrigin`'s longest-matching-prefix rule, the same rule that already
 settles two self-hosted products on one origin; registry key order plays no
-part. It can also carry `excludedLabels`: leftmost host labels that are the
-vendor's own subdomains, not tenants. `status.pagerduty.com/incidents/<id>` is
-a real Statuspage page that would otherwise match PagerDuty's suffix and its
-own item path at once, so PagerDuty's rule excludes `status` and ten other
-vendor-published subdomains. The list is per rule, not shared, because
-`www.atlassian.net` is a real Jira Cloud tenant — a list built for PagerDuty
-would break Jira if applied there too.
+part. It can also carry two host-level guards, both checked in `suffixEntry`
+before any matcher runs. `excludedLabels` names leftmost host labels that are
+the vendor's own subdomains, not tenants: `status.pagerduty.com/incidents`
+matches PagerDuty's suffix and a recognised dashboard path at once, so
+PagerDuty's rule excludes `status` and nineteen other vendor-published names.
+`minTenantLabelLength` carries the short ones structurally — PagerDuty
+documents a five-character minimum for account subdomains, so its rule declares
+`5` and every shorter label (`go`, `app`, `api`, `www`) is refused without
+anyone having had to list it. Both are per rule, not shared, because
+`www.atlassian.net` is a real Jira Cloud tenant and Atlassian publishes no
+length rule — either guard applied there would break a genuine customer's site.
+Nothing downstream backstops them: a vendor host that gets past both is handed
+to the matcher as a tenant, so an item-id pattern is not a second line of
+defence (a vendor's own ids look like the product's own — PagerDuty's status
+page mints `PV31RQ5`), and only the matcher's narrowness stands between that
+page and a wrong header.
 
 **The run store keys on scope, not just on an item.** `StoredRun`'s subject is
 a `RunSubject` — `{kind:"item", id}` or `{kind:"service", service}` — and

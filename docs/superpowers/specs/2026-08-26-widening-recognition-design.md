@@ -198,8 +198,9 @@ survives, now guarding the derivation instead of a human's diligence.
 `SurfaceKind` gains `doc` and `incident`. Neither appears in any `LANE_RULES`
 entry, so `laneBelongsOnSurface` returns false for every lane and the panel
 renders what a Jira issue renders today: header, freshness, Related, the
-`glossary` term lane, targeted fetch on a miss, capture as last resort. The
-absence of a lane is expressed in the type system, not in a comment.
+`glossary` term lane, capture as last resort. Targeted fetch is NOT among them
+and this originally said it was — see Amendment 5. The absence of a lane is
+expressed in the type system, not in a comment.
 
 ### 3 · What each product matches
 
@@ -236,9 +237,12 @@ subdomain **on a recognised path**, not merely on `/`.
 
 A denylist is the honest instrument here rather than a tenant-shaped pattern:
 tenant labels are arbitrary customer strings with no structure to match on, so
-there is nothing to allowlist. It will not be exhaustive, and it does not have to
-be — it removes the handful of subdomains a vendor predictably publishes, and
-anything it misses fails the way an unknown host already fails.
+there is nothing to allowlist. It will not be exhaustive. What it misses does
+NOT fail the way an unknown host fails, which this paragraph originally claimed:
+a missed vendor label is treated as a tenant, and the product's own matcher is
+the only thing left. Amendment 4 records what shipped instead — a documented
+minimum subdomain length carrying the short labels structurally, and no pretence
+that an item-id pattern backstops the list.
 
 **Sentry is `incident`, not `issue`, despite Sentry's own wording.** The kind
 exists to gate lanes, and an error group poses the operational question a
@@ -261,9 +265,11 @@ new static permissions.
 
 #### Amendments (Slice 4)
 
-Slice 4 shipped Confluence and PagerDuty largely as designed, with three
+Slice 4 shipped Confluence and PagerDuty largely as designed, with five
 corrections the evidence gathered while building it forced, plus one gap that
-belongs to the gateway rather than to this design.
+belongs to the gateway rather than to this design. Amendments 4 and 5 came out
+of the whole-branch review, which re-fetched the pages the earlier evidence
+rested on.
 
 - **Amendment 1 — the "no lane" guarantee is a derived array, not a
   hand-written union.** §2 said the absence of a lane on `doc`/`incident` must
@@ -295,6 +301,35 @@ belongs to the gateway rather than to this design.
   `RULE_BY_PRODUCT`'s key order from the load-bearing set entirely; the
   ordering test in `recognise.test.ts` asserts the outcome on both sides of
   the split rather than the order of the table.
+- **Amendment 4 — the host guards are the whole host-level defence, and half of
+  that guard is now a documented length rule.** §3 justified the mechanism
+  partly on `status.pagerduty.com` being an Atlassian Statuspage whose
+  lower-case incident ids an id pattern would reject, making that pattern a
+  second line of defence. Re-fetched during review:
+  `status.pagerduty.com/api/v2/summary.json` is a 404, so it is not a Statuspage
+  at all; its real routes are `/incident_details/:id` and
+  `/incidents/details/:id`, not `/incidents/:id`; every path there 200s from one
+  SPA shell, which is the only reason the original check appeared to confirm
+  anything; and its ids are UPPER-case `P`-prefixed (`PV31RQ5`), the same shape
+  as a tenant's. No id pattern backstops the host guard — `INCIDENT_ID` only
+  keeps the item arm narrow on a host that has already been accepted. What ships
+  in its place is structural: `HostRule`'s suffix arm gained
+  `minTenantLabelLength`, the vendor's DOCUMENTED minimum subdomain length,
+  checked in `suffixEntry` beside `excludedLabels`. PagerDuty declares `5`
+  (Support, "Account Subdomains": "a minimum of five characters"), which refuses
+  `go`, `app`, `api`, `www`, `eu`, `docs` and `blog` — and every future short
+  vendor host — without listing any of them, leaving `excludedLabels` holding
+  only the ≥5-character vendor names, twenty of them. `.atlassian.net` declares
+  no length at all, for the same reason it declares no labels.
+- **Amendment 5 — `doc` and `incident` pages get no targeted fetch.** §2 and the
+  "Item pages on the new products carry no agent lane" bullet both listed
+  targeted fetch among what the new surfaces deliver. The gateway's fetch
+  boundary is a closed union — `FetchableService = "github" | "gitlab" |
+  "bitbucket" | "jenkins" | "jira"`
+  (`packages/gateway/src/sync/fetch-host-boundary.ts`) — so neither Confluence
+  nor PagerDuty is fetchable, and neither Sentry nor Notion will be. The panel
+  offers resolve, Related, freshness and capture; a fetch button on these
+  surfaces would name an action the gateway refuses.
 
 **A known gap, and it is the gateway's to close.** `confluence-sync.ts` indexes
 a page under `<site>/wiki/pages/viewpage.action?pageId=<id>` — a valid
@@ -529,8 +564,9 @@ Six PRs, each independently reviewable:
      this item raised: there is no subdomain scheme to confirm, so a later
      slice should not re-open it without new evidence.
 - **Item pages on the new products carry no agent lane.** They deliver resolve,
-  Related, freshness and targeted fetch — real C1/C3 value, and honestly less
-  than a lane. Giving `issue`, `build`, `doc` and `incident` lanes of their own
+  Related and freshness — real C1/C3 value, and honestly less than a lane. Not
+  targeted fetch: the gateway's `FetchableService` is a closed union that names
+  neither product (Amendment 5). Giving `issue`, `build`, `doc` and `incident` lanes of their own
   is the natural follow-on, and is a C2 question, not a recognition one.
 
 ## Out of scope

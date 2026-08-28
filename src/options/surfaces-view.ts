@@ -1,6 +1,7 @@
 // Pure DOM builders for the Options "Recognised surfaces" list. Origin strings
 // are user input; every one is written with textContent, never innerHTML.
 import { splitOrigin } from "../shared/origins.ts";
+import { BUILT_IN_SURFACES } from "../shared/recognise/index.ts";
 import { productName } from "../shared/recognise/registry.ts";
 import type { Product } from "../shared/types.ts";
 
@@ -66,7 +67,7 @@ export function renderSurfaceList(doc: Document, rows: readonly SurfaceRow[]): H
     const empty = doc.createElement("p");
     empty.className = "options__status";
     empty.textContent =
-      "No self-hosted surfaces added. Bitbucket Cloud, GitHub, GitLab and Jira Cloud are recognised without setup.";
+      "No self-hosted surfaces added. The built-in surfaces — Bitbucket Cloud, CircleCI, Confluence Cloud, GitHub, GitLab, Jira Cloud, Linear and PagerDuty — are recognised without setup.";
     return empty;
   }
   const list = doc.createElement("ul");
@@ -102,16 +103,34 @@ export function renderSurfaceList(doc: Document, rows: readonly SurfaceRow[]): H
 }
 
 /**
+ * What a row's grant is actually keyed by, which is NOT always its `origin`.
+ *
+ * A user's entry is an absolute origin, possibly path-scoped, so the host it
+ * shares is `splitOrigin(...).base`. A BUILT-IN row's `origin` is its display
+ * label — `*.atlassian.net/wiki` — which `new URL()` rejects, so `splitOrigin`
+ * returns null there and grouping by it alone would silently find no siblings.
+ * The registry's `pattern` is the real key for those rows (it is what
+ * `chrome.permissions` is called with), and Confluence and Jira share one, which
+ * is exactly the pair the note has to cover. Same lookup `options.ts` does to
+ * route the click.
+ */
+function grantKey(origin: string): string | null {
+  return (
+    BUILT_IN_SURFACES.find((s) => s.label === origin)?.pattern ?? splitOrigin(origin)?.base ?? null
+  );
+}
+
+/**
  * Page access is granted per HOST, so revoking one entry silences every other
  * entry on the same host. Name them rather than surprising the user.
  */
 export function sharedHostNote(rows: readonly SurfaceRow[], origin: string): string | null {
-  const base = splitOrigin(origin)?.base;
-  if (base === undefined) {
+  const key = grantKey(origin);
+  if (key === null) {
     return null;
   }
   const siblings = rows
-    .filter((r) => r.origin !== origin && splitOrigin(r.origin)?.base === base)
+    .filter((r) => r.origin !== origin && grantKey(r.origin) === key)
     .map((r) => r.origin);
   if (siblings.length === 0) {
     return null;

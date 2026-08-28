@@ -65,8 +65,10 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
   Confluence shares `*.atlassian.net` with Jira and is told apart by its `/wiki`
   path, so no new page-access grant is involved: granting either grants both,
-  because a browser permission is per host. A self-hosted Confluence Data
-  Center instance can be added from Options like any other self-hosted product.
+  because a browser permission is per host — and revoking from either row now
+  names the other on screen, rather than silently withdrawing page access from
+  a product you did not touch. A self-hosted Confluence Data Center instance can
+  be added from Options like any other self-hosted product.
 
   **A known gap, and it is the gateway's to close:** the gateway indexes a
   Confluence page under `…/wiki/pages/viewpage.action?pageId=<id>`, which is not

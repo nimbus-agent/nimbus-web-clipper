@@ -59,6 +59,19 @@ describe("the registry covers exactly the declared products", () => {
     }
   });
 
+  it("declares every minimum tenant label length as a positive integer", () => {
+    // A vendor's documented minimum subdomain length. `suffixEntry` refuses any
+    // shorter leftmost label, so a 0 or a fraction here is a guard that quietly
+    // does nothing, and a negative one is nonsense that still typechecks.
+    for (const rule of PRODUCT_RULES) {
+      for (const host of rule.hosts) {
+        if (host.kind !== "suffix" || host.minTenantLabelLength === undefined) continue;
+        expect(Number.isInteger(host.minTenantLabelLength)).toBe(true);
+        expect(host.minTenantLabelLength).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it("declares every excluded label as a bare lower-case host label", () => {
     // Compared against `url.hostname.split(".")[0]`, which is always lower-case
     // and never contains a dot. "Status" or "status.pagerduty.com" here would

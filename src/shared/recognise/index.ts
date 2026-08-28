@@ -56,8 +56,10 @@ export const BUILT_IN_SURFACES: readonly BuiltInSurface[] = PRODUCT_RULES.flatMa
           // route one product's button to the other's pattern. The `pattern` is
           // deliberately NOT prefixed: a WebExtension host permission is
           // host-scoped, so both rows share one grant, and revoking from either
-          // withdraws page access for both. `options.ts`'s revoke handler already
-          // says as much for sibling entries.
+          // withdraws page access for both. `sharedHostNote` in
+          // `surfaces-view.ts` says so on the revoke — it keys built-in rows by
+          // this `pattern` precisely because their `origin` is the label above
+          // and does not parse as a URL.
           label: `*${host.suffix}${host.pathPrefix ?? ""}`,
           product: rule.product,
           pattern: host.pattern,
@@ -107,6 +109,13 @@ function suffixEntry(url: URL): ConfiguredOrigin | null {
         continue;
       }
       if (host.excludedLabels?.includes(label) === true) {
+        continue;
+      }
+      // Shorter than the vendor's documented minimum subdomain length, so the
+      // label cannot be a customer at all. Checked alongside the denylist rather
+      // than inside it: same effect, but derived from a published rule instead of
+      // from somebody having heard of the name.
+      if (host.minTenantLabelLength !== undefined && label.length < host.minTenantLabelLength) {
         continue;
       }
       candidates.push({ origin: `${url.origin}${host.pathPrefix ?? ""}`, product: rule.product });
