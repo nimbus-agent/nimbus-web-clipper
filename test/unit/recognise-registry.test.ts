@@ -97,6 +97,11 @@ describe("the built-in tables are derived, not copied", () => {
     expect([...BUILT_IN_SURFACES]).toEqual([
       { label: "bitbucket.org", product: "bitbucket", pattern: "https://bitbucket.org/*" },
       { label: "app.circleci.com", product: "circleci", pattern: "https://app.circleci.com/*" },
+      {
+        label: "*.atlassian.net/wiki",
+        product: "confluence",
+        pattern: "https://*.atlassian.net/*",
+      },
       { label: "github.com", product: "github", pattern: "https://github.com/*" },
       { label: "gitlab.com", product: "gitlab", pattern: "https://gitlab.com/*" },
       { label: "*.atlassian.net", product: "jira", pattern: "https://*.atlassian.net/*" },
@@ -125,10 +130,12 @@ describe("the built-in tables are derived, not copied", () => {
     expect(BUILT_IN_SURFACES.find((s) => s.product === "jenkins")).toBeUndefined();
   });
 
-  it("derives exactly six rows — no product invents one", () => {
-    // Jenkins has no built-in host, so seven products yield six rows. A derivation
-    // that mapped over products instead of over their hosts would produce seven.
-    expect(BUILT_IN_SURFACES).toHaveLength(6);
+  it("derives exactly seven rows — no product invents one", () => {
+    // Jenkins has no built-in host, so eight products yield seven rows. A
+    // derivation that mapped over products instead of over their hosts would
+    // produce eight. Two of these rows share one host: Confluence and Jira both
+    // live on *.atlassian.net, distinguished by Confluence's `/wiki` prefix.
+    expect(BUILT_IN_SURFACES).toHaveLength(7);
   });
 });
 
@@ -152,6 +159,7 @@ describe("PRODUCT_SERVICE_ID", () => {
     expect(PRODUCT_SERVICE_ID).toEqual({
       bitbucket: "bitbucket",
       circleci: "circleci",
+      confluence: "confluence",
       github: "github",
       gitlab: "gitlab",
       jenkins: "jenkins",
@@ -169,6 +177,7 @@ describe("the self-hosted product picker is derived, not hand-written", () => {
     expect(SELF_HOSTABLE_PRODUCTS.map((r) => r.product)).toEqual([
       "bitbucket",
       "circleci",
+      "confluence",
       "github",
       "gitlab",
       "jenkins",

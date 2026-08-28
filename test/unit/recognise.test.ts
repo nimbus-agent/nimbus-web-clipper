@@ -287,6 +287,7 @@ describe("BUILT_IN_SURFACES", () => {
     const pages: Record<string, string> = {
       bitbucket: "https://bitbucket.org/acme/web/pull-requests/7",
       circleci: "https://app.circleci.com/pipelines/github/acme/web/482",
+      confluence: "https://acme.atlassian.net/wiki/spaces/ENG/pages/22970764/Getting+Started",
       github: "https://github.com/acme/web/pull/482",
       gitlab: "https://gitlab.com/acme/web/-/merge_requests/9",
       jira: "https://acme.atlassian.net/browse/ABC-1",
@@ -614,6 +615,158 @@ describe("Linear", () => {
     // above, not workspace slugs in general.
     const r = recognise("https://linear.app/acme/inbox", NONE);
     expect(r.ok && r.kind).toBe("home");
+  });
+});
+
+describe("Confluence", () => {
+  it("recognises a page", () => {
+    // The shape verified live on 2026-08-28 against
+    // lf-toip.atlassian.net/wiki/spaces/HOME/pages/22970764/Getting+Started+with+Confluence+Wiki
+    expectItem("https://acme.atlassian.net/wiki/spaces/ENG/pages/22970764/Getting+Started", NONE, {
+      product: "confluence",
+      kind: "doc",
+      ref: "ENG/22970764",
+      resolveUrl: "https://acme.atlassian.net/wiki/spaces/ENG/pages/22970764/Getting+Started",
+    });
+  });
+
+  it("gives a page one identity whether or not the title segment is present", () => {
+    // Confluence serves the same page with and without the trailing title, and
+    // rewrites the title when the page is renamed. `sameItem` keys on the ref,
+    // so both must produce the same one or the panel would announce a change
+    // the user cannot see.
+    const withTitle = recognise(
+      "https://acme.atlassian.net/wiki/spaces/ENG/pages/22970764/Getting+Started",
+      NONE,
+    );
+    const without = recognise("https://acme.atlassian.net/wiki/spaces/ENG/pages/22970764", NONE);
+    expect(sameItem(withTitle, without)).toBe(true);
+  });
+
+  it("recognises a personal space, whose key is an account id", () => {
+    // Personal spaces are `~<accountId>`. The space key is accepted as any
+    // non-empty segment rather than pattern-matched: the `spaces/<x>/pages/<digits>`
+    // structure is already specific, and a key pattern would only add false
+    // negatives on a shape Atlassian chose, not ours.
+    expectItem("https://acme.atlassian.net/wiki/spaces/~712020abc/pages/551/Notes", NONE, {
+      product: "confluence",
+      kind: "doc",
+      ref: "~712020abc/551",
+      resolveUrl: "https://acme.atlassian.net/wiki/spaces/~712020abc/pages/551/Notes",
+    });
+  });
+
+  it("recognises all three dashboards", () => {
+    // `/wiki/home` verified live (rtulv.atlassian.net/wiki/home);
+    // `/wiki/dashboard.action` is documented in Atlassian Support's
+    // "Change the landing page". The bare `/wiki` is the product root.
+    for (const url of [
+      "https://acme.atlassian.net/wiki",
+      "https://acme.atlassian.net/wiki/",
+      "https://acme.atlassian.net/wiki/home",
+      "https://acme.atlassian.net/wiki/dashboard.action",
+    ]) {
+      const r = recognise(url, NONE);
+      expect(r.ok && r.kind, url).toBe("home");
+      expect(r.ok && r.product, url).toBe("confluence");
+    }
+  });
+
+  it("labels a page a doc and offers it no lane", () => {
+    const r = recognise("https://acme.atlassian.net/wiki/spaces/ENG/pages/1/T", NONE);
+    expect(r.ok && r.label).toBe("Confluence doc");
+  });
+
+  it("declines paths it does not model", () => {
+    // A space overview and a blog post are real Confluence pages that this
+    // matcher deliberately does not claim; a non-numeric page id is a guess it
+    // refuses. All three are misses, asserted with `reason` so the test cannot
+    // pass by the host rule vanishing.
+    for (const url of [
+      "https://acme.atlassian.net/wiki/spaces/ENG",
+      "https://acme.atlassian.net/wiki/spaces/ENG/overview",
+      "https://acme.atlassian.net/wiki/spaces/ENG/blog/2020/01/01/551/Post",
+      "https://acme.atlassian.net/wiki/spaces/ENG/pages/not-a-number/T",
+      "https://acme.atlassian.net/wiki/people/712020abc",
+    ]) {
+      expect(recognise(url, NONE), url).toEqual({ ok: false, reason: "unrecognised-path" });
+    }
+  });
+
+  it("does not let the /wiki prefix bleed into a neighbouring path", () => {
+    // matchOrigin's `${prefix}/` boundary check. `/wikifoo` is Jira's, not
+    // Confluence's — and Jira does not model it either, so it is a miss on
+    // Jira's matcher rather than a Confluence page.
+    expect(recognise("https://acme.atlassian.net/wikifoo/spaces/ENG/pages/1/T", NONE)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+  });
+});
+
+describe("Confluence and Jira share one tenant host", () => {
+  it("gives /wiki to Confluence and everything else to Jira", () => {
+    expectItem("https://acme.atlassian.net/wiki/spaces/ENG/pages/1/T", NONE, {
+      product: "confluence",
+      kind: "doc",
+      ref: "ENG/1",
+      resolveUrl: "https://acme.atlassian.net/wiki/spaces/ENG/pages/1/T",
+    });
+    expectItem("https://acme.atlassian.net/browse/ENG-1", NONE, {
+      product: "jira",
+      kind: "issue",
+      ref: "ENG-1",
+      resolveUrl: "https://acme.atlassian.net/browse/ENG-1",
+    });
+    const jiraHome = recognise("https://acme.atlassian.net/jira/your-work", NONE);
+    expect(jiraHome.ok && jiraHome.product).toBe("jira");
+  });
+
+  it("is decided by the longest path prefix, not by registry order", () => {
+    // The ordering assertion the registry's doc comment asked for when this
+    // slice landed. It must hold regardless of RULE_BY_PRODUCT's key order, so
+    // it asserts the OUTCOME on both sides of the split rather than the order of
+    // the table — a test that read the table would pass for a wrong table.
+    const wiki = recognise("https://acme.atlassian.net/wiki/home", NONE);
+    const jira = recognise("https://acme.atlassian.net/secure/Dashboard.jspa", NONE);
+    expect(wiki.ok && wiki.product).toBe("confluence");
+    expect(jira.ok && jira.product).toBe("jira");
+  });
+
+  it("keeps a user's Jira Server entry from claiming Confluence-shaped paths", () => {
+    // The registry's `hosts` list governs BUILT-IN hosts only; it never widens
+    // what a user's own entry matches. A Confluence-shaped path under a
+    // Jira-only entry stays unrecognised rather than becoming a Confluence page.
+    const jiraOnly: readonly ConfiguredOrigin[] = [
+      { origin: "https://corp.example/jira", product: "jira" },
+    ];
+    expect(recognise("https://corp.example/jira/wiki/spaces/ENG/pages/1/T", jiraOnly)).toEqual({
+      ok: false,
+      reason: "unrecognised-path",
+    });
+  });
+
+  it("keeps two self-hosted products on one host siloed", () => {
+    // matchOrigin's longest-prefix rule, pinned from the recogniser's side.
+    const both: readonly ConfiguredOrigin[] = [
+      { origin: "https://internal.corp/jira", product: "jira" },
+      { origin: "https://internal.corp/wiki", product: "confluence" },
+    ];
+    expectItem("https://internal.corp/jira/browse/ENG-1", both, {
+      product: "jira",
+      kind: "issue",
+      ref: "ENG-1",
+      resolveUrl: "https://internal.corp/jira/browse/ENG-1",
+    });
+    expectItem("https://internal.corp/wiki/spaces/ENG/pages/1/T", both, {
+      product: "confluence",
+      kind: "doc",
+      ref: "ENG/1",
+      resolveUrl: "https://internal.corp/wiki/spaces/ENG/pages/1/T",
+    });
+    // Neither matches the other's paths.
+    expect(recognise("https://internal.corp/jira/spaces/ENG/pages/1/T", both).ok).toBe(false);
+    expect(recognise("https://internal.corp/wiki/browse/ENG-1", both).ok).toBe(false);
   });
 });
 

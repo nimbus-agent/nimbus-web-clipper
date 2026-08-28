@@ -25,9 +25,14 @@ export const BUILT_IN_ORIGINS: readonly ConfiguredOrigin[] = PRODUCT_RULES.flatM
  *
  * DERIVED from the registry's host rules. An `origin` host's label is its
  * hostname and its pattern is `hostPermissionPattern(origin)`; a `suffix` host
- * has no origin at all, so it labels itself `*<suffix>` and carries the wildcard
- * pattern its rule declares. A product with no built-in host (Jenkins)
- * contributes no row.
+ * has no origin at all, so it labels itself `*<suffix>` — plus its `pathPrefix`
+ * when it declares one, e.g. `*.atlassian.net/wiki` — and carries the wildcard
+ * pattern its rule declares. The prefix has to be part of the label because two
+ * products can share one suffix (Confluence and Jira both on
+ * `*.atlassian.net`): without it their rows would carry identical labels, and
+ * `options.ts` routes a grant/revoke click by matching the clicked row's label,
+ * so it could not tell the two rows apart. A product with no built-in host
+ * (Jenkins) contributes no row.
  */
 export interface BuiltInSurface {
   /** Shown in Options. Not an origin: Jira Cloud's is a host pattern. */

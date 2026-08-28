@@ -144,6 +144,7 @@ export interface CueState {
 export const PRODUCT_IDS = [
   "bitbucket",
   "circleci",
+  "confluence",
   "github",
   "gitlab",
   "jenkins",

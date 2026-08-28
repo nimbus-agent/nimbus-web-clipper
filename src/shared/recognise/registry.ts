@@ -2,6 +2,7 @@
 import type { Product } from "../types.ts";
 import { bitbucketRule } from "./bitbucket.ts";
 import { circleciRule } from "./circleci.ts";
+import { confluenceRule } from "./confluence.ts";
 import { githubRule } from "./github.ts";
 import { gitlabRule } from "./gitlab.ts";
 import { jenkinsRule } from "./jenkins.ts";
@@ -17,6 +18,7 @@ import type { ProductRule } from "./rule.ts";
 export const RULE_BY_PRODUCT: Record<Product, ProductRule> = {
   bitbucket: bitbucketRule,
   circleci: circleciRule,
+  confluence: confluenceRule,
   github: githubRule,
   gitlab: gitlabRule,
   jenkins: jenkinsRule,
@@ -31,10 +33,13 @@ export const RULE_BY_PRODUCT: Record<Product, ProductRule> = {
  * `index.ts`) are derived by flat-mapping over this array, so `RULE_BY_PRODUCT`'s
  * key order sets both the order `matchOrigin` sees built-in origins in and the
  * order the Options page renders its built-in rows. The keys above are
- * alphabetical — keep them that way. It becomes load-bearing in a sharper sense
- * the first time two products claim the same host (Confluence under
- * `*.atlassian.net`, slice 4): when that lands, the sharing pair needs an
- * explicit ordering test rather than a reliance on this object's key order.
+ * alphabetical — keep them that way. Two products DO now claim one host:
+ * Confluence owns `/wiki` on the `*.atlassian.net` host Jira takes the rest
+ * of. That is settled by `suffixEntry`'s longest-path-prefix rule
+ * (`matchOrigin`), NOT by this object's key order — so the ordering test in
+ * `recognise.test.ts` asserts the outcome on both sides of the split rather
+ * than the order of these keys. Key order still sets the order Options
+ * renders its built-in rows in; keep them alphabetical.
  */
 export const PRODUCT_RULES: readonly ProductRule[] = Object.values(RULE_BY_PRODUCT);
 

@@ -230,11 +230,11 @@ describe("isProduct is derived from the declared product ids", () => {
   });
 
   it("rejects a product this client does not recognise yet", () => {
-    // "confluence" is a real gateway connector and a planned product (slice 4,
-    // sharing Jira Cloud's `*.atlassian.net` host — see registry.ts). It must be
-    // false TODAY — otherwise the guard is accepting arbitrary strings and the
-    // stored-origin validation it backs is decorative.
-    expect(isProduct("confluence")).toBe(false);
+    // "pagerduty" is a real gateway connector and a planned product (slice 4,
+    // the task after Confluence — see registry.ts). It must be false TODAY —
+    // otherwise the guard is accepting arbitrary strings and the stored-origin
+    // validation it backs is decorative.
+    expect(isProduct("pagerduty")).toBe(false);
     expect(isProduct("")).toBe(false);
     expect(isProduct(undefined)).toBe(false);
   });
