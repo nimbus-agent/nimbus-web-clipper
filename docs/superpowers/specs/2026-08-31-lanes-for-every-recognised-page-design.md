@@ -6,6 +6,9 @@
 > `docs/superpowers/specs/2026-08-31-agents-for-items-and-files-design.md`; that document
 > owns the wire and this one consumes it. Where the two disagree, that one is correct.
 >
+> **Reviewed:** [design review](./2026-08-31-lanes-for-every-recognised-page-design-review.md)
+> (Antigravity, 2026-08-31) — responses in §11.
+>
 > **Roadmap:** continues the C-series. **C6 — lanes on an item** (§4), **C7 — the file you
 > are looking at** (§5). Both are recorded in `ROADMAP.md` by the last slice.
 
@@ -76,14 +79,18 @@ confirmation, no C3.1 path — but it is a genuine change to `resolveForAgent`'s
 This is the finding that reshaped the whole arc, and it is documented in full as F4 of the
 upstream spec.
 
-A file page gives `acme/web` + `src/foo.ts` — a forge coordinate. The gateway's file entities
-are keyed to the reader's **local checkout**: `source_file` external ids are
+A file page gives `acme/web` and an addressable remainder — a forge coordinate. The gateway's
+file entities are keyed to the reader's **local checkout**: `source_file` external ids are
 `file:<repoRoot>:<path>`, and `ownership`'s path arm explicitly refuses a path "outside every
 configured root". The bridge between the two — a `workspace --tracks_remote--> repo` edge —
 exists in the graph and is not reachable from any agent parameter.
 
 The client must not attempt to guess a local path. It sends the forge coordinate; the gateway
 walks the bridge. That is upstream PR 2, and **§5 does not start until it lands**.
+
+§5.1 shows this cuts deeper than it first looks: the client cannot even isolate the *path* part
+of the URL by itself, because a branch name may contain slashes. Both halves of the coordinate
+are resolved on the side that holds the index.
 
 ### F4 — `GET /v1/agents` tells you the names, not the arms
 
@@ -106,8 +113,9 @@ reader browsing a repo they have never checked out locally will get a miss — p
 correctly.
 
 That is a real bound, and the panel must say it in words rather than render five empty lanes.
-The upstream resolver returns two distinct misses for exactly this reason (*no such remote is
-tracked* vs *tracked, but that path is not indexed*), and §5.4 renders them differently.
+The upstream resolver returns two distinct misses for exactly this reason —
+`remote_not_tracked` vs `file_not_indexed`, a typed discriminant rather than prose — and §5.4
+renders them differently, once per page rather than once per lane.
 
 ### F6 — `impact` on a file used to answer about the wrong thing
 
@@ -157,6 +165,14 @@ currently enforced by the type system rather than by a test:
   backstop would be permanently-uncovered new lines; keeping the check in the return type
   avoids that.
 
+**The shape must not be a mapped type with optional members.** The obvious encoding —
+`{ [L in AgentLane]: { [S in SurfaceKind]?: … } }` — was proposed in review and it defeats its
+own purpose: an optional property may be omitted without error, so "lane declared on a surface
+with no param builder" becomes exactly the silent hole the table exists to close. The
+declaration must be **total over the pairs the lane claims** — the lane names its surfaces, and
+every named surface is then a required key — so omitting one is a compile error rather than an
+absent entry that reads as "not applicable".
+
 Acceptance bar for this slice: **every existing test passes untouched**, no changelog entry, no
 user-visible change. Same bar as slice 1 of the widening arc, and for the same reason — a
 refactor that also changes behaviour cannot be reviewed as either.
@@ -204,6 +220,15 @@ minimum gateway version. The version is read once, cached with the connection, a
 pairing. Below the floor the lanes are not offered — not offered and failing are different
 things, and only one of them is honest.
 
+**A development build must satisfy the floor.** A gateway built from a feature branch reports
+something like `0.0.0-dev` or a prerelease tag, and a naive `>=` comparison puts every such
+build *below* any released floor — which would turn the lanes off for exactly the people
+building them, including in the e2e job that is supposed to prove they work. The comparison
+therefore treats a non-release version (`0.0.0`, or any prerelease of the floor or later) as
+satisfying it. That is the right default for a loopback-only client: the gateway on
+`127.0.0.1` is the user's own build, and being wrong about it costs a `-32602` the panel
+already handles, not a leak.
+
 ---
 
 ## 5. C7 — the file you are looking at
@@ -222,11 +247,29 @@ Each is a local edit to that product's own `match` in `src/shared/recognise/`; t
 does not change. Self-hosted origins inherit it for free, since a configured origin already
 routes to the same module.
 
-`Match` (`src/shared/recognise/rule.ts:9`) gains the forge coordinate — repo and repo-relative
-path — as its own carried fields. Deriving them at the call site from `path` is precisely the
-drift the registry exists to prevent, and the ref (branch or SHA) is deliberately **not** sent:
-the gateway answers from the reader's checkout, not from the branch they happen to be viewing,
-and pretending otherwise would be a claim the answer does not support.
+**The client cannot split the ref from the path, and must not try.** Branch names contain
+slashes. `github.com/acme/web/blob/feat/auth-v2/src/index.ts` is ref `feat/auth-v2` + path
+`src/index.ts` — or ref `feat` + path `auth-v2/src/index.ts`. Nothing in the URL distinguishes
+them, and resolving it needs the repo's branch list, which is a forge API call this extension
+will never make. An earlier draft of this section said "the ref is deliberately not sent" as
+though that settled it; it does not, because you still have to know where the ref *ends* to
+find the path.
+
+So the recogniser carries the **opaque remainder** after `/blob/` (or Bitbucket's `/src/`) and
+sends it as `refAndPath`. The gateway disambiguates it against the file list it already holds
+for that repo — it knows which paths are indexed and the browser does not. This is the same
+division of labour as F3: the client sends what the page shows, the gateway resolves it against
+what it knows.
+
+`Match` (`src/shared/recognise/rule.ts:9`) therefore gains two carried fields — the repo
+coordinate and `refAndPath`. Deriving either at the call site is precisely the drift the
+registry exists to prevent.
+
+**Repo extraction is variable-depth on GitLab.** A project can nest under any number of
+groups — `gitlab.com/group/subgroup/team/project/-/blob/main/src/app.ts` — so the repo
+coordinate is everything before the `/-/` delimiter, not the first two segments. GitHub and
+Bitbucket are fixed at `owner/repo`. The `/-/` delimiter is what makes GitLab's case
+tractable at all, and the matcher keys on it rather than counting segments.
 
 ### 5.2 · A fourth scope
 
@@ -250,13 +293,25 @@ Two things to pin with tests rather than comments:
 
 ### 5.4 · The two misses
 
-`no such remote is tracked` → "Nimbus has no local checkout of `acme/web`, so it cannot answer
-about its files." One sentence, no lanes. `tracked, but that path is not indexed` → the repo is
-known and the file is not, which is a different sentence and a different remediation.
+`remote_not_tracked` → "Nimbus has no local checkout of `acme/web`, so it cannot answer about
+its files." One sentence, no lanes. `file_not_indexed` → the repo is known and the file is not,
+which is a different sentence and a different remediation. Upstream returns these as a **typed
+discriminant**, not prose, so the panel branches on a value rather than matching on a sentence
+that a later improvement to the wording would break.
 
 Neither renders five empty lanes. This is the same rule the dashboard connector-health gate
 established in #76: a lane that will answer nothing is worse than no lane, because the empty
 answer reads as "there is nothing", not as "I cannot see".
+
+**One resolution for the page, not five.** Five lanes each discovering the same miss
+independently would mean five RPCs, five spinners resolving into five identical apologies, and
+five egress rows for one fact. So the panel resolves the file **once** before offering any lane,
+and renders the miss banner instead of the lanes when that resolution fails. On a hit, the lanes
+run as usual.
+
+This mirrors what the panel already does on item surfaces, where resolution precedes the lanes
+rather than being repeated inside each one — and it is the same instinct behind the connector-
+health gate: establish once whether an answer is possible, then decide what to offer.
 
 ---
 
@@ -267,7 +322,14 @@ With upstream PR 3 and the SDK's guards landed, `connections` and `currency` joi
 
 - **`connections`** renders edge-typed neighbours — "PR #482 resolves this issue" — and must
   render the edge, not just the neighbour. Without the relationship it degenerates into a
-  second Related, which already runs on the same page.
+  second Related, which already runs on the same page. Upstream publishes `edgeType` as a
+  **closed union**, so the renderer maps each edge to its own label exhaustively rather than
+  printing a raw `snake_case` value at the reader.
+
+  Because both appear on the same page, they must not read as one list: `connections` sits in
+  its own section with the edge as a leading badge, and Related keeps its existing position.
+  The distinction the user needs is *why* an item is here — a link someone made, or a
+  resemblance the index computed — and only the badge carries that.
 - **`currency`** renders a claim **with its evidence**, never a bare verdict. Upstream F6 binds
   the agent to that; the panel must not then collapse it to a badge. If the evidence cannot be
   shown in the space available, the lane shows fewer claims, not less evidence.
@@ -279,6 +341,15 @@ With upstream PR 3 and the SDK's guards landed, `connections` and `currency` joi
 - **Recogniser fixtures** for the three forge file-URL shapes, plus the near-misses that must
   *not* match: a directory listing (`/tree/`), a raw URL, a blob URL with no path, and a PR
   files-changed tab (a `pr`, not a `file`).
+- **Refs that are not one segment**: a branch with slashes (`feat/user-auth/src/file.ts`), a
+  tag (`v1.0.0-rc.1/src/file.ts`) and a commit sha all produce the same `refAndPath` remainder
+  without the client attempting a split.
+- **GitLab nesting**: a project under three groups yields the full path before `/-/` as the
+  repo coordinate, and a two-segment GitHub URL still yields `owner/repo`.
+- **The version floor accepts a development build** — `0.0.0-dev` and a prerelease of the floor
+  both satisfy it; a genuinely older release does not.
+- **One resolution per page**: a file page with five lanes issues exactly one file-resolution
+  request, and a miss renders the banner without dispatching any lane.
 - **`lane × surface` exhaustiveness**: a lane declared on a surface with no param shape fails
   to compile. Asserted the way the existing exhaustiveness is — by a type-level test, not a
   runtime assertion.
@@ -321,8 +392,16 @@ With upstream PR 3 and the SDK's guards landed, `connections` and `currency` joi
   legibly, the honest outcome is to ship `currency` alone and reconsider.
 - **`panel-in-page.ts` is 2,001 lines** and this adds a surface kind, a scope and four lanes to
   it. The file was already flagged as oversized when C5.3 chose a context menu over a panel
-  lane. This design does not refactor it — that is not this arc's work — but slice 4 should not
-  be the slice that discovers the limit.
+  lane.
+
+  Review proposed extracting lane rendering into per-lane modules before slice 4. **Deferred as
+  a general refactor, accepted as a constraint on new code:** rewriting the existing renderers
+  is a separate change with its own review, and bundling it into a slice that also adds lanes
+  would make both unreviewable — the same argument that gives §4.1 its no-behaviour-change
+  bar. What this design does commit to is that **the new renderers land as new modules**
+  (file-lane rendering, the miss banner, the two brief renderers) rather than as additions to
+  `panel-in-page.ts`, so the arc leaves the file no worse than it found it. If slice 4 cannot
+  hold that line, the extraction stops being deferrable and becomes its own slice before it.
 - **The version floor hardcodes a number** that only becomes true when upstream PR 1 is
   released. Until then the item lanes are off for everyone, including developers testing
   against a locally-built gateway. The floor must be a named constant with the reason next to
@@ -341,3 +420,22 @@ With upstream PR 3 and the SDK's guards landed, `connections` and `currency` joi
   the C3.1 path does not apply and is not offered.
 - **Widening `host_permissions`.** The file surface reads the tab URL under the same per-origin
   page access C1.4 established. No new network destination; loopback only, unchanged.
+- **Extracting the existing `panel-in-page.ts` renderers.** Deferred, with the constraint in §9
+  that new renderers land as new modules.
+
+---
+
+## 11. Review responses
+
+Against [`2026-08-31-lanes-for-every-recognised-page-design-review.md`](./2026-08-31-lanes-for-every-recognised-page-design-review.md)
+(Antigravity, 2026-08-31). Each finding was checked against the code before being accepted.
+
+| Finding | Disposition |
+| --- | --- |
+| Q2.1 branch names contain slashes | **Accepted — the most consequential finding, and it changed the upstream contract too.** The client cannot split `/blob/<ref>/<path>` without the repo's branch list. §5.1 now sends the opaque `refAndPath` remainder and the gateway disambiguates against its indexed file list. The earlier "the ref is deliberately not sent" was answering a different question. |
+| Q2.2 version floor vs development builds | **Accepted.** §4.4 treats `0.0.0`/prerelease as satisfying the floor. Without it the lanes would be off for the people building them and in the e2e job meant to prove them. |
+| Q2.3 five lanes, five identical misses | **Accepted.** §5.4 resolves the file once per page before offering any lane; a miss renders the banner and dispatches nothing. |
+| Q2.4 Related vs connections layout | **Accepted.** §6 puts `connections` in its own section with the edge as a leading badge. The reader's question is *why* an item is listed — a link someone made, or a resemblance the index computed. |
+| I3.1 extract lane rendering from the monolith | **Deferred as a refactor, accepted as a constraint.** Rewriting existing renderers inside a slice that also adds lanes makes both unreviewable — the same argument behind §4.1's no-behaviour-change bar. §9 commits the *new* renderers to new modules, with the extraction promoted to its own slice if that line cannot hold. |
+| I3.2 mapped type for `lane × surface` | **Accepted in intent, rejected as written.** `{ [S in SurfaceKind]?: … }` makes every pair optional, so an undeclared pair compiles — reintroducing the hole the table exists to close. §4.1 requires the declaration to be total over the surfaces a lane claims. |
+| I3.3 GitLab nested groups | **Accepted.** §5.1 keys on the `/-/` delimiter rather than counting segments, so arbitrary group depth works. |
