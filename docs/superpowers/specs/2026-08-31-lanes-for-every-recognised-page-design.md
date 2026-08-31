@@ -29,9 +29,10 @@ turns out to be the single richest page the client can recognise.
 
 When it is done:
 
-- **C6** — an issue, doc, incident, Linear issue or CircleCI pipeline offers *how did we get
-  here*, *who should I talk to*, and (second half) *what is connected to this* and *is this
-  still true*.
+- **C6** — a Jira issue, a Linear issue and a PagerDuty incident offer *how did we get here*,
+  *who should I talk to*, and (second half) *what is connected to this* and *is this still
+  true*. A Confluence page does **not**: it has no graph entity for a lane to answer from
+  (§4.2), and a lane that answers nothing is worse than no lane.
 - **C7** — a file page on GitHub, GitLab or Bitbucket offers five lanes: *what breaks if I
   change this*, *who knows it*, *who owns it*, *whose knowledge left with them*, *who else is
   touching it*.
@@ -179,7 +180,15 @@ refactor that also changes behaviour cannot be reviewed as either.
 
 ### 4.2 · The three item lanes
 
-With PR 1 landed, three lanes widen their surface list to `pr`, `issue`, `doc`, `incident`:
+With PR 1 landed, three lanes widen their surface list to `pr`, `issue` and `incident` — **not
+`doc`**. Upstream F8 is the reason, and it was found while planning: a Confluence page indexes as
+`type: "page"`, which appears in neither `ITEM_LINKED_ENTITY_TYPES` nor `GRAPH_SYNC_BY_TYPE`, so it
+has **no graph entity**. Every one of these lanes answers from graph edges, so on a `doc` page they
+would return an empty answer or a gap, permanently, for a reason no user could act on.
+
+A Confluence page therefore keeps exactly what it has today — header, freshness, Related, glossary —
+and this design does not pretend otherwise. Adding a `page` graph populator upstream would light all
+three lanes up with no client change, since the surface list is a one-line table edit.
 
 - **`why`** — *how did we get here*. Sends `{ itemUrl }`, the same `resolveUrl` the panel
   already computes for resolution. The brief answers on a **third** subject field —
