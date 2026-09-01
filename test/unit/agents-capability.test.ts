@@ -95,3 +95,38 @@ describe("meetsFloor", () => {
     expect(meetsFloor(ITEM_ARM_FLOOR, ITEM_ARM_FLOOR)).toBe(true);
   });
 });
+
+describe("fetchAgentRoster — the token never leaves loopback", () => {
+  it("refuses a non-loopback origin without issuing the request", async () => {
+    // The request carries the bearer token, so the interesting assertion is not the
+    // return value but that `doFetch` is never reached at all.
+    let called = 0;
+    const spy = (async () => {
+      called += 1;
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    for (const origin of [
+      "https://evil.example",
+      "http://127.0.0.1.attacker.com",
+      "https://127.0.0.1:7474",
+      "http://[::1]:7474".replace("[::1]", "example.com"),
+    ]) {
+      expect(await fetchAgentRoster({ origin, token: "t", doFetch: spy })).toEqual({
+        unavailable: true,
+      });
+    }
+    expect(called).toBe(0);
+  });
+
+  it("still allows the real loopback origins", async () => {
+    for (const origin of ["http://127.0.0.1:7474", "http://localhost:7474"]) {
+      const roster = await fetchAgentRoster({
+        origin,
+        token: "t",
+        doFetch: stubFetch(200, { agents: ["why"] }),
+      });
+      expect(roster, origin).toEqual({ names: ["why"] });
+    }
+  });
+});

@@ -10,7 +10,7 @@
 // Reading the roster is NOT sufficient on its own, and the version floor below
 // is why — see `meetsFloor`.
 
-import { endpointUrl } from "../shared/gateway.ts";
+import { endpointUrl, isLoopbackOrigin } from "../shared/gateway.ts";
 import { isObject, readJson } from "./http-json.ts";
 
 /** A list read over a local index. The same bound the egress reads take. */
@@ -42,6 +42,15 @@ function parseNames(body: unknown): readonly string[] | null {
 }
 
 export async function fetchAgentRoster(deps: RosterDeps): Promise<AgentRoster> {
+  // Defence in depth, not a fix for a live path. Every caller passes the origin from
+  // the connection store, which `handlePair` already validated before storing — and
+  // `egress-client.ts` and `brief-client.ts` rely on exactly that and re-check nothing.
+  // This request carries the bearer token, which is the extension's ONE secret, and
+  // "loopback only" is a non-negotiable rather than a property to infer from a caller.
+  // Three lines here mean the module cannot leak it even if called wrongly.
+  if (!isLoopbackOrigin(deps.origin)) {
+    return { unavailable: true };
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ROSTER_TIMEOUT_MS);
   try {
