@@ -1,4 +1,4 @@
-import { homeMatch, isNumber, type Match, type ProductRule } from "./rule.ts";
+import { homeMatch, isNumber, lastSegment, type Match, type ProductRule } from "./rule.ts";
 
 function match(s: readonly string[]): Match | null {
   // Bitbucket Server: /projects/{KEY}/repos/{slug}/pull-requests/{n}
@@ -18,6 +18,24 @@ function match(s: readonly string[]): Match | null {
       matchedPath: path,
     };
   }
+  // Bitbucket Cloud source file: /{workspace}/{repo}/src/{ref}/{path}. Bitbucket spells
+  // `blob` as `src`, which is why this cannot share GitHub's matcher.
+  if (s[2] === "src") {
+    const [ws, rp] = s;
+    const refAndPath = s.slice(3).join("/");
+    if (ws !== undefined && rp !== undefined && s.length >= 5 && refAndPath !== "") {
+      const path = `/${ws}/${rp}/src/${refAndPath}`;
+      return {
+        kind: "file",
+        ref: `${ws}/${rp} ${lastSegment(refAndPath)}`,
+        path,
+        matchedPath: path,
+        forgeFile: { repo: `${ws}/${rp}`, refAndPath },
+      };
+    }
+    return null;
+  }
+
   // Bitbucket Cloud: /{workspace}/{repo}/pull-requests/{n}
   const [workspace, repo, section, num] = s;
   if (workspace === undefined || repo === undefined || section !== "pull-requests") {

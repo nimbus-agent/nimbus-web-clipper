@@ -74,6 +74,7 @@ const KIND_NAMES: Record<SurfaceKind, string> = {
   home: "dashboard",
   doc: "doc",
   incident: "incident",
+  file: "file",
 };
 
 function labelFor(product: Product, kind: SurfaceKind): string {

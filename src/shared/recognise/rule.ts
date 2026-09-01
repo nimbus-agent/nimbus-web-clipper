@@ -11,6 +11,19 @@ export interface Match {
   readonly ref: string;
   readonly path: string;
   readonly matchedPath: string;
+  /**
+   * The forge coordinate, on a `file` match only.
+   *
+   * Carried here rather than re-derived at the call site from `path`: deriving one
+   * from the other is exactly the drift the registry exists to prevent, and the three
+   * forges spell the same coordinate differently (`/blob/`, `/-/blob/`, `/src/`).
+   *
+   * `refAndPath` is everything after the delimiter, ref and path STILL JOINED. A branch
+   * name may contain slashes, so `feat/auth-v2/src/foo.ts` cannot be split here without
+   * the repository's branch list — which would be a forge API call this client must
+   * never make. The gateway holds the file list and splits it there.
+   */
+  readonly forgeFile?: { readonly repo: string; readonly refAndPath: string };
 }
 
 /**
@@ -144,4 +157,15 @@ const NUMBER = /^\d+$/;
 /** A path segment that is a bare decimal id (a PR number, a build number). */
 export function isNumber(segment: string): boolean {
   return NUMBER.test(segment);
+}
+
+/**
+ * The last path segment — the file's own name, for a header that must fit one line.
+ *
+ * `src/very/deep/path/handler.ts` reads as `handler.ts`; the full coordinate is still
+ * carried in `forgeFile` for the gateway, which needs all of it.
+ */
+export function lastSegment(p: string): string {
+  const parts = p.split("/");
+  return parts[parts.length - 1] ?? p;
 }

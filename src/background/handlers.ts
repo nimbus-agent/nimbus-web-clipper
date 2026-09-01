@@ -523,6 +523,24 @@ type ResolveForAgent =
       readonly label: string;
       readonly term: string;
     }
+  | {
+      readonly ok: true;
+      readonly scope: "file";
+      readonly origin: string;
+      readonly token: string;
+      readonly label: string;
+      /**
+       * The forge coordinate, straight off recognition. NO resolve call is made on
+       * this arm and none is possible: a source file is not a connector item, so
+       * there is no indexed row to resolve to, no miss to recover from, and no
+       * targeted fetch that could ever create one. The gateway maps the coordinate
+       * to the reader's own checkout — this client does not know their filesystem
+       * and must not guess at it.
+       */
+      readonly service: string;
+      readonly repo: string;
+      readonly refAndPath: string;
+    }
   | { readonly ok: false; readonly reason: AgentError; readonly scopeGap?: ScopeGap };
 
 /**
@@ -708,11 +726,27 @@ type AgentParams =
   | { term: string }
   | { fileOrPrUrl: string }
   | { prUrl: string }
-  | { topicOrFile: string };
+  | { topicOrFile: string }
+  /** The forge coordinate, unsplit — `requireFileParam`'s forge arm upstream. */
+  | { service: string; repo: string; refAndPath: string };
 
 function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }): AgentParams {
   if (resolved.scope === "service") {
     return { service: resolved.service };
+  }
+  if (resolved.scope === "file") {
+    // Straight through, unsplit. The gateway maps this to the reader's own checkout
+    // (`resolveFileByRemote`); splitting the ref from the path here is impossible
+    // without the repository's branch list, and inventing a local path is not this
+    // client's business.
+    //
+    // Every lane on a `file` surface takes the same shape, so this returns before the
+    // per-lane switch below rather than adding five identical cases to it.
+    return {
+      service: resolved.service,
+      repo: resolved.repo,
+      refAndPath: resolved.refAndPath,
+    };
   }
   if (resolved.scope === "term") {
     // `{ term }` and nothing else. `agents.glossary` also accepts `limit`, and
@@ -771,9 +805,13 @@ function subjectFor(resolved: ResolveForAgent & { ok: true }): RunSubject {
   if (resolved.scope === "service") {
     return { kind: "service", service: resolved.service };
   }
-  return resolved.scope === "term"
-    ? { kind: "term", term: resolved.term }
-    : { kind: "item", id: resolved.item.id };
+  if (resolved.scope === "term") {
+    return { kind: "term", term: resolved.term };
+  }
+  if (resolved.scope === "file") {
+    return { kind: "file", repo: resolved.repo, refAndPath: resolved.refAndPath };
+  }
+  return { kind: "item", id: resolved.item.id };
 }
 
 /** Build the response for a `failed` lane, attaching the scope gap only when
