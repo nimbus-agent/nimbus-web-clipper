@@ -66,7 +66,13 @@ export const MAX_STORED_TERM_RUNS = 6;
 export type RunSubject =
   | { readonly kind: "item"; readonly id: string }
   | { readonly kind: "service"; readonly service: string }
-  | { readonly kind: "term"; readonly term: string };
+  | { readonly kind: "term"; readonly term: string }
+  /**
+   * A source file. Keyed by repo AND coordinate, because two files in one
+   * repository — and the same path in two repositories — are different subjects,
+   * and a key that dropped either would serve one file's run for the other.
+   */
+  | { readonly kind: "file"; readonly repo: string; readonly refAndPath: string };
 
 export interface StoredRun {
   readonly subject: RunSubject;
@@ -87,7 +93,13 @@ function subjectValue(subject: RunSubject): string {
   if (subject.kind === "item") {
     return subject.id;
   }
-  return subject.kind === "service" ? subject.service : subject.term;
+  if (subject.kind === "service") {
+    return subject.service;
+  }
+  // Both halves, joined by the same separator the key uses: a repo alone would
+  // collide every file in it, and a coordinate alone would collide the same path
+  // across repositories.
+  return subject.kind === "file" ? `${subject.repo}${KEY_SEP}${subject.refAndPath}` : subject.term;
 }
 
 function makeKey(subject: RunSubject, lane: AgentLane): string {
