@@ -176,7 +176,7 @@ export type Product = (typeof PRODUCT_IDS)[number];
  * `ALL_KINDS` list that still typechecked — the same drift `PRODUCT_IDS` exists
  * to prevent one union over.
  */
-export const SURFACE_KINDS = ["pr", "build", "issue", "home", "doc", "incident"] as const;
+export const SURFACE_KINDS = ["pr", "build", "issue", "home", "doc", "incident", "file"] as const;
 
 export type SurfaceKind = (typeof SURFACE_KINDS)[number];
 

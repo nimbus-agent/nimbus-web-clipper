@@ -73,7 +73,7 @@ describe("LANE_RULES", () => {
   it("names every surface kind the recogniser can produce", () => {
     // Pins the derivation itself: if `SurfaceKind` ever stops being derived from
     // `SURFACE_KINDS`, this list and the union can drift apart again.
-    expect([...SURFACE_KINDS]).toEqual(["pr", "build", "issue", "home", "doc", "incident"]);
+    expect([...SURFACE_KINDS]).toEqual(["pr", "build", "issue", "home", "doc", "incident", "file"]);
   });
 });
 
