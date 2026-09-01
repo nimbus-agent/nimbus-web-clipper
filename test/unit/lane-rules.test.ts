@@ -5,6 +5,8 @@ import {
   LANE_RULES,
   laneBelongsOnSurface,
   SURFACE_KINDS,
+  type SurfaceKind,
+  scopeForLane,
 } from "../../src/shared/types.ts";
 
 // DERIVED, not hand-written. A literal list here typechecks while incomplete,
@@ -26,9 +28,13 @@ describe("LANE_RULES", () => {
       if (rule.input !== "page") {
         continue;
       }
-      expect(rule.surfaces.length, lane).toBeGreaterThan(0);
-      for (const kind of rule.surfaces) {
+      const claimed = Object.keys(rule.surfaces);
+      expect(claimed.length, lane).toBeGreaterThan(0);
+      for (const kind of claimed) {
         expect(ALL_KINDS).toContain(kind);
+        // A claimed surface always carries a scope — the property the one-map
+        // shape exists to make unexpressible otherwise.
+        expect(scopeForLane(lane, kind as SurfaceKind), `${lane}/${kind}`).not.toBeNull();
       }
     }
   });
@@ -37,8 +43,8 @@ describe("LANE_RULES", () => {
   // `fileOrPrUrl` and `expert` asks who should review it — neither question means
   // anything about a Jenkins build or a Jira issue.
   it("puts the shipped lanes on pull requests only", () => {
-    expect(LANE_RULES.impact).toEqual({ input: "page", surfaces: ["pr"] });
-    expect(LANE_RULES.expert).toEqual({ input: "page", surfaces: ["pr"] });
+    expect(LANE_RULES.impact).toEqual({ input: "page", surfaces: { pr: "item" } });
+    expect(LANE_RULES.expert).toEqual({ input: "page", surfaces: { pr: "item" } });
   });
 
   it("offers no page lane on any item surface — only a dashboard and a PR carry lanes", () => {
@@ -74,7 +80,7 @@ describe("LANE_RULES", () => {
 describe("service lanes", () => {
   it("puts the service-scoped lanes on home and nowhere else", () => {
     for (const lane of ["catchup", "decisions", "ownership"] as const) {
-      expect(LANE_RULES[lane], lane).toEqual({ input: "page", surfaces: ["home"] });
+      expect(LANE_RULES[lane], lane).toEqual({ input: "page", surfaces: { home: "service" } });
     }
   });
 
@@ -86,7 +92,9 @@ describe("service lanes", () => {
 
   it("gives every surface kind at least one lane", () => {
     const covered = new Set(
-      Object.values(LANE_RULES).flatMap((rule) => (rule.input === "page" ? rule.surfaces : [])),
+      Object.values(LANE_RULES).flatMap((rule) =>
+        rule.input === "page" ? Object.keys(rule.surfaces) : [],
+      ),
     );
     // `build` and `issue` deliberately have no agent lane yet — assert the two
     // that DO, so this test fails loudly if a future edit empties them.

@@ -429,8 +429,32 @@ export type AgentLane = (typeof AGENT_LANES)[number];
  * error rather than a lane that silently appears everywhere — the property C2.3
  * established, now covering both questions instead of one.
  */
+/**
+ * Where a page lane's input comes from, on one surface.
+ *
+ * `item` needs a resolved indexed item; `service` needs only the connector id; `file`
+ * needs the forge coordinate the recogniser already holds and makes NO resolve call at
+ * all, because a source file is not a connector item and never resolves to one.
+ */
+export type LaneScope = "item" | "service" | "file";
+
+/**
+ * A page lane's surfaces, and what supplies its input on each.
+ *
+ * ONE map, not a surface list plus a separate scope table. That split is what allowed the
+ * hole this generalisation closes: a lane could name a surface in one place and have no
+ * param shape in the other, and both halves compiled. Here a lane claims a surface only by
+ * writing its scope, so a claimed-but-unshaped pair cannot be expressed.
+ *
+ * `Partial` is load-bearing and safe: it says a lane need not claim every surface, which is
+ * the normal case. It does NOT make a claimed surface's scope optional — the VALUE type is
+ * a bare `LaneScope`, and `exactOptionalPropertyTypes` is on, so `{ pr: undefined }` does
+ * not typecheck either.
+ */
+export type LaneSurfaceMap = Readonly<Partial<Record<SurfaceKind, LaneScope>>>;
+
 export type LaneRule =
-  | { readonly input: "page"; readonly surfaces: readonly SurfaceKind[] }
+  | { readonly input: "page"; readonly surfaces: LaneSurfaceMap }
   | { readonly input: "term" };
 
 /**
@@ -454,18 +478,18 @@ export const LANE_RULES: Record<AgentLane, LaneRule> = {
   // reason for the gate does not apply to it. The term you most need defined is
   // usually on the unfamiliar internal wiki that has no connector at all.
   glossary: { input: "term" },
-  impact: { input: "page", surfaces: ["pr"] },
-  expert: { input: "page", surfaces: ["pr"] },
+  impact: { input: "page", surfaces: { pr: "item" } },
+  expert: { input: "page", surfaces: { pr: "item" } },
   // The third review question, and gated identically: `agents.why`'s prUrl arm
   // answers about a change under review, which is a question only a pull request
   // page can pose.
-  why: { input: "page", surfaces: ["pr"] },
+  why: { input: "page", surfaces: { pr: "item" } },
   // Service-scoped: these answer about a whole connector, so they belong on the
   // one page whose scope is the connector. On an item page they would repeat
   // the same answer for every item on that host.
-  catchup: { input: "page", surfaces: ["home"] },
-  decisions: { input: "page", surfaces: ["home"] },
-  ownership: { input: "page", surfaces: ["home"] },
+  catchup: { input: "page", surfaces: { home: "service" } },
+  decisions: { input: "page", surfaces: { home: "service" } },
+  ownership: { input: "page", surfaces: { home: "service" } },
 };
 
 /**
@@ -479,8 +503,23 @@ export const LANE_RULES: Record<AgentLane, LaneRule> = {
  * handler's forged-message check) from each inventing their own default.
  */
 export function laneBelongsOnSurface(lane: AgentLane, kind: SurfaceKind): boolean {
+  return scopeForLane(lane, kind) !== null;
+}
+
+/**
+ * Which scope supplies this lane's input on this surface, or null when the lane is not
+ * offered there at all.
+ *
+ * The single source both the render gate and `agentParams` read, so "is this lane offered
+ * here" and "what does it send here" can never answer from different tables. `Object.hasOwn`
+ * rather than a bare index: `kind` reaches this from a recogniser, and `in` would resolve
+ * `"constructor"` against Object.prototype.
+ */
+export function scopeForLane(lane: AgentLane, kind: SurfaceKind): LaneScope | null {
   const rule = LANE_RULES[lane];
-  return rule.input === "page" && rule.surfaces.includes(kind);
+  if (rule.input !== "page") return null;
+  const surfaces: Readonly<Record<string, LaneScope>> = rule.surfaces;
+  return Object.hasOwn(surfaces, kind) ? (surfaces[kind] ?? null) : null;
 }
 
 /**
