@@ -11,6 +11,11 @@
 >
 > **Roadmap:** continues the C-series. **C6 — lanes on an item** (§4), **C7 — the file you
 > are looking at** (§5). Both are recorded in `ROADMAP.md` by the last slice.
+>
+> **Amended 2026-09-02.** Slices 1 and 2 shipped in #94. Upstream PR 1 landed as Nimbus#1421
+> (in the v7.5.0 release) and PR 2 as Nimbus#1424 (unreleased), so §4.2 and §5 are both
+> unblocked. §4.4's version floor turned out to have no input — see the new **F7** — so it
+> takes a small additive upstream change and §4.4 is rewritten to match.
 
 ---
 
@@ -129,20 +134,53 @@ The client-side consequence: **the impact lane on a file page must render the su
 gateway resolved**, not just the finding. A lane that shows an answer without showing what it
 is an answer about cannot be checked by the person reading it.
 
+### F7 — nothing on the HTTP surface serves a gateway version
+
+Found while checking that upstream PR 1 had landed, and it invalidates an assumption §4.4 made
+without stating it. The version floor has no input: `GET /v1/health` answers
+`{ status: "ok", gateway: "read_only_http" }`, `GET /v1/agents` answers `{ agents: […] }`, and
+`HTTP_ROUTES` carries no version route at all. `meetsFloor` fails closed on a `null` version —
+correctly — so wiring the floor up as designed would withhold the item lanes from **every**
+gateway.
+
+`ITEM_ARM_FLOOR` is separately wrong: it reads `2.19.0`, a line the gateway had already left
+when the constant was written. The gateway reports `7.5.0` today and has moved four majors in a
+week, so a 2.x floor is satisfied by everything and gates nothing. Neither defect is live —
+`ITEM_ARM_FLOOR` and `meetsFloor` have no callers until the item lanes wire them up — but this
+slice is what wires them up.
+
+The version therefore goes on **`GET /v1/agents`**, additively, as a small upstream change. Two
+alternatives were considered and rejected:
+
+- **`GET /v1/health`.** Tokenless, so it would be read at pair time and cached — which is where
+  the staleness in the withdrawn §4.4 wording comes from. It also puts a version on the one
+  route this client calls without a bearer; no CORS headers are set anywhere in
+  `packages/gateway/src/ipc/`, so a page could not read the response, but the roster route is
+  authed, already called here, and costs nothing extra.
+- **Publishing the arms rather than a version** — `GET /v1/agents` describing what each agent
+  *accepts*, which would retire F4's problem permanently instead of proxying it through a
+  release number. This is the better long-run shape and this decision does not block it. It is
+  not this slice: the arms live inside each handler's param types, so deriving them honestly is
+  real upstream work, and hand-listing them is exactly the drift shape `EXTERNAL_AGENT_NAMES`
+  exists to prevent — that constant is derived from `AGENTS_RPC_HANDLERS` for this reason.
+
 ---
 
 ## 3. Dependencies and order
 
-| Slice | Needs |
-| --- | --- |
-| §4.1 the `lane × surface` refactor | nothing — pure client, no behaviour change |
-| §4.2 item lanes (`why`, `expert`, `ownership`) | upstream **PR 1** |
-| §4.4 capability discovery + version floor | nothing |
-| §5 the file surface | upstream **PR 2** |
-| §6 `connections` + `currency` lanes | upstream **PR 3**, and the SDK's guards |
+| Slice | Needs | State |
+| --- | --- | --- |
+| §4.1 the `lane × surface` refactor | nothing — pure client, no behaviour change | ✅ #94 |
+| §4.4 roster discovery | nothing | ✅ #94 |
+| §4.4 the version floor | a `version` field on `GET /v1/agents` (F7) | upstream, not started |
+| §4.2 item lanes (`why`, `expert`, `ownership`) | upstream **PR 1** — Nimbus#1421 | ✅ landed, v7.5.0 |
+| §5 the file surface | upstream **PR 2** — Nimbus#1424 | ✅ landed, unreleased |
+| §6 `connections` + `currency` lanes | upstream **PR 3**, and the SDK's guards | not started |
 
-§4.1 and §4.4 can start immediately; they are the only parts of this document that are not
-waiting on the gateway. Everything else lands in the order above.
+The roster half of §4.4 shipped without the floor half, which is why the floor's missing input
+went unnoticed: `ITEM_ARM_FLOOR` and `meetsFloor` have no callers today. The floor's upstream
+field is small and additive, and it gates §4.2 only — so it leads that slice rather than
+standing as its own.
 
 ---
 
@@ -225,9 +263,24 @@ means a gateway older than the route: fall back to the current hardcoded set, si
 as the connector-health gate degrades when `GET /v1/connectors` is absent.
 
 Per F4, name discovery cannot prove an arm exists, so the item lanes additionally require a
-minimum gateway version. The version is read once, cached with the connection, and re-read on
-pairing. Below the floor the lanes are not offered — not offered and failing are different
-things, and only one of them is honest.
+minimum gateway version. **The version rides on the roster response** — `GET /v1/agents`
+answers `{ agents: […], version }`, so the fact and the check arrive in the same request, at the
+moment the floor is evaluated. Below the floor the lanes are not offered — not offered and
+failing are different things, and only one of them is honest.
+
+An earlier draft of this section said the version is "read once, cached with the connection, and
+re-read on pairing." That is withdrawn, and F7 records why: a cache keyed to pairing goes stale
+the moment a user upgrades their gateway without re-pairing, and the symptom is lanes that stay
+off forever with nothing on screen to explain it. Reading it inline costs nothing, because the
+request is one the panel already makes.
+
+**The floor is `7.5.0`** — upstream #1421 landed before the v7.5.0 release, so that is the first
+release serving the `itemUrl` arm. A consequence worth stating plainly: 7.5.0 *has* the arm and
+does **not** report a version, so it fails closed and is offered no item lanes. The effective
+floor is therefore the release that adds the version field. That is one release of lag for
+anyone sitting exactly on 7.5.0, and it is the honest outcome — a gateway that cannot say what
+it is does not get lanes. `meetsFloor` still earns its keep for the next floor: the file arms
+(upstream #1424) are unreleased and will carry one of their own.
 
 **A development build must satisfy the floor.** A gateway built from a feature branch reports
 something like `0.0.0-dev` or a prerelease tag, and a naive `>=` comparison puts every such
