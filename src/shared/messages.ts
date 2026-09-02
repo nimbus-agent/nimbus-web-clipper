@@ -780,9 +780,10 @@ function isConnectorHealth(v: unknown): v is ConnectorHealth {
  *  The cast is on the KNOWN list, never on the datum — the same shape
  *  `isConnectorHealth` uses two functions up. `Array.isArray` narrows only to
  *  `any[]`, so casting each element to `AgentLane` would assert the very thing
- *  this guard exists to check, and a numeric or nested entry would walk straight
- *  through. Widening `AGENT_LANES` to `readonly string[]` instead leaves the
- *  runtime comparison doing the work it is here to do. */
+ *  this guard exists to check. Widening `AGENT_LANES` to `readonly string[]`
+ *  keeps the guard honest: the cast lands on the known list rather than the
+ *  unknown datum, so the guard cannot be quietly weakened by someone widening
+ *  the union later. */
 function isAgentLaneList(v: unknown): v is readonly AgentLane[] {
   return Array.isArray(v) && v.every((x) => (AGENT_LANES as readonly string[]).includes(x));
 }

@@ -466,7 +466,7 @@ mock's fixed brief cannot produce.
 
 ## Manual verification — Item lanes and the version floor (C6)
 
-> **This pass cannot be run yet, and steps 1–4 and 6 will not pass against any
+> **This pass cannot be run yet, and steps 1–4 will not pass against any
 > gateway that exists.** The item lanes are gated on the gateway reporting its
 > own version from `GET /v1/agents`, and that route serves `{ agents }` alone —
 > upstream Nimbus#1421 added the item **arm**, not the version **field**. With
@@ -482,14 +482,15 @@ mock's fixed brief cannot produce.
 Not a unit test, and it is the pass that catches what none of the above can:
 whether the gateway's rendered brief actually names the item it answered
 about, and whether the panel's capability discovery behaves across two real
-gateway builds. **`bun run mock-gateway` cannot exercise this pass** — its
-`GET /v1/agents` route does not exist, so `offeredLanes` always reads
-`unavailable` against it and the panel falls back to "nothing withheld,"
-never the filtered set steps 1–2 below are checking. This needs two gateway
-builds: one below the floor (any build today — see the note above; a checkout
-from before Nimbus#1421 also serves) and one at or above it, meaning a build
-that reports a `version` of at least `7.5.0` from `GET /v1/agents`. The second
-does not exist yet.
+gateway builds. **Against the mock, an issue page does get a narrowed list:**
+its `GET /v1/agents` route does not exist, so `offeredLanes` reads
+`unavailable`, and the three item lanes are withheld on the issue — exactly
+the filtered set steps 1–2 below are checking. The mock cannot show the
+other half: a version at or above the floor, so the lanes offered and run. To
+verify both halves, pair against two gateway builds: one today (any build
+without the version field) and one once Nimbus#1421 ships the field (meaning a
+build that reports a `version` of at least `7.5.0` from `GET /v1/agents`). The
+second build does not exist yet.
 
 Prereq: paired, a Jira issue Nimbus has indexed (a Linear issue or a PagerDuty
 incident works identically for steps 1–3), and — for step 6 — a Confluence

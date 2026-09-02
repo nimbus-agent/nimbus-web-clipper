@@ -11,9 +11,9 @@ disagree, the code wins — fix the document.
 A Chrome + Firefox **Manifest V3** extension that clips the readable article or
 the current selection of a web page into the user's local-first
 [Nimbus](https://github.com/nimbus-agent/Nimbus) index, and surfaces related
-indexed items in an on-demand panel. Phases C1–C5 added the rest of what is
+indexed items in an on-demand panel. Phases C1–C6 added the rest of what is
 documented below: page recognition, the agent lanes, targeted fetch, research
-briefs, and the activity page over the gateway's egress ledger.
+briefs, the activity page over the gateway's egress ledger, and the item lanes.
 
 It is a **thin client** over a locked HTTP contract. It talks to exactly one
 place — a Nimbus gateway on `127.0.0.1` — and holds exactly one secret, the

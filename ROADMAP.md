@@ -1122,8 +1122,10 @@ the editor structurally cannot.*
 > upstream Nimbus#1421 shipped in). A gateway that does not report a version —
 > including 7.5.0 itself, which has the arm but predates the field — fails
 > closed and gets none of the three; a gateway too old to answer `GET
-> /v1/agents` at all is not second-guessed, and renders exactly as it did
-> before this phase.
+> /v1/agents` at all is not second-guessed: on a pull request or a dashboard
+> the panel renders exactly as it did, with nothing withheld — and on an issue
+> or an incident the three unconfirmable lanes are withheld, which is also
+> exactly as it did.
 > **Done when** The three lanes run on a Jira issue, a Linear issue and a
 > PagerDuty incident, against the item each resolves to; the panel offers
 > exactly the lanes the paired gateway's roster (and, for these three, its
