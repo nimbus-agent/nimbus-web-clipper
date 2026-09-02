@@ -17,7 +17,7 @@ import {
   handleUnpair,
 } from "../../src/background/handlers.ts";
 import type { QueuedClip } from "../../src/shared/queue.ts";
-import type { Connection } from "../../src/shared/types.ts";
+import { AGENT_LANES, type Connection } from "../../src/shared/types.ts";
 
 const conn: Connection = {
   origin: "http://127.0.0.1:8765",
@@ -547,6 +547,7 @@ describe("handleResolve", () => {
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       // Note: recognise() preserves the query string deliberately — the gateway
       // owns canonicalisation, so the recogniser's resolveUrl (asserted below)
@@ -574,6 +575,7 @@ describe("handleResolve", () => {
         }),
         resolveItem: async () => ({ ok: false, reason: "insufficient_scope" }),
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
     );
@@ -601,6 +603,7 @@ describe("handleResolve", () => {
           scopeGap: { required: "resolve", granted: ["clip", "briefs"] },
         }),
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
     );
@@ -629,6 +632,7 @@ describe("handleResolve", () => {
           return { ok: false, reason: "server_error" };
         },
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://example.com/whatever" },
     );
@@ -653,6 +657,7 @@ describe("handleResolve", () => {
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: PR },
     );
@@ -671,6 +676,7 @@ describe("handleResolve", () => {
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://corp.example/jira/browse/plat-9?x=1" },
     );
@@ -687,6 +693,7 @@ describe("handleResolve", () => {
         return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
       },
       readConnectorHealth: async () => null,
+      readAgentRoster: async () => ({ unavailable: true as const }),
     };
 
     const res = await handleResolve(deps, {
@@ -713,6 +720,7 @@ describe("handleResolve", () => {
         return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
       },
       readConnectorHealth: async () => null,
+      readAgentRoster: async () => ({ unavailable: true as const }),
     };
 
     const res = await handleResolve(deps, {
@@ -723,6 +731,117 @@ describe("handleResolve", () => {
 
     expect(resolveCalls).toBe(0);
     expect(res).toMatchObject({ ok: false, reason: "not_paired" });
+  });
+});
+
+describe("handleResolve attaches the offered lanes", () => {
+  const prResolveDeps = {
+    getOrigins: async () => [],
+    getConnection: async () => ({ origin: "http://127.0.0.1:8765", token: "t", label: "MacBook" }),
+    resolveItem: async () => ({
+      ok: true as const,
+      outcome: { kind: "not-indexed" as const, fetchable: true },
+    }),
+    readConnectorHealth: async () => null,
+    readAgentRoster: async () => ({ unavailable: true as const }),
+  };
+
+  it("attaches the lanes the gateway can serve", async () => {
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "MacBook",
+        }),
+        resolveItem: async () => ({ ok: true, outcome: { kind: "not-indexed", fetchable: true } }),
+        readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ names: ["why", "impact"], version: "7.6.0" }),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/acme/web/pull/482" },
+    );
+    expect(res.ok).toBe(true);
+    expect(res.ok === true && res.offeredLanes).toEqual(["impact", "why"]);
+  });
+
+  // The roster read failing must leave the panel exactly as it renders without one.
+  it("omits the offered lanes when the roster could not be read", async () => {
+    const res = await handleResolve(
+      { ...prResolveDeps, readAgentRoster: async () => ({ unavailable: true }) },
+      { kind: "resolve", pageUrl: "https://github.com/acme/web/pull/482" },
+    );
+    expect(res.ok === true && "offeredLanes" in res).toBe(false);
+  });
+
+  // The gate is computed for the PAGE's own surface, and these two are the only
+  // handler-level tests that can tell. Everything above resolves a GitHub PR or a
+  // GitHub dashboard, where the floor never applies — so replacing
+  // `recognition.kind` with a literal `"pr"` in `offeredFor`'s call would leave
+  // the whole suite green while offering the three item lanes to every gateway
+  // below the floor, which is the exact failure this gate exists to prevent.
+  const JIRA_ISSUE = "https://acme.atlassian.net/browse/PLAT-91";
+
+  it("floors the item lanes on an issue when the gateway reports no version", async () => {
+    const res = await handleResolve(
+      {
+        ...prResolveDeps,
+        readAgentRoster: async () => ({ names: [...AGENT_LANES], version: null }),
+      },
+      { kind: "resolve", pageUrl: JIRA_ISSUE },
+    );
+    expect(res.ok).toBe(true);
+    const offered = res.ok === true ? res.offeredLanes : undefined;
+    expect(offered).toBeDefined();
+    expect(offered).not.toContain("why");
+    expect(offered).not.toContain("expert");
+    expect(offered).not.toContain("ownership");
+  });
+
+  it("offers the item lanes on an issue when the gateway is at the floor", async () => {
+    const res = await handleResolve(
+      {
+        ...prResolveDeps,
+        readAgentRoster: async () => ({ names: [...AGENT_LANES], version: "7.6.0" }),
+      },
+      { kind: "resolve", pageUrl: JIRA_ISSUE },
+    );
+    expect(res.ok).toBe(true);
+    const offered = res.ok === true ? res.offeredLanes : undefined;
+    expect(offered).toContain("why");
+    expect(offered).toContain("expert");
+    expect(offered).toContain("ownership");
+  });
+
+  // A dashboard gets the list too: the three service lanes are roster-gated like
+  // every other lane, on top of the connector-health gate they already have.
+  it("attaches the offered lanes on a dashboard", async () => {
+    const res = await handleResolve(
+      {
+        ...prResolveDeps,
+        readAgentRoster: async () => ({ names: ["catchup"], version: "7.6.0" }),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/" },
+    );
+    expect(res.ok === true && res.offeredLanes).toEqual(["catchup"]);
+  });
+
+  // No pairing, no bearer, no roster read — the same rule every gateway call here
+  // follows. Assert the CALL never happens, not merely that the field is absent.
+  it("does not read the roster when unpaired", async () => {
+    let called = false;
+    await handleResolve(
+      {
+        ...prResolveDeps,
+        getConnection: async () => null,
+        readAgentRoster: async () => {
+          called = true;
+          return { unavailable: true };
+        },
+      },
+      { kind: "resolve", pageUrl: "https://github.com/acme/web/pull/482" },
+    );
+    expect(called).toBe(false);
   });
 });
 
@@ -740,6 +859,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map([["github", { state: "healthy" as const }]]),
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -753,6 +873,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -771,6 +892,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map(),
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -789,6 +911,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map(),
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -798,6 +921,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -814,6 +938,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map([["github", { state: "degraded" as const }]]),
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -831,6 +956,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
           calls++;
           return null;
         },
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/acme/web/pull/1" },
     );
@@ -849,6 +975,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
           calls++;
           return null;
         },
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -1018,6 +1145,117 @@ describe("handleAgentRun", () => {
       params: { fileOrPrUrl: "https://github.com/a/b/pull/1" },
     });
     expect(seen[1]).toEqual({ agent: "expert", params: { topicOrFile: "Cache it" } });
+  });
+
+  // The three item lanes on an issue. Each sends the page URL under `itemUrl` —
+  // upstream's arm name, mutually exclusive with prUrl / topicOrFile / service.
+  //
+  // A local deps factory rather than a file-level fixture, and the URL is one
+  // `recognise.test.ts` pins: a URL the recogniser rejects would make every one of
+  // these pass for the wrong reason, failing at `not_resolved` before any param is
+  // built.
+  //
+  // The Jira page is deliberately NOT already canonical. Its key is lower-cased
+  // and it carries a query string, so `recognise` upper-cases the key on its way
+  // to `resolveUrl` (`jira.ts`) and the two strings differ — which is the only
+  // reason this case can tell `resolveUrl` from the raw `pageUrl` at all. Spec
+  // §2.1 requires the byte-identical `resolveUrl`, and with three already-canonical
+  // URLs every one of these would pass for a build that sent either. The
+  // neighbouring `why`-on-a-PR test carries a sub-tab segment and a query for
+  // exactly the same reason. (Note what Jira does NOT do: the query survives —
+  // canonicalisation is the gateway's job — so the case difference is the whole
+  // signal here.)
+  const ITEM_PAGES = [
+    [
+      "a Jira issue",
+      "https://acme.atlassian.net/browse/plat-91?filter=1",
+      "https://acme.atlassian.net/browse/PLAT-91?filter=1",
+    ],
+    [
+      "a Linear issue",
+      "https://linear.app/acme/issue/ENG-123/fix-the-thing",
+      "https://linear.app/acme/issue/ENG-123/fix-the-thing",
+    ],
+    [
+      "a PagerDuty incident",
+      "https://acmeco.pagerduty.com/incidents/PT4KHLK",
+      "https://acmeco.pagerduty.com/incidents/PT4KHLK",
+    ],
+  ] as const;
+
+  const itemLaneCases = (["why", "expert", "ownership"] as const).flatMap((lane) =>
+    ITEM_PAGES.map(([where, pageUrl, itemUrl]) => ({ lane, where, pageUrl, itemUrl })),
+  );
+
+  it.each(itemLaneCases)("sends $lane an itemUrl on $where", async ({ lane, pageUrl, itemUrl }) => {
+    const invoked: unknown[] = [];
+    await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async (_o: string, _t: string, _agent: string, params: unknown) => {
+          invoked.push(params);
+          return { ok: true as const, runId: "r1" };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane, pageUrl },
+    );
+    expect(invoked).toEqual([{ itemUrl }]);
+  });
+
+  // §4.3: a page that resolves to nothing is a condition of the PAGE, and it is
+  // already spelled. The item lanes reuse `not_resolved` rather than inventing a
+  // second vocabulary for the same fact.
+  it("reports not_resolved for an item lane on an unindexed issue", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "not-indexed" as const, fetchable: true },
+        }),
+        invokeAgent: async () => {
+          throw new Error("must not invoke for a page that resolves to nothing");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "why", pageUrl: "https://acme.atlassian.net/browse/PLAT-91" },
+    );
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+
+  // Unchanged, and the point of carrying the surface: same lane, same `item`
+  // scope, different arm — a PR page has served `prUrl` for releases, so widening
+  // the table must not move it. `impact`'s and `expert`'s PR arms are pinned by
+  // "sends impact the page URL and expert the item title" above, and `why`'s by
+  // the test below.
+  it("still sends ownership a service on a dashboard, not an itemUrl", async () => {
+    const invoked: Array<{ agent: string; params: unknown }> = [];
+    await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => {
+          throw new Error("must not resolve on a dashboard");
+        },
+        invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+          invoked.push({ agent, params });
+          return { ok: true as const, runId: "r1" };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "ownership", pageUrl: "https://github.com/" },
+    );
+    expect(invoked).toEqual([{ agent: "ownership", params: { service: "github" } }]);
   });
 
   it("the why lane is asked with the page's PR URL, not the item title, and unnormalised", async () => {

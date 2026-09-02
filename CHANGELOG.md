@@ -59,9 +59,11 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   home or a PagerDuty incidents list gets *catch me up*, *what changed while I
   was away* and *what's mine*, gated on the connector's health like every other
   dashboard. Neither offers a targeted fetch on a miss: the gateway's fetch
-  boundary covers GitHub, GitLab, Bitbucket, Jenkins and Jira only. Neither
-  offers an agent lane on the item page itself — those three questions answer
-  about a whole connector, not one document or one incident.
+  boundary covers GitHub, GitLab, Bitbucket, Jenkins and Jira only. The three
+  connector-scoped lanes above do not run on the item page itself — they
+  answer about a whole connector, not one document or one incident, and stay
+  that way for both. (A PagerDuty incident later gained its own, item-scoped
+  lanes — client-side; see the entry below for the gateway they wait on.)
 
   Confluence shares `*.atlassian.net` with Jira and is told apart by its `/wiki`
   path, so no new page-access grant is involved: granting either grants both,
@@ -78,6 +80,41 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   which indexes the page under the `_links.webui` URL Confluence itself links
   to; this client deliberately does not work around it, because canonicalisation
   is the gateway's job.
+
+- **A Jira issue, a Linear issue and a PagerDuty incident can now get agent
+  lanes — and stay dark until the gateway says it can serve them.**
+  Recognition reached these products in the last two releases and then had
+  nothing to run on them: an issue got a header, a freshness line, Related and
+  the glossary box, and no lane at all. The client half of *how did we get
+  here*, *who should I talk to* and *who owns this* — answered about the
+  indexed item the page resolves to — is complete and shipped here.
+
+  **You will not see them yet, and that is deliberate.** Offering one of these
+  three lanes needs the gateway to accept an item URL, and its agent list
+  cannot say whether it does: all three agent *names* have been published for
+  releases, their item *arms* have not. So the client reads the gateway's own
+  version alongside that list and offers the three only at or above the release
+  that added the arm. **No released gateway reports a version on that route
+  today** — `GET /v1/agents` answers with the names alone — so on every gateway
+  that currently exists the three lanes are withheld, from everyone, including
+  developers running a locally built gateway (a local build reports no version
+  either, so it fails closed before the development-build allowance can apply).
+  The moment a gateway serves its version there, they light up with no change
+  to this extension and no re-pairing. Until then this entry describes a client
+  that is finished and waiting.
+
+- **The panel no longer offers a lane the paired gateway cannot serve.** The
+  lane list was a hardcoded assertion about a gateway you might not be
+  running; an older one answered a lane by failing it. The panel now reads
+  what the gateway publishes and offers that — which does work today, on every
+  gateway serving `GET /v1/agents`. A gateway too old to answer the capability
+  question at all is not second-guessed, and what that means depends on the
+  page: on a pull request or a product dashboard nothing is withheld and the
+  panel renders exactly as it did before. On an issue or an incident the three
+  lanes above are withheld, because their arm is the one thing an unanswered
+  capability read leaves unconfirmed — and withholding them puts those pages
+  back to exactly what they showed before this release. Not offered and failing
+  are different things, and only one of them is honest.
 
 ## [0.5.0] - 2026-08-24
 

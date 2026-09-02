@@ -256,6 +256,7 @@ describe("a home page", () => {
             throw new Error("resolveItem must not be called on a home page");
           },
           readConnectorHealth: async () => null,
+          readAgentRoster: async () => ({ unavailable: true }),
         },
         { kind: "resolve", pageUrl },
       );

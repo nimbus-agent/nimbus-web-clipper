@@ -59,6 +59,7 @@ import {
   listRunning as storeListRunning,
   putRun as storePutRun,
 } from "./agent-run-store.ts";
+import { fetchAgentRoster } from "./agents-capability.ts";
 import { type AmbientDeps, decideAmbient } from "./ambient.ts";
 import { getAmbientHosts } from "./ambient-prefs.ts";
 import { createBrief, feedBriefSource, getBrief, runBrief, saveBrief } from "./brief-client.ts";
@@ -256,6 +257,12 @@ const agentStateDeps = { getOrigins, getConnection, resolveItem, ...agentStoreDe
 // fake and never has to know the store exists.
 const readConnectorHealth = (origin: string) =>
   storeReadConnectorHealth({ getConnectors }, origin, Date.now());
+
+// Bound here for the same reason `readConnectorHealth` is: `fetchAgentRoster` takes a
+// deps object with its own `doFetch`, and `handleResolve`'s dep takes (origin, token).
+// This is the one place the real implementation is wired.
+const readAgentRoster = (origin: string, token: string) =>
+  fetchAgentRoster({ origin, token, doFetch: fetch });
 
 // Runs currently being polled by an in-worker loop, keyed by runId. Lets the
 // alarm's resume skip a run already being handled locally: unlike the eviction
@@ -1116,7 +1123,10 @@ function routeIndexReads(message: unknown, respond: Respond): Routed {
     return true;
   }
   if (isResolveRequest(message)) {
-    handleResolve({ getConnection, getOrigins, resolveItem, readConnectorHealth }, message)
+    handleResolve(
+      { getConnection, getOrigins, resolveItem, readConnectorHealth, readAgentRoster },
+      message,
+    )
       .then(respond)
       .catch(() => {
         respond({
@@ -1353,7 +1363,7 @@ const ambientDeps: AmbientDeps = {
   lastCued: (tabId) => lastCuedByTab.get(tabId),
   resolve: (pageUrl) =>
     handleResolve(
-      { getConnection, getOrigins, resolveItem, readConnectorHealth },
+      { getConnection, getOrigins, resolveItem, readConnectorHealth, readAgentRoster },
       { kind: "resolve", pageUrl },
     ),
   currentUrl: tabUrl,

@@ -464,6 +464,84 @@ mock's fixed brief cannot produce.
    renders the gateway's gap brief including its `nimbus index add` line — not
    a blank lane.
 
+## Manual verification — Item lanes and the version floor (C6)
+
+> **This pass cannot be run yet, and steps 2–5 will not pass against any
+> gateway that exists.** The item lanes are gated on the gateway reporting its
+> own version from `GET /v1/agents`, and that route serves `{ agents }` alone —
+> upstream Nimbus#1421 added the item **arm**, not the version **field**. With
+> no version, `meetsFloor` fails closed, so the three lanes are withheld on
+> every gateway, a locally built one included (a local build reports no version
+> at all rather than `0.0.0`, so it never reaches the development-build
+> allowance in `meetsFloor`). A tester following step 2 today will see the three
+> lanes absent and should conclude the *gateway* is missing the field, **not**
+> that the feature is broken. Run this pass once a gateway serves a `version`
+> there. Until then only two steps mean anything: **step 1**, which is exactly
+> today's state and includes its "the PR page is unaffected" check, and **step
+> 6**, which passes only vacuously — nothing offers an item lane anywhere yet, so
+> Confluence and CircleCI not offering one proves nothing about them. **Step 5 is
+> blocked with the rest**: with the three lanes withheld there is no lane in which
+> to observe the miss.
+
+Not a unit test, and it is the pass that catches what none of the above can:
+whether the gateway's rendered brief actually names the item it answered
+about, and whether the panel's capability discovery behaves across two real
+gateway builds. **Against the mock, an issue page does get a narrowed list:**
+its `GET /v1/agents` route does not exist, so `offeredLanes` reads
+`unavailable`, and the three item lanes are withheld on the issue — exactly
+the filtered set steps 1–2 below are checking. The mock cannot show the
+other half: a version at or above the floor, so the lanes offered and run. To
+verify both halves, pair against two gateway builds: one today (any build
+without the version field) and one once Nimbus#1421 ships the field (meaning a
+build that reports a `version` of at least `7.5.0` from `GET /v1/agents`). The
+second build does not exist yet.
+
+Prereq: paired, a Jira issue Nimbus has indexed (a Linear issue or a PagerDuty
+incident works identically for steps 1–3), and — for step 6 — a Confluence
+page and a CircleCI pipeline, also indexed.
+
+1. **Below the floor:** run the gateway build WITHOUT Nimbus#1421. Open the
+   Jira issue. → header, freshness, Related, glossary — and none of the three
+   new lanes (*How did we get here*, *Who should I talk to*, *Who owns
+   this*). The PR page is unaffected by any of this: `impact`, `expert` and
+   `why` are all still offered there and still work.
+2. **At the floor:** restart with a gateway that both has Nimbus#1421 **and
+   reports a `version` at or past `7.5.0` from `GET /v1/agents`** — no such
+   build exists yet, which is what the note at the top of this section is
+   about; Nimbus#1421 shipped the arm without the field. Open the same Jira
+   issue. → *How did we get here*, *Who should I talk to* and *Who owns
+   this* are all offered. Run each. (`meetsFloor` in
+   `src/background/agents-capability.ts` also accepts `0.0.0` as a development
+   build — but only if the gateway reports it, and a local build reports no
+   version at all, so that allowance cannot rescue this step either.)
+3. **Read what comes back.** The client renders `run.brief` as a string — it
+   never parses the brief's subject fields, so whether the answer names its
+   subject is entirely the gateway's business. Read each of the three briefs
+   from step 2 and confirm the text names the issue it answered about. If one
+   does not, that is an upstream defect (the Nimbus design spec's F6 rule, one
+   surface over) and it gets its own upstream issue — do not paper over it
+   client-side.
+4. **An ambiguous page, and expect it to disappoint** (needs a Jira issue
+   whose URL resolves to more than one indexed row — optional if you cannot
+   produce one). Pick a candidate from the chooser and run the three lanes. →
+   a **gap**, not an answer: upstream `itemEntityFor`
+   (`packages/gateway/src/agents/expert.ts:277`) calls `resolveItemByUrl` and
+   returns `null` on anything that is not `found`, and an ambiguous resolve is
+   not found — so each lane reports "does not resolve to an indexed item with
+   a graph entity" under a header naming the item you just picked. This is a
+   known limitation, not fixed here — see
+   `docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md`'s
+   limitations note. Record what you actually see; do not change client code
+   to hide it.
+5. **The miss:** open a Jira issue that is NOT indexed. → one honest "this
+   page is not in your index" per lane, from the existing `not_resolved`
+   copy — never an empty answer.
+6. **The negative check — Confluence and CircleCI:** open the Confluence page,
+   then separately the CircleCI pipeline. → neither offers any item lane:
+   Confluence by design (upstream F8 — no graph entity for a `type: "page"`
+   item; see `docs/architecture.md`'s "Item lanes on an issue or an incident"),
+   CircleCI because it is not an item surface `LANE_RULES` names at all.
+
 ## Manual verification — Setup that works (discovery, connection health, the trust panel)
 
 Prereq: a Nimbus gateway available to start/stop on demand. Step 1 needs a
@@ -713,9 +791,11 @@ bundle, and the real extension plumbing.
     clip it: the preview lists **Author**, **Published** (as a calendar day),
     **Site**, **Language** and **Lead image**, with a relative image
     absolutised against the page's own origin — and the body the gateway
-    receives carries the same five under `source`. Needs **gateway 2.12.0** or
-    later for them to be stored; an older gateway accepts the clip and drops
-    them with no error. **[Same substitution as steps 9–10: driven through the
+    receives carries the same five under `source`. Needs the **gateway release
+    that added it, 2.12.0**, or later for them to be stored (a floor from an
+    old release line — the gateway's own version has since passed **7.5.0**);
+    an older gateway accepts the clip and drops them with no error. **[Same
+    substitution as steps 9–10: driven through the
     panel's capture offer, which shares `shared/preview.ts` with the popup.]**
 
 ## Manual verification — Research briefs

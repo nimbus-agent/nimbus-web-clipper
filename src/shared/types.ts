@@ -165,11 +165,13 @@ export type Product = (typeof PRODUCT_IDS)[number];
  * about a whole connector, so they need a page whose scope matches that answer.
  * See LANE_RULES below.
  *
- * `doc` and `incident` carry NO lane at all — `LANE_RULES` names `pr` and `home`
- * only, so `laneBelongsOnSurface` is false for every lane on both. That is the
- * design, not an omission: a Confluence page and a PagerDuty incident get the
- * header, freshness, Related and the `glossary` term lane, exactly as a Jira
- * issue does today.
+ * `doc` carries NO lane at all — `LANE_RULES` names it nowhere, so
+ * `laneBelongsOnSurface` is false for every lane on it. That is the design, not an
+ * omission: a Confluence page has no graph entity for an item lane to answer from
+ * (upstream F8), so it gets the header, freshness, Related and the `glossary` term
+ * lane and nothing else. An `incident` used to be in the same position and is not
+ * any more: a PagerDuty incident is an indexed item with a graph entity, so it
+ * carries the three item lanes.
  *
  * Keep this `as const` and keep `SurfaceKind` derived from it. A hand-written
  * second copy of the union is what let `lane-rules.test.ts` hold an incomplete
@@ -479,17 +481,25 @@ export const LANE_RULES: Record<AgentLane, LaneRule> = {
   // usually on the unfamiliar internal wiki that has no connector at all.
   glossary: { input: "term" },
   impact: { input: "page", surfaces: { pr: "item" } },
-  expert: { input: "page", surfaces: { pr: "item" } },
-  // The third review question, and gated identically: `agents.why`'s prUrl arm
-  // answers about a change under review, which is a question only a pull request
-  // page can pose.
-  why: { input: "page", surfaces: { pr: "item" } },
+  expert: { input: "page", surfaces: { pr: "item", issue: "item", incident: "item" } },
+  // The third review question — and no longer only a review question. `agents.why`
+  // has an `itemUrl` arm as well as its `prUrl` one, so "how did we get here" is
+  // answerable about any indexed item with a graph entity: a Jira or Linear issue,
+  // a PagerDuty incident. NOT a Confluence page — upstream F8: a page indexes as
+  // type "page", which has no graph entity, so the lane would answer nothing
+  // permanently, for a reason no user could act on.
+  why: { input: "page", surfaces: { pr: "item", issue: "item", incident: "item" } },
   // Service-scoped: these answer about a whole connector, so they belong on the
   // one page whose scope is the connector. On an item page they would repeat
   // the same answer for every item on that host.
   catchup: { input: "page", surfaces: { home: "service" } },
   decisions: { input: "page", surfaces: { home: "service" } },
-  ownership: { input: "page", surfaces: { home: "service" } },
+  // Two scopes, and the lane that forced this table's shape: the connector on a
+  // dashboard, one indexed item on an issue or an incident. See `LaneSurfaceMap`.
+  ownership: {
+    input: "page",
+    surfaces: { home: "service", issue: "item", incident: "item" },
+  },
 };
 
 /**

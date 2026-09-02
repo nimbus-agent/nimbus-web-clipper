@@ -507,6 +507,43 @@ describe("isResolveResponse", () => {
       ).toBe(false);
     }
   });
+
+  it("accepts a resolve response carrying the offered lanes", () => {
+    expect(
+      isResolveResponse({
+        kind: "resolve",
+        ok: true,
+        recognition,
+        outcome: { kind: "not-indexed", fetchable: false },
+        offeredLanes: ["why", "expert"],
+      }),
+    ).toBe(true);
+  });
+
+  // Cross-boundary data. A lane name this build does not know is not a lane it can
+  // render, and passing it through would put an unknown id into the panel's state map.
+  it("rejects a resolve response whose offered lanes are not lanes", () => {
+    expect(
+      isResolveResponse({
+        kind: "resolve",
+        ok: true,
+        recognition,
+        outcome: { kind: "not-indexed", fetchable: false },
+        offeredLanes: ["why", "notALane"],
+      }),
+    ).toBe(false);
+  });
+
+  it("accepts a resolve response with no offered lanes at all", () => {
+    expect(
+      isResolveResponse({
+        kind: "resolve",
+        ok: true,
+        recognition,
+        outcome: { kind: "not-indexed", fetchable: false },
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("isFetchResponse", () => {

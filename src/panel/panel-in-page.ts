@@ -29,6 +29,7 @@ import {
   type Recognition,
   type RelatedHit,
   type ResolveCandidate,
+  type SurfaceKind,
 } from "../shared/types.ts";
 import {
   type LaneContext,
@@ -156,6 +157,37 @@ const LANE_TITLES: Record<AgentLane, string> = {
   catchup: "What happened while I was away",
   decisions: "What got decided",
   ownership: "Who owns what",
+};
+
+/**
+ * The titles an ITEM surface asks for instead — the same three lanes, on a page
+ * that is not a change under review.
+ *
+ * `LANE_TITLES` above was written for a pull request, and on one it is right:
+ * "Why does this change exist" over a PR names exactly what the lane answers. On
+ * a PagerDuty incident the same words are not merely awkward, they are false —
+ * an incident is not a change. These are the spec's own phrasings (§4.2).
+ */
+const ITEM_SURFACE_TITLES: Partial<Record<AgentLane, string>> = {
+  why: "How did we get here",
+  expert: "Who should I talk to",
+  ownership: "Who owns this",
+};
+
+/**
+ * Which surfaces override which titles. An EXCEPTION table, deliberately not a
+ * second copy of `LANE_TITLES`: an unlisted (lane, surface) pair falls straight
+ * through to the title above, so `pr` and `home` keep the shipped copy written
+ * for them and nothing but the changed words lives here.
+ *
+ * `issue` and `incident` share ONE object rather than two identical literals.
+ * They are the same question asked about the same kind of thing — an indexed item
+ * with a graph entity — and two copies would be two places for one wording to
+ * drift.
+ */
+const SURFACE_LANE_TITLES: Partial<Record<SurfaceKind, Partial<Record<AgentLane, string>>>> = {
+  issue: ITEM_SURFACE_TITLES,
+  incident: ITEM_SURFACE_TITLES,
 };
 
 /** How often an OPEN panel re-asks the worker for a running lane's state — a
@@ -603,6 +635,12 @@ function createPanel(body: HTMLElement): {
    * until a later resolve actually succeeds.
    */
   let pinnedRecognition: Recognition | null = null;
+  /**
+   * What the gateway told us it can serve here, from the resolve answer. `null`
+   * until an answer arrives, and after one that carried no list — both mean the
+   * same thing to `lanesFor`: do not filter.
+   */
+  let offeredLanes: readonly AgentLane[] | null = null;
   /** The last URL `checkNavigation` looked at — so a tick on an unchanged URL
    *  costs a string compare and nothing else. */
   let lastCheckedUrl = pinnedUrl;
@@ -875,14 +913,25 @@ function createPanel(body: HTMLElement): {
       pageSubject: shown.kind === "resolved" || shown.kind === "service" || shown.kind === "chosen",
       pickedItemId: shown.kind === "chosen" ? shown.candidate.id : null,
       term,
+      offered: offeredLanes,
     };
   }
 
   /** A term lane wears its term as its title — "Definition" on every one of them
    *  would say nothing about which word was asked about. Quoted so a one-word
-   *  term still reads as a quotation rather than as a heading this panel wrote. */
-  function laneTitle(lane: AgentLane): string {
-    return lane === "glossary" && term.kind === "ready" ? `“${term.term}”` : LANE_TITLES[lane];
+   *  term still reads as a quotation rather than as a heading this panel wrote.
+   *
+   *  Otherwise the surface may override the title (`SURFACE_LANE_TITLES`), and
+   *  anything it does not name falls through to `LANE_TITLES`. `surfaceKind` is
+   *  passed in from the caller's `pinnedRecognition` read rather than taken from
+   *  the header or re-derived here: the title and the render gate that decided to
+   *  show this lane at all must answer from one surface, not two. */
+  function laneTitle(lane: AgentLane, surfaceKind: SurfaceKind | null): string {
+    if (lane === "glossary" && term.kind === "ready") {
+      return `“${term.term}”`;
+    }
+    const override = surfaceKind === null ? undefined : SURFACE_LANE_TITLES[surfaceKind]?.[lane];
+    return override ?? LANE_TITLES[lane];
   }
 
   /** Why this panel will not send the current selection. Only ever called for a
@@ -1096,6 +1145,20 @@ function createPanel(body: HTMLElement): {
     pinnedUrl = window.location.href;
     lastCheckedUrl = pinnedUrl;
     pinnedRecognition = null;
+    // Belongs with the other per-page resets above/below for the same reason as
+    // `pinnedRecognition`: the offered-lanes list is computed per surface
+    // (`offeredLanes(roster, kind)`), so carrying the old page's list forward
+    // would be wrong in principle. Today it is not observable, though: the
+    // transient paint() below runs with `header: loading` and `term: none`,
+    // both of which already block every offered-gated lane on their own, and
+    // by the time a header state that unblocks one can be reached, loadHeader
+    // has always just overwritten this from that same response (see its `res.ok`
+    // arm) — reachable header kinds and knowledge of `offeredLanes` are set by
+    // the same branch. So this line is here for when that ordering someday
+    // changes, not because a test can currently tell its absence from its
+    // presence — see the "offered-lanes gate" describe block in
+    // panel-in-page.test.ts for the reasoning trail.
+    offeredLanes = null;
     navAway = false;
     header = { kind: "loading" };
     chosen = null;
@@ -1319,7 +1382,7 @@ function createPanel(body: HTMLElement): {
       };
     const agentLanes: Lane[] = lanesFor(laneCtx).map((lane) => ({
       id: lane,
-      title: laneTitle(lane),
+      title: laneTitle(lane, surfaceKind),
       expanded: laneOpen[lane],
       render: (doc: Document) =>
         // A lane that cannot run renders its reason here, locally, and sends
@@ -1429,6 +1492,9 @@ function createPanel(body: HTMLElement): {
       // The identity of the page this panel describes, from the same response the
       // header is built from — never a second recognition of its own.
       pinnedRecognition = res.recognition;
+      if (res.ok) {
+        offeredLanes = res.offeredLanes ?? null;
+      }
     }
     // Taken ONCE per repaint here, not re-read per rendered line — see the
     // `resolved` state's `nowMs` doc comment in panel-view.ts.

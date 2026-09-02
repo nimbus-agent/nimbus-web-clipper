@@ -1,10 +1,13 @@
 // test/unit/agents-capability.test.ts
 import { describe, expect, it } from "vitest";
 import {
+  type AgentRoster,
   fetchAgentRoster,
   ITEM_ARM_FLOOR,
   meetsFloor,
+  offeredLanes,
 } from "../../src/background/agents-capability.ts";
+import { AGENT_LANES } from "../../src/shared/types.ts";
 
 function stubFetch(status: number, body: unknown): typeof fetch {
   return (async () =>
@@ -23,7 +26,7 @@ const deps = (doFetch: typeof fetch) => ({
 describe("fetchAgentRoster", () => {
   it("returns the published names on 200", async () => {
     const roster = await fetchAgentRoster(deps(stubFetch(200, { agents: ["why", "impact"] })));
-    expect(roster).toEqual({ names: ["why", "impact"] });
+    expect(roster).toEqual({ names: ["why", "impact"], version: null });
   });
 
   it("treats a 404 as a gateway older than the route, and says nothing about it", async () => {
@@ -126,7 +129,129 @@ describe("fetchAgentRoster — the token never leaves loopback", () => {
         token: "t",
         doFetch: stubFetch(200, { agents: ["why"] }),
       });
-      expect(roster, origin).toEqual({ names: ["why"] });
+      expect(roster, origin).toEqual({ names: ["why"], version: null });
     }
+  });
+});
+
+it("carries the version the gateway published", async () => {
+  const roster = await fetchAgentRoster({
+    origin: "http://127.0.0.1:7474",
+    token: "t",
+    doFetch: stubFetch(200, { agents: ["why"], version: "7.6.0" }),
+  });
+  expect(roster).toEqual({ names: ["why"], version: "7.6.0" });
+});
+
+// A gateway that serves the route but predates the field. NOT `unavailable`:
+// we learned the names, and withholding every lane because we did not learn a
+// version would be a much bigger claim than the one fact we are missing.
+it("reads a roster with no version as names plus a null version", async () => {
+  const roster = await fetchAgentRoster({
+    origin: "http://127.0.0.1:7474",
+    token: "t",
+    doFetch: stubFetch(200, { agents: ["why"] }),
+  });
+  expect(roster).toEqual({ names: ["why"], version: null });
+});
+
+// A non-string version is a wire answer we do not understand. Fail closed on the
+// FIELD (null), not on the whole roster — same reasoning as the missing-field case.
+it("treats a non-string version as absent", async () => {
+  const roster = await fetchAgentRoster({
+    origin: "http://127.0.0.1:7474",
+    token: "t",
+    doFetch: stubFetch(200, { agents: ["why"], version: 7.6 }),
+  });
+  expect(roster).toEqual({ names: ["why"], version: null });
+});
+
+describe("offeredLanes", () => {
+  const roster = (names: string[], version: string | null): AgentRoster => ({ names, version });
+
+  // Not knowing must leave the panel exactly as it renders WITHOUT a roster read.
+  // On a surface where no lane needs the item arm that is the whole answer: filter
+  // nothing, and send no field. Same degradation the connector-health gate makes
+  // when GET /v1/connectors is absent.
+  it("returns null when the roster could not be read on a surface with no item-arm lane", () => {
+    expect(offeredLanes({ unavailable: true }, "pr")).toBeNull();
+    expect(offeredLanes({ unavailable: true }, "home")).toBeNull();
+  });
+
+  // The other half of the same rule, and the half a failed read used to get
+  // backwards: on `issue` / `incident` "as it renders without a roster read" means
+  // WITHOUT the three lanes whose arm only a gateway at the floor serves — which is
+  // exactly what those pages rendered before the item lanes existed. Returning null
+  // here would make the more ignorant state the more permissive one, offering the
+  // three to the gateways least able to serve them.
+  it("withholds only the item-arm lanes when the roster could not be read on an item surface", () => {
+    expect(offeredLanes({ unavailable: true }, "issue")).toEqual([
+      "glossary",
+      "impact",
+      "catchup",
+      "decisions",
+    ]);
+    expect(offeredLanes({ unavailable: true }, "incident")).toEqual([
+      "glossary",
+      "impact",
+      "catchup",
+      "decisions",
+    ]);
+  });
+
+  it("withholds a lane the gateway does not publish", () => {
+    const offered = offeredLanes(roster(["why", "impact"], "7.6.0"), "pr");
+    expect(offered).toContain("why");
+    expect(offered).not.toContain("expert");
+  });
+
+  // The pr lanes send prUrl / fileOrPrUrl / topicOrFile — arms every gateway has
+  // served for releases. They must not be gated on a floor they never needed.
+  it("does not floor-gate a pr lane", () => {
+    expect(offeredLanes(roster(["why", "impact", "expert"], null), "pr")).toEqual([
+      "impact",
+      "expert",
+      "why",
+    ]);
+  });
+
+  it("withholds an item-arm lane when the gateway reports no version", () => {
+    expect(offeredLanes(roster(["why", "expert", "ownership"], null), "issue")).toEqual([]);
+  });
+
+  it("withholds an item-arm lane below the floor", () => {
+    expect(offeredLanes(roster(["why", "expert", "ownership"], "7.4.0"), "incident")).toEqual([]);
+  });
+
+  it("offers the item-arm lanes at the floor and above", () => {
+    expect(offeredLanes(roster(["why", "expert", "ownership"], "7.6.0"), "issue")).toEqual([
+      "expert",
+      "why",
+      "ownership",
+    ]);
+  });
+
+  // A development build satisfies any floor — the people building these lanes are
+  // the ones who most need them on, and the e2e job that proves them runs against
+  // exactly such a build.
+  it("offers the item-arm lanes to a development build", () => {
+    expect(offeredLanes(roster(["why"], "0.0.0-dev"), "issue")).toEqual(["why"]);
+  });
+
+  // Order is AGENT_LANES order, which is render order. Note what this does NOT
+  // do: `offeredLanes` never applies `LANE_RULES`, so a full roster on a `pr`
+  // page returns every published lane, `catchup` and `ownership` included.
+  // Whether a lane belongs on this surface is `lanesFor`'s question, and asking
+  // it in two places is how the two answers start to disagree.
+  it("preserves render order and applies no surface rule", () => {
+    expect(offeredLanes(roster([...AGENT_LANES], "7.6.0"), "pr")).toEqual([
+      "glossary",
+      "impact",
+      "expert",
+      "why",
+      "catchup",
+      "decisions",
+      "ownership",
+    ]);
   });
 });

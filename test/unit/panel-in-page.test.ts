@@ -6,6 +6,8 @@ import {
   type AgentLane,
   type LaneState,
   type RelatedHit,
+  SURFACE_KINDS,
+  scopeForLane,
 } from "../../src/shared/types.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
@@ -2252,14 +2254,95 @@ describe("lanes appear only where they can answer", () => {
     expect(root.querySelector('[data-lane="expert"]')).not.toBeNull();
   });
 
-  // Before LANE_SURFACES these appeared here too, and expanding one handed the
-  // issue/build URL to agents.impact as its `fileOrPrUrl`.
-  it("offers no agent lane on a resolved Jira issue", async () => {
+  // Before LANE_SURFACES every lane appeared here too, and expanding `impact`
+  // handed the issue URL to agents.impact as its `fileOrPrUrl`. `impact` is still
+  // withheld for exactly that reason — its non-PR arm answers about a FILE — while
+  // the three item lanes now answer about the issue itself, through `itemUrl`.
+  it("keeps impact off a resolved Jira issue, and offers the three item lanes", async () => {
     const root = await mountPanelWithResolve(resolved("jira", "issue", "ABC-12"));
     expect(root.querySelector('[data-lane="impact"]')).toBeNull();
-    expect(root.querySelector('[data-lane="expert"]')).toBeNull();
+    expect(root.querySelector('[data-lane="expert"]')).not.toBeNull();
+    expect(root.querySelector('[data-lane="why"]')).not.toBeNull();
+    expect(root.querySelector('[data-lane="ownership"]')).not.toBeNull();
     // The Related lane is unaffected — it works in every header state.
     expect(root.querySelector('[data-lane="related"]')).not.toBeNull();
+  });
+
+  function laneTitles(root: ParentNode): Record<string, string> {
+    const titles: Record<string, string> = {};
+    for (const lane of root.querySelectorAll<HTMLDetailsElement>("details[data-lane]")) {
+      const id = lane.dataset["lane"];
+      if (id !== undefined) {
+        titles[id] = lane.querySelector("summary")?.textContent?.trim() ?? "";
+      }
+    }
+    return titles;
+  }
+
+  // The copy `LANE_TITLES` ships was written for a pull request, where it is
+  // right. "Why does this change exist" over a Jira issue is a different claim:
+  // an issue is not a change.
+  it("titles the item lanes for the item, not for a change under review", async () => {
+    const root = await mountPanelWithResolve(resolved("jira", "issue", "ABC-12"));
+    const titles = laneTitles(root);
+    expect(titles["why"]).toBe("How did we get here");
+    expect(titles["expert"]).toBe("Who should I talk to");
+    expect(titles["ownership"]).toBe("Who owns this");
+  });
+
+  // The assertion that matters more: the override is an EXCEPTION table, so a
+  // surface it does not name must render the shipped copy byte-for-byte.
+  it("leaves the pull-request titles exactly as they shipped", async () => {
+    const root = await mountPanelWithResolve(resolved("github", "pr", "acme/web #482"));
+    const titles = laneTitles(root);
+    expect(titles["impact"]).toBe("What breaks if it lands");
+    expect(titles["expert"]).toBe("Who should review it");
+    expect(titles["why"]).toBe("Why does this change exist");
+  });
+
+  // The two tables are deliberately separate — `LANE_RULES` says where a lane
+  // belongs, `SURFACE_LANE_TITLES` says what it is called there — and nothing
+  // joins them, so `incident` could be deleted from the title table and every
+  // test above would still pass: they name `issue` and `pr` by hand. This one
+  // derives the pairs from `LANE_RULES` instead. The rule it pins: an item-scope
+  // lane on any surface that is NOT a pull request must have an override, because
+  // the copy it would otherwise fall through to was written for a change under
+  // review and is false about anything else. Keeping the tables separate is the
+  // point; leaving them unchecked was not.
+  const ITEM_TITLES: Readonly<Record<string, string>> = {
+    why: "How did we get here",
+    expert: "Who should I talk to",
+    ownership: "Who owns this",
+  };
+  // One product per item surface, so the pair can actually be mounted. A new
+  // item surface with no entry here throws rather than silently mounting under
+  // some other product's recognition.
+  const PRODUCT_FOR_KIND: Readonly<Record<string, string>> = {
+    issue: "jira",
+    incident: "pagerduty",
+  };
+
+  const itemTitlePairs = SURFACE_KINDS.flatMap((kind) =>
+    AGENT_LANES.filter((lane) => scopeForLane(lane, kind) === "item" && kind !== "pr").map(
+      (lane) => ({ lane, kind }),
+    ),
+  );
+
+  // A guard on the derivation itself: an empty list would make every case below
+  // vacuously green, and `it.each([])` is not an error.
+  it("derives at least one item-scope pair off a pull request", () => {
+    expect(itemTitlePairs.length).toBeGreaterThan(0);
+  });
+
+  // One `it` per pair, not one loop inside one `it`: each case mounts the panel,
+  // and the mount is torn down per test.
+  it.each(itemTitlePairs)("titles $lane for the item on $kind", async ({ lane, kind }) => {
+    const product = PRODUCT_FOR_KIND[kind];
+    if (product === undefined) {
+      throw new Error(`add a product for the new item surface "${kind}"`);
+    }
+    const root = await mountPanelWithResolve(resolved(product, kind, "REF-1"));
+    expect(laneTitles(root)[lane]).toBe(ITEM_TITLES[lane]);
   });
 
   it("offers no agent lane on a resolved Jenkins build", async () => {
@@ -2267,6 +2350,70 @@ describe("lanes appear only where they can answer", () => {
     expect(root.querySelector('[data-lane="impact"]')).toBeNull();
     expect(root.querySelector('[data-lane="expert"]')).toBeNull();
   });
+});
+
+describe("the offered-lanes gate", () => {
+  const PR482 = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #482",
+    resolveUrl: "https://github.com/acme/web/pull/482",
+  };
+
+  function resolvedFor(recognition: unknown, offeredLanes?: readonly string[]): unknown {
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: {
+        kind: "found",
+        matchKind: "exact",
+        item: {
+          id: "it-1",
+          service: "github",
+          type: "pr",
+          title: "Add retry budget",
+          url: "https://github.com/acme/web/pull/482",
+          modifiedAt: Date.now(),
+        },
+      },
+      ...(offeredLanes === undefined ? {} : { offeredLanes }),
+    };
+  }
+
+  const renderedLanes = (root: ParentNode): (string | null)[] =>
+    Array.from(root.querySelectorAll<HTMLDetailsElement>("details[data-lane]")).map((el) =>
+      el.getAttribute("data-lane"),
+    );
+
+  it("renders only the lanes the resolve answer offered", async () => {
+    const root = await mountPanelWithResolve(resolvedFor(PR482, ["impact"]));
+    expect(renderedLanes(root)).toEqual(["related", "impact"]);
+  });
+
+  // No `offeredLanes` at all — the shape an older gateway sends, and the same
+  // "absent means unknown" fixture the connector gate above regression-guards.
+  // Byte-identical to what this panel rendered before this feature existed.
+  it("filters nothing when the resolve answer carries no offered list", async () => {
+    const root = await mountPanelWithResolve(resolvedFor(PR482));
+    expect(renderedLanes(root)).toEqual(["related", "impact", "expert", "why"]);
+  });
+
+  // No test here exercises reread()'s `offeredLanes = null;` reset — it is not
+  // observable through this panel's rendered output. Every route that could show
+  // a stale offered list closes on its own: the transient paint() reread() runs
+  // BEFORE loadHeader() has `header: loading` and `term: none`, both of which
+  // already block every offered-gated lane regardless of `offered`; and every
+  // header kind that unblocks one (`resolved`/`service`/`chosen`) is produced
+  // only from the `res.ok` arm of `headerFrom`, which is the exact same arm that
+  // just overwrote `offeredLanes` from that response. So a header capable of
+  // showing an offered-gated lane never coexists with a stale offered list — see
+  // the reset's own comment in panel-in-page.ts for the fuller trail. The reset
+  // stays for when that ordering someday changes; a test asserting it today
+  // would pass with the reset present, absent, or replaced by a no-op, which
+  // makes it a false guard rather than a true one.
 });
 
 describe("following a client-side navigation", () => {

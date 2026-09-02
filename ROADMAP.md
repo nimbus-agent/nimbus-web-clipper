@@ -265,7 +265,7 @@ gateway/engine to grow a new surface, then the ecosystem bets. Within a phase,
 highest value first.
 
 The reframe adds a second, superseding lens: **the client phases come first.**
-They are lettered **C1–C4** so nothing below has to be renumbered. The numbered
+They are lettered **C1, C2, …** so nothing below has to be renumbered. The numbered
 phases **1–10** are all still here and most are still wanted — they were written
 for a clipper, so where the reframe changes an item's priority or shape it now
 carries a `**Reframe**` line saying so, with the reason. Nothing was dropped
@@ -689,8 +689,9 @@ that already exist, without leaving the tab.*
 > Full design: `docs/superpowers/specs/2026-08-19-why-from-a-pull-request-design.md`.
 > **Done when** A lane answers "why does this change exist" for a resolved
 > pull request, without requiring the browser to have a local checkout of
-> anything. ✅ — the lane gates exactly as `impact`/`expert` do
-> (`LANE_RULES.why`, `surfaces: ["pr"]`) and appears under both the
+> anything. ✅ — the lane gated exactly as `impact`/`expert` did at the time
+> (`LANE_RULES.why`, `surfaces: ["pr"]`; **C6** later widens `why`'s surfaces
+> to `issue` and `incident` too — see that entry) and appears under both the
 > `resolved` and `chosen` headers. **Appearing under `chosen` is not the same
 > as answering about the item picked there** — see the known gap below;
 > correct that claim if you are about to repeat it.
@@ -763,6 +764,16 @@ that already exist, without leaving the tab.*
 > naming the item the user just picked — the exact refusal this bar forbids. See
 > C2.4's **Known gap**; the fix is to send `ResolveCandidate.url` for those two
 > lanes, and it is not done.
+> **Correction (C6.1):** the same failure now occurs on **three** surfaces, not
+> one — `pr`, `issue` and `incident`, which is every surface an item lane runs
+> on. `why`, `expert` and `ownership` on an `issue` or an `incident` send
+> `{ itemUrl: resolveUrl }` — the page's URL again — so an ambiguous issue or
+> incident answers with a gap under the header naming the candidate the user
+> picked, exactly as `impact` and `why` do on a PR. Still inherited rather than
+> introduced, and the `ResolveCandidate.url` fix named above does not reach it:
+> upstream `itemEntityFor` resolves whatever URL it is handed, so the only fix
+> for the item lanes is an upstream **`itemId` arm** on those agents. Recorded
+> so the count stops being wrong.
 
 ## Phase C3 — On a miss, sync — don't scrape 🟡
 
@@ -1082,6 +1093,103 @@ the editor structurally cannot.*
 > work, only C5.2's note that it was coming, which this entry's update now
 > marks resolved. Full reasoning:
 > [`docs/superpowers/specs/2026-08-19-briefs-over-your-index-design.md`](./docs/superpowers/specs/2026-08-19-briefs-over-your-index-design.md).
+
+---
+
+## Phase C6 — Lanes on an item 🟢/🟡
+
+### C6.1 Issue and incident get why, expert, ownership — and the panel stops guessing the lane list · 🟢/🟡 · M — ✅ client-complete, 🟡 gateway-blocked
+> **What** A Jira issue, a Linear issue and a PagerDuty incident gain three agent
+> lanes — *how did we get here*, *who should I talk to*, *who owns this* —
+> answered about the one indexed item the page resolves to. The panel also stops
+> asserting a hardcoded lane list: it reads `GET /v1/agents` on every resolve and
+> offers only what the paired gateway actually publishes. That guarantee holds
+> when the read succeeds. A gateway that cannot answer it is not second-guessed:
+> the item lanes are withheld, because their arm was never confirmable, and every
+> other lane renders exactly as it did before — offered without having been
+> confirmed as published, which is the pre-C6 behaviour rather than a claim about
+> this gateway.
+> **Why it wows** C1.2's widening (#87, #88) reached these products and then had
+> nothing to run on them — an issue got a header, a freshness line, Related and
+> the glossary box, and no lane at all. This closes that without guessing at a
+> gateway version: the panel asks.
+> **Touches** `src/background/agents-capability.ts` (new — the roster read, the
+> `ITEM_ARM_FLOOR` version gate), `handlers.ts` (`agentParams` generalised to
+> `lane × surface`, the new `offeredFor`), `src/shared/types.ts` (`LaneRule`
+> generalised to a `LaneSurfaceMap`, `scopeForLane`), `src/shared/messages.ts`
+> (`offeredLanes` on the resolve response), `src/panel/panel-in-page.ts` (honours
+> the offered set, item-surface lane titles).
+> **Approach** `GET /v1/agents` answers `{ agents, version }` in one request,
+> read fresh on every resolve rather than cached with the pairing, so an
+> upgraded gateway is reflected without re-pairing. Agent names alone cannot say
+> whether `why`, `expert` and `ownership` accept an item URL — all three have
+> been published for releases — so the three item-surface pairs additionally
+> require the gateway version to meet `ITEM_ARM_FLOOR` (`7.5.0`, the release
+> upstream Nimbus#1421 shipped in). A gateway that does not report a version —
+> including 7.5.0 itself, which has the arm but predates the field — fails
+> closed and gets none of the three; a gateway too old to answer `GET
+> /v1/agents` at all is not second-guessed: on a pull request or a dashboard
+> the panel renders exactly as it did, with nothing withheld — and on an issue
+> or an incident the three unconfirmable lanes are withheld, which is also
+> exactly as it did.
+> **Done when** The three lanes run on a Jira issue, a Linear issue and a
+> PagerDuty incident, against the item each resolves to; the panel offers
+> exactly the lanes the paired gateway's roster (and, for these three, its
+> version) says it can serve; and neither `pr`'s existing
+> `impact`/`expert`/`why` nor `home`'s `catchup`/`decisions`/`ownership`
+> changed behaviour. **Not yet met, and not by anything the client can do.**
+> The roster half is met and works against any gateway serving
+> `GET /v1/agents`; the last two clauses are met. The first is not: it is
+> gated on a gateway version this route does not serve.
+> **Depends — and this is the honest status.** `GET /v1/agents` upstream
+> answers `{ agents }` and nothing else (`packages/gateway/src/ipc/http-server.ts`,
+> `json({ agents: [...EXTERNAL_AGENT_NAMES] }, 200)`); Nimbus#1421 added the
+> item **arm**, not the **version field**. So `meetsFloor(null, …)` is false on
+> every gateway that exists, and the three item lanes are withheld from
+> everyone — including from a locally built gateway, which reports no version
+> at all rather than `0.0.0` and therefore fails closed before the
+> development-build allowance in `meetsFloor` can apply. The client is
+> complete; **propose and land a `version` field on `GET /v1/agents` upstream**
+> and this entry flips 🟡 → 🟢 with no client change and no re-pairing. The
+> manual checks in `docs/development.md` cannot be run until it does, and say
+> so.
+> **The honest bound: a Confluence page still gets none of these.** It indexes
+> upstream as `type: "page"`, which has no graph entity, and all three lanes
+> answer from graph edges — offering them there would mean a permanently empty
+> answer under a header that looks like every other lane. That reads as "there
+> is nothing" when the truth is "this cannot be asked", so `doc` keeps exactly
+> what it had: header, freshness, Related, `glossary`. **A gateway below the
+> version floor is bound the same honest way** — not offered the three lanes,
+> not shown them failing.
+> **Deferred here, with its trigger: `expert` on a pull request still sends
+> `{ topicOrFile: item.title }`.** §4.2 of the design wanted that switched to the
+> item arm too, and called the title arm what it is — client-side dishonesty,
+> because "who has touched things whose titles look like this" is not the
+> question the lane's label promises. It is deliberately not switched. The item
+> arm is floored, and with no gateway reporting a version the floor is failing
+> closed for 100% of them, so switching today would withhold a **working,
+> shipped** lane from every user to remove a wording problem. **Trigger:** once
+> gateways commonly report a version on `GET /v1/agents` — the same unblock the
+> Depends note above waits on — switch `expert` on `pr` to `{ itemUrl }` and
+> delete this note. Recorded here and not only in a code comment, because the
+> code comment is next to the line and this is the file a maintainer reads to
+> find out what is owed.
+> **The ambiguous-page gap now reaches three surfaces, not one** — `pr`, `issue`
+> and `incident`, every surface an item lane runs on. C2.4's known
+> gap — a lane asked with the *page's* URL, which the gateway re-resolves and
+> finds ambiguous again, reporting a miss under a header naming the item the
+> user just picked — applies verbatim to `why`, `expert` and `ownership` on
+> `issue` and `incident`, because they send `{ itemUrl: resolveUrl }` for the
+> same reason `impact` and `why` send `{ prUrl: resolveUrl }` on a PR.
+> Inherited, not introduced here, and the only real fix is an upstream `itemId`
+> arm on those agents — sending `ResolveCandidate.url` would help only where the
+> candidates have distinct URLs, which is exactly not the ambiguous case. Named
+> once, here, rather than left as a fourth silent copy. See **C2.5**'s
+> correction note.
+> Full design:
+> [`docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md`](./docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md)
+> (§4; §5's file-page lanes are **C7**, blocked on an unreleased upstream PR and
+> not part of this entry).
 
 ---
 

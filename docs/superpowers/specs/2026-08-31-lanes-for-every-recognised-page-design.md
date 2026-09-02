@@ -11,6 +11,11 @@
 >
 > **Roadmap:** continues the C-series. **C6 — lanes on an item** (§4), **C7 — the file you
 > are looking at** (§5). Both are recorded in `ROADMAP.md` by the last slice.
+>
+> **Amended 2026-09-02.** Slices 1 and 2 shipped in #94. Upstream PR 1 landed as Nimbus#1421
+> (in the v7.5.0 release) and PR 2 as Nimbus#1424 (unreleased), so §4.2 and §5 are both
+> unblocked. §4.4's version floor turned out to have no input — see the new **F7** — so it
+> takes a small additive upstream change and §4.4 is rewritten to match.
 
 ---
 
@@ -129,20 +134,53 @@ The client-side consequence: **the impact lane on a file page must render the su
 gateway resolved**, not just the finding. A lane that shows an answer without showing what it
 is an answer about cannot be checked by the person reading it.
 
+### F7 — nothing on the HTTP surface serves a gateway version
+
+Found while checking that upstream PR 1 had landed, and it invalidates an assumption §4.4 made
+without stating it. The version floor has no input: `GET /v1/health` answers
+`{ status: "ok", gateway: "read_only_http" }`, `GET /v1/agents` answers `{ agents: […] }`, and
+`HTTP_ROUTES` carries no version route at all. `meetsFloor` fails closed on a `null` version —
+correctly — so wiring the floor up as designed would withhold the item lanes from **every**
+gateway.
+
+`ITEM_ARM_FLOOR` is separately wrong: it reads `2.19.0`, a line the gateway had already left
+when the constant was written. The gateway reports `7.5.0` today and has moved four majors in a
+week, so a 2.x floor is satisfied by everything and gates nothing. Neither defect is live —
+`ITEM_ARM_FLOOR` and `meetsFloor` have no callers until the item lanes wire them up — but this
+slice is what wires them up.
+
+The version therefore goes on **`GET /v1/agents`**, additively, as a small upstream change. Two
+alternatives were considered and rejected:
+
+- **`GET /v1/health`.** Tokenless, so it would be read at pair time and cached — which is where
+  the staleness in the withdrawn §4.4 wording comes from. It also puts a version on the one
+  route this client calls without a bearer; no CORS headers are set anywhere in
+  `packages/gateway/src/ipc/`, so a page could not read the response, but the roster route is
+  authed, already called here, and costs nothing extra.
+- **Publishing the arms rather than a version** — `GET /v1/agents` describing what each agent
+  *accepts*, which would retire F4's problem permanently instead of proxying it through a
+  release number. This is the better long-run shape and this decision does not block it. It is
+  not this slice: the arms live inside each handler's param types, so deriving them honestly is
+  real upstream work, and hand-listing them is exactly the drift shape `EXTERNAL_AGENT_NAMES`
+  exists to prevent — that constant is derived from `AGENTS_RPC_HANDLERS` for this reason.
+
 ---
 
 ## 3. Dependencies and order
 
-| Slice | Needs |
-| --- | --- |
-| §4.1 the `lane × surface` refactor | nothing — pure client, no behaviour change |
-| §4.2 item lanes (`why`, `expert`, `ownership`) | upstream **PR 1** |
-| §4.4 capability discovery + version floor | nothing |
-| §5 the file surface | upstream **PR 2** |
-| §6 `connections` + `currency` lanes | upstream **PR 3**, and the SDK's guards |
+| Slice | Needs | State |
+| --- | --- | --- |
+| §4.1 the `lane × surface` refactor | nothing — pure client, no behaviour change | ✅ #94 |
+| §4.4 roster discovery | nothing | ✅ #94 |
+| §4.4 the version floor | a `version` field on `GET /v1/agents` (F7) | upstream, not started |
+| §4.2 item lanes (`why`, `expert`, `ownership`) | upstream **PR 1** — Nimbus#1421 | ✅ landed, v7.5.0 |
+| §5 the file surface | upstream **PR 2** — Nimbus#1424 | ✅ landed, unreleased |
+| §6 `connections` + `currency` lanes | upstream **PR 3**, and the SDK's guards | not started |
 
-§4.1 and §4.4 can start immediately; they are the only parts of this document that are not
-waiting on the gateway. Everything else lands in the order above.
+The roster half of §4.4 shipped without the floor half, which is why the floor's missing input
+went unnoticed: `ITEM_ARM_FLOOR` and `meetsFloor` have no callers today. The floor's upstream
+field is small and additive, and it gates §4.2 only — so it leads that slice rather than
+standing as its own.
 
 ---
 
@@ -225,9 +263,24 @@ means a gateway older than the route: fall back to the current hardcoded set, si
 as the connector-health gate degrades when `GET /v1/connectors` is absent.
 
 Per F4, name discovery cannot prove an arm exists, so the item lanes additionally require a
-minimum gateway version. The version is read once, cached with the connection, and re-read on
-pairing. Below the floor the lanes are not offered — not offered and failing are different
-things, and only one of them is honest.
+minimum gateway version. **The version rides on the roster response** — `GET /v1/agents`
+answers `{ agents: […], version }`, so the fact and the check arrive in the same request, at the
+moment the floor is evaluated. Below the floor the lanes are not offered — not offered and
+failing are different things, and only one of them is honest.
+
+An earlier draft of this section said the version is "read once, cached with the connection, and
+re-read on pairing." That is withdrawn, and F7 records why: a cache keyed to pairing goes stale
+the moment a user upgrades their gateway without re-pairing, and the symptom is lanes that stay
+off forever with nothing on screen to explain it. Reading it inline costs nothing, because the
+request is one the panel already makes.
+
+**The floor is `7.5.0`** — upstream #1421 landed before the v7.5.0 release, so that is the first
+release serving the `itemUrl` arm. A consequence worth stating plainly: 7.5.0 *has* the arm and
+does **not** report a version, so it fails closed and is offered no item lanes. The effective
+floor is therefore the release that adds the version field. That is one release of lag for
+anyone sitting exactly on 7.5.0, and it is the honest outcome — a gateway that cannot say what
+it is does not get lanes. `meetsFloor` still earns its keep for the next floor: the file arms
+(upstream #1424) are unreleased and will carry one of their own.
 
 **A development build must satisfy the floor.** A gateway built from a feature branch reports
 something like `0.0.0-dev` or a prerelease tag, and a naive `>=` comparison puts every such
@@ -416,6 +469,25 @@ With upstream PR 3 and the SDK's guards landed, `connections` and `currency` joi
   against a locally-built gateway. The floor must be a named constant with the reason next to
   it, and slice 3 must not land before the gateway release it names.
 
+  **Update (2026-09-02, as shipped):** this is the branch's live state, and it is broader than
+  the sentence above. The blocker is not the *release* of PR 1 — that landed — it is **F7**,
+  which is still open: `GET /v1/agents` serves `{ agents }` with no `version`, so `meetsFloor`
+  fails closed on every gateway, a locally-built one included. The floor is a named constant
+  (`ITEM_ARM_FLOOR`) with its reasoning beside it, and the client is complete; the feature is
+  gateway-blocked until F7 ships. Recorded in the changelog, **ROADMAP C6.1**, and the
+  `development.md` pass, so no reader concludes from an absent lane that the client is broken.
+
+- **An ambiguous page still disappoints, and now on three surfaces rather than one** — `pr`,
+  `issue` and `incident`, every surface an item lane runs on. When a
+  page resolves to several candidates and the user picks one, `why`, `expert` and `ownership`
+  on an `issue` or an `incident` send `{ itemUrl: resolveUrl }` — the *page's* URL — which the
+  gateway re-resolves and finds ambiguous again, so the lane reports a gap under a header
+  naming the item the user just picked. Identical in shape to C2.4's known gap for `impact` and
+  `why` on a PR, inherited rather than introduced by these lanes, and not fixable from here:
+  `ResolveCandidate.url` does not help, because upstream `itemEntityFor` resolves whatever URL
+  it receives. The fix is an upstream **`itemId` arm**. Named here so the limitation has one
+  home rather than four silent copies; also in **ROADMAP C2.5** and **C6.1**.
+
 ---
 
 ## 10. Out of scope
@@ -448,3 +520,11 @@ Against [`2026-08-31-lanes-for-every-recognised-page-design-review.md`](./2026-0
 | I3.1 extract lane rendering from the monolith | **Deferred as a refactor, accepted as a constraint.** Rewriting existing renderers inside a slice that also adds lanes makes both unreviewable — the same argument behind §4.1's no-behaviour-change bar. §9 commits the *new* renderers to new modules, with the extraction promoted to its own slice if that line cannot hold. |
 | I3.2 mapped type for `lane × surface` | **Accepted in intent, rejected as written.** `{ [S in SurfaceKind]?: … }` makes every pair optional, so an undeclared pair compiles — reintroducing the hole the table exists to close. §4.1 requires the declaration to be total over the surfaces a lane claims. |
 | I3.3 GitLab nested groups | **Accepted.** §5.1 keys on the `/-/` delimiter rather than counting segments, so arbitrary group depth works. |
+
+Against the whole-branch review of `feat/c6-item-lanes` (2026-09-02):
+
+| Finding | Disposition |
+| --- | --- |
+| §4.2's `expert`-on-`pr` switch to `{ itemUrl }` was not implemented | **Deferred deliberately, with a trigger.** §4.2 is right that `{ topicOrFile: item.title }` answers a narrower question than the lane's label promises. But the item arm is gated on `ITEM_ARM_FLOOR`, and no gateway reports a version on `GET /v1/agents` (F7 is still open upstream), so `meetsFloor` fails closed for **every** gateway today. Switching now would withhold a working, shipped lane from 100% of users to fix a wording problem — the only option that does not break a lane in production is to hold. **Trigger:** switch `expert` on `pr` to the item arm once gateways commonly report a version. Also recorded in **ROADMAP C6.1**, which is where a maintainer looks. |
+| the ambiguous-page limitation is now four surfaces, not one | **Accepted as a recording, not a fix.** See §9's new bullet and **ROADMAP C2.5**'s C6.1 correction. |
+| the version floor has no gateway that satisfies it | **Accepted, and the prose corrected rather than the code.** The floor is right; what was wrong was the changelog, roadmap and `development.md` implying the lanes were live. Nimbus#1421 shipped the arm, not the field, so the client is complete and the feature is gateway-blocked. F7 remains the open upstream dependency. |

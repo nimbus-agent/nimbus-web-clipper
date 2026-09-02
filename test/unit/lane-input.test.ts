@@ -18,6 +18,7 @@ function ctx(over: Partial<LaneContext> = {}): LaneContext {
     pageSubject: true,
     pickedItemId: null,
     term: NO_TERM,
+    offered: null,
     ...over,
   };
 }
@@ -56,6 +57,16 @@ describe("lanesFor — page lanes", () => {
     expect(lanesFor(ctx())).toEqual(["impact", "expert", "why"]);
   });
 
+  // null means we never learned what this gateway serves. It must render exactly as
+  // it did before capability discovery existed — not blank.
+  it("filters nothing when the offered list is unknown", () => {
+    expect(lanesFor(ctx({ offered: null }))).toEqual(["impact", "expert", "why"]);
+  });
+
+  it("drops a lane the gateway does not serve", () => {
+    expect(lanesFor(ctx({ offered: ["impact", "why"] }))).toEqual(["impact", "why"]);
+  });
+
   it("offers the service lanes on a dashboard", () => {
     expect(lanesFor(ctx({ surfaceKind: "home" }))).toEqual(["catchup", "decisions", "ownership"]);
   });
@@ -70,9 +81,15 @@ describe("lanesFor — page lanes", () => {
     expect(lanesFor(ctx({ surfaceKind: null }))).toEqual([]);
   });
 
-  it("offers no page lane on a build or an issue", () => {
+  it("offers no page lane on a build", () => {
     expect(lanesFor(ctx({ surfaceKind: "build" }))).toEqual([]);
-    expect(lanesFor(ctx({ surfaceKind: "issue" }))).toEqual([]);
+  });
+
+  // An issue and an incident are indexed items with graph entities, so the three
+  // item lanes answer about them. Render order is `AGENT_LANES` order.
+  it("offers the three item lanes on an issue and an incident", () => {
+    expect(lanesFor(ctx({ surfaceKind: "issue" }))).toEqual(["expert", "why", "ownership"]);
+    expect(lanesFor(ctx({ surfaceKind: "incident" }))).toEqual(["expert", "why", "ownership"]);
   });
 });
 
@@ -102,6 +119,20 @@ describe("lanesFor — the term lane", () => {
   // the gesture they just made look like it did nothing at all.
   it("still appears when the term was refused", () => {
     expect(lanesFor(ctx({ term: { kind: "refused", reason: "too_long" } }))).toContain("glossary");
+  });
+
+  // The term gate and the offered gate are independent, and both must pass. A
+  // glossary lane the gateway does not publish cannot be answered either.
+  it("drops a term lane the gateway does not serve", () => {
+    expect(
+      lanesFor(ctx({ surfaceKind: null, pageSubject: false, term, offered: ["why"] })),
+    ).toEqual([]);
+  });
+
+  it("keeps a term lane the gateway does serve", () => {
+    expect(
+      lanesFor(ctx({ surfaceKind: null, pageSubject: false, term, offered: ["glossary"] })),
+    ).toEqual(["glossary"]);
   });
 });
 
