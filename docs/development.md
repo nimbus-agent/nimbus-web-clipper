@@ -466,6 +466,19 @@ mock's fixed brief cannot produce.
 
 ## Manual verification — Item lanes and the version floor (C6)
 
+> **This pass cannot be run yet, and steps 1–4 and 6 will not pass against any
+> gateway that exists.** The item lanes are gated on the gateway reporting its
+> own version from `GET /v1/agents`, and that route serves `{ agents }` alone —
+> upstream Nimbus#1421 added the item **arm**, not the version **field**. With
+> no version, `meetsFloor` fails closed, so the three lanes are withheld on
+> every gateway, a locally built one included (a local build reports no version
+> at all rather than `0.0.0`, so it never reaches the development-build
+> allowance in `meetsFloor`). A tester following step 2 today will see the three
+> lanes absent and should conclude the *gateway* is missing the field, **not**
+> that the feature is broken. Run this pass once a gateway serves a `version`
+> there; until then the only step that is meaningful is step 5, and step 1's
+> "the PR page is unaffected" check.
+
 Not a unit test, and it is the pass that catches what none of the above can:
 whether the gateway's rendered brief actually names the item it answered
 about, and whether the panel's capability discovery behaves across two real
@@ -473,9 +486,10 @@ gateway builds. **`bun run mock-gateway` cannot exercise this pass** — its
 `GET /v1/agents` route does not exist, so `offeredLanes` always reads
 `unavailable` against it and the panel falls back to "nothing withheld,"
 never the filtered set steps 1–2 below are checking. This needs two gateway
-builds: one from before Nimbus#1421 (`main` checked out ahead of that PR, or
-with it stashed) and one from after, built from a local checkout of `main`
-with it merged.
+builds: one below the floor (any build today — see the note above; a checkout
+from before Nimbus#1421 also serves) and one at or above it, meaning a build
+that reports a `version` of at least `7.5.0` from `GET /v1/agents`. The second
+does not exist yet.
 
 Prereq: paired, a Jira issue Nimbus has indexed (a Linear issue or a PagerDuty
 incident works identically for steps 1–3), and — for step 6 — a Confluence
@@ -486,11 +500,15 @@ page and a CircleCI pipeline, also indexed.
    new lanes (*How did we get here*, *Who should I talk to*, *Who owns
    this*). The PR page is unaffected by any of this: `impact`, `expert` and
    `why` are all still offered there and still work.
-2. **At the floor:** restart with the gateway build that has Nimbus#1421 (it
-   reports a version at or past `7.5.0`, or a development build — see
-   `meetsFloor` in `src/background/agents-capability.ts`). Open the same Jira
+2. **At the floor:** restart with a gateway that both has Nimbus#1421 **and
+   reports a `version` at or past `7.5.0` from `GET /v1/agents`** — no such
+   build exists yet, which is what the note at the top of this section is
+   about; Nimbus#1421 shipped the arm without the field. Open the same Jira
    issue. → *How did we get here*, *Who should I talk to* and *Who owns
-   this* are all offered. Run each.
+   this* are all offered. Run each. (`meetsFloor` in
+   `src/background/agents-capability.ts` also accepts `0.0.0` as a development
+   build — but only if the gateway reports it, and a local build reports no
+   version at all, so that allowance cannot rescue this step either.)
 3. **Read what comes back.** The client renders `run.brief` as a string — it
    never parses the brief's subject fields, so whether the answer names its
    subject is entirely the gateway's business. Read each of the three briefs

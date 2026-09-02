@@ -469,6 +469,24 @@ With upstream PR 3 and the SDK's guards landed, `connections` and `currency` joi
   against a locally-built gateway. The floor must be a named constant with the reason next to
   it, and slice 3 must not land before the gateway release it names.
 
+  **Update (2026-09-02, as shipped):** this is the branch's live state, and it is broader than
+  the sentence above. The blocker is not the *release* of PR 1 — that landed — it is **F7**,
+  which is still open: `GET /v1/agents` serves `{ agents }` with no `version`, so `meetsFloor`
+  fails closed on every gateway, a locally-built one included. The floor is a named constant
+  (`ITEM_ARM_FLOOR`) with its reasoning beside it, and the client is complete; the feature is
+  gateway-blocked until F7 ships. Recorded in the changelog, **ROADMAP C6.1**, and the
+  `development.md` pass, so no reader concludes from an absent lane that the client is broken.
+
+- **An ambiguous page still disappoints, and now on four surfaces rather than one.** When a
+  page resolves to several candidates and the user picks one, `why`, `expert` and `ownership`
+  on an `issue` or an `incident` send `{ itemUrl: resolveUrl }` — the *page's* URL — which the
+  gateway re-resolves and finds ambiguous again, so the lane reports a gap under a header
+  naming the item the user just picked. Identical in shape to C2.4's known gap for `impact` and
+  `why` on a PR, inherited rather than introduced by these lanes, and not fixable from here:
+  `ResolveCandidate.url` does not help, because upstream `itemEntityFor` resolves whatever URL
+  it receives. The fix is an upstream **`itemId` arm**. Named here so the limitation has one
+  home rather than four silent copies; also in **ROADMAP C2.5** and **C6.1**.
+
 ---
 
 ## 10. Out of scope
@@ -501,3 +519,11 @@ Against [`2026-08-31-lanes-for-every-recognised-page-design-review.md`](./2026-0
 | I3.1 extract lane rendering from the monolith | **Deferred as a refactor, accepted as a constraint.** Rewriting existing renderers inside a slice that also adds lanes makes both unreviewable — the same argument behind §4.1's no-behaviour-change bar. §9 commits the *new* renderers to new modules, with the extraction promoted to its own slice if that line cannot hold. |
 | I3.2 mapped type for `lane × surface` | **Accepted in intent, rejected as written.** `{ [S in SurfaceKind]?: … }` makes every pair optional, so an undeclared pair compiles — reintroducing the hole the table exists to close. §4.1 requires the declaration to be total over the surfaces a lane claims. |
 | I3.3 GitLab nested groups | **Accepted.** §5.1 keys on the `/-/` delimiter rather than counting segments, so arbitrary group depth works. |
+
+Against the whole-branch review of `feat/c6-item-lanes` (2026-09-02):
+
+| Finding | Disposition |
+| --- | --- |
+| §4.2's `expert`-on-`pr` switch to `{ itemUrl }` was not implemented | **Deferred deliberately, with a trigger.** §4.2 is right that `{ topicOrFile: item.title }` answers a narrower question than the lane's label promises. But the item arm is gated on `ITEM_ARM_FLOOR`, and no gateway reports a version on `GET /v1/agents` (F7 is still open upstream), so `meetsFloor` fails closed for **every** gateway today. Switching now would withhold a working, shipped lane from 100% of users to fix a wording problem — the only option that does not break a lane in production is to hold. **Trigger:** switch `expert` on `pr` to the item arm once gateways commonly report a version. Also recorded in **ROADMAP C6.1**, which is where a maintainer looks. |
+| the ambiguous-page limitation is now four surfaces, not one | **Accepted as a recording, not a fix.** See §9's new bullet and **ROADMAP C2.5**'s C6.1 correction. |
+| the version floor has no gateway that satisfies it | **Accepted, and the prose corrected rather than the code.** The floor is right; what was wrong was the changelog, roadmap and `development.md` implying the lanes were live. Nimbus#1421 shipped the arm, not the field, so the client is complete and the feature is gateway-blocked. F7 remains the open upstream dependency. |

@@ -1293,19 +1293,33 @@ already under the `agents` scope every paired token needs for lanes at all)
 and returns the published set as `offeredLanes` on the resolve response, and
 the panel renders only what that set contains.
 
-**Absent means "we did not learn," and that filters nothing.** `offeredLanes`
-is an *optional* field on the resolve response, deliberately distinct from an
-empty list: a roster read can fail for the same reasons the connector-health
-read can (a 404 from a gateway older than the route, an unreachable gateway, a
-timeout, a malformed body), and in every one of those cases the panel must
-render exactly what it rendered before this feature existed — nothing
-withheld. An empty `offeredLanes: []` would withhold every lane on a gateway
-that simply could not be asked, which is the connector-health gate's own
-lesson applied a second time: a gateway that cannot answer a capability
-question is not a gateway with no capabilities. `offeredFor` (`handlers.ts`)
-spreads the field in only when the roster read produced a set, using
-`exactOptionalPropertyTypes` to keep an explicit `offeredLanes: undefined` — a
-different type from an absent key — off the wire.
+**Absent means "filter nothing."** `offeredLanes` is an *optional* field on the
+resolve response, deliberately distinct from an empty list: a roster read can
+fail for the same reasons the connector-health read can (a 404 from a gateway
+older than the route, an unreachable gateway, a timeout, a malformed body), and
+the rule in every one of those cases is that the panel renders exactly what it
+rendered before this feature existed. An empty `offeredLanes: []` would withhold
+every lane on a gateway that simply could not be asked, which is the
+connector-health gate's own lesson applied a second time: a gateway that cannot
+answer a capability question is not a gateway with no capabilities. `offeredFor`
+(`handlers.ts`) spreads the field in only when `offeredLanes` produced a set,
+using `exactOptionalPropertyTypes` to keep an explicit `offeredLanes: undefined`
+— a different type from an absent key — off the wire.
+
+**"Exactly what it rendered before" is per surface, and that is why a failed
+read is not simply unfiltered.** On `pr`, `home` and every other surface whose
+lanes need no floored arm, a failed roster read sends no field and filters
+nothing — those pages are byte-identical to what they were. On `issue` and
+`incident` it sends a *present* list: this surface's lanes **minus** the three
+item-arm ones. Which is the same thing said consistently, because what those
+pages rendered before this feature is a header, freshness, Related and
+`glossary` — not three item lanes. Returning "unfiltered" there would have made
+the more ignorant state the more permissive one: a roster that answered *without*
+a version withholds the three (the floor fails closed), while a roster that did
+not answer *at all* would have offered them — to a gateway too old to serve
+`GET /v1/agents`, which is precisely the population least likely to serve the
+arm. `offeredLanes` (`agents-capability.ts`) makes that decision in one place;
+`lanesFor` (`lane-input.ts`) only applies it.
 
 **The version floor gates *arms*, not *names*.** `GET /v1/agents` lists agent
 names, and `why`, `expert` and `ownership` have all been published for
@@ -1331,8 +1345,21 @@ numbered release. `needsItemArm`
 whether to offer the lane) and `agentParams` (`handlers.ts`, deciding which arm
 to actually send) read, so a surface floored in one place can never be sent the
 wrong params in the other. A gateway too old to answer `GET /v1/agents` at all
-is not second-guessed either way: the panel renders exactly as it did before
-this feature, with nothing withheld.
+is not second-guessed about the lanes it *did* serve before: on a pull request
+or a dashboard the panel renders exactly as it did, with nothing withheld — and
+on an issue or an incident the three unconfirmable lanes are withheld, which is
+also exactly as it did.
+
+**Live status: this half is gateway-blocked, and knowing that saves a bug
+report.** Upstream `GET /v1/agents` currently answers
+`json({ agents: [...EXTERNAL_AGENT_NAMES] }, 200)` and nothing else
+(`packages/gateway/src/ipc/http-server.ts`) — Nimbus#1421 shipped the `itemUrl`
+**arm**, not the version **field**. So `meetsFloor(null, …)` is false on every
+gateway that exists and the three item lanes are withheld from everyone,
+including anyone running a gateway built locally from a branch: such a build
+reports *no* version rather than `0.0.0`, so it fails closed before the
+development-build allowance above can apply. The client side is complete and
+needs no change when the field ships. Do not "fix" this by loosening the floor.
 
 **`agentParams` is now keyed by lane *and* surface, not by lane alone.** Before
 this generalisation, `impact`'s render sent one param shape per lane; `why` on
