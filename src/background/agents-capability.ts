@@ -25,7 +25,9 @@ const ROSTER_TIMEOUT_MS = 10_000;
  * when `GET /v1/connectors` is absent, and for the same reason: a gateway that
  * cannot answer a capability question is not a gateway with no capabilities.
  */
-export type AgentRoster = { readonly names: readonly string[] } | { readonly unavailable: true };
+export type AgentRoster =
+  | { readonly names: readonly string[]; readonly version: string | null }
+  | { readonly unavailable: true };
 
 export type RosterDeps = {
   readonly origin: string;
@@ -39,6 +41,20 @@ function parseNames(body: unknown): readonly string[] | null {
   const agents = body["agents"];
   if (!Array.isArray(agents)) return null;
   return agents.every((n) => typeof n === "string") ? (agents as readonly string[]) : null;
+}
+
+/**
+ * The gateway's own version, or the fact that it did not say.
+ *
+ * `null` is NOT `unavailable`. A gateway that serves the roster but predates the
+ * version field has told us the names, and that fact stands on its own — the
+ * missing half fails closed at `meetsFloor`, which withholds exactly the lanes
+ * that need an arm we cannot confirm, and nothing else.
+ */
+function parseVersion(body: unknown): string | null {
+  if (!isObject(body)) return null;
+  const v = body["version"];
+  return typeof v === "string" ? v : null;
 }
 
 export async function fetchAgentRoster(deps: RosterDeps): Promise<AgentRoster> {
@@ -70,8 +86,9 @@ export async function fetchAgentRoster(deps: RosterDeps): Promise<AgentRoster> {
       // Every one of them means the same thing HERE: we did not learn the set.
       return { unavailable: true };
     }
-    const names = parseNames(await readJson(res));
-    return names === null ? { unavailable: true } : { names };
+    const body = await readJson(res);
+    const names = parseNames(body);
+    return names === null ? { unavailable: true } : { names, version: parseVersion(body) };
   } finally {
     clearTimeout(timer);
   }
@@ -88,9 +105,16 @@ export async function fetchAgentRoster(deps: RosterDeps): Promise<AgentRoster> {
  * a request, an egress row and a visibly failing lane to learn something a
  * version string already says.
  *
+ * Upstream Nimbus#1421 landed before the v7.5.0 release, so that is the first
+ * release serving the arm. Note the consequence, which is deliberate: 7.5.0 HAS
+ * the arm and does not report a version, so it fails closed and is offered no
+ * item lanes. The effective floor is the release that added the version field —
+ * one release of lag, and the honest outcome, because a gateway that cannot say
+ * what it is has not told us it can answer.
+ *
  * Do not raise this without a released gateway to point at.
  */
-export const ITEM_ARM_FLOOR = "2.19.0";
+export const ITEM_ARM_FLOOR = "7.5.0";
 
 type Semver = { major: number; minor: number; patch: number; prerelease: boolean };
 

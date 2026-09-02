@@ -23,7 +23,7 @@ const deps = (doFetch: typeof fetch) => ({
 describe("fetchAgentRoster", () => {
   it("returns the published names on 200", async () => {
     const roster = await fetchAgentRoster(deps(stubFetch(200, { agents: ["why", "impact"] })));
-    expect(roster).toEqual({ names: ["why", "impact"] });
+    expect(roster).toEqual({ names: ["why", "impact"], version: null });
   });
 
   it("treats a 404 as a gateway older than the route, and says nothing about it", async () => {
@@ -126,7 +126,39 @@ describe("fetchAgentRoster — the token never leaves loopback", () => {
         token: "t",
         doFetch: stubFetch(200, { agents: ["why"] }),
       });
-      expect(roster, origin).toEqual({ names: ["why"] });
+      expect(roster, origin).toEqual({ names: ["why"], version: null });
     }
   });
+});
+
+it("carries the version the gateway published", async () => {
+  const roster = await fetchAgentRoster({
+    origin: "http://127.0.0.1:7474",
+    token: "t",
+    doFetch: stubFetch(200, { agents: ["why"], version: "7.6.0" }),
+  });
+  expect(roster).toEqual({ names: ["why"], version: "7.6.0" });
+});
+
+// A gateway that serves the route but predates the field. NOT `unavailable`:
+// we learned the names, and withholding every lane because we did not learn a
+// version would be a much bigger claim than the one fact we are missing.
+it("reads a roster with no version as names plus a null version", async () => {
+  const roster = await fetchAgentRoster({
+    origin: "http://127.0.0.1:7474",
+    token: "t",
+    doFetch: stubFetch(200, { agents: ["why"] }),
+  });
+  expect(roster).toEqual({ names: ["why"], version: null });
+});
+
+// A non-string version is a wire answer we do not understand. Fail closed on the
+// FIELD (null), not on the whole roster — same reasoning as the missing-field case.
+it("treats a non-string version as absent", async () => {
+  const roster = await fetchAgentRoster({
+    origin: "http://127.0.0.1:7474",
+    token: "t",
+    doFetch: stubFetch(200, { agents: ["why"], version: 7.6 }),
+  });
+  expect(roster).toEqual({ names: ["why"], version: null });
 });
