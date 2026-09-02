@@ -2278,11 +2278,6 @@ describe("the offered-lanes gate", () => {
     ref: "acme/web #482",
     resolveUrl: "https://github.com/acme/web/pull/482",
   };
-  const PR517 = {
-    ...PR482,
-    ref: "acme/web #517",
-    resolveUrl: "https://github.com/acme/web/pull/517",
-  };
 
   function resolvedFor(recognition: unknown, offeredLanes?: readonly string[]): unknown {
     return {
@@ -2323,52 +2318,19 @@ describe("the offered-lanes gate", () => {
     expect(renderedLanes(root)).toEqual(["related", "impact", "expert", "why"]);
   });
 
-  // `reread()` calls `paint()` before `loadHeader()` — so if the old page's
-  // offered list survived the pin move, the new page's very first paint would
-  // filter through it. Both pages are pull requests on purpose: the surface
-  // gate alone would already explain "why" appearing and "impact" vanishing,
-  // so pinning the surface constant isolates the offered-list reset as the
-  // only thing that can be doing it.
-  it("drops the offered lanes when the panel re-reads", async () => {
-    vi.useFakeTimers();
-    // `recognise` answers by URL, like `mountWatching` above — the navigation
-    // watcher must see #517 as a genuinely different item before it raises
-    // the notice this test clicks through.
-    harness.sendMessage.mockImplementation(async (message: unknown) => {
-      const m = message as { kind?: string; pageUrl?: string };
-      if (m.kind === "resolve") return resolvedFor(PR482, ["impact"]);
-      if (m.kind === "recognise") {
-        const recognition = (m.pageUrl ?? "").includes("/517") ? PR517 : PR482;
-        return { kind: "recognition", ok: true, recognition };
-      }
-      return { kind: "related", ok: true, items: [] };
-    });
-    window.history.pushState({}, "", "/acme/web/pull/482");
-    await loadPanel();
-    await vi.waitFor(() => {
-      expect(headerText()).not.toContain("Checking Nimbus");
-    });
-    const root = shadow();
-    if (root === null) {
-      throw new Error("panel shadow root not found");
-    }
-    expect(renderedLanes(root)).toEqual(["related", "impact"]);
-
-    window.history.pushState({}, "", "/acme/web/pull/517");
-    await advanceTimers(600); // the navigation watcher notices the flip
-
-    harness.sendMessage.mockImplementation(async (message: unknown) => {
-      const m = message as { kind?: string };
-      if (m.kind === "resolve") return resolvedFor(PR517, ["why"]);
-      if (m.kind === "recognise") return { kind: "recognition", ok: true, recognition: PR517 };
-      return { kind: "related", ok: true, items: [] };
-    });
-    root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
-    await advanceTimers(0);
-
-    expect(renderedLanes(root)).toContain("why");
-    expect(renderedLanes(root)).not.toContain("impact");
-  });
+  // No test here exercises reread()'s `offeredLanes = null;` reset — it is not
+  // observable through this panel's rendered output. Every route that could show
+  // a stale offered list closes on its own: the transient paint() reread() runs
+  // BEFORE loadHeader() has `header: loading` and `term: none`, both of which
+  // already block every offered-gated lane regardless of `offered`; and every
+  // header kind that unblocks one (`resolved`/`service`/`chosen`) is produced
+  // only from the `res.ok` arm of `headerFrom`, which is the exact same arm that
+  // just overwrote `offeredLanes` from that response. So a header capable of
+  // showing an offered-gated lane never coexists with a stale offered list — see
+  // the reset's own comment in panel-in-page.ts for the fuller trail. The reset
+  // stays for when that ordering someday changes; a test asserting it today
+  // would pass with the reset present, absent, or replaced by a no-op, which
+  // makes it a false guard rather than a true one.
 });
 
 describe("following a client-side navigation", () => {

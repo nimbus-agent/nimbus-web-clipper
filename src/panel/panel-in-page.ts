@@ -1103,10 +1103,19 @@ function createPanel(body: HTMLElement): {
     pinnedUrl = window.location.href;
     lastCheckedUrl = pinnedUrl;
     pinnedRecognition = null;
-    // The offered-lanes list is computed per surface (`offeredLanes(roster,
-    // kind)`), so the old page's list would filter the new page's lanes through
-    // the wrong gate. `reread()` calls `paint()` before `loadHeader()`, so
-    // without this reset that stale list would be live for at least one paint.
+    // Belongs with the other per-page resets above/below for the same reason as
+    // `pinnedRecognition`: the offered-lanes list is computed per surface
+    // (`offeredLanes(roster, kind)`), so carrying the old page's list forward
+    // would be wrong in principle. Today it is not observable, though: the
+    // transient paint() below runs with `header: loading` and `term: none`,
+    // both of which already block every offered-gated lane on their own, and
+    // by the time a header state that unblocks one can be reached, loadHeader
+    // has always just overwritten this from that same response (see its `res.ok`
+    // arm) — reachable header kinds and knowledge of `offeredLanes` are set by
+    // the same branch. So this line is here for when that ordering someday
+    // changes, not because a test can currently tell its absence from its
+    // presence — see the "offered-lanes gate" describe block in
+    // panel-in-page.test.ts for the reasoning trail.
     offeredLanes = null;
     navAway = false;
     header = { kind: "loading" };
