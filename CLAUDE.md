@@ -8,7 +8,7 @@ web pages (readable article or selection) into the user's local-first
 indexed items in an on-demand panel. Phases C1–C6 grew it past clipping: it
 recognises the page you are on (PR / build / issue / incident), runs the
 gateway's agents against it as panel lanes — offering only the lanes the paired
-gateway says it can serve — asks research briefs across your open tabs, and
+gateway publishes, whenever it can say what those are — asks research briefs across your open tabs, and
 reads the gateway's egress ledger back as an activity page. It is a **thin client**:
 it talks only to a
 Nimbus gateway on `127.0.0.1` over a locked HTTP contract. No cloud calls, no

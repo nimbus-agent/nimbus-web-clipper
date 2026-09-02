@@ -466,7 +466,7 @@ mock's fixed brief cannot produce.
 
 ## Manual verification — Item lanes and the version floor (C6)
 
-> **This pass cannot be run yet, and steps 1–4 will not pass against any
+> **This pass cannot be run yet, and steps 2–5 will not pass against any
 > gateway that exists.** The item lanes are gated on the gateway reporting its
 > own version from `GET /v1/agents`, and that route serves `{ agents }` alone —
 > upstream Nimbus#1421 added the item **arm**, not the version **field**. With
@@ -476,8 +476,12 @@ mock's fixed brief cannot produce.
 > allowance in `meetsFloor`). A tester following step 2 today will see the three
 > lanes absent and should conclude the *gateway* is missing the field, **not**
 > that the feature is broken. Run this pass once a gateway serves a `version`
-> there; until then the only step that is meaningful is step 5, and step 1's
-> "the PR page is unaffected" check.
+> there. Until then only two steps mean anything: **step 1**, which is exactly
+> today's state and includes its "the PR page is unaffected" check, and **step
+> 6**, which passes only vacuously — nothing offers an item lane anywhere yet, so
+> Confluence and CircleCI not offering one proves nothing about them. **Step 5 is
+> blocked with the rest**: with the three lanes withheld there is no lane in which
+> to observe the miss.
 
 Not a unit test, and it is the pass that catches what none of the above can:
 whether the gateway's rendered brief actually names the item it answered

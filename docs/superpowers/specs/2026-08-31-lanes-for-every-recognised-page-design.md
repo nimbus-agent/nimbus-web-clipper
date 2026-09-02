@@ -477,7 +477,8 @@ With upstream PR 3 and the SDK's guards landed, `connections` and `currency` joi
   gateway-blocked until F7 ships. Recorded in the changelog, **ROADMAP C6.1**, and the
   `development.md` pass, so no reader concludes from an absent lane that the client is broken.
 
-- **An ambiguous page still disappoints, and now on four surfaces rather than one.** When a
+- **An ambiguous page still disappoints, and now on three surfaces rather than one** — `pr`,
+  `issue` and `incident`, every surface an item lane runs on. When a
   page resolves to several candidates and the user picks one, `why`, `expert` and `ownership`
   on an `issue` or an `incident` send `{ itemUrl: resolveUrl }` — the *page's* URL — which the
   gateway re-resolves and finds ambiguous again, so the lane reports a gap under a header

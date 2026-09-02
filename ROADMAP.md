@@ -764,8 +764,9 @@ that already exist, without leaving the tab.*
 > naming the item the user just picked — the exact refusal this bar forbids. See
 > C2.4's **Known gap**; the fix is to send `ResolveCandidate.url` for those two
 > lanes, and it is not done.
-> **Correction (C6.1):** the same failure now occurs on **four** surfaces, not
-> one. `why`, `expert` and `ownership` on an `issue` or an `incident` send
+> **Correction (C6.1):** the same failure now occurs on **three** surfaces, not
+> one — `pr`, `issue` and `incident`, which is every surface an item lane runs
+> on. `why`, `expert` and `ownership` on an `issue` or an `incident` send
 > `{ itemUrl: resolveUrl }` — the page's URL again — so an ambiguous issue or
 > incident answers with a gap under the header naming the candidate the user
 > picked, exactly as `impact` and `why` do on a PR. Still inherited rather than
@@ -1102,7 +1103,12 @@ the editor structurally cannot.*
 > lanes — *how did we get here*, *who should I talk to*, *who owns this* —
 > answered about the one indexed item the page resolves to. The panel also stops
 > asserting a hardcoded lane list: it reads `GET /v1/agents` on every resolve and
-> offers only what the paired gateway actually publishes.
+> offers only what the paired gateway actually publishes. That guarantee holds
+> when the read succeeds. A gateway that cannot answer it is not second-guessed:
+> the item lanes are withheld, because their arm was never confirmable, and every
+> other lane renders exactly as it did before — offered without having been
+> confirmed as published, which is the pre-C6 behaviour rather than a claim about
+> this gateway.
 > **Why it wows** C1.2's widening (#87, #88) reached these products and then had
 > nothing to run on them — an issue got a header, a freshness line, Related and
 > the glossary box, and no lane at all. This closes that without guessing at a
@@ -1168,7 +1174,8 @@ the editor structurally cannot.*
 > delete this note. Recorded here and not only in a code comment, because the
 > code comment is next to the line and this is the file a maintainer reads to
 > find out what is owed.
-> **The ambiguous-page gap now reaches four surfaces, not one.** C2.4's known
+> **The ambiguous-page gap now reaches three surfaces, not one** — `pr`, `issue`
+> and `incident`, every surface an item lane runs on. C2.4's known
 > gap — a lane asked with the *page's* URL, which the gateway re-resolves and
 > finds ambiguous again, reporting a miss under a header naming the item the
 > user just picked — applies verbatim to `why`, `expert` and `ownership` on
