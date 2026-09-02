@@ -265,7 +265,7 @@ gateway/engine to grow a new surface, then the ecosystem bets. Within a phase,
 highest value first.
 
 The reframe adds a second, superseding lens: **the client phases come first.**
-They are lettered **C1–C4** so nothing below has to be renumbered. The numbered
+They are lettered **C1, C2, …** so nothing below has to be renumbered. The numbered
 phases **1–10** are all still here and most are still wanted — they were written
 for a clipper, so where the reframe changes an item's priority or shape it now
 carries a `**Reframe**` line saying so, with the reason. Nothing was dropped
@@ -689,8 +689,9 @@ that already exist, without leaving the tab.*
 > Full design: `docs/superpowers/specs/2026-08-19-why-from-a-pull-request-design.md`.
 > **Done when** A lane answers "why does this change exist" for a resolved
 > pull request, without requiring the browser to have a local checkout of
-> anything. ✅ — the lane gates exactly as `impact`/`expert` do
-> (`LANE_RULES.why`, `surfaces: ["pr"]`) and appears under both the
+> anything. ✅ — the lane gated exactly as `impact`/`expert` did at the time
+> (`LANE_RULES.why`, `surfaces: ["pr"]`; **C6** later widens `why`'s surfaces
+> to `issue` and `incident` too — see that entry) and appears under both the
 > `resolved` and `chosen` headers. **Appearing under `chosen` is not the same
 > as answering about the item picked there** — see the known gap below;
 > correct that claim if you are about to repeat it.
@@ -1082,6 +1083,56 @@ the editor structurally cannot.*
 > work, only C5.2's note that it was coming, which this entry's update now
 > marks resolved. Full reasoning:
 > [`docs/superpowers/specs/2026-08-19-briefs-over-your-index-design.md`](./docs/superpowers/specs/2026-08-19-briefs-over-your-index-design.md).
+
+---
+
+## Phase C6 — Lanes on an item 🟢
+
+### C6.1 Issue and incident get why, expert, ownership — and the panel stops guessing the lane list · 🟢 · M — ✅ shipped
+> **What** A Jira issue, a Linear issue and a PagerDuty incident gain three agent
+> lanes — *how did we get here*, *who should I talk to*, *who owns this* —
+> answered about the one indexed item the page resolves to. The panel also stops
+> asserting a hardcoded lane list: it reads `GET /v1/agents` on every resolve and
+> offers only what the paired gateway actually publishes.
+> **Why it wows** C1.2's widening (#87, #88) reached these products and then had
+> nothing to run on them — an issue got a header, a freshness line, Related and
+> the glossary box, and no lane at all. This closes that without guessing at a
+> gateway version: the panel asks.
+> **Touches** `src/background/agents-capability.ts` (new — the roster read, the
+> `ITEM_ARM_FLOOR` version gate), `handlers.ts` (`agentParams` generalised to
+> `lane × surface`, the new `offeredFor`), `src/shared/types.ts` (`LaneRule`
+> generalised to a `LaneSurfaceMap`, `scopeForLane`), `src/shared/messages.ts`
+> (`offeredLanes` on the resolve response), `src/panel/panel-in-page.ts` (honours
+> the offered set, item-surface lane titles).
+> **Approach** `GET /v1/agents` answers `{ agents, version }` in one request,
+> read fresh on every resolve rather than cached with the pairing, so an
+> upgraded gateway is reflected without re-pairing. Agent names alone cannot say
+> whether `why`, `expert` and `ownership` accept an item URL — all three have
+> been published for releases — so the three item-surface pairs additionally
+> require the gateway version to meet `ITEM_ARM_FLOOR` (`7.5.0`, the release
+> upstream Nimbus#1421 shipped in). A gateway that does not report a version —
+> including 7.5.0 itself, which has the arm but predates the field — fails
+> closed and gets none of the three; a gateway too old to answer `GET
+> /v1/agents` at all is not second-guessed, and renders exactly as it did
+> before this phase.
+> **Done when** The three lanes run on a Jira issue, a Linear issue and a
+> PagerDuty incident, against the item each resolves to; the panel offers
+> exactly the lanes the paired gateway's roster (and, for these three, its
+> version) says it can serve; and neither `pr`'s existing
+> `impact`/`expert`/`why` nor `home`'s `catchup`/`decisions`/`ownership`
+> changed behaviour. ✅
+> **The honest bound: a Confluence page still gets none of these.** It indexes
+> upstream as `type: "page"`, which has no graph entity, and all three lanes
+> answer from graph edges — offering them there would mean a permanently empty
+> answer under a header that looks like every other lane. That reads as "there
+> is nothing" when the truth is "this cannot be asked", so `doc` keeps exactly
+> what it had: header, freshness, Related, `glossary`. **A gateway below the
+> version floor is bound the same honest way** — not offered the three lanes,
+> not shown them failing.
+> Full design:
+> [`docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md`](./docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md)
+> (§4; §5's file-page lanes are **C7**, blocked on an unreleased upstream PR and
+> not part of this entry).
 
 ---
 

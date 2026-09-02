@@ -59,9 +59,11 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   home or a PagerDuty incidents list gets *catch me up*, *what changed while I
   was away* and *what's mine*, gated on the connector's health like every other
   dashboard. Neither offers a targeted fetch on a miss: the gateway's fetch
-  boundary covers GitHub, GitLab, Bitbucket, Jenkins and Jira only. Neither
-  offers an agent lane on the item page itself — those three questions answer
-  about a whole connector, not one document or one incident.
+  boundary covers GitHub, GitLab, Bitbucket, Jenkins and Jira only. The three
+  connector-scoped lanes above do not run on the item page itself — they
+  answer about a whole connector, not one document or one incident, and stay
+  that way for both. (A PagerDuty incident later gained its own, item-scoped
+  lanes — see below.)
 
   Confluence shares `*.atlassian.net` with Jira and is told apart by its `/wiki`
   path, so no new page-access grant is involved: granting either grants both,
@@ -78,6 +80,28 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   which indexes the page under the `_links.webui` URL Confluence itself links
   to; this client deliberately does not work around it, because canonicalisation
   is the gateway's job.
+
+- **A Jira issue, a Linear issue and a PagerDuty incident now get agent lanes.**
+  Recognition reached these products in the last two releases and then had
+  nothing to run on them: an issue got a header, a freshness line, Related and
+  the glossary box, and no lane at all. They now offer *how did we get here*,
+  *who should I talk to* and *who owns this*, answered about the indexed item
+  the page resolves to. A Confluence page deliberately does not: it has no
+  graph entity for these lanes to answer from, so all three would come back
+  permanently empty, and an empty answer reads as "there is nothing" rather
+  than "this cannot be asked".
+
+- **The panel no longer offers a lane the paired gateway cannot serve.** The
+  lane list was a hardcoded assertion about a gateway you might not be
+  running; an older one answered a lane by failing it. The panel now reads
+  what the gateway publishes and offers that. The three lanes above
+  additionally need a gateway new enough to accept an item URL — the agents'
+  names have been published for releases, their item arms have not, so the
+  name alone cannot say. A gateway that does not report its version is
+  offered none of the three, which costs one release of lag and never shows
+  you a lane that was going to fail. A gateway too old to answer the
+  capability question at all is not second-guessed: the panel renders exactly
+  as it did before, with nothing withheld.
 
 ## [0.5.0] - 2026-08-24
 

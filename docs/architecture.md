@@ -302,7 +302,10 @@ and it is why the `source` rung in all three cross-boundary guards
 the rebuild rather than costing the user the whole capture — and at the offline
 queue, where `clip-queue-store.ts` reads with `value.filter(isQueuedClip)`, a
 per-member rejection would discard the entire clip rather than the field.
-`source` needs **gateway 2.12.0**; older gateways drop it with no error.
+`source` needs the **gateway release that added it, 2.12.0**, or later; older
+gateways drop it with no error. That is a floor from an old release line — the
+gateway's own version has since passed **7.5.0** — not a claim that 2.12.0 is
+recent.
 
 The gateway's status codes are mapped to a small, closed set of typed reasons in
 [`gateway-client.ts`](../src/background/gateway-client.ts): `unreachable`,
@@ -972,11 +975,14 @@ asked anything. It is a discriminated union, not a table of independent fields,
 because the two arms are exclusive and each carries something the other must not
 have:
 
-- `{input: "page", surfaces}` — the lane's whole input comes from the page, so it
-  declares which `SurfaceKind`s it belongs on. `impact`, `expert` and `why` are
-  `["pr"]`; `catchup`, `decisions` and `ownership` are `["home"]` — see the next
-  section for what `"home"` is and why those three could not simply join the
-  other two.
+- `{input: "page", surfaces}` — the lane's whole input comes from the page. Since
+  Phase C6, `surfaces` is not a plain list: it is a `LaneSurfaceMap`, one entry
+  per `SurfaceKind` the lane belongs on, and the value is the **scope** that
+  surface supplies — `"service"`, `"item"` or `"file"`. `impact` maps `pr` to
+  `"item"`; `why` and `expert` map `pr`, `issue` and `incident` all to `"item"`;
+  `catchup` and `decisions` map `home` to `"service"`; `ownership` maps `home` to
+  `"service"` and `issue`/`incident` to `"item"`. See the next section for what
+  `"home"` is, and "Item lanes vs. service lanes" below for the item surfaces.
 - `{input: "term"}` — the lane's input is a selection the user made, so a surface
   list would be meaningless. `glossary` is the only member.
 
@@ -986,9 +992,20 @@ lands* and handed that page's URL to `agents.impact` as its `fileOrPrUrl` — a
 question that does not apply, from an input the agent was not built for.
 
 The table is keyed by `AgentLane`, so adding a lane without declaring its rule is
-a type error. Surface gating is on the recogniser's `kind` — a closed union this
-repo owns — and not on `ResolvedItem.type`, which is a free-form string from the
-wire.
+a type error, and `LaneSurfaceMap`'s value type is a bare (non-optional) `LaneScope`
+under `exactOptionalPropertyTypes`, so a lane that claims a surface without
+declaring what supplies its input there is a compile error too — not an absent
+entry that silently reads as "not applicable". Surface gating is on the
+recogniser's `kind` — a closed union this repo owns — and not on
+`ResolvedItem.type`, which is a free-form string from the wire. `scopeForLane`
+(`src/shared/types.ts`) is the single reader both the panel's render gate and
+`agentParams` (`handlers.ts`) use, so "is this lane offered here" and "what does
+it send here" can never answer from two different tables — before this table
+generalised, that was exactly the hole a fourth item-scope lane could have fallen
+into: `agentParams` mapped one lane to one param shape, so a lane offered on two
+surfaces with two different inputs (`ownership` on `home` and on `issue`) would
+have compiled, rendered and invoked while silently sent the wrong surface's
+params.
 
 ### Lanes that take an input (C2.5 · glossary · 4.2)
 
@@ -1156,11 +1173,23 @@ hardcoded `<option>` markup. The picker is now `SELF_HOSTABLE_PRODUCTS`
 load. See `src/shared/recognise/registry.ts` for both derivations; this file
 does not restate their reasoning.
 
-**Two more surface kinds carry no lane, by construction.** `SurfaceKind` gained
-`doc` (a Confluence page) and `incident` (a PagerDuty incident); `LANE_RULES`
-names only `pr` and `home`, so `laneBelongsOnSurface` is false for both on
-every lane — the panel renders exactly what a Jira issue renders today:
-header, freshness, Related, the `glossary` term lane. `SurfaceKind` is itself
+**One surface kind carries no lane, by construction — and it is not the one it
+used to be.** `SurfaceKind` gained `doc` (a Confluence page) and `incident` (a
+PagerDuty incident) in the same widening pass that added `issue`, and for a
+while `LANE_RULES` named only `pr` and `home`, so all three of `issue`, `doc`
+and `incident` rendered exactly what an unrecognised page's header does:
+nothing but header, freshness, Related and the `glossary` term lane.
+
+Phase C6 closed that for `issue` and `incident`: both now carry the three item
+lanes described below ("Capability discovery and the version floor"). `doc`
+still carries none, and that is deliberate, not leftover — a Confluence page
+indexes upstream as `type: "page"`, which has no graph entity, and every one of
+these lanes answers from graph edges. Offering them on a `doc` page would mean
+three lanes that return an empty answer or a gap forever, for a reason no user
+could act on; an empty answer reads as "there is nothing", not as "this cannot
+be asked". Adding a page-graph populator upstream would light the lanes up with
+no client change — the surface list is a one-line table edit — but until that
+lands, `doc` gets exactly what it gets today. `SurfaceKind` is itself
 now derived from a `SURFACE_KINDS` `as const` array, mirroring `PRODUCT_IDS`,
 so a kind added to the array and left out of some `Record<SurfaceKind, …>` is
 a compile error rather than a hand-written list that silently under-covers it.
@@ -1239,6 +1268,77 @@ and a client that greps gateway prose breaks silently the first time upstream
 rewords a sentence.
 
 Full reasoning: `docs/superpowers/specs/2026-08-13-c2-3-service-lanes-design.md`.
+
+### Item lanes on an issue or an incident (Phase C6)
+
+`why`, `expert` and `ownership` now also belong on `issue` and `incident` —
+a Jira issue, a Linear issue, a PagerDuty incident — with the `item` scope,
+answering about the one indexed item the page resolves to rather than about a
+whole connector. Each sends the gateway's `itemUrl` arm, not the `prUrl` arm
+`why` sends on a PR or the title-based `topicOrFile` arm `expert` still sends
+there (see the `agentParams` comment in `handlers.ts` for why that hold is
+deliberate). Because a lane can now answer the same question with different
+wording depending on where it is asked, the item surfaces get their own lane
+titles — "How did we get here", "Who should I talk to", "Who owns this"
+(`ITEM_SURFACE_TITLES` in `panel-in-page.ts`) — rather than the PR-flavoured
+"Why does this change exist" reused on a page that is not a change under
+review.
+
+**Capability discovery: the panel asks the gateway, rather than assuming.**
+The lane list used to be a hardcoded assertion about a gateway the user might
+not be running — an older one answered a lane by failing it, one request and
+one visibly broken lane after the panel had already offered it. `resolve` now
+also reads `GET /v1/agents` (`agents-capability.ts`'s `fetchAgentRoster`,
+already under the `agents` scope every paired token needs for lanes at all)
+and returns the published set as `offeredLanes` on the resolve response, and
+the panel renders only what that set contains.
+
+**Absent means "we did not learn," and that filters nothing.** `offeredLanes`
+is an *optional* field on the resolve response, deliberately distinct from an
+empty list: a roster read can fail for the same reasons the connector-health
+read can (a 404 from a gateway older than the route, an unreachable gateway, a
+timeout, a malformed body), and in every one of those cases the panel must
+render exactly what it rendered before this feature existed — nothing
+withheld. An empty `offeredLanes: []` would withhold every lane on a gateway
+that simply could not be asked, which is the connector-health gate's own
+lesson applied a second time: a gateway that cannot answer a capability
+question is not a gateway with no capabilities. `offeredFor` (`handlers.ts`)
+spreads the field in only when the roster read produced a set, using
+`exactOptionalPropertyTypes` to keep an explicit `offeredLanes: undefined` — a
+different type from an absent key — off the wire.
+
+**The version floor gates *arms*, not *names*.** `GET /v1/agents` lists agent
+names, and `why`, `expert` and `ownership` have all been published for
+releases — so the roster alone cannot say whether *this* gateway accepts an
+`itemUrl` for them, only that the agent exists at all. `ITEM_ARM_FLOOR`
+(`agents-capability.ts`) is `"7.5.0"`, the first release to carry the upstream
+change (Nimbus#1421) that serves that arm, and it rides on the same roster
+response rather than a second request: `GET /v1/agents` answers
+`{ agents, version }`, so the fact and the check arrive together, evaluated
+fresh on every resolve rather than cached with the pairing (a version cached at
+pairing time would go stale the moment a user upgrades their gateway without
+re-pairing, with nothing on screen to explain why the lanes stayed off). A
+gateway that does not report a version at all — including 7.5.0 itself, which
+has the arm but predates the version field — fails **closed** and is offered
+none of the three item lanes; that costs one release of lag for anyone sitting
+exactly on 7.5.0 and is the honest trade, because a gateway that cannot say
+what it is has not told the panel it can answer. A development build (`0.0.0`,
+or any prerelease of the floor or later) is treated as satisfying any floor, so
+a gateway built locally from a feature branch — the ordinary way to run one on
+`127.0.0.1` while developing this extension — is not punished for not being a
+numbered release. `needsItemArm`
+(`agents-capability.ts`) is the single predicate both `offeredLanes` (deciding
+whether to offer the lane) and `agentParams` (`handlers.ts`, deciding which arm
+to actually send) read, so a surface floored in one place can never be sent the
+wrong params in the other. A gateway too old to answer `GET /v1/agents` at all
+is not second-guessed either way: the panel renders exactly as it did before
+this feature, with nothing withheld.
+
+**`agentParams` is now keyed by lane *and* surface, not by lane alone.** Before
+this generalisation, `impact`'s render sent one param shape per lane; `why` on
+an issue and `why` on a PR now need different arms for the same lane, and
+`ownership` on `home` and `ownership` on `issue` already did. See "Which lanes
+appear where" above for the `LaneSurfaceMap` table this is built on.
 
 ### The connector-health gate
 
