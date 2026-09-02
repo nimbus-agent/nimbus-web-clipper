@@ -1108,6 +1108,94 @@ describe("handleAgentRun", () => {
     expect(seen[1]).toEqual({ agent: "expert", params: { topicOrFile: "Cache it" } });
   });
 
+  // The three item lanes on an issue. Each sends the page URL under `itemUrl` —
+  // upstream's arm name, mutually exclusive with prUrl / topicOrFile / service.
+  //
+  // A local deps factory rather than a file-level fixture, and the URL is one
+  // `recognise.test.ts` pins: a URL the recogniser rejects would make every one of
+  // these pass for the wrong reason, failing at `not_resolved` before any param is
+  // built.
+  const ITEM_PAGES = [
+    ["a Jira issue", "https://acme.atlassian.net/browse/PLAT-91"],
+    ["a Linear issue", "https://linear.app/acme/issue/ENG-123/fix-the-thing"],
+    ["a PagerDuty incident", "https://acmeco.pagerduty.com/incidents/PT4KHLK"],
+  ] as const;
+
+  const itemLaneCases = (["why", "expert", "ownership"] as const).flatMap((lane) =>
+    ITEM_PAGES.map(([where, pageUrl]) => ({ lane, where, pageUrl })),
+  );
+
+  it.each(itemLaneCases)("sends $lane an itemUrl on $where", async ({ lane, pageUrl }) => {
+    const invoked: unknown[] = [];
+    await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async (_o: string, _t: string, _agent: string, params: unknown) => {
+          invoked.push(params);
+          return { ok: true as const, runId: "r1" };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane, pageUrl },
+    );
+    expect(invoked).toEqual([{ itemUrl: pageUrl }]);
+  });
+
+  // §4.3: a page that resolves to nothing is a condition of the PAGE, and it is
+  // already spelled. The item lanes reuse `not_resolved` rather than inventing a
+  // second vocabulary for the same fact.
+  it("reports not_resolved for an item lane on an unindexed issue", async () => {
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "not-indexed" as const, fetchable: true },
+        }),
+        invokeAgent: async () => {
+          throw new Error("must not invoke for a page that resolves to nothing");
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "why", pageUrl: "https://acme.atlassian.net/browse/PLAT-91" },
+    );
+    expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+
+  // Unchanged, and the point of carrying the surface: same lane, same `item`
+  // scope, different arm — a PR page has served `prUrl` for releases, so widening
+  // the table must not move it. `impact`'s and `expert`'s PR arms are pinned by
+  // "sends impact the page URL and expert the item title" above, and `why`'s by
+  // the test below.
+  it("still sends ownership a service on a dashboard, not an itemUrl", async () => {
+    const invoked: Array<{ agent: string; params: unknown }> = [];
+    await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => {
+          throw new Error("must not resolve on a dashboard");
+        },
+        invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+          invoked.push({ agent, params });
+          return { ok: true as const, runId: "r1" };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "ownership", pageUrl: "https://github.com/" },
+    );
+    expect(invoked).toEqual([{ agent: "ownership", params: { service: "github" } }]);
+  });
+
   it("the why lane is asked with the page's PR URL, not the item title, and unnormalised", async () => {
     // Same URL impact receives. Sending `topicOrFile` here would be the
     // wrong-question-wrong-input bug LANE_RULES exists to prevent, one layer

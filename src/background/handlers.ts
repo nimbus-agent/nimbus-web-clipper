@@ -52,7 +52,7 @@ import {
   type SurfaceKind,
 } from "../shared/types.ts";
 import type { RunSubject, StoredRun } from "./agent-run-store.ts";
-import { type AgentRoster, offeredLanes } from "./agents-capability.ts";
+import { type AgentRoster, needsItemArm, offeredLanes } from "./agents-capability.ts";
 import type { CaptureOutcome } from "./capture-tab.ts";
 
 export interface CaptureDeps {
@@ -539,6 +539,18 @@ type ResolveForAgent =
        * `title` are read (`subjectFor`, `agentParams`), so nothing is lost.
        */
       readonly item: ResolveCandidate;
+      /**
+       * The recognised surface this item was found on.
+       *
+       * The scope says WHERE the input comes from — one indexed item, on every one
+       * of these surfaces. It does not say which ARM carries it, and those diverge:
+       * a `pr` page sends `prUrl` / `fileOrPrUrl` / `topicOrFile`, arms every
+       * released gateway serves; an `issue` or an `incident` sends `itemUrl`, which
+       * arrived in 7.5.0. `agentParams` is therefore keyed by lane AND surface —
+       * the completion of the generalisation `LANE_RULES` already made, in the one
+       * place that still read a lane alone.
+       */
+      readonly surface: SurfaceKind;
     }
   | {
       readonly ok: true;
@@ -719,6 +731,7 @@ async function resolveForAgent(
       label: conn.label,
       resolveUrl: recognition.resolveUrl,
       item: picked,
+      surface: recognition.kind,
     };
   }
   if (resolved.outcome.kind !== "found") {
@@ -734,23 +747,26 @@ async function resolveForAgent(
     label: conn.label,
     resolveUrl: recognition.resolveUrl,
     item: resolved.outcome.item,
+    surface: recognition.kind,
   };
 }
 
 /**
  * The gateway validates this body verbatim, so each agent gets exactly what it
- * accepts: `impact` takes the page's PR URL, `expert` free text to match against
- * indexed titles (the repo name would parse too, but answers a broader
- * question — the same people for every PR in the repo), `why` the same page PR
- * URL as `impact` under the param name its `prUrl` arm declares, and the three
- * service lanes take the connector id alone.
+ * accepts: `impact` takes the page's PR URL; `expert` on a pull request free text
+ * to match against indexed titles (the repo name would parse too, but answers a
+ * broader question — the same people for every PR in the repo); `why` on a pull
+ * request the same page PR URL as `impact`, under the param name its `prUrl` arm
+ * declares; `why`, `expert` and `ownership` on an issue or an incident the page
+ * URL under `itemUrl`, upstream's `requireUrlArm`; and the two remaining service
+ * lanes the connector id alone.
  *
  * No `sinceMs`, `minConfidence` or `limit` is sent. The gateway owns those
  * defaults and re-reads its config per call, so a client-side knob would only
  * be a second place for the same number to disagree.
  */
 /** The param shapes `agentParams` actually produces — one per lane family
- *  (service, term, and the three item-scope shapes below). Giving the
+ *  (service, term, file, and the four item-scope shapes below). Giving the
  *  function this as an explicit return type, instead of `unknown`, is what
  *  makes the switch's exhaustiveness a compile error rather than a runtime
  *  backstop: see the comment on the switch below. */
@@ -760,6 +776,9 @@ type AgentParams =
   | { fileOrPrUrl: string }
   | { prUrl: string }
   | { topicOrFile: string }
+  /** `why` / `expert` / `ownership`'s item arm, upstream `requireUrlArm`. Mutually
+   *  exclusive with `prUrl`, `topicOrFile` and `service` — sending two is a -32602. */
+  | { itemUrl: string }
   /** The forge coordinate, unsplit — `requireFileParam`'s forge arm upstream. */
   | { service: string; repo: string; refAndPath: string };
 
@@ -788,47 +807,48 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
     // a second place for the same number to disagree.
     return { term: resolved.term };
   }
-  // `resolved.scope === "item"` from here — one of the three page lanes gated
-  // to a `pr` surface (`LANE_RULES`). Switched exhaustively over `lane` rather
-  // than if/return-falling-through-to-`expert`: the previous shape's fallthrough
-  // handed `expert`'s `topicOrFile` to whatever lane wasn't `impact` or `why`,
-  // which was correct only by coincidence — a fourth item-scope lane added to
-  // `AGENT_LANES` would compile, render and invoke while silently sent
-  // `expert`'s params. This branch is the proof: `why` would have shipped that
-  // exact bug had its own case been forgotten here.
+  // `resolved.scope === "item"` from here. Switched over the lane, and — for the
+  // three lanes that answer on more than one surface — over the surface too. The
+  // previous shape's fallthrough handed `expert`'s `topicOrFile` to whatever lane
+  // was not `impact` or `why`, which was correct only by coincidence; this is the
+  // case it was coincidental about.
   //
-  // There is deliberately no `default` arm. `AgentParams` above does not
-  // include `undefined`, so if a case is ever missing, control falling off
-  // the end of this switch is a compile error (TS2366: "Function lacks
-  // ending return statement…") rather than a runtime `never` assertion — the
-  // exhaustiveness check now lives in the return type, not in a statement
-  // here. Do not "helpfully" add a `default:` back; that would silence the
-  // exact error this is for.
+  // There is deliberately no `default` arm. `AgentParams` does not include
+  // `undefined`, so a missing case is a compile error (TS2366) rather than a
+  // runtime `never` assertion — the exhaustiveness check lives in the return type.
+  // Do not "helpfully" add a `default:` back.
+  // `needsItemArm` (agents-capability.ts), NOT a second surface list written out
+  // here. It is the same predicate `offeredLanes` gates the floor on, and the two
+  // must agree by construction: a pair floored there and sent `prUrl` here would
+  // withhold a lane on one gateway and send the wrong arm on another.
+  const itemArm = needsItemArm(lane, resolved.surface);
   switch (lane) {
     case "impact":
+      // Never widened past `pr` (`LANE_RULES`): its non-PR arm answers about a
+      // FILE, not an item, so an issue URL would be the wrong question.
       return { fileOrPrUrl: resolved.resolveUrl };
     case "why":
-      // The same URL `impact` gets, under the param name `agents.why`'s prUrl
-      // arm declares. NOT the item title: `why` resolves the URL through the
-      // index itself, and a title would be a different question answered from
-      // an input the agent does not accept.
-      return { prUrl: resolved.resolveUrl };
+      return itemArm ? { itemUrl: resolved.resolveUrl } : { prUrl: resolved.resolveUrl };
+    case "ownership":
+      // Unreachable on `pr` — `LANE_RULES` gives ownership `home`, `issue` and
+      // `incident` only, and `home` returns at the `service` branch far above.
+      return { itemUrl: resolved.resolveUrl };
     case "expert":
+      // On `pr` this stays `topicOrFile`, and that is a deliberate hold rather than
+      // an oversight: switching it would make `expert`/`pr` an item-arm pair, and
+      // the version floor would then withhold from every gateway that does not yet
+      // publish a version a lane that works today. The title arm answers a broader
+      // question than the label promises; trading a working lane for a sharper one
+      // is a change to make once the floor is commonly met, not at its introduction.
+      return itemArm ? { itemUrl: resolved.resolveUrl } : { topicOrFile: resolved.item.title };
     case "glossary":
     case "catchup":
     case "decisions":
-    case "ownership":
-      // `glossary`, `catchup`, `decisions` and `ownership` are unreachable
-      // here: `LANE_RULES[lane].input` routes `glossary` to `resolveTermLane`
-      // (scope `"term"`) and the three service lanes to the `kind === "home"`
-      // branch (scope `"service"`) above, in `resolveForAgent` —
-      // `resolveForAgent` never returns `scope: "item"` for any of these
-      // four. They are grouped into `expert`'s case rather than given their
-      // own dead-and-uncoverable ones, because the value they'd need if one
-      // ever did land here is the same one `expert` returns. This grouping
-      // does not weaken the exhaustiveness proof above: a real fifth
-      // item-scope lane still needs its own case, or its name is left
-      // unhandled and the switch stops being exhaustive.
+      // Unreachable here: `LANE_RULES[lane].input` routes `glossary` to
+      // `resolveTermLane` (scope `"term"`) and the two remaining service lanes to
+      // the `kind === "home"` branch (scope `"service"`). Grouped rather than given
+      // dead cases of their own; a real new item-scope lane still needs its own
+      // case or the switch stops being exhaustive.
       return { topicOrFile: resolved.item.title };
   }
 }

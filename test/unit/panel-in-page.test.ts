@@ -2252,12 +2252,16 @@ describe("lanes appear only where they can answer", () => {
     expect(root.querySelector('[data-lane="expert"]')).not.toBeNull();
   });
 
-  // Before LANE_SURFACES these appeared here too, and expanding one handed the
-  // issue/build URL to agents.impact as its `fileOrPrUrl`.
-  it("offers no agent lane on a resolved Jira issue", async () => {
+  // Before LANE_SURFACES every lane appeared here too, and expanding `impact`
+  // handed the issue URL to agents.impact as its `fileOrPrUrl`. `impact` is still
+  // withheld for exactly that reason — its non-PR arm answers about a FILE — while
+  // the three item lanes now answer about the issue itself, through `itemUrl`.
+  it("offers the item lanes but never impact on a resolved Jira issue", async () => {
     const root = await mountPanelWithResolve(resolved("jira", "issue", "ABC-12"));
     expect(root.querySelector('[data-lane="impact"]')).toBeNull();
-    expect(root.querySelector('[data-lane="expert"]')).toBeNull();
+    expect(root.querySelector('[data-lane="expert"]')).not.toBeNull();
+    expect(root.querySelector('[data-lane="why"]')).not.toBeNull();
+    expect(root.querySelector('[data-lane="ownership"]')).not.toBeNull();
     // The Related lane is unaffected — it works in every header state.
     expect(root.querySelector('[data-lane="related"]')).not.toBeNull();
   });

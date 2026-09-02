@@ -81,9 +81,15 @@ describe("lanesFor — page lanes", () => {
     expect(lanesFor(ctx({ surfaceKind: null }))).toEqual([]);
   });
 
-  it("offers no page lane on a build or an issue", () => {
+  it("offers no page lane on a build", () => {
     expect(lanesFor(ctx({ surfaceKind: "build" }))).toEqual([]);
-    expect(lanesFor(ctx({ surfaceKind: "issue" }))).toEqual([]);
+  });
+
+  // An issue and an incident are indexed items with graph entities, so the three
+  // item lanes answer about them. Render order is `AGENT_LANES` order.
+  it("offers the three item lanes on an issue and an incident", () => {
+    expect(lanesFor(ctx({ surfaceKind: "issue" }))).toEqual(["expert", "why", "ownership"]);
+    expect(lanesFor(ctx({ surfaceKind: "incident" }))).toEqual(["expert", "why", "ownership"]);
   });
 });
 
