@@ -349,20 +349,40 @@ export async function handleResolve(
     // filled in only because `ResolveResponse`'s ok arm requires one — the same
     // synthetic the unrecognised branch above already uses. `fetchable:false` keeps
     // the C3.1 button away from a page that is not a fetch candidate.
-    const connector = connectorStateFor(
-      await deps.readConnectorHealth(conn.origin),
-      PRODUCT_SERVICE_ID[recognition.product],
-    );
+    // CONCURRENT, on purpose. The connector's health and the agent roster are two
+    // independent gateway reads — neither one's request depends on the other's
+    // answer — and awaiting them in sequence would add the roster's 10s bound on
+    // top of the health read before the panel gets a header. `decideAmbient`
+    // (ambient.ts) calls this on every recognised navigation and discards the
+    // roster entirely, so that latency lands on the ambient cue too, where it
+    // makes the cue likelier to be suppressed as "navigated" on a slow gateway.
+    // What must NOT move: both reads carry the bearer token, so both stay below
+    // the `getConnection()` null check above. Unpaired means no request at all.
+    const [health, offered] = await Promise.all([
+      deps.readConnectorHealth(conn.origin),
+      offeredFor(deps, conn.origin, conn.token, recognition.kind),
+    ]);
+    const connector = connectorStateFor(health, PRODUCT_SERVICE_ID[recognition.product]);
     return {
       kind: "resolve",
       ok: true,
       recognition,
       outcome: { kind: "not-indexed", fetchable: false },
       connector,
-      ...(await offeredFor(deps, conn.origin, conn.token, recognition.kind)),
+      ...offered,
     };
   }
-  const r = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
+  // Concurrent for the same reason as the home branch above: `offeredFor` reads
+  // nothing the resolve produces, and serialising them would put the roster's 10s
+  // bound behind the resolve's 8s one before a header can render. The cost is one
+  // extra local GET on a resolve that fails — a loopback request the panel would
+  // have made a moment later anyway — and that is the right trade against doubling
+  // the worst-case wait on every recognised page. Neither read may move above the
+  // `getConnection()` check: both carry the bearer token.
+  const [r, offered] = await Promise.all([
+    deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl),
+    offeredFor(deps, conn.origin, conn.token, recognition.kind),
+  ]);
   if (!r.ok) {
     return r.scopeGap === undefined
       ? { kind: "resolve", ok: false, recognition, reason: r.reason }
@@ -379,7 +399,7 @@ export async function handleResolve(
     ok: true,
     recognition,
     outcome: r.outcome,
-    ...(await offeredFor(deps, conn.origin, conn.token, recognition.kind)),
+    ...offered,
   };
 }
 
@@ -758,8 +778,8 @@ async function resolveForAgent(
  * broader question — the same people for every PR in the repo); `why` on a pull
  * request the same page PR URL as `impact`, under the param name its `prUrl` arm
  * declares; `why`, `expert` and `ownership` on an issue or an incident the page
- * URL under `itemUrl`, upstream's `requireUrlArm`; and the two remaining service
- * lanes the connector id alone.
+ * URL under `itemUrl`, upstream's `requireUrlArm`; and `catchup`, `decisions` and
+ * `ownership` on a dashboard the connector id alone.
  *
  * No `sinceMs`, `minConfidence` or `limit` is sent. The gateway owns those
  * defaults and re-reads its config per call, so a client-side knob would only

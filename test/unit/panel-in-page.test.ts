@@ -6,6 +6,8 @@ import {
   type AgentLane,
   type LaneState,
   type RelatedHit,
+  SURFACE_KINDS,
+  scopeForLane,
 } from "../../src/shared/types.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
@@ -2296,6 +2298,51 @@ describe("lanes appear only where they can answer", () => {
     expect(titles["impact"]).toBe("What breaks if it lands");
     expect(titles["expert"]).toBe("Who should review it");
     expect(titles["why"]).toBe("Why does this change exist");
+  });
+
+  // The two tables are deliberately separate — `LANE_RULES` says where a lane
+  // belongs, `SURFACE_LANE_TITLES` says what it is called there — and nothing
+  // joins them, so `incident` could be deleted from the title table and every
+  // test above would still pass: they name `issue` and `pr` by hand. This one
+  // derives the pairs from `LANE_RULES` instead. The rule it pins: an item-scope
+  // lane on any surface that is NOT a pull request must have an override, because
+  // the copy it would otherwise fall through to was written for a change under
+  // review and is false about anything else. Keeping the tables separate is the
+  // point; leaving them unchecked was not.
+  const ITEM_TITLES: Readonly<Record<string, string>> = {
+    why: "How did we get here",
+    expert: "Who should I talk to",
+    ownership: "Who owns this",
+  };
+  // One product per item surface, so the pair can actually be mounted. A new
+  // item surface with no entry here throws rather than silently mounting under
+  // some other product's recognition.
+  const PRODUCT_FOR_KIND: Readonly<Record<string, string>> = {
+    issue: "jira",
+    incident: "pagerduty",
+  };
+
+  const itemTitlePairs = SURFACE_KINDS.flatMap((kind) =>
+    AGENT_LANES.filter((lane) => scopeForLane(lane, kind) === "item" && kind !== "pr").map(
+      (lane) => ({ lane, kind }),
+    ),
+  );
+
+  // A guard on the derivation itself: an empty list would make every case below
+  // vacuously green, and `it.each([])` is not an error.
+  it("derives at least one item-scope pair off a pull request", () => {
+    expect(itemTitlePairs.length).toBeGreaterThan(0);
+  });
+
+  // One `it` per pair, not one loop inside one `it`: each case mounts the panel,
+  // and the mount is torn down per test.
+  it.each(itemTitlePairs)("titles $lane for the item on $kind", async ({ lane, kind }) => {
+    const product = PRODUCT_FOR_KIND[kind];
+    if (product === undefined) {
+      throw new Error(`add a product for the new item surface "${kind}"`);
+    }
+    const root = await mountPanelWithResolve(resolved(product, kind, "REF-1"));
+    expect(laneTitles(root)[lane]).toBe(ITEM_TITLES[lane]);
   });
 
   it("offers no agent lane on a resolved Jenkins build", async () => {

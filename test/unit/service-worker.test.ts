@@ -211,9 +211,14 @@ describe("message routing — success shapes", () => {
       title: "Add thing",
       url: "https://github.com/acme/web/pull/1",
     };
+    // A FRESH Response per call, not one shared instance. `handleResolve` issues
+    // the resolve and the `GET /v1/agents` roster read concurrently, and a
+    // `Response` body can be consumed exactly once — a single `mockResolvedValue`
+    // hands both reads the same object, so whichever lands second reads a used
+    // body and the resolve reports a failure it never had.
     globalThis.fetch = vi
       .fn()
-      .mockResolvedValue(
+      .mockImplementation(async () =>
         jsonRes(200, { found: true, matchKind: "exact", item: { ...item, modified_at: 5 } }),
       );
 

@@ -22,9 +22,12 @@ const ROSTER_TIMEOUT_MS = 10_000;
  *
  * `unavailable` is deliberately distinct from `{ names: [] }`. An empty roster
  * would withhold EVERY lane; not knowing must leave the panel exactly as it
- * renders today. That is the same degradation the connector-health gate makes
- * when `GET /v1/connectors` is absent, and for the same reason: a gateway that
- * cannot answer a capability question is not a gateway with no capabilities.
+ * renders without a roster read at all. That is the same degradation the
+ * connector-health gate makes when `GET /v1/connectors` is absent, and for the
+ * same reason: a gateway that cannot answer a capability question is not a
+ * gateway with no capabilities. What "as it renders without a roster read"
+ * means per surface — and why an item surface is not simply unfiltered — is
+ * `offeredLanes` below.
  */
 export type AgentRoster =
   | { readonly names: readonly string[]; readonly version: string | null }
@@ -112,27 +115,40 @@ export async function fetchAgentRoster(deps: RosterDeps): Promise<AgentRoster> {
  * Upstream Nimbus#1421 landed before the v7.5.0 release, so that is the first
  * release serving the arm. Note the consequence, which is deliberate: 7.5.0 HAS
  * the arm and does not report a version, so it fails closed and is offered no
- * item lanes. The effective floor is the release that added the version field —
- * one release of lag, and the honest outcome, because a gateway that cannot say
- * what it is has not told us it can answer.
+ * item lanes. The effective floor is the release that added the version field,
+ * because a gateway that cannot say what it is has not told us it can answer.
+ *
+ * As of 2026-09-02 that release does not exist. Upstream `GET /v1/agents`
+ * answers `{ agents }` alone — Nimbus#1421 shipped the arm, not the field — so
+ * `meetsFloor(null, …)` is false everywhere and these three lanes are withheld
+ * on EVERY gateway, a locally built one included: a local build reports no
+ * version rather than `0.0.0`, so it fails closed before the development-build
+ * allowance in `meetsFloor` can apply. The client is complete and waiting on the
+ * field. Do not loosen the floor to make the lanes appear; a lane offered
+ * against a gateway that cannot serve its arm is a `-32602` under a header that
+ * promised an answer, which is the thing this gate exists to prevent.
  *
  * Do not raise this without a released gateway to point at.
  */
 export const ITEM_ARM_FLOOR = "7.5.0";
 
-type Semver = { major: number; minor: number; patch: number; prerelease: boolean };
+type Semver = { major: number; minor: number; patch: number };
 
 /**
- * Parse `major.minor.patch`, dropping build metadata and noting a prerelease.
+ * Parse `major.minor.patch`, dropping build metadata and any prerelease tag.
  *
  * Build metadata (`+build.1234`) is stripped FIRST because semver excludes it
  * from precedence entirely, and a naive split would carry it into the patch
  * number. Anything that is not three integers returns null and fails closed.
+ *
+ * The prerelease tag is dropped rather than recorded. `meetsFloor` below treats
+ * a prerelease exactly as it treats the release it is a build of, and that falls
+ * out of the numeric comparison on its own — a flag nothing reads would only be
+ * a second place for the same rule to be written down and then disagree.
  */
 function parseSemver(version: string): Semver | null {
-  const withoutBuild = version.split("+")[0] ?? "";
-  const [core, ...pre] = withoutBuild.split("-");
-  const parts = (core ?? "").split(".");
+  const core = version.split("+")[0]?.split("-")[0] ?? "";
+  const parts = core.split(".");
   if (parts.length !== 3) return null;
   const nums = parts.map((p) => (/^\d+$/.test(p) ? Number.parseInt(p, 10) : Number.NaN));
   if (nums.some((n) => Number.isNaN(n))) return null;
@@ -140,7 +156,6 @@ function parseSemver(version: string): Semver | null {
     major: nums[0] ?? 0,
     minor: nums[1] ?? 0,
     patch: nums[2] ?? 0,
-    prerelease: pre.length > 0,
   };
 }
 
@@ -207,13 +222,33 @@ export function needsItemArm(lane: AgentLane, kind: SurfaceKind): boolean {
 
 /**
  * Which lanes the PAIRED gateway can actually serve on a page of this kind — or
- * `null` when we did not learn.
+ * `null` when we did not learn and nothing on this surface depended on learning.
  *
- * `null` is the load-bearing value. It means the roster read failed, and every
- * caller must treat it as "do not filter", never as "no lanes": a gateway that
- * cannot answer a capability question is not a gateway with no capabilities. This
- * is the same fail-open the connector-health gate makes when `GET /v1/connectors`
- * is absent, and for the same reason.
+ * The rule this whole module exists to keep is: **not knowing must leave the
+ * panel exactly as it renders without a roster read at all.** `null` is how that
+ * is said, and every caller must read it as "do not filter", never as "no lanes"
+ * — a gateway that cannot answer a capability question is not a gateway with no
+ * capabilities. Same fail-open the connector-health gate makes when
+ * `GET /v1/connectors` is absent, and for the same reason.
+ *
+ * A roster we could not read is therefore handled per SURFACE, not globally:
+ *
+ * - **No lane here needs the item arm** (`pr`, `home`, and every other surface
+ *   today) → `null`. Those pages rendered these lanes before any of this existed
+ *   and they render byte-identically now; the wire field stays absent.
+ * - **Some lane here does** (`issue`, `incident`) → this surface's lanes MINUS
+ *   the item-arm ones. Exactly the lanes whose arm we could not confirm are
+ *   withheld, and nothing else.
+ *
+ * The second case is the one an earlier shape got backwards. It returned `null`
+ * there too — so a roster that answered without a version withheld the three item
+ * lanes, while a roster that did not answer at all offered them. The more ignorant
+ * state was the more permissive one, and the population it was most permissive
+ * with (a gateway too old to serve `GET /v1/agents`) is precisely the one least
+ * likely to serve the arm. Withholding them here does not weaken the rule above,
+ * it is what finally makes it true on the new surfaces as well as the old ones:
+ * an `issue` or an `incident` with an unreadable roster renders exactly what it
+ * rendered before this feature shipped — header, freshness, Related, glossary.
  *
  * Two gates, and they answer different questions. The roster says whether this
  * gateway serves the agent at all. The floor says whether it serves the ARM this
@@ -225,7 +260,10 @@ export function needsItemArm(lane: AgentLane, kind: SurfaceKind): boolean {
  * twice, in two places, is how the two answers start to disagree.
  */
 export function offeredLanes(roster: AgentRoster, kind: SurfaceKind): readonly AgentLane[] | null {
-  if ("unavailable" in roster) return null;
+  if ("unavailable" in roster) {
+    if (!AGENT_LANES.some((lane) => needsItemArm(lane, kind))) return null;
+    return AGENT_LANES.filter((lane) => !needsItemArm(lane, kind));
+  }
   const published = new Set(roster.names);
   return AGENT_LANES.filter(
     (lane) =>

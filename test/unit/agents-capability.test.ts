@@ -169,10 +169,34 @@ it("treats a non-string version as absent", async () => {
 describe("offeredLanes", () => {
   const roster = (names: string[], version: string | null): AgentRoster => ({ names, version });
 
-  // Not knowing must leave the panel exactly as it renders today. Same degradation
-  // the connector-health gate makes when GET /v1/connectors is absent.
-  it("returns null when the roster could not be read", () => {
+  // Not knowing must leave the panel exactly as it renders WITHOUT a roster read.
+  // On a surface where no lane needs the item arm that is the whole answer: filter
+  // nothing, and send no field. Same degradation the connector-health gate makes
+  // when GET /v1/connectors is absent.
+  it("returns null when the roster could not be read on a surface with no item-arm lane", () => {
     expect(offeredLanes({ unavailable: true }, "pr")).toBeNull();
+    expect(offeredLanes({ unavailable: true }, "home")).toBeNull();
+  });
+
+  // The other half of the same rule, and the half a failed read used to get
+  // backwards: on `issue` / `incident` "as it renders without a roster read" means
+  // WITHOUT the three lanes whose arm only a gateway at the floor serves — which is
+  // exactly what those pages rendered before the item lanes existed. Returning null
+  // here would make the more ignorant state the more permissive one, offering the
+  // three to the gateways least able to serve them.
+  it("withholds only the item-arm lanes when the roster could not be read on an item surface", () => {
+    expect(offeredLanes({ unavailable: true }, "issue")).toEqual([
+      "glossary",
+      "impact",
+      "catchup",
+      "decisions",
+    ]);
+    expect(offeredLanes({ unavailable: true }, "incident")).toEqual([
+      "glossary",
+      "impact",
+      "catchup",
+      "decisions",
+    ]);
   });
 
   it("withholds a lane the gateway does not publish", () => {

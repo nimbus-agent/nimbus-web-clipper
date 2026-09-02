@@ -59,10 +59,17 @@ export interface LaneContext {
   readonly pickedItemId: string | null;
   readonly term: TermState;
   /**
-   * The lanes the paired gateway can serve on this page, or `null` when we did not
-   * learn. `null` filters nothing — a capability read that failed must leave this
-   * panel exactly as it rendered before capability discovery existed. Withholding
-   * every lane because we could not ask is a bigger claim than the one we missed.
+   * The lanes the paired gateway can serve on this page, or `null` to filter
+   * nothing — a capability read that failed must leave this panel exactly as it
+   * rendered before capability discovery existed. Withholding every lane because
+   * we could not ask is a bigger claim than the one we missed.
+   *
+   * `null` is not the same as "we did not learn", and this module must not treat
+   * it as such. A failed roster read still arrives here as a PRESENT list on a
+   * surface whose lanes need an arm only a new enough gateway serves — narrowed
+   * to exactly the lanes that arm was never needed for. `offeredLanes`
+   * (`background/agents-capability.ts`) makes that call; this side only applies
+   * whatever it decided.
    */
   readonly offered: readonly AgentLane[] | null;
 }

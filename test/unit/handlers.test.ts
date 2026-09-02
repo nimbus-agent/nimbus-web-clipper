@@ -17,7 +17,7 @@ import {
   handleUnpair,
 } from "../../src/background/handlers.ts";
 import type { QueuedClip } from "../../src/shared/queue.ts";
-import type { Connection } from "../../src/shared/types.ts";
+import { AGENT_LANES, type Connection } from "../../src/shared/types.ts";
 
 const conn: Connection = {
   origin: "http://127.0.0.1:8765",
@@ -774,6 +774,45 @@ describe("handleResolve attaches the offered lanes", () => {
     expect(res.ok === true && "offeredLanes" in res).toBe(false);
   });
 
+  // The gate is computed for the PAGE's own surface, and these two are the only
+  // handler-level tests that can tell. Everything above resolves a GitHub PR or a
+  // GitHub dashboard, where the floor never applies — so replacing
+  // `recognition.kind` with a literal `"pr"` in `offeredFor`'s call would leave
+  // the whole suite green while offering the three item lanes to every gateway
+  // below the floor, which is the exact failure this gate exists to prevent.
+  const JIRA_ISSUE = "https://acme.atlassian.net/browse/PLAT-91";
+
+  it("floors the item lanes on an issue when the gateway reports no version", async () => {
+    const res = await handleResolve(
+      {
+        ...prResolveDeps,
+        readAgentRoster: async () => ({ names: [...AGENT_LANES], version: null }),
+      },
+      { kind: "resolve", pageUrl: JIRA_ISSUE },
+    );
+    expect(res.ok).toBe(true);
+    const offered = res.ok === true ? res.offeredLanes : undefined;
+    expect(offered).toBeDefined();
+    expect(offered).not.toContain("why");
+    expect(offered).not.toContain("expert");
+    expect(offered).not.toContain("ownership");
+  });
+
+  it("offers the item lanes on an issue when the gateway is at the floor", async () => {
+    const res = await handleResolve(
+      {
+        ...prResolveDeps,
+        readAgentRoster: async () => ({ names: [...AGENT_LANES], version: "7.6.0" }),
+      },
+      { kind: "resolve", pageUrl: JIRA_ISSUE },
+    );
+    expect(res.ok).toBe(true);
+    const offered = res.ok === true ? res.offeredLanes : undefined;
+    expect(offered).toContain("why");
+    expect(offered).toContain("expert");
+    expect(offered).toContain("ownership");
+  });
+
   // A dashboard gets the list too: the three service lanes are roster-gated like
   // every other lane, on top of the connector-health gate they already have.
   it("attaches the offered lanes on a dashboard", async () => {
@@ -1115,17 +1154,40 @@ describe("handleAgentRun", () => {
   // `recognise.test.ts` pins: a URL the recogniser rejects would make every one of
   // these pass for the wrong reason, failing at `not_resolved` before any param is
   // built.
+  //
+  // The Jira page is deliberately NOT already canonical. Its key is lower-cased
+  // and it carries a query string, so `recognise` upper-cases the key on its way
+  // to `resolveUrl` (`jira.ts`) and the two strings differ — which is the only
+  // reason this case can tell `resolveUrl` from the raw `pageUrl` at all. Spec
+  // §2.1 requires the byte-identical `resolveUrl`, and with three already-canonical
+  // URLs every one of these would pass for a build that sent either. The
+  // neighbouring `why`-on-a-PR test carries a sub-tab segment and a query for
+  // exactly the same reason. (Note what Jira does NOT do: the query survives —
+  // canonicalisation is the gateway's job — so the case difference is the whole
+  // signal here.)
   const ITEM_PAGES = [
-    ["a Jira issue", "https://acme.atlassian.net/browse/PLAT-91"],
-    ["a Linear issue", "https://linear.app/acme/issue/ENG-123/fix-the-thing"],
-    ["a PagerDuty incident", "https://acmeco.pagerduty.com/incidents/PT4KHLK"],
+    [
+      "a Jira issue",
+      "https://acme.atlassian.net/browse/plat-91?filter=1",
+      "https://acme.atlassian.net/browse/PLAT-91?filter=1",
+    ],
+    [
+      "a Linear issue",
+      "https://linear.app/acme/issue/ENG-123/fix-the-thing",
+      "https://linear.app/acme/issue/ENG-123/fix-the-thing",
+    ],
+    [
+      "a PagerDuty incident",
+      "https://acmeco.pagerduty.com/incidents/PT4KHLK",
+      "https://acmeco.pagerduty.com/incidents/PT4KHLK",
+    ],
   ] as const;
 
   const itemLaneCases = (["why", "expert", "ownership"] as const).flatMap((lane) =>
-    ITEM_PAGES.map(([where, pageUrl]) => ({ lane, where, pageUrl })),
+    ITEM_PAGES.map(([where, pageUrl, itemUrl]) => ({ lane, where, pageUrl, itemUrl })),
   );
 
-  it.each(itemLaneCases)("sends $lane an itemUrl on $where", async ({ lane, pageUrl }) => {
+  it.each(itemLaneCases)("sends $lane an itemUrl on $where", async ({ lane, pageUrl, itemUrl }) => {
     const invoked: unknown[] = [];
     await handleAgentRun(
       {
@@ -1144,7 +1206,7 @@ describe("handleAgentRun", () => {
       },
       { kind: "agent-run", lane, pageUrl },
     );
-    expect(invoked).toEqual([{ itemUrl: pageUrl }]);
+    expect(invoked).toEqual([{ itemUrl }]);
   });
 
   // §4.3: a page that resolves to nothing is a condition of the PAGE, and it is

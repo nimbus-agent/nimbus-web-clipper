@@ -466,10 +466,18 @@ export type ResolveResponse =
        * The lanes the paired gateway can actually serve on THIS page — the roster
        * it publishes, narrowed by the version floor the item arm needs.
        *
-       * ABSENT means "we did not learn", and the panel must read that as no
-       * filtering. It never means "no lanes": withholding everything because a
-       * capability read failed is a far larger claim than the one we failed to
-       * check. Same fail-open as `connector`, above.
+       * ABSENT means "filter nothing", and the panel must read it as exactly that.
+       * It never means "no lanes": withholding everything because a capability read
+       * failed is a far larger claim than the one we failed to check. Same
+       * fail-open as `connector`, above.
+       *
+       * Absent is NOT the same as "we did not learn", though, and reading it that
+       * way is how the wrong lanes get offered. A roster read that failed outright
+       * still sends a PRESENT, narrowed list on a surface whose lanes need an arm
+       * only a new enough gateway serves (`issue`, `incident`) — the lanes we could
+       * not confirm are withheld, the rest are not. It is `offeredLanes`
+       * (`background/agents-capability.ts`) that decides which of the two a failed
+       * read produces, per surface, and the reasoning lives there.
        */
       readonly offeredLanes?: readonly AgentLane[];
     }
@@ -767,9 +775,16 @@ function isConnectorHealth(v: unknown): v is ConnectorHealth {
 }
 
 /** Every entry a lane this build knows, or the whole field is refused. An unknown
- *  name would key the panel's lane-state map with an id nothing can render. */
+ *  name would key the panel's lane-state map with an id nothing can render.
+ *
+ *  The cast is on the KNOWN list, never on the datum — the same shape
+ *  `isConnectorHealth` uses two functions up. `Array.isArray` narrows only to
+ *  `any[]`, so casting each element to `AgentLane` would assert the very thing
+ *  this guard exists to check, and a numeric or nested entry would walk straight
+ *  through. Widening `AGENT_LANES` to `readonly string[]` instead leaves the
+ *  runtime comparison doing the work it is here to do. */
 function isAgentLaneList(v: unknown): v is readonly AgentLane[] {
-  return Array.isArray(v) && v.every((x) => AGENT_LANES.includes(x as AgentLane));
+  return Array.isArray(v) && v.every((x) => (AGENT_LANES as readonly string[]).includes(x));
 }
 
 /** The recognition is required on BOTH arms: a gateway failure must not erase
