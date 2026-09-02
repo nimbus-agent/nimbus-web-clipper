@@ -942,3 +942,80 @@ describe("a built-in suffix host is matched by suffix, not by origin", () => {
     });
   });
 });
+
+/**
+ * A source file on the three forges.
+ *
+ * The coordinate is carried, never re-derived: the forges spell the same thing three ways
+ * (`/blob/`, `/-/blob/`, `/src/`), and `refAndPath` stays JOINED because a branch name may
+ * contain slashes and only the side holding the file list can split it.
+ */
+describe("the file surface", () => {
+  test("the three forges' file URLs are recognised", () => {
+    expectItem("https://github.com/acme/web/blob/main/src/foo.ts", NONE, {
+      product: "github",
+      kind: "file",
+      ref: "acme/web foo.ts",
+      resolveUrl: "https://github.com/acme/web/blob/main/src/foo.ts",
+    });
+    expectItem("https://gitlab.com/g/p/-/blob/main/src/foo.ts", NONE, {
+      product: "gitlab",
+      kind: "file",
+      ref: "g/p foo.ts",
+      resolveUrl: "https://gitlab.com/g/p/-/blob/main/src/foo.ts",
+    });
+    expectItem("https://bitbucket.org/acme/web/src/main/src/foo.ts", NONE, {
+      product: "bitbucket",
+      kind: "file",
+      ref: "acme/web foo.ts",
+      resolveUrl: "https://bitbucket.org/acme/web/src/main/src/foo.ts",
+    });
+  });
+
+  test("a ref with slashes is carried whole, never split by the client", () => {
+    for (const [url, refAndPath] of [
+      ["https://github.com/acme/web/blob/feat/auth-v2/src/foo.ts", "feat/auth-v2/src/foo.ts"],
+      ["https://github.com/acme/web/blob/v1.0.0-rc.1/src/foo.ts", "v1.0.0-rc.1/src/foo.ts"],
+      ["https://github.com/acme/web/blob/a1b2c3d4/src/foo.ts", "a1b2c3d4/src/foo.ts"],
+    ] as const) {
+      const r = recognise(url, NONE);
+      expect(r.ok, url).toBe(true);
+      if (!r.ok) continue;
+      expect(r.kind).toBe("file");
+      // The full remainder reaches the gateway; only the display ref is shortened.
+      expect(r.resolveUrl).toContain(refAndPath);
+    }
+  });
+
+  test("GitLab projects nest under any number of groups", () => {
+    expectItem("https://gitlab.com/group/sub/team/proj/-/blob/main/src/app.ts", NONE, {
+      product: "gitlab",
+      kind: "file",
+      ref: "group/sub/team/proj app.ts",
+      resolveUrl: "https://gitlab.com/group/sub/team/proj/-/blob/main/src/app.ts",
+    });
+  });
+
+  test("near misses are not files", () => {
+    for (const url of [
+      "https://github.com/acme/web/tree/main/src", // a directory listing
+      "https://github.com/acme/web/blob/main", // a ref with no path
+      "https://github.com/acme/web/blob", // no ref at all
+      "https://gitlab.com/g/p/-/tree/main/src", // GitLab's directory listing
+      "https://bitbucket.org/acme/web/src/main", // Bitbucket ref with no path
+    ]) {
+      const r = recognise(url, NONE);
+      if (r.ok) {
+        expect(r.kind, url).not.toBe("file");
+      }
+    }
+  });
+
+  test("a PR files-changed tab is a pr, not a file", () => {
+    // `/pull/482/files` contains the word `files` and must never reach the file arm:
+    // it is a pull request, and the PR lanes own it.
+    const r = recognise("https://github.com/acme/web/pull/482/files", NONE);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.kind).toBe("pr");
+  });
+});
