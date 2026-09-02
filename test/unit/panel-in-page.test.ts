@@ -2256,7 +2256,7 @@ describe("lanes appear only where they can answer", () => {
   // handed the issue URL to agents.impact as its `fileOrPrUrl`. `impact` is still
   // withheld for exactly that reason — its non-PR arm answers about a FILE — while
   // the three item lanes now answer about the issue itself, through `itemUrl`.
-  it("offers the item lanes but never impact on a resolved Jira issue", async () => {
+  it("keeps impact off a resolved Jira issue, and offers the three item lanes", async () => {
     const root = await mountPanelWithResolve(resolved("jira", "issue", "ABC-12"));
     expect(root.querySelector('[data-lane="impact"]')).toBeNull();
     expect(root.querySelector('[data-lane="expert"]')).not.toBeNull();
@@ -2264,6 +2264,38 @@ describe("lanes appear only where they can answer", () => {
     expect(root.querySelector('[data-lane="ownership"]')).not.toBeNull();
     // The Related lane is unaffected — it works in every header state.
     expect(root.querySelector('[data-lane="related"]')).not.toBeNull();
+  });
+
+  function laneTitles(root: ParentNode): Record<string, string> {
+    const titles: Record<string, string> = {};
+    for (const lane of root.querySelectorAll<HTMLDetailsElement>("details[data-lane]")) {
+      const id = lane.dataset["lane"];
+      if (id !== undefined) {
+        titles[id] = lane.querySelector("summary")?.textContent?.trim() ?? "";
+      }
+    }
+    return titles;
+  }
+
+  // The copy `LANE_TITLES` ships was written for a pull request, where it is
+  // right. "Why does this change exist" over a Jira issue is a different claim:
+  // an issue is not a change.
+  it("titles the item lanes for the item, not for a change under review", async () => {
+    const root = await mountPanelWithResolve(resolved("jira", "issue", "ABC-12"));
+    const titles = laneTitles(root);
+    expect(titles["why"]).toBe("How did we get here");
+    expect(titles["expert"]).toBe("Who should I talk to");
+    expect(titles["ownership"]).toBe("Who owns this");
+  });
+
+  // The assertion that matters more: the override is an EXCEPTION table, so a
+  // surface it does not name must render the shipped copy byte-for-byte.
+  it("leaves the pull-request titles exactly as they shipped", async () => {
+    const root = await mountPanelWithResolve(resolved("github", "pr", "acme/web #482"));
+    const titles = laneTitles(root);
+    expect(titles["impact"]).toBe("What breaks if it lands");
+    expect(titles["expert"]).toBe("Who should review it");
+    expect(titles["why"]).toBe("Why does this change exist");
   });
 
   it("offers no agent lane on a resolved Jenkins build", async () => {

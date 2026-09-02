@@ -833,23 +833,33 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
       // Unreachable on `pr` — `LANE_RULES` gives ownership `home`, `issue` and
       // `incident` only, and `home` returns at the `service` branch far above.
       return { itemUrl: resolved.resolveUrl };
-    case "expert":
-      // On `pr` this stays `topicOrFile`, and that is a deliberate hold rather than
-      // an oversight: switching it would make `expert`/`pr` an item-arm pair, and
-      // the version floor would then withhold from every gateway that does not yet
-      // publish a version a lane that works today. The title arm answers a broader
-      // question than the label promises; trading a working lane for a sharper one
-      // is a change to make once the floor is commonly met, not at its introduction.
-      return itemArm ? { itemUrl: resolved.resolveUrl } : { topicOrFile: resolved.item.title };
     case "glossary":
     case "catchup":
     case "decisions":
-      // Unreachable here: `LANE_RULES[lane].input` routes `glossary` to
-      // `resolveTermLane` (scope `"term"`) and the two remaining service lanes to
-      // the `kind === "home"` branch (scope `"service"`). Grouped rather than given
-      // dead cases of their own; a real new item-scope lane still needs its own
-      // case or the switch stops being exhaustive.
-      return { topicOrFile: resolved.item.title };
+    case "expert":
+      // Two facts, one case.
+      //
+      // `glossary`, `catchup` and `decisions` are unreachable here:
+      // `LANE_RULES[lane].input` routes `glossary` to `resolveTermLane` (scope
+      // `"term"`) and the two remaining service lanes to the `kind === "home"`
+      // branch (scope `"service"`) above, so `resolveForAgent` never returns
+      // `scope: "item"` for any of them. They are grouped onto `expert`'s
+      // REACHABLE case rather than given a dead one of their own — the value they
+      // would need if one ever did land here is the one `expert` returns, and a
+      // case of their own would be a permanently-uncovered line under a new-code
+      // coverage gate. The grouping does not weaken the exhaustiveness proof: a
+      // real new item-scope lane still needs its own case, or its name is left
+      // unhandled and the switch stops being exhaustive.
+      //
+      // `expert` itself: on `pr` this stays `topicOrFile`, and that is a deliberate
+      // hold rather than an oversight. Switching it would make `expert`/`pr` an
+      // item-arm pair, and the version floor would then withhold from every gateway
+      // that does not yet publish a version a lane that works today. The title arm
+      // answers a broader question than the label promises; trading a working lane
+      // for a sharper one is a change to make once the floor is commonly met, not
+      // at its introduction. On an `issue` or an `incident` there is no such
+      // history to protect, so those take the item arm.
+      return itemArm ? { itemUrl: resolved.resolveUrl } : { topicOrFile: resolved.item.title };
   }
 }
 
