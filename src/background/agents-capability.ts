@@ -37,8 +37,7 @@ export type RosterDeps = {
 };
 
 /** Every entry a string, or the whole answer is untrusted. */
-function parseNames(body: unknown): readonly string[] | null {
-  if (!isObject(body)) return null;
+function parseNames(body: Record<string, unknown>): readonly string[] | null {
   const agents = body["agents"];
   if (!Array.isArray(agents)) return null;
   return agents.every((n) => typeof n === "string") ? (agents as readonly string[]) : null;
@@ -52,8 +51,7 @@ function parseNames(body: unknown): readonly string[] | null {
  * missing half fails closed at `meetsFloor`, which withholds exactly the lanes
  * that need an arm we cannot confirm, and nothing else.
  */
-function parseVersion(body: unknown): string | null {
-  if (!isObject(body)) return null;
+function parseVersion(body: Record<string, unknown>): string | null {
   const v = body["version"];
   return typeof v === "string" ? v : null;
 }
@@ -88,6 +86,11 @@ export async function fetchAgentRoster(deps: RosterDeps): Promise<AgentRoster> {
       return { unavailable: true };
     }
     const body = await readJson(res);
+    // Narrow ONCE, here: both parsers read the same body and only one caller
+    // should have to ask what shape it is.
+    if (!isObject(body)) {
+      return { unavailable: true };
+    }
     const names = parseNames(body);
     return names === null ? { unavailable: true } : { names, version: parseVersion(body) };
   } finally {
