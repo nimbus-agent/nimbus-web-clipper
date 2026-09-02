@@ -547,6 +547,7 @@ describe("handleResolve", () => {
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       // Note: recognise() preserves the query string deliberately — the gateway
       // owns canonicalisation, so the recogniser's resolveUrl (asserted below)
@@ -574,6 +575,7 @@ describe("handleResolve", () => {
         }),
         resolveItem: async () => ({ ok: false, reason: "insufficient_scope" }),
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
     );
@@ -601,6 +603,7 @@ describe("handleResolve", () => {
           scopeGap: { required: "resolve", granted: ["clip", "briefs"] },
         }),
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
     );
@@ -629,6 +632,7 @@ describe("handleResolve", () => {
           return { ok: false, reason: "server_error" };
         },
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://example.com/whatever" },
     );
@@ -653,6 +657,7 @@ describe("handleResolve", () => {
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: PR },
     );
@@ -671,6 +676,7 @@ describe("handleResolve", () => {
           return { ok: true, outcome: { kind: "not-indexed", fetchable: true } };
         },
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://corp.example/jira/browse/plat-9?x=1" },
     );
@@ -687,6 +693,7 @@ describe("handleResolve", () => {
         return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
       },
       readConnectorHealth: async () => null,
+      readAgentRoster: async () => ({ unavailable: true as const }),
     };
 
     const res = await handleResolve(deps, {
@@ -713,6 +720,7 @@ describe("handleResolve", () => {
         return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
       },
       readConnectorHealth: async () => null,
+      readAgentRoster: async () => ({ unavailable: true as const }),
     };
 
     const res = await handleResolve(deps, {
@@ -723,6 +731,78 @@ describe("handleResolve", () => {
 
     expect(resolveCalls).toBe(0);
     expect(res).toMatchObject({ ok: false, reason: "not_paired" });
+  });
+});
+
+describe("handleResolve attaches the offered lanes", () => {
+  const prResolveDeps = {
+    getOrigins: async () => [],
+    getConnection: async () => ({ origin: "http://127.0.0.1:8765", token: "t", label: "MacBook" }),
+    resolveItem: async () => ({
+      ok: true as const,
+      outcome: { kind: "not-indexed" as const, fetchable: true },
+    }),
+    readConnectorHealth: async () => null,
+    readAgentRoster: async () => ({ unavailable: true as const }),
+  };
+
+  it("attaches the lanes the gateway can serve", async () => {
+    const res = await handleResolve(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => ({
+          origin: "http://127.0.0.1:8765",
+          token: "t",
+          label: "MacBook",
+        }),
+        resolveItem: async () => ({ ok: true, outcome: { kind: "not-indexed", fetchable: true } }),
+        readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ names: ["why", "impact"], version: "7.6.0" }),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/acme/web/pull/482" },
+    );
+    expect(res.ok).toBe(true);
+    expect(res.ok === true && res.offeredLanes).toEqual(["impact", "why"]);
+  });
+
+  // The roster read failing must leave the panel exactly as it renders without one.
+  it("omits the offered lanes when the roster could not be read", async () => {
+    const res = await handleResolve(
+      { ...prResolveDeps, readAgentRoster: async () => ({ unavailable: true }) },
+      { kind: "resolve", pageUrl: "https://github.com/acme/web/pull/482" },
+    );
+    expect(res.ok === true && "offeredLanes" in res).toBe(false);
+  });
+
+  // A dashboard gets the list too: the three service lanes are roster-gated like
+  // every other lane, on top of the connector-health gate they already have.
+  it("attaches the offered lanes on a dashboard", async () => {
+    const res = await handleResolve(
+      {
+        ...prResolveDeps,
+        readAgentRoster: async () => ({ names: ["catchup"], version: "7.6.0" }),
+      },
+      { kind: "resolve", pageUrl: "https://github.com/" },
+    );
+    expect(res.ok === true && res.offeredLanes).toEqual(["catchup"]);
+  });
+
+  // No pairing, no bearer, no roster read — the same rule every gateway call here
+  // follows. Assert the CALL never happens, not merely that the field is absent.
+  it("does not read the roster when unpaired", async () => {
+    let called = false;
+    await handleResolve(
+      {
+        ...prResolveDeps,
+        getConnection: async () => null,
+        readAgentRoster: async () => {
+          called = true;
+          return { unavailable: true };
+        },
+      },
+      { kind: "resolve", pageUrl: "https://github.com/acme/web/pull/482" },
+    );
+    expect(called).toBe(false);
   });
 });
 
@@ -740,6 +820,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map([["github", { state: "healthy" as const }]]),
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -753,6 +834,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -771,6 +853,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map(),
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -789,6 +872,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map(),
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -798,6 +882,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => null,
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -814,6 +899,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         getConnection: async () => conn,
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map([["github", { state: "degraded" as const }]]),
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -831,6 +917,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
           calls++;
           return null;
         },
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/acme/web/pull/1" },
     );
@@ -849,6 +936,7 @@ describe("handleResolve attaches connector health on a dashboard", () => {
           calls++;
           return null;
         },
+        readAgentRoster: async () => ({ unavailable: true }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );

@@ -462,6 +462,16 @@ export type ResolveResponse =
        * panel: do not claim to know.
        */
       readonly connector?: ConnectorHealth;
+      /**
+       * The lanes the paired gateway can actually serve on THIS page — the roster
+       * it publishes, narrowed by the version floor the item arm needs.
+       *
+       * ABSENT means "we did not learn", and the panel must read that as no
+       * filtering. It never means "no lanes": withholding everything because a
+       * capability read failed is a far larger claim than the one we failed to
+       * check. Same fail-open as `connector`, above.
+       */
+      readonly offeredLanes?: readonly AgentLane[];
     }
   | {
       readonly kind: "resolve";
@@ -756,6 +766,12 @@ function isConnectorHealth(v: unknown): v is ConnectorHealth {
   );
 }
 
+/** Every entry a lane this build knows, or the whole field is refused. An unknown
+ *  name would key the panel's lane-state map with an id nothing can render. */
+function isAgentLaneList(v: unknown): v is readonly AgentLane[] {
+  return Array.isArray(v) && v.every((x) => AGENT_LANES.includes(x as AgentLane));
+}
+
 /** The recognition is required on BOTH arms: a gateway failure must not erase
  *  the fact that the client knows what page this is. */
 export function isResolveResponse(v: unknown): v is ResolveResponse {
@@ -765,7 +781,8 @@ export function isResolveResponse(v: unknown): v is ResolveResponse {
   if (v["ok"] === true) {
     return (
       isResolveOutcome(v["outcome"]) &&
-      (v["connector"] === undefined || isConnectorHealth(v["connector"]))
+      (v["connector"] === undefined || isConnectorHealth(v["connector"])) &&
+      (v["offeredLanes"] === undefined || isAgentLaneList(v["offeredLanes"]))
     );
   }
   return (

@@ -49,8 +49,10 @@ import {
   type ResolveError,
   type ResolveOutcome,
   type ScopeGap,
+  type SurfaceKind,
 } from "../shared/types.ts";
 import type { RunSubject, StoredRun } from "./agent-run-store.ts";
+import { type AgentRoster, offeredLanes } from "./agents-capability.ts";
 import type { CaptureOutcome } from "./capture-tab.ts";
 
 export interface CaptureDeps {
@@ -244,6 +246,12 @@ export interface ResolveDeps {
   readonly readConnectorHealth: (
     origin: string,
   ) => Promise<ReadonlyMap<string, ConnectorHealth> | null>;
+  /**
+   * What the paired gateway publishes it can do. Bound in `service-worker.ts`;
+   * a handler test injects a fake and never learns the module exists — the same
+   * shape `readConnectorHealth` above already takes.
+   */
+  readonly readAgentRoster: (origin: string, token: string) => Promise<AgentRoster>;
 }
 
 /**
@@ -283,6 +291,24 @@ function connectorStateFor(
     return { state: "unknown" };
   }
   return health.get(serviceId) ?? { state: "not_configured" };
+}
+
+/**
+ * The lanes this gateway can serve here, as the ok-arm field — or nothing at all.
+ *
+ * Spread into the response (`...offeredFor(...)`) rather than returned as a
+ * possibly-`undefined` property, because `exactOptionalPropertyTypes` is on: an
+ * explicit `offeredLanes: undefined` is a different type from an absent key, and
+ * the wire wants the key absent.
+ */
+async function offeredFor(
+  deps: Pick<ResolveDeps, "readAgentRoster">,
+  origin: string,
+  token: string,
+  kind: SurfaceKind,
+): Promise<{ offeredLanes?: readonly AgentLane[] }> {
+  const offered = offeredLanes(await deps.readAgentRoster(origin, token), kind);
+  return offered === null ? {} : { offeredLanes: offered };
 }
 
 export async function handleResolve(
@@ -333,6 +359,7 @@ export async function handleResolve(
       recognition,
       outcome: { kind: "not-indexed", fetchable: false },
       connector,
+      ...(await offeredFor(deps, conn.origin, conn.token, recognition.kind)),
     };
   }
   const r = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
@@ -347,7 +374,13 @@ export async function handleResolve(
           scopeGap: { label: conn.label, ...r.scopeGap },
         };
   }
-  return { kind: "resolve", ok: true, recognition, outcome: r.outcome };
+  return {
+    kind: "resolve",
+    ok: true,
+    recognition,
+    outcome: r.outcome,
+    ...(await offeredFor(deps, conn.origin, conn.token, recognition.kind)),
+  };
 }
 
 export interface FetchDeps {
