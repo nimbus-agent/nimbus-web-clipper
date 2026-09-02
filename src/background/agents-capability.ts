@@ -11,6 +11,7 @@
 // is why — see `meetsFloor`.
 
 import { endpointUrl, isLoopbackOrigin } from "../shared/gateway.ts";
+import { AGENT_LANES, type AgentLane, type SurfaceKind } from "../shared/types.ts";
 import { isObject, readJson } from "./http-json.ts";
 
 /** A list read over a local index. The same bound the egress reads take. */
@@ -170,4 +171,62 @@ export function meetsFloor(version: string | null, floor: string): boolean {
   // Exactly the floor: a prerelease of it counts, since it is a build of the
   // release that carries the arm.
   return true;
+}
+
+/**
+ * The (lane, surface) pairs whose params are the `itemUrl` arm, and therefore the
+ * only ones the version floor gates.
+ *
+ * This CANNOT be derived from `LANE_RULES`. That table says scope `"item"` for
+ * `why` on `pr` and for `why` on `issue` alike — correctly, because both end at
+ * one indexed item — but `pr` sends `prUrl`, an arm every released gateway has
+ * served, and `issue` sends `itemUrl`, an arm that arrived in 7.5.0. The scope is
+ * where the input comes from; this table is which arm carries it. Two questions,
+ * two tables, and collapsing them is what would put a floor on lanes that work
+ * today.
+ */
+const ITEM_ARM_LANES: ReadonlySet<AgentLane> = new Set<AgentLane>(["why", "expert", "ownership"]);
+const ITEM_ARM_SURFACES: ReadonlySet<SurfaceKind> = new Set<SurfaceKind>(["issue", "incident"]);
+
+/**
+ * Does this (lane, surface) pair send the `itemUrl` arm?
+ *
+ * EXPORTED, and read by two callers that must never disagree: `offeredLanes`
+ * below, deciding whether the version floor applies, and `agentParams`
+ * (`handlers.ts`), deciding which arm to actually send. They are the same
+ * question — "does this pair need an arm the gateway may not have" — and a
+ * second copy of the surface list in `agentParams` is how a C7 surface would end
+ * up floored in one place and sent the wrong params in the other.
+ */
+export function needsItemArm(lane: AgentLane, kind: SurfaceKind): boolean {
+  return ITEM_ARM_LANES.has(lane) && ITEM_ARM_SURFACES.has(kind);
+}
+
+/**
+ * Which lanes the PAIRED gateway can actually serve on a page of this kind — or
+ * `null` when we did not learn.
+ *
+ * `null` is the load-bearing value. It means the roster read failed, and every
+ * caller must treat it as "do not filter", never as "no lanes": a gateway that
+ * cannot answer a capability question is not a gateway with no capabilities. This
+ * is the same fail-open the connector-health gate makes when `GET /v1/connectors`
+ * is absent, and for the same reason.
+ *
+ * Two gates, and they answer different questions. The roster says whether this
+ * gateway serves the agent at all. The floor says whether it serves the ARM this
+ * surface needs — see `ITEM_ARM_LANES` for why the second cannot be read off
+ * `LANE_RULES`.
+ *
+ * This deliberately does NOT apply `LANE_RULES`: whether a lane belongs on a
+ * surface is the panel's question and is already answered by `lanesFor`. Asking it
+ * twice, in two places, is how the two answers start to disagree.
+ */
+export function offeredLanes(roster: AgentRoster, kind: SurfaceKind): readonly AgentLane[] | null {
+  if ("unavailable" in roster) return null;
+  const published = new Set(roster.names);
+  return AGENT_LANES.filter(
+    (lane) =>
+      published.has(lane) &&
+      (!needsItemArm(lane, kind) || meetsFloor(roster.version, ITEM_ARM_FLOOR)),
+  );
 }

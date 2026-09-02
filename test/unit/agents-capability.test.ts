@@ -1,10 +1,13 @@
 // test/unit/agents-capability.test.ts
 import { describe, expect, it } from "vitest";
 import {
+  type AgentRoster,
   fetchAgentRoster,
   ITEM_ARM_FLOOR,
   meetsFloor,
+  offeredLanes,
 } from "../../src/background/agents-capability.ts";
+import { AGENT_LANES } from "../../src/shared/types.ts";
 
 function stubFetch(status: number, body: unknown): typeof fetch {
   return (async () =>
@@ -161,4 +164,70 @@ it("treats a non-string version as absent", async () => {
     doFetch: stubFetch(200, { agents: ["why"], version: 7.6 }),
   });
   expect(roster).toEqual({ names: ["why"], version: null });
+});
+
+describe("offeredLanes", () => {
+  const roster = (names: string[], version: string | null): AgentRoster => ({ names, version });
+
+  // Not knowing must leave the panel exactly as it renders today. Same degradation
+  // the connector-health gate makes when GET /v1/connectors is absent.
+  it("returns null when the roster could not be read", () => {
+    expect(offeredLanes({ unavailable: true }, "pr")).toBeNull();
+  });
+
+  it("withholds a lane the gateway does not publish", () => {
+    const offered = offeredLanes(roster(["why", "impact"], "7.6.0"), "pr");
+    expect(offered).toContain("why");
+    expect(offered).not.toContain("expert");
+  });
+
+  // The pr lanes send prUrl / fileOrPrUrl / topicOrFile — arms every gateway has
+  // served for releases. They must not be gated on a floor they never needed.
+  it("does not floor-gate a pr lane", () => {
+    expect(offeredLanes(roster(["why", "impact", "expert"], null), "pr")).toEqual([
+      "impact",
+      "expert",
+      "why",
+    ]);
+  });
+
+  it("withholds an item-arm lane when the gateway reports no version", () => {
+    expect(offeredLanes(roster(["why", "expert", "ownership"], null), "issue")).toEqual([]);
+  });
+
+  it("withholds an item-arm lane below the floor", () => {
+    expect(offeredLanes(roster(["why", "expert", "ownership"], "7.4.0"), "incident")).toEqual([]);
+  });
+
+  it("offers the item-arm lanes at the floor and above", () => {
+    expect(offeredLanes(roster(["why", "expert", "ownership"], "7.6.0"), "issue")).toEqual([
+      "expert",
+      "why",
+      "ownership",
+    ]);
+  });
+
+  // A development build satisfies any floor — the people building these lanes are
+  // the ones who most need them on, and the e2e job that proves them runs against
+  // exactly such a build.
+  it("offers the item-arm lanes to a development build", () => {
+    expect(offeredLanes(roster(["why"], "0.0.0-dev"), "issue")).toEqual(["why"]);
+  });
+
+  // Order is AGENT_LANES order, which is render order. Note what this does NOT
+  // do: `offeredLanes` never applies `LANE_RULES`, so a full roster on a `pr`
+  // page returns every published lane, `catchup` and `ownership` included.
+  // Whether a lane belongs on this surface is `lanesFor`'s question, and asking
+  // it in two places is how the two answers start to disagree.
+  it("preserves render order and applies no surface rule", () => {
+    expect(offeredLanes(roster([...AGENT_LANES], "7.6.0"), "pr")).toEqual([
+      "glossary",
+      "impact",
+      "expert",
+      "why",
+      "catchup",
+      "decisions",
+      "ownership",
+    ]);
+  });
 });
