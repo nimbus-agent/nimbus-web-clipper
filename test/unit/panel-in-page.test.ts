@@ -2269,6 +2269,108 @@ describe("lanes appear only where they can answer", () => {
   });
 });
 
+describe("the offered-lanes gate", () => {
+  const PR482 = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #482",
+    resolveUrl: "https://github.com/acme/web/pull/482",
+  };
+  const PR517 = {
+    ...PR482,
+    ref: "acme/web #517",
+    resolveUrl: "https://github.com/acme/web/pull/517",
+  };
+
+  function resolvedFor(recognition: unknown, offeredLanes?: readonly string[]): unknown {
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: {
+        kind: "found",
+        matchKind: "exact",
+        item: {
+          id: "it-1",
+          service: "github",
+          type: "pr",
+          title: "Add retry budget",
+          url: "https://github.com/acme/web/pull/482",
+          modifiedAt: Date.now(),
+        },
+      },
+      ...(offeredLanes === undefined ? {} : { offeredLanes }),
+    };
+  }
+
+  const renderedLanes = (root: ParentNode): (string | null)[] =>
+    Array.from(root.querySelectorAll<HTMLDetailsElement>("details[data-lane]")).map((el) =>
+      el.getAttribute("data-lane"),
+    );
+
+  it("renders only the lanes the resolve answer offered", async () => {
+    const root = await mountPanelWithResolve(resolvedFor(PR482, ["impact"]));
+    expect(renderedLanes(root)).toEqual(["related", "impact"]);
+  });
+
+  // No `offeredLanes` at all — the shape an older gateway sends, and the same
+  // "absent means unknown" fixture the connector gate above regression-guards.
+  // Byte-identical to what this panel rendered before this feature existed.
+  it("filters nothing when the resolve answer carries no offered list", async () => {
+    const root = await mountPanelWithResolve(resolvedFor(PR482));
+    expect(renderedLanes(root)).toEqual(["related", "impact", "expert", "why"]);
+  });
+
+  // `reread()` calls `paint()` before `loadHeader()` — so if the old page's
+  // offered list survived the pin move, the new page's very first paint would
+  // filter through it. Both pages are pull requests on purpose: the surface
+  // gate alone would already explain "why" appearing and "impact" vanishing,
+  // so pinning the surface constant isolates the offered-list reset as the
+  // only thing that can be doing it.
+  it("drops the offered lanes when the panel re-reads", async () => {
+    vi.useFakeTimers();
+    // `recognise` answers by URL, like `mountWatching` above — the navigation
+    // watcher must see #517 as a genuinely different item before it raises
+    // the notice this test clicks through.
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind === "resolve") return resolvedFor(PR482, ["impact"]);
+      if (m.kind === "recognise") {
+        const recognition = (m.pageUrl ?? "").includes("/517") ? PR517 : PR482;
+        return { kind: "recognition", ok: true, recognition };
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/482");
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    const root = shadow();
+    if (root === null) {
+      throw new Error("panel shadow root not found");
+    }
+    expect(renderedLanes(root)).toEqual(["related", "impact"]);
+
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600); // the navigation watcher notices the flip
+
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string };
+      if (m.kind === "resolve") return resolvedFor(PR517, ["why"]);
+      if (m.kind === "recognise") return { kind: "recognition", ok: true, recognition: PR517 };
+      return { kind: "related", ok: true, items: [] };
+    });
+    root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button")?.click();
+    await advanceTimers(0);
+
+    expect(renderedLanes(root)).toContain("why");
+    expect(renderedLanes(root)).not.toContain("impact");
+  });
+});
+
 describe("following a client-side navigation", () => {
   const PR482 = {
     ok: true,

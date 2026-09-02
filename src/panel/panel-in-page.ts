@@ -603,6 +603,12 @@ function createPanel(body: HTMLElement): {
    * until a later resolve actually succeeds.
    */
   let pinnedRecognition: Recognition | null = null;
+  /**
+   * What the gateway told us it can serve here, from the resolve answer. `null`
+   * until an answer arrives, and after one that carried no list — both mean the
+   * same thing to `lanesFor`: do not filter.
+   */
+  let offeredLanes: readonly AgentLane[] | null = null;
   /** The last URL `checkNavigation` looked at — so a tick on an unchanged URL
    *  costs a string compare and nothing else. */
   let lastCheckedUrl = pinnedUrl;
@@ -875,6 +881,7 @@ function createPanel(body: HTMLElement): {
       pageSubject: shown.kind === "resolved" || shown.kind === "service" || shown.kind === "chosen",
       pickedItemId: shown.kind === "chosen" ? shown.candidate.id : null,
       term,
+      offered: offeredLanes,
     };
   }
 
@@ -1096,6 +1103,11 @@ function createPanel(body: HTMLElement): {
     pinnedUrl = window.location.href;
     lastCheckedUrl = pinnedUrl;
     pinnedRecognition = null;
+    // The offered-lanes list is computed per surface (`offeredLanes(roster,
+    // kind)`), so the old page's list would filter the new page's lanes through
+    // the wrong gate. `reread()` calls `paint()` before `loadHeader()`, so
+    // without this reset that stale list would be live for at least one paint.
+    offeredLanes = null;
     navAway = false;
     header = { kind: "loading" };
     chosen = null;
@@ -1429,6 +1441,9 @@ function createPanel(body: HTMLElement): {
       // The identity of the page this panel describes, from the same response the
       // header is built from — never a second recognition of its own.
       pinnedRecognition = res.recognition;
+      if (res.ok) {
+        offeredLanes = res.offeredLanes ?? null;
+      }
     }
     // Taken ONCE per repaint here, not re-read per rendered line — see the
     // `resolved` state's `nowMs` doc comment in panel-view.ts.

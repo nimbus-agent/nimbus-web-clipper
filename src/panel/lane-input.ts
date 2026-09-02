@@ -58,6 +58,13 @@ export interface LaneContext {
    *  the request so the handler does not re-resolve into the same ambiguity. */
   readonly pickedItemId: string | null;
   readonly term: TermState;
+  /**
+   * The lanes the paired gateway can serve on this page, or `null` when we did not
+   * learn. `null` filters nothing — a capability read that failed must leave this
+   * panel exactly as it rendered before capability discovery existed. Withholding
+   * every lane because we could not ask is a bigger claim than the one we missed.
+   */
+  readonly offered: readonly AgentLane[] | null;
 }
 
 /**
@@ -75,6 +82,11 @@ export interface LaneContext {
  */
 export function lanesFor(ctx: LaneContext): readonly AgentLane[] {
   return AGENT_LANES.filter((lane) => {
+    // The gateway's own answer, and it outranks both arms below: a lane this
+    // gateway does not serve cannot be answered no matter how good the page is.
+    if (ctx.offered !== null && !ctx.offered.includes(lane)) {
+      return false;
+    }
     if (LANE_RULES[lane].input === "term") {
       return ctx.term.kind !== "none";
     }
