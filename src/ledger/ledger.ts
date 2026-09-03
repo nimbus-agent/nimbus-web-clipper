@@ -132,7 +132,7 @@ async function loadWindow(before?: number): Promise<void> {
     before === undefined ? { kind: "egress-window" } : { kind: "egress-window", before },
   );
   const res = isReplyFor(raw, "egress-window") ? (raw as EgressWindowResponse) : undefined;
-  if (res === undefined || !res.ok) {
+  if (!res?.ok) {
     failure = refusalFailure(res);
     render();
     return;

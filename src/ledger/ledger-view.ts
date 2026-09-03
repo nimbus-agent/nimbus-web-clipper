@@ -108,12 +108,13 @@ function renderOutcome(outcome: LedgerOutcome | undefined): HTMLElement {
   if (outcome === undefined) {
     return el("span", "ledger__outcome ledger__outcome--absent", "Outcome not recorded");
   }
+  // itemId wins over reason when both are present: an id names the thing that
+  // happened, a reason only describes it.
+  const detail = outcome.itemId ?? outcome.reason;
   const text =
-    outcome.itemId !== undefined
-      ? `${OUTCOME_LABELS[outcome.status]} — ${outcome.itemId}`
-      : outcome.reason !== undefined
-        ? `${OUTCOME_LABELS[outcome.status]} — ${outcome.reason}`
-        : OUTCOME_LABELS[outcome.status];
+    detail === undefined
+      ? OUTCOME_LABELS[outcome.status]
+      : `${OUTCOME_LABELS[outcome.status]} — ${detail}`;
   return el("span", `ledger__outcome ledger__outcome--${outcome.status}`, text);
 }
 

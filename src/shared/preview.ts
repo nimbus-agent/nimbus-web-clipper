@@ -116,32 +116,33 @@ export function buildClipPreview(
   payload: ClipPayload,
   canonicalRejected?: CanonicalRejection,
 ): ClipPreview {
+  // Built as ONE literal rather than a sequence of pushes, because every comment
+  // below is about POSITION — "directly beneath URL", "after Tags" — and row order
+  // is the thing a reader has to be able to check at a glance. Conditional rows
+  // spread in place so they cannot drift out of sequence.
   const fields: PreviewField[] = [
     { label: "Title", value: payload.title },
     { label: "URL", value: payload.url },
-  ];
-  if (payload.canonicalUrl !== undefined) {
-    fields.push({ label: "Canonical URL", value: payload.canonicalUrl });
-  }
-  // Guarded on `canonicalUrl` being absent, not just on a rejection being
-  // passed: every `CANONICAL_NOTICE` sentence ends with "used the address
-  // above", which is only true while this row sits directly beneath `URL`
-  // with nothing in between. Callers today never pass both a canonicalUrl and
-  // a rejection, but that is a fact about the callers — this keeps the
-  // function correct even if that stopped holding.
-  if (canonicalRejected !== undefined && payload.canonicalUrl === undefined) {
-    fields.push({ label: "Note", value: CANONICAL_NOTICE[canonicalRejected] });
-  }
-  fields.push(
+    ...(payload.canonicalUrl !== undefined
+      ? [{ label: "Canonical URL", value: payload.canonicalUrl }]
+      : []),
+    // Guarded on `canonicalUrl` being absent, not just on a rejection being
+    // passed: every `CANONICAL_NOTICE` sentence ends with "used the address
+    // above", which is only true while this row sits directly beneath `URL`
+    // with nothing in between. Callers today never pass both a canonicalUrl and
+    // a rejection, but that is a fact about the callers — this keeps the
+    // function correct even if that stopped holding.
+    ...(canonicalRejected !== undefined && payload.canonicalUrl === undefined
+      ? [{ label: "Note", value: CANONICAL_NOTICE[canonicalRejected] }]
+      : []),
     { label: "Mode", value: payload.mode },
     // The word "none", not an empty string: a blank cell reads as a rendering bug,
     // and the same reasoning already governs the shortcuts readout's "Not set".
     { label: "Tags", value: payload.tags.length === 0 ? "none" : payload.tags.join(", ") },
-  );
-  // Appended AFTER Tags, never between URL and Note: every CANONICAL_NOTICE
-  // sentence ends "used the address above", which is only true while the Note
-  // row sits directly beneath URL.
-  fields.push(...sourceFields(payload.source));
+    // AFTER Tags, never between URL and Note — same "used the address above"
+    // reasoning as the Note row.
+    ...sourceFields(payload.source),
+  ];
   const truncated = payload.body.length > EXCERPT_CHARS;
   return {
     fields,
