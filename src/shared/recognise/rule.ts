@@ -167,5 +167,5 @@ export function isNumber(segment: string): boolean {
  */
 export function lastSegment(p: string): string {
   const parts = p.split("/");
-  return parts[parts.length - 1] ?? p;
+  return parts.at(-1) ?? p;
 }

@@ -1406,11 +1406,10 @@ function createPanel(body: HTMLElement): {
     // that "we don't know" means ungated, never blank, so a `shown` of some other
     // kind must not silently blank the lanes if that invariant ever stops holding.
     const homeLanes = shown.kind !== "service" || gatePolicy(shown.connector.state).lanes;
+    const homeSurfaceLanes: Lane[] = homeLanes ? agentLanes : [];
     const lanes: Lane[] =
       surfaceKind === "home"
-        ? homeLanes
-          ? agentLanes
-          : []
+        ? homeSurfaceLanes
         : [
             { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
             ...agentLanes,
