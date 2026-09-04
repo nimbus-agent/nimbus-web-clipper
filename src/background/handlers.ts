@@ -716,6 +716,31 @@ async function resolveForAgent(
       service: PRODUCT_SERVICE_ID[recognition.product],
     };
   }
+  if (recognition.kind === "file") {
+    // No resolve call, and none is possible: a source file is not a connector item, so
+    // there is no indexed row to resolve to and no targeted fetch that could create one.
+    // The gateway maps the coordinate to the reader's own checkout — this client does
+    // not know their filesystem and must not guess at it.
+    //
+    // Placed BEFORE the resolveItem call below rather than beside it. Without this
+    // branch a file page falls through and sends a forge blob URL to the ITEM resolver,
+    // which typechecks, returns a miss, and is silently wrong.
+    if (recognition.forgeFile === undefined) {
+      // A `file` recognition without its coordinate is a recogniser bug, not a page
+      // condition. Refused rather than guessed at.
+      return { ok: false, reason: "not_resolved" };
+    }
+    return {
+      ok: true,
+      scope: "file",
+      origin: conn.origin,
+      token: conn.token,
+      label: conn.label,
+      service: PRODUCT_SERVICE_ID[recognition.product],
+      repo: recognition.forgeFile.repo,
+      refAndPath: recognition.forgeFile.refAndPath,
+    };
+  }
   const resolved = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!resolved.ok) {
     return resolved.scopeGap === undefined

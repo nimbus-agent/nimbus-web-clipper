@@ -1258,6 +1258,34 @@ describe("handleAgentRun", () => {
     expect(invoked).toEqual([{ agent: "ownership", params: { service: "github" } }]);
   });
 
+  // Cannot pass until Task 6 puts `impact` on the `file` surface: `laneBelongsOnSurface`
+  // refuses the pairing before `resolveForAgent` ever reaches the `file` branch. Written
+  // now, alongside the branch it pins, so the branch is not merged untested; unskipped
+  // in Task 6 once the lane table claims the surface.
+  it.skip("never resolves a file page as an indexed item — unskipped in Task 6", async () => {
+    let resolveCalls = 0;
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => {
+          resolveCalls += 1;
+          return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
+        },
+        invokeAgent: async () => ({ ok: true as const, runId: "r1" }),
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      {
+        kind: "agent-run",
+        lane: "impact",
+        pageUrl: "https://github.com/acme/web/blob/main/src/index.ts",
+      },
+    );
+    expect(resolveCalls).toBe(0);
+    expect(res.state.kind).not.toBe("failed");
+  });
+
   it("the why lane is asked with the page's PR URL, not the item title, and unnormalised", async () => {
     // Same URL impact receives. Sending `topicOrFile` here would be the
     // wrong-question-wrong-input bug LANE_RULES exists to prevent, one layer
