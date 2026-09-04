@@ -39,6 +39,7 @@ import {
   type Connection,
   type FetchError,
   type FetchOutcome,
+  type FileResolution,
   LANE_RULES,
   type LaneState,
   laneBelongsOnSurface,
@@ -52,7 +53,13 @@ import {
   type SurfaceKind,
 } from "../shared/types.ts";
 import type { RunSubject, StoredRun } from "./agent-run-store.ts";
-import { type AgentRoster, needsItemArm, offeredLanes } from "./agents-capability.ts";
+import {
+  type AgentRoster,
+  ITEM_ARM_FLOOR,
+  itemArmPolicy,
+  meetsFloor,
+  offeredLanes,
+} from "./agents-capability.ts";
 import type { CaptureOutcome } from "./capture-tab.ts";
 
 export interface CaptureDeps {
@@ -235,6 +242,21 @@ export interface ResolveDeps {
   readonly getConnection: GetConnection;
   readonly resolveItem: ResolveItem;
   /**
+   * Resolve a `file` recognition's forge coordinate against the reader's local
+   * checkout. Mirrors `resolveItem`'s shape — same three failure-vs-success arms —
+   * but answers a different question: an item lookup never touches a filesystem.
+   */
+  readonly resolveFile: (
+    origin: string,
+    token: string,
+    service: string,
+    repo: string,
+    refAndPath: string,
+  ) => Promise<
+    | { ok: true; resolution: FileResolution }
+    | { ok: false; reason: ResolveError; scopeGap?: RawScopeGap }
+  >;
+  /**
    * Health for the gateway at `origin`, or null when it could not be read.
    *
    * NOTE the shape: the store (connector-health-store.ts) exports
@@ -372,6 +394,62 @@ export async function handleResolve(
       ...offered,
     };
   }
+  if (recognition.kind === "file") {
+    // No resolve call, and none is possible: a source file is not a connector item.
+    // The gateway maps the coordinate to the reader's own checkout instead — see
+    // `resolveForAgent`'s own `file` branch for the fuller version of this reasoning
+    // (a different function answering a different question: what a LANE is about,
+    // not what the PANEL shows).
+    //
+    // CONCURRENT with the roster read for the same reason as the home branch above:
+    // `offeredFor` reads nothing the probe produces, and serialising them would put
+    // the roster's 10s bound behind the probe's 8s one before a header can render.
+    // Neither read may move above the `getConnection()` check above: both carry the
+    // bearer token.
+    const coordinate = recognition.forgeFile;
+    const [probe, offered] = await Promise.all([
+      coordinate === undefined
+        ? // A `file` recognition without its coordinate is a recogniser bug, not a
+          // page condition — nothing to probe and nothing to claim. Guarding on
+          // `forgeFile !== undefined` at the `recognition.kind` check instead would
+          // let this case fall through to `deps.resolveItem` below, sending a forge
+          // blob URL to the item resolver — the exact trap Task 3 closed.
+          Promise.resolve({ ok: true as const, resolution: { kind: "unsupported" as const } })
+        : deps.resolveFile(
+            conn.origin,
+            conn.token,
+            PRODUCT_SERVICE_ID[recognition.product],
+            coordinate.repo,
+            coordinate.refAndPath,
+          ),
+      offeredFor(deps, conn.origin, conn.token, recognition.kind),
+    ]);
+    // A refused SCOPE travels the same path `resolveItem`'s 403 already does, below —
+    // that is what reaches the panel's `needs-scope` header and the `nimbus clip
+    // scopes` command it prints. The label comes from the connection, which only
+    // this layer holds.
+    if (!probe.ok && probe.reason === "insufficient_scope") {
+      return probe.scopeGap === undefined
+        ? { kind: "resolve", ok: false, recognition, reason: probe.reason }
+        : {
+            kind: "resolve",
+            ok: false,
+            recognition,
+            reason: probe.reason,
+            scopeGap: { label: conn.label, ...probe.scopeGap },
+          };
+    }
+    // Every OTHER refusal is silent: the page is still recognised, the header still
+    // renders, and we claim nothing about a file we could not ask about.
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: false },
+      file: probe.ok ? probe.resolution : { kind: "unsupported" },
+      ...offered,
+    };
+  }
   // Concurrent for the same reason as the home branch above: `offeredFor` reads
   // nothing the resolve produces, and serialising them would put the roster's 10s
   // bound behind the resolve's 8s one before a header can render. The cost is one
@@ -486,6 +564,12 @@ export interface AgentRunDeps {
   >;
   readonly getRun: (subject: RunSubject, lane: AgentLane) => Promise<StoredRun | null>;
   readonly putRun: (run: Omit<StoredRun, "expiresAtMs">) => Promise<void>;
+  /**
+   * What the paired gateway publishes it can do. Bound in `service-worker.ts`,
+   * mirroring `ResolveDeps`'s own field of the same shape — a handler test injects
+   * a fake and never learns the module exists.
+   */
+  readonly readAgentRoster: (origin: string, token: string) => Promise<AgentRoster>;
 }
 
 export interface AgentStateDeps {
@@ -716,6 +800,31 @@ async function resolveForAgent(
       service: PRODUCT_SERVICE_ID[recognition.product],
     };
   }
+  if (recognition.kind === "file") {
+    // No resolve call, and none is possible: a source file is not a connector item, so
+    // there is no indexed row to resolve to and no targeted fetch that could create one.
+    // The gateway maps the coordinate to the reader's own checkout — this client does
+    // not know their filesystem and must not guess at it.
+    //
+    // Placed BEFORE the resolveItem call below rather than beside it. Without this
+    // branch a file page falls through and sends a forge blob URL to the ITEM resolver,
+    // which typechecks, returns a miss, and is silently wrong.
+    if (recognition.forgeFile === undefined) {
+      // A `file` recognition without its coordinate is a recogniser bug, not a page
+      // condition. Refused rather than guessed at.
+      return { ok: false, reason: "not_resolved" };
+    }
+    return {
+      ok: true,
+      scope: "file",
+      origin: conn.origin,
+      token: conn.token,
+      label: conn.label,
+      service: PRODUCT_SERVICE_ID[recognition.product],
+      repo: recognition.forgeFile.repo,
+      refAndPath: recognition.forgeFile.refAndPath,
+    };
+  }
   const resolved = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!resolved.ok) {
     return resolved.scopeGap === undefined
@@ -802,7 +911,11 @@ type AgentParams =
   /** The forge coordinate, unsplit — `requireFileParam`'s forge arm upstream. */
   | { service: string; repo: string; refAndPath: string };
 
-function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }): AgentParams {
+function agentParams(
+  lane: AgentLane,
+  resolved: ResolveForAgent & { ok: true },
+  rosterVersion: string | null,
+): AgentParams {
   if (resolved.scope === "service") {
     return { service: resolved.service };
   }
@@ -813,7 +926,7 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
     // client's business.
     //
     // Every lane on a `file` surface takes the same shape, so this returns before the
-    // per-lane switch below rather than adding five identical cases to it.
+    // per-lane switch below rather than adding three identical cases to it.
     return {
       service: resolved.service,
       repo: resolved.repo,
@@ -837,21 +950,32 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
   // `undefined`, so a missing case is a compile error (TS2366) rather than a
   // runtime `never` assertion — the exhaustiveness check lives in the return type.
   // Do not "helpfully" add a `default:` back.
-  // `needsItemArm` (agents-capability.ts), NOT a second surface list written out
-  // here. It is the same predicate `offeredLanes` gates the floor on, and the two
-  // must agree by construction: a pair floored there and sent `prUrl` here would
-  // withhold a lane on one gateway and send the wrong arm on another.
-  const itemArm = needsItemArm(lane, resolved.surface);
+  //
+  // `itemArmPolicy` (agents-capability.ts), NOT a second surface list written out
+  // here. It is the same table `offeredLanes` gates the floor on, and the two must
+  // agree by construction: a pair required there and sent the wrong arm here would
+  // withhold a lane on one gateway and send it the wrong params on another.
+  const useItemArm = (surface: SurfaceKind): boolean => {
+    const policy = itemArmPolicy(lane, surface);
+    return (
+      policy === "item-required" ||
+      (policy === "item-preferred" && meetsFloor(rosterVersion, ITEM_ARM_FLOOR))
+    );
+  };
   switch (lane) {
     case "impact":
       // Never widened past `pr` (`LANE_RULES`): its non-PR arm answers about a
       // FILE, not an item, so an issue URL would be the wrong question.
       return { fileOrPrUrl: resolved.resolveUrl };
     case "why":
-      return itemArm ? { itemUrl: resolved.resolveUrl } : { prUrl: resolved.resolveUrl };
+      return useItemArm(resolved.surface)
+        ? { itemUrl: resolved.resolveUrl }
+        : { prUrl: resolved.resolveUrl };
     case "ownership":
       // Unreachable on `pr` — `LANE_RULES` gives ownership `home`, `issue` and
-      // `incident` only, and `home` returns at the `service` branch far above.
+      // `incident` only, and `home` returns at the `service` branch far above. Every
+      // reachable pair is `item-required` (`ITEM_ARM_POLICY`), so this needs no
+      // `useItemArm` check of its own.
       return { itemUrl: resolved.resolveUrl };
     case "glossary":
     case "catchup":
@@ -871,15 +995,15 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
       // real new item-scope lane still needs its own case, or its name is left
       // unhandled and the switch stops being exhaustive.
       //
-      // `expert` itself: on `pr` this stays `topicOrFile`, and that is a deliberate
-      // hold rather than an oversight. Switching it would make `expert`/`pr` an
-      // item-arm pair, and the version floor would then withhold from every gateway
-      // that does not yet publish a version a lane that works today. The title arm
-      // answers a broader question than the label promises; trading a working lane
-      // for a sharper one is a change to make once the floor is commonly met, not
-      // at its introduction. On an `issue` or an `incident` there is no such
-      // history to protect, so those take the item arm.
-      return itemArm ? { itemUrl: resolved.resolveUrl } : { topicOrFile: resolved.item.title };
+      // `expert` itself: on `issue`/`incident` the arm is `item-required` — the lane
+      // was only offered because the floor was met, so sending it is safe. On `pr`
+      // it is `item-preferred`: `expert` has shipped there on `topicOrFile` for
+      // releases, so the lane is never withheld, and the sharper `itemUrl` is sent
+      // only once this gateway's roster proves it meets the floor. Trading a
+      // working lane for a sharper one is a per-request sharpening, not a gate.
+      return useItemArm(resolved.surface)
+        ? { itemUrl: resolved.resolveUrl }
+        : { topicOrFile: resolved.item.title };
   }
 }
 
@@ -936,7 +1060,21 @@ export async function handleAgentRun(
     return { kind: "agent-state", lane: req.lane, state: cached.state };
   }
 
-  const params = agentParams(req.lane, resolved);
+  // One extra loopback GET per lane expansion, and the whole price of never
+  // withholding a working lane. Read fresh rather than cached with the pairing, for
+  // the same reason `handleResolve` does: an upgraded gateway must be reflected
+  // without re-pairing. A failed read is `unavailable`, never a throw — the lane
+  // must still run. Only the `item` scope's `agentParams` branch ever consults the
+  // version (`expert` on `pr`), so a `service`/`term`/`file` lane pays nothing for it.
+  const roster =
+    resolved.scope === "item"
+      ? await deps
+          .readAgentRoster(resolved.origin, resolved.token)
+          .catch(() => ({ unavailable: true as const }))
+      : null;
+  const rosterVersion = roster === null || "unavailable" in roster ? null : roster.version;
+
+  const params = agentParams(req.lane, resolved, rosterVersion);
   const invoked = await invokeWithRetry(deps, resolved.origin, resolved.token, req.lane, params);
   if (!invoked.ok) {
     const scopeGap =

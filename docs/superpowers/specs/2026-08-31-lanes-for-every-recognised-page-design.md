@@ -172,9 +172,9 @@ alternatives were considered and rejected:
 | --- | --- | --- |
 | §4.1 the `lane × surface` refactor | nothing — pure client, no behaviour change | ✅ #94 |
 | §4.4 roster discovery | nothing | ✅ #94 |
-| §4.4 the version floor | a `version` field on `GET /v1/agents` (F7) | upstream, not started |
+| §4.4 the version floor | a `version` field on `GET /v1/agents` (F7) | ✅ landed, v7.7.0 (Nimbus#1428) |
 | §4.2 item lanes (`why`, `expert`, `ownership`) | upstream **PR 1** — Nimbus#1421 | ✅ landed, v7.5.0 |
-| §5 the file surface | upstream **PR 2** — Nimbus#1424 | ✅ landed, unreleased |
+| §5 the file surface | upstream **PR 2** — Nimbus#1424 | ✅ landed, v7.6.0 |
 | §6 `connections` + `currency` lanes | upstream **PR 3**, and the SDK's guards | not started |
 
 The roster half of §4.4 shipped without the floor half, which is why the floor's missing input
@@ -279,8 +279,9 @@ release serving the `itemUrl` arm. A consequence worth stating plainly: 7.5.0 *h
 does **not** report a version, so it fails closed and is offered no item lanes. The effective
 floor is therefore the release that adds the version field. That is one release of lag for
 anyone sitting exactly on 7.5.0, and it is the honest outcome — a gateway that cannot say what
-it is does not get lanes. `meetsFloor` still earns its keep for the next floor: the file arms
-(upstream #1424) are unreleased and will carry one of their own.
+it is does not get lanes. **Update:** upstream #1424 shipped in v7.6.0, and the file surface
+does not, in the end, carry a floor of its own — see the note under §5.4 for why a direct probe
+replaced it.
 
 **A development build must satisfy the floor.** A gateway built from a feature branch reports
 something like `0.0.0-dev` or a prerelease tag, and a naive `>=` comparison puts every such
@@ -340,6 +341,11 @@ kind so two files on one host do not share a cached run.
 
 ### 5.3 · Five lanes
 
+**Superseded — shipped as three, not five; see the correction note under §5.4.** `ghost` and
+`conflicts` never shipped: they are federation-only and the forge arm refuses namespaces, so
+both are permanently excluded rather than deferred. The rest of this section is kept for the
+per-lane reasoning it still gets right.
+
 `impact`, `expert` and `ownership` gain `file` in their surface lists with the file param
 shape. `ghost` and `conflicts` are **new members of `AGENT_LANES`** — the first lanes added
 since C2.3 — and both are `file`-only.
@@ -374,6 +380,14 @@ run as usual.
 This mirrors what the panel already does on item surfaces, where resolution precedes the lanes
 rather than being repeated inside each one — and it is the same instinct behind the connector-
 health gate: establish once whether an answer is possible, then decide what to offer.
+
+**Correction, superseded by
+[`2026-09-04-the-file-you-are-looking-at-design.md`](./2026-09-04-the-file-you-are-looking-at-design.md):**
+the typed discriminant above never reached an HTTP route — upstream flattens it into a JSON-RPC
+`-32602` message instead, so the client reads the reason off a string prefix, not a field (that
+spec's F1). And §5.3's five lanes shipped as **three**: `ghost` and `conflicts` are
+federation-only and the forge arm refuses namespaces, so both would answer nothing on every
+gateway forever (that spec's F3 and §4.7) — they are not deferred, they are out of scope.
 
 ---
 

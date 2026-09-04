@@ -223,6 +223,17 @@ export type Recognition =
        * shared/recognise/index.ts.
        */
       readonly resolveUrl: string;
+      /**
+       * The forge coordinate, on a `file` recognition only — carried through from
+       * `Match.forgeFile` rather than re-derived, because the three forges spell the
+       * same coordinate differently and deriving it twice is the drift the registry
+       * exists to prevent.
+       *
+       * `refAndPath` is ref and path STILL JOINED. A branch name may contain slashes,
+       * so splitting it here would need the repository's branch list — a forge API call
+       * this client must never make. The gateway holds the file list and splits there.
+       */
+      readonly forgeFile?: { readonly repo: string; readonly refAndPath: string };
     }
   | { readonly ok: false; readonly reason: "unknown-host" | "unrecognised-path" };
 
@@ -321,6 +332,27 @@ export type ResolveError =
   | "server_error";
 
 /**
+ * Why the gateway could not place a file. A CLOSED union, and the client branches on
+ * the value — upstream also flattens these into a -32602 message prefix on the agent
+ * route, and matching that prose is what this route exists to avoid.
+ */
+export type FileMissReason = "remote_not_tracked" | "file_not_indexed";
+
+/**
+ * What the file probe learned. `miss` has a sentence, `unsupported` is a gateway older
+ * than the route and says nothing, and `found` is the only arm that offers lanes.
+ *
+ * There is deliberately NO scope arm. A 403 travels the resolve response's existing
+ * `ok: false` + `scopeGap` path, which already reaches the panel's `needs-scope`
+ * header and the `nimbus clip scopes` command it prints — a second route to that
+ * screen could not carry the connection label `scopeCommand` needs.
+ */
+export type FileResolution =
+  | { readonly kind: "found"; readonly path: string }
+  | { readonly kind: "miss"; readonly reason: FileMissReason; readonly repo: string }
+  | { readonly kind: "unsupported" };
+
+/**
  * What a 403 tells us about a scope the paired token lacks, plus the label needed
  * to name the device in the fix command.
  *
@@ -393,8 +425,13 @@ export type FetchError =
  * `preflight`, `premortem`, `whyPeek` and `negotiate` are absent because
  * upstream excludes them from the HTTP surface entirely
  * (HTTP_EXCLUDED_AGENT_METHODS in packages/gateway/src/ipc/agents-rpc.ts).
- * `ghost` and `conflicts` are absent because both require `{ file }` — a local
- * checkout the browser does not have.
+ * `ghost` and `conflicts` are absent, and the forge arm did NOT change that. Both
+ * build their entire result from `input.namespaces` upstream, and the forge shape
+ * refuses namespaces outright ("that shape answers locally only") — so under the one
+ * shape a browser can send, each returns an empty array on every gateway, forever.
+ * Offering them would put a header promising an answer over a permanent blank, which
+ * is the same reason a Confluence page gets no item lanes. This is a bound, not a
+ * deferral: see the C7 design spec §4.7.
  *
  * `glossary` is declared FIRST because order here is render order and it is the
  * only lane the user summons by name: it exists in a panel because they just
@@ -480,8 +517,11 @@ export const LANE_RULES: Record<AgentLane, LaneRule> = {
   // reason for the gate does not apply to it. The term you most need defined is
   // usually on the unfamiliar internal wiki that has no connector at all.
   glossary: { input: "term" },
-  impact: { input: "page", surfaces: { pr: "item" } },
-  expert: { input: "page", surfaces: { pr: "item", issue: "item", incident: "item" } },
+  impact: { input: "page", surfaces: { pr: "item", file: "file" } },
+  expert: {
+    input: "page",
+    surfaces: { pr: "item", issue: "item", incident: "item", file: "file" },
+  },
   // The third review question — and no longer only a review question. `agents.why`
   // has an `itemUrl` arm as well as its `prUrl` one, so "how did we get here" is
   // answerable about any indexed item with a graph entity: a Jira or Linear issue,
@@ -498,7 +538,7 @@ export const LANE_RULES: Record<AgentLane, LaneRule> = {
   // dashboard, one indexed item on an issue or an incident. See `LaneSurfaceMap`.
   ownership: {
     input: "page",
-    surfaces: { home: "service", issue: "item", incident: "item" },
+    surfaces: { home: "service", issue: "item", incident: "item", file: "file" },
   },
 };
 

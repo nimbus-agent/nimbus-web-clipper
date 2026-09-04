@@ -151,6 +151,16 @@ export type HeaderState =
        *  so the "Synced … ago" line does not jitter across repaints. */
       readonly nowMs: number;
     }
+  /**
+   * A recognised source file. Deliberately NOT `not-indexed`, for the same reason
+   * `service` is not: `offersCapture` returns true there when `fetchable` is false,
+   * which would put "Save a copy to Nimbus" under a miss — and a clipped blob page
+   * gives Nimbus neither a checkout nor an indexed repository.
+   *
+   * `banner` carries the miss sentence, and is ABSENT on a hit and on an older
+   * gateway — the panel says nothing it cannot back.
+   */
+  | { readonly kind: "file"; readonly surface: string; readonly banner?: string }
   | {
       readonly kind: "resolved";
       readonly surface: string;
@@ -727,6 +737,13 @@ export function renderHeader(
 
   if (state.kind === "service") {
     appendServiceHeader(doc, box, state);
+    return box;
+  }
+
+  if (state.kind === "file") {
+    if (state.banner !== undefined) {
+      box.append(line(doc, "nimbus-related__status", state.banner));
+    }
     return box;
   }
 

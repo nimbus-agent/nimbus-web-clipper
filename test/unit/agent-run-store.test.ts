@@ -267,6 +267,52 @@ describe("agent-run-store", () => {
     expect(await getRun({ kind: "service", service: "github" }, "catchup", NOW)).toBeNull();
   });
 
+  it("round-trips a file subject through storage", async () => {
+    // The guard, not the key, is the gap: makeKey/subjectValue already handle `file`,
+    // so this fails only on the read back — silently, and only on the storage path.
+    const subject = { kind: "file" as const, repo: "acme/web", refAndPath: "main/src/index.ts" };
+    await putRun(
+      {
+        subject,
+        lane: "impact",
+        runId: "run_file_impact",
+        state: { kind: "done", brief: "B" },
+        expiresAtMs: NOW + 1000,
+      },
+      NOW,
+    );
+    expect(await getRun(subject, "impact", NOW)).toMatchObject({ runId: "run_file_impact" });
+  });
+
+  it("keys two files in one repo separately", async () => {
+    // subjectValue joins repo and coordinate with the key separator precisely so one
+    // file's cached run cannot be served for another.
+    const a = { kind: "file" as const, repo: "acme/web", refAndPath: "main/src/a.ts" };
+    const b = { kind: "file" as const, repo: "acme/web", refAndPath: "main/src/b.ts" };
+    await putRun(
+      {
+        subject: a,
+        lane: "impact",
+        runId: "run_a",
+        state: { kind: "done", brief: "A" },
+        expiresAtMs: NOW + 1000,
+      },
+      NOW,
+    );
+    await putRun(
+      {
+        subject: b,
+        lane: "impact",
+        runId: "run_b",
+        state: { kind: "done", brief: "B" },
+        expiresAtMs: NOW + 1000,
+      },
+      NOW,
+    );
+    expect((await getRun(a, "impact", NOW))?.runId).toBe("run_a");
+    expect((await getRun(b, "impact", NOW))?.runId).toBe("run_b");
+  });
+
   describe("run subjects", () => {
     it("keeps an item subject and a service subject with the same text apart", async () => {
       const item = { kind: "item" as const, id: "jenkins" };

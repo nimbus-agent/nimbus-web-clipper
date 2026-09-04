@@ -42,9 +42,15 @@ describe("LANE_RULES", () => {
   // `agents.impact` takes a `fileOrPrUrl` and asks what a change under review
   // breaks — a question that means nothing about a Jenkins build or a Jira issue.
   // `expert` has left this group: its item arm answers about any indexed item, so
-  // it is no longer a pull-request-only lane.
-  it("puts the shipped lanes on pull requests only", () => {
-    expect(LANE_RULES.impact).toEqual({ input: "page", surfaces: { pr: "item" } });
+  // it is no longer a pull-request-only lane. `impact` itself is no longer
+  // PR-only either: the forge arm gave it a second, `file`-scoped surface — the
+  // `fileOrPrUrl` question means exactly as much about a source file as it does
+  // about a change under review.
+  it("puts impact on a pull request and a file", () => {
+    expect(LANE_RULES.impact).toEqual({
+      input: "page",
+      surfaces: { pr: "item", file: "file" },
+    });
   });
 
   it("offers no page lane on a build or a doc — the two surfaces with nothing to ask", () => {
@@ -68,14 +74,21 @@ describe("LANE_RULES", () => {
     }
   });
 
-  it("gates why exactly as expert is gated, and no longer as impact is", () => {
-    // Not a tautology: it pins that a future edit widening `why`'s surfaces has to
-    // widen `expert`'s too, or explain why the two diverged. `impact` is the
-    // divergence this widening already made, and here is that explanation: its
-    // non-PR arm answers about a FILE, not an item, so there is no item surface for
-    // it to widen onto — an issue URL under `fileOrPrUrl` would be the wrong
-    // question, which is the bug `LANE_RULES` exists to prevent.
-    expect(LANE_RULES.why).toEqual(LANE_RULES.expert);
+  it("gates why on expert's item surfaces, and no longer as impact is", () => {
+    // Not a tautology: it pins that a future edit widening `why`'s item surfaces has
+    // to widen `expert`'s too, or explain why the two diverged. `why` has no `file`
+    // arm — `agents.why` has no forge-coordinate input at all — so it can no longer
+    // equal `expert` outright now that `expert` also answers on a file; comparing the
+    // two on `issue`/`incident`/`pr` alone is the part of the claim that still holds.
+    // `impact` remains the divergence this widening explains: its non-PR arm answers
+    // about a FILE, not an item, so there is no item surface for it to widen onto —
+    // an issue URL under `fileOrPrUrl` would be the wrong question, which is the bug
+    // `LANE_RULES` exists to prevent.
+    for (const kind of ["pr", "issue", "incident"] as const) {
+      expect(scopeForLane("why", kind), kind).toBe(scopeForLane("expert", kind));
+    }
+    expect(scopeForLane("why", "file")).toBeNull();
+    expect(scopeForLane("expert", "file")).toBe("file");
     expect(LANE_RULES.why).not.toEqual(LANE_RULES.impact);
   });
 
@@ -126,10 +139,10 @@ describe("service lanes", () => {
     expect(scopeForLane("ownership", "home")).toBe("service");
   });
 
-  it("gives ownership an item scope on an issue and an incident", () => {
+  it("gives ownership an item scope on an issue and an incident, and a file scope on a file", () => {
     expect(LANE_RULES.ownership).toEqual({
       input: "page",
-      surfaces: { home: "service", issue: "item", incident: "item" },
+      surfaces: { home: "service", issue: "item", incident: "item", file: "file" },
     });
   });
 
@@ -151,6 +164,29 @@ describe("service lanes", () => {
     expect(covered.has("home")).toBe(true);
     expect(covered.has("issue")).toBe(true);
     expect(covered.has("incident")).toBe(true);
+  });
+});
+
+describe("the file surface", () => {
+  it("offers exactly impact, expert and ownership", () => {
+    const onFile = AGENT_LANES.filter((l) => scopeForLane(l, "file") !== null);
+    expect(onFile).toEqual(["impact", "expert", "ownership"]);
+  });
+
+  it("does not offer ghost or conflicts, because neither can answer", () => {
+    // Both build their entire result inside `input.namespaces.map(...)` upstream, and
+    // the forge arm REFUSES namespaces ("that shape answers locally only"). So under
+    // the one shape a browser can send, both return an empty array on every gateway,
+    // forever. A lane that will answer nothing is worse than no lane — the same rule
+    // that keeps these three off a Confluence page. See spec §4.7 before adding them.
+    expect(AGENT_LANES).not.toContain("ghost");
+    expect(AGENT_LANES).not.toContain("conflicts");
+  });
+
+  it("sends the forge coordinate on every file lane", () => {
+    for (const lane of ["impact", "expert", "ownership"] as const) {
+      expect(scopeForLane(lane, "file")).toBe("file");
+    }
   });
 });
 

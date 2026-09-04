@@ -118,17 +118,16 @@ export async function fetchAgentRoster(deps: RosterDeps): Promise<AgentRoster> {
  * item lanes. The effective floor is the release that added the version field,
  * because a gateway that cannot say what it is has not told us it can answer.
  *
- * As of 2026-09-02 that release does not exist. Upstream `GET /v1/agents`
- * answers `{ agents }` alone — Nimbus#1421 shipped the arm, not the field — so
- * `meetsFloor(null, …)` is false everywhere and these three lanes are withheld
- * on EVERY gateway, a locally built one included: a local build reports no
- * version rather than `0.0.0`, so it fails closed before the development-build
- * allowance in `meetsFloor` can apply. The client is complete and waiting on the
- * field. Do not loosen the floor to make the lanes appear; a lane offered
- * against a gateway that cannot serve its arm is a `-32602` under a header that
- * promised an answer, which is the thing this gate exists to prevent.
+ * Upstream Nimbus#1428 added the `version` field in **v7.7.0**, so the floor now has
+ * its input. Note what did not change: 7.5.0 and 7.6.0 HAVE the arm and report no
+ * version, so they still fail closed and are offered no item-REQUIRED lanes. That is
+ * correct — a gateway that cannot say what it is has not told us it can answer — and
+ * it is exactly why `expert` on a pull request is `item-preferred` rather than
+ * required (see `ITEM_ARM_POLICY`).
  *
- * Do not raise this without a released gateway to point at.
+ * Do not lower this floor to make the lanes appear on an older gateway. A lane offered
+ * against a gateway that cannot serve its arm is a -32602 under a header that promised
+ * an answer, which is the thing this gate exists to prevent.
  */
 export const ITEM_ARM_FLOOR = "7.5.0";
 
@@ -192,32 +191,47 @@ export function meetsFloor(version: string | null, floor: string): boolean {
 }
 
 /**
- * The (lane, surface) pairs whose params are the `itemUrl` arm, and therefore the
- * only ones the version floor gates.
+ * Which (lane, surface) pairs use the `itemUrl` arm, and whether the floor GATES the
+ * lane or only sharpens it.
  *
- * This CANNOT be derived from `LANE_RULES`. That table says scope `"item"` for
- * `why` on `pr` and for `why` on `issue` alike — correctly, because both end at
- * one indexed item — but `pr` sends `prUrl`, an arm every released gateway has
- * served, and `issue` sends `itemUrl`, an arm that arrived in 7.5.0. The scope is
- * where the input comes from; this table is which arm carries it. Two questions,
- * two tables, and collapsing them is what would put a floor on lanes that work
- * today.
+ * This cannot be derived from `LANE_RULES`. That table says scope `"item"` for `why`
+ * on `pr` and on `issue` alike — correctly, since both end at one indexed item — but
+ * `pr` sends `prUrl`, an arm every released gateway serves, and `issue` sends
+ * `itemUrl`, which arrived in 7.5.0.
+ *
+ * A POLICY rather than a boolean, because the two readers stopped asking the same
+ * question. `offeredLanes` asks "must I withhold this?"; `agentParams` asks "which arm
+ * do I send?". For `expert`/`pr` those now differ: never withheld, but sharpened when
+ * the gateway can serve it. One table, two readers — a `meetsFloor` call inside
+ * `agentParams` instead would be the second copy this table exists to prevent.
+ *
+ * An ABSENT pair keeps today's behaviour, which is why `why`/`pr` is not listed: it
+ * sends `prUrl`, an arm every released gateway serves, and a cross-product of
+ * {why,expert,ownership} x {issue,incident,pr} would have floored it by accident.
  */
-const ITEM_ARM_LANES: ReadonlySet<AgentLane> = new Set<AgentLane>(["why", "expert", "ownership"]);
-const ITEM_ARM_SURFACES: ReadonlySet<SurfaceKind> = new Set<SurfaceKind>(["issue", "incident"]);
+export type ArmPolicy = "item-required" | "item-preferred";
+
+const ITEM_ARM_POLICY: ReadonlyMap<string, ArmPolicy> = new Map([
+  ["why:issue", "item-required"],
+  ["why:incident", "item-required"],
+  ["expert:issue", "item-required"],
+  ["expert:incident", "item-required"],
+  ["ownership:issue", "item-required"],
+  ["ownership:incident", "item-required"],
+  // Never withheld — has shipped on `topicOrFile` for releases; flooring it would
+  // withhold a WORKING lane from every gateway below 7.7.0 to remove a wording problem.
+  ["expert:pr", "item-preferred"],
+]);
 
 /**
- * Does this (lane, surface) pair send the `itemUrl` arm?
+ * Does this (lane, surface) pair send the `itemUrl` arm, and does the floor gate it?
  *
- * EXPORTED, and read by two callers that must never disagree: `offeredLanes`
- * below, deciding whether the version floor applies, and `agentParams`
- * (`handlers.ts`), deciding which arm to actually send. They are the same
- * question — "does this pair need an arm the gateway may not have" — and a
- * second copy of the surface list in `agentParams` is how a C7 surface would end
- * up floored in one place and sent the wrong params in the other.
+ * EXPORTED, and read by two callers that must not disagree: `offeredLanes` below and
+ * `agentParams` (`handlers.ts`). A second copy of these pairs in either is how a lane
+ * ends up floored in one place and sent the wrong params in the other.
  */
-export function needsItemArm(lane: AgentLane, kind: SurfaceKind): boolean {
-  return ITEM_ARM_LANES.has(lane) && ITEM_ARM_SURFACES.has(kind);
+export function itemArmPolicy(lane: AgentLane, kind: SurfaceKind): ArmPolicy | null {
+  return ITEM_ARM_POLICY.get(`${lane}:${kind}`) ?? null;
 }
 
 /**
@@ -233,11 +247,13 @@ export function needsItemArm(lane: AgentLane, kind: SurfaceKind): boolean {
  *
  * A roster we could not read is therefore handled per SURFACE, not globally:
  *
- * - **No lane here needs the item arm** (`pr`, `home`, and every other surface
+ * - **No lane here is `item-required`** (`pr`, `home`, and every other surface
  *   today) → `null`. Those pages rendered these lanes before any of this existed
- *   and they render byte-identically now; the wire field stays absent.
- * - **Some lane here does** (`issue`, `incident`) → this surface's lanes MINUS
- *   the item-arm ones. Exactly the lanes whose arm we could not confirm are
+ *   and they render byte-identically now; the wire field stays absent. This
+ *   includes `expert` on `pr`: it is `item-preferred`, never withheld, so it never
+ *   makes this list required.
+ * - **Some lane here is** (`issue`, `incident`) → this surface's lanes MINUS
+ *   the required ones. Exactly the lanes whose arm we could not confirm are
  *   withheld, and nothing else.
  *
  * The second case is the one an earlier shape got backwards. It returned `null`
@@ -252,7 +268,7 @@ export function needsItemArm(lane: AgentLane, kind: SurfaceKind): boolean {
  *
  * Two gates, and they answer different questions. The roster says whether this
  * gateway serves the agent at all. The floor says whether it serves the ARM this
- * surface needs — see `ITEM_ARM_LANES` for why the second cannot be read off
+ * surface needs — see `ITEM_ARM_POLICY` for why the second cannot be read off
  * `LANE_RULES`.
  *
  * This deliberately does NOT apply `LANE_RULES`: whether a lane belongs on a
@@ -260,14 +276,14 @@ export function needsItemArm(lane: AgentLane, kind: SurfaceKind): boolean {
  * twice, in two places, is how the two answers start to disagree.
  */
 export function offeredLanes(roster: AgentRoster, kind: SurfaceKind): readonly AgentLane[] | null {
+  const required = (lane: AgentLane): boolean => itemArmPolicy(lane, kind) === "item-required";
   if ("unavailable" in roster) {
-    if (!AGENT_LANES.some((lane) => needsItemArm(lane, kind))) return null;
-    return AGENT_LANES.filter((lane) => !needsItemArm(lane, kind));
+    if (!AGENT_LANES.some(required)) return null;
+    return AGENT_LANES.filter((lane) => !required(lane));
   }
   const published = new Set(roster.names);
   return AGENT_LANES.filter(
     (lane) =>
-      published.has(lane) &&
-      (!needsItemArm(lane, kind) || meetsFloor(roster.version, ITEM_ARM_FLOOR)),
+      published.has(lane) && (!required(lane) || meetsFloor(roster.version, ITEM_ARM_FLOOR)),
   );
 }

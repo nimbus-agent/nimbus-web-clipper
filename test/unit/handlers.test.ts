@@ -17,7 +17,7 @@ import {
   handleUnpair,
 } from "../../src/background/handlers.ts";
 import type { QueuedClip } from "../../src/shared/queue.ts";
-import { AGENT_LANES, type Connection } from "../../src/shared/types.ts";
+import { AGENT_LANES, type Connection, type FileResolution } from "../../src/shared/types.ts";
 
 const conn: Connection = {
   origin: "http://127.0.0.1:8765",
@@ -548,6 +548,10 @@ describe("handleResolve", () => {
         },
         readConnectorHealth: async () => null,
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       // Note: recognise() preserves the query string deliberately — the gateway
       // owns canonicalisation, so the recogniser's resolveUrl (asserted below)
@@ -576,6 +580,10 @@ describe("handleResolve", () => {
         resolveItem: async () => ({ ok: false, reason: "insufficient_scope" }),
         readConnectorHealth: async () => null,
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
     );
@@ -604,6 +612,10 @@ describe("handleResolve", () => {
         }),
         readConnectorHealth: async () => null,
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://github.com/a/b/pull/1" },
     );
@@ -633,6 +645,10 @@ describe("handleResolve", () => {
         },
         readConnectorHealth: async () => null,
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://example.com/whatever" },
     );
@@ -658,6 +674,10 @@ describe("handleResolve", () => {
         },
         readConnectorHealth: async () => null,
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: PR },
     );
@@ -677,6 +697,10 @@ describe("handleResolve", () => {
         },
         readConnectorHealth: async () => null,
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://corp.example/jira/browse/plat-9?x=1" },
     );
@@ -694,6 +718,10 @@ describe("handleResolve", () => {
       },
       readConnectorHealth: async () => null,
       readAgentRoster: async () => ({ unavailable: true as const }),
+      resolveFile: async () => ({
+        ok: true as const,
+        resolution: { kind: "unsupported" as const },
+      }),
     };
 
     const res = await handleResolve(deps, {
@@ -721,6 +749,10 @@ describe("handleResolve", () => {
       },
       readConnectorHealth: async () => null,
       readAgentRoster: async () => ({ unavailable: true as const }),
+      resolveFile: async () => ({
+        ok: true as const,
+        resolution: { kind: "unsupported" as const },
+      }),
     };
 
     const res = await handleResolve(deps, {
@@ -731,6 +763,114 @@ describe("handleResolve", () => {
 
     expect(resolveCalls).toBe(0);
     expect(res).toMatchObject({ ok: false, reason: "not_paired" });
+  });
+
+  describe("a file page", () => {
+    const FILE = "https://github.com/acme/web/blob/main/src/index.ts";
+    const fileDeps = (resolution: FileResolution) => ({
+      getOrigins: async () => [],
+      getConnection: async () => conn,
+      resolveItem: async () => {
+        throw new Error("a file page must never reach the item resolver");
+      },
+      resolveFile: async () => ({ ok: true as const, resolution }),
+      readConnectorHealth: async () => null,
+      readAgentRoster: async () => ({ names: [...AGENT_LANES], version: "7.8.1" }),
+    });
+
+    it("sends the coordinate and never calls the item resolver", async () => {
+      const seen: string[][] = [];
+      const res = await handleResolve(
+        {
+          ...fileDeps({ kind: "found", path: "src/index.ts" }),
+          resolveFile: async (_o, _t, service, repo, refAndPath) => {
+            seen.push([service, repo, refAndPath]);
+            return { ok: true, resolution: { kind: "found", path: "src/index.ts" } };
+          },
+        },
+        { kind: "resolve", pageUrl: FILE },
+      );
+      expect(seen).toEqual([["github", "acme/web", "main/src/index.ts"]]);
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.file).toEqual({ kind: "found", path: "src/index.ts" });
+    });
+
+    it.each(["remote_not_tracked", "file_not_indexed"] as const)(
+      "carries the %s miss through as a value",
+      async (reason) => {
+        const res = await handleResolve(fileDeps({ kind: "miss", reason, repo: "acme/web" }), {
+          kind: "resolve",
+          pageUrl: FILE,
+        });
+        expect(res.ok).toBe(true);
+        if (!res.ok) return;
+        expect(res.file).toEqual({ kind: "miss", reason, repo: "acme/web" });
+      },
+    );
+
+    it("reports a 403 through the shipped scope-gap path, with the connection label", async () => {
+      // The population that hits this first: LEGACY_SCOPES is ["clip","briefs"], so every
+      // browser paired before scopes lacks `resolve`. The label is what `scopeCommand`
+      // needs to print `nimbus clip scopes <label> --set resolve`.
+      const res = await handleResolve(
+        {
+          ...fileDeps({ kind: "unsupported" }),
+          resolveFile: async () => ({
+            ok: false as const,
+            reason: "insufficient_scope" as const,
+            scopeGap: { required: "resolve", granted: ["clip"] },
+          }),
+        },
+        { kind: "resolve", pageUrl: FILE },
+      );
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.reason).toBe("insufficient_scope");
+      expect(res.scopeGap).toEqual({
+        label: conn.label,
+        required: "resolve",
+        granted: ["clip"],
+      });
+    });
+
+    it("degrades every other probe failure to unsupported, silently", async () => {
+      // A gateway that is down is not a gateway that refused. The page stays recognised,
+      // the header renders, and nothing is claimed about the file.
+      const res = await handleResolve(
+        {
+          ...fileDeps({ kind: "unsupported" }),
+          resolveFile: async () => ({ ok: false as const, reason: "unreachable" as const }),
+        },
+        { kind: "resolve", pageUrl: FILE },
+      );
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.file).toEqual({ kind: "unsupported" });
+    });
+
+    it("reads the probe and the roster concurrently", async () => {
+      // Serialising them stacks the roster's 10s bound behind the probe's before a
+      // header can render — the reason the other two branches already use Promise.all.
+      const order: string[] = [];
+      await handleResolve(
+        {
+          ...fileDeps({ kind: "found", path: "src/index.ts" }),
+          resolveFile: async () => {
+            order.push("probe:start");
+            await Promise.resolve();
+            order.push("probe:end");
+            return { ok: true, resolution: { kind: "found", path: "src/index.ts" } };
+          },
+          readAgentRoster: async () => {
+            order.push("roster:start");
+            return { names: [...AGENT_LANES], version: "7.8.1" };
+          },
+        },
+        { kind: "resolve", pageUrl: FILE },
+      );
+      expect(order.indexOf("roster:start")).toBeLessThan(order.indexOf("probe:end"));
+    });
   });
 });
 
@@ -744,6 +884,7 @@ describe("handleResolve attaches the offered lanes", () => {
     }),
     readConnectorHealth: async () => null,
     readAgentRoster: async () => ({ unavailable: true as const }),
+    resolveFile: async () => ({ ok: true as const, resolution: { kind: "unsupported" as const } }),
   };
 
   it("attaches the lanes the gateway can serve", async () => {
@@ -756,6 +897,10 @@ describe("handleResolve attaches the offered lanes", () => {
           label: "MacBook",
         }),
         resolveItem: async () => ({ ok: true, outcome: { kind: "not-indexed", fetchable: true } }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
         readConnectorHealth: async () => null,
         readAgentRoster: async () => ({ names: ["why", "impact"], version: "7.6.0" }),
       },
@@ -860,6 +1005,10 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map([["github", { state: "healthy" as const }]]),
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -874,6 +1023,10 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         resolveItem: okOutcome,
         readConnectorHealth: async () => null,
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -893,6 +1046,10 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map(),
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -912,6 +1069,10 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map(),
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -922,6 +1083,10 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         resolveItem: okOutcome,
         readConnectorHealth: async () => null,
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -939,6 +1104,10 @@ describe("handleResolve attaches connector health on a dashboard", () => {
         resolveItem: okOutcome,
         readConnectorHealth: async () => new Map([["github", { state: "degraded" as const }]]),
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -957,6 +1126,10 @@ describe("handleResolve attaches connector health on a dashboard", () => {
           return null;
         },
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://github.com/acme/web/pull/1" },
     );
@@ -976,6 +1149,10 @@ describe("handleResolve attaches connector health on a dashboard", () => {
           return null;
         },
         readAgentRoster: async () => ({ unavailable: true }),
+        resolveFile: async () => ({
+          ok: true as const,
+          resolution: { kind: "unsupported" as const },
+        }),
       },
       { kind: "resolve", pageUrl: "https://github.com/" },
     );
@@ -1094,6 +1271,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           called = true;
           return { ok: false as const, reason: "server_error" as const };
@@ -1122,6 +1300,7 @@ describe("handleAgentRun", () => {
         ok: true as const,
         outcome: { kind: "found" as const, item, matchKind: "exact" as const },
       }),
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
         seen.push({ agent, params });
         return { ok: true as const, runId: "r1" };
@@ -1197,6 +1376,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async (_o: string, _t: string, _agent: string, params: unknown) => {
           invoked.push(params);
           return { ok: true as const, runId: "r1" };
@@ -1221,6 +1401,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "not-indexed" as const, fetchable: true },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not invoke for a page that resolves to nothing");
         },
@@ -1246,6 +1427,7 @@ describe("handleAgentRun", () => {
         resolveItem: async () => {
           throw new Error("must not resolve on a dashboard");
         },
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
           invoked.push({ agent, params });
           return { ok: true as const, runId: "r1" };
@@ -1256,6 +1438,58 @@ describe("handleAgentRun", () => {
       { kind: "agent-run", lane: "ownership", pageUrl: "https://github.com/" },
     );
     expect(invoked).toEqual([{ agent: "ownership", params: { service: "github" } }]);
+  });
+
+  // A file page has no indexed item to resolve to — `resolveForAgent` takes the
+  // `forgeFile` branch and never calls `resolveItem` at all. Pins the forge params
+  // `invokeAgent` actually receives (a swapped repo/refAndPath or a dropped service
+  // would still pass a test that only checked `resolveCalls`) and the cache
+  // subject the run is stored under, so a regression that quietly fell back to
+  // resolving the file as an item — or sent the wrong forge coordinate — fails here.
+  it("never resolves a file page as an indexed item", async () => {
+    let resolveCalls = 0;
+    const invoked: Array<{ agent: string; params: unknown }> = [];
+    const puts: unknown[] = [];
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => {
+          resolveCalls += 1;
+          return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
+        },
+        readAgentRoster: async () => ({ unavailable: true as const }),
+        invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+          invoked.push({ agent, params });
+          return { ok: true as const, runId: "r1" };
+        },
+        getRun: async () => null,
+        putRun: async (run) => {
+          puts.push(run);
+        },
+      },
+      {
+        kind: "agent-run",
+        lane: "impact",
+        pageUrl: "https://github.com/acme/web/blob/main/src/index.ts",
+      },
+    );
+    expect(resolveCalls).toBe(0);
+    expect(res.state.kind).not.toBe("failed");
+    expect(invoked).toEqual([
+      {
+        agent: "impact",
+        params: { service: "github", repo: "acme/web", refAndPath: "main/src/index.ts" },
+      },
+    ]);
+    expect(puts).toEqual([
+      {
+        subject: { kind: "file", repo: "acme/web", refAndPath: "main/src/index.ts" },
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+      },
+    ]);
   });
 
   it("the why lane is asked with the page's PR URL, not the item title, and unnormalised", async () => {
@@ -1275,6 +1509,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
           seen.push({ agent, params });
           return { ok: true as const, runId: "r1" };
@@ -1305,6 +1540,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           called = true;
           return { ok: true as const, runId: "r2" };
@@ -1337,6 +1573,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           called = true;
           return { ok: true as const, runId: "r-rerun" };
@@ -1365,6 +1602,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "not-indexed" as const, fetchable: true },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not be called");
         },
@@ -1388,6 +1626,7 @@ describe("handleAgentRun", () => {
           resolveCalled = true;
           return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: true } };
         },
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not be called");
         },
@@ -1410,6 +1649,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => ({ ok: true as const, runId: "r9" }),
         getRun: async () => null,
         putRun: async (run) => {
@@ -1456,6 +1696,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           calls++;
           return calls === 1
@@ -1488,6 +1729,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           calls++;
           return { ok: false as const, reason: "busy" as const, retryAfterMs: 1000 };
@@ -1519,6 +1761,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           calls++;
           return calls === 1
@@ -1559,6 +1802,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           calls++;
           return calls === 1
@@ -1587,6 +1831,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => ({
           ok: false as const,
           reason: "insufficient_scope" as const,
@@ -1613,6 +1858,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => ({ ok: false as const, reason: "insufficient_scope" as const }),
         getRun: async () => null,
         putRun: async () => undefined,
@@ -1633,6 +1879,7 @@ describe("handleAgentRun", () => {
           reason: "insufficient_scope" as const,
           scopeGap: { required: "resolve", granted: ["clip"] },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not be called");
         },
@@ -1646,6 +1893,77 @@ describe("handleAgentRun", () => {
       reason: "insufficient_scope",
       scopeGap: { label: "chrome", required: "resolve", granted: ["clip"] },
     });
+  });
+});
+
+// `expert`/`pr` is `item-preferred` (`itemArmPolicy`, agents-capability.ts): never
+// withheld, but sharpened to `itemUrl` once the roster proves the gateway meets
+// `ITEM_ARM_FLOOR`. Every other `handleAgentRun` test above injects a
+// `readAgentRoster` that answers `unavailable` (the pre-existing, honest default),
+// so none of them exercise this fork — it needs its own fixture with a title that
+// differs from every other lane's, so a wrong-arm assertion cannot pass by
+// coincidence with a shared fixture.
+describe("expert on a pull request", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+  const item = {
+    id: "gh-1",
+    service: "github",
+    type: "pr",
+    title: "Add retry to the client",
+    url: "https://github.com/acme/web/pull/1",
+    modifiedAt: 1,
+  };
+  const PR = "https://github.com/acme/web/pull/1";
+
+  // Not a pre-existing helper — built on this file's `handleAgentRun` harness for
+  // this task, capturing what the injected `invokeAgent` dep received.
+  async function runAndCaptureParams(opts: {
+    lane: "expert";
+    pageUrl: string;
+    rosterVersion: string | null;
+  }): Promise<unknown> {
+    const seen: unknown[] = [];
+    await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async (_o: string, _t: string, _agent: string, params: unknown) => {
+          seen.push(params);
+          return { ok: true as const, runId: "r1" };
+        },
+        // A roster that answers WITH a version, not `unavailable` — 7.5.0 and
+        // 7.6.0 both serve the roster and simply say nothing about themselves.
+        readAgentRoster: async () => ({ names: [...AGENT_LANES], version: opts.rosterVersion }),
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: opts.lane, pageUrl: opts.pageUrl },
+    );
+    return seen[0];
+  }
+
+  it("sends the item arm when the gateway meets the floor", async () => {
+    const params = await runAndCaptureParams({
+      lane: "expert",
+      pageUrl: PR,
+      rosterVersion: "7.8.1",
+    });
+    expect(params).toEqual({ itemUrl: "https://github.com/acme/web/pull/1" });
+  });
+
+  it("keeps the title arm below the floor, rather than withholding the lane", async () => {
+    // 7.5.0 and 7.6.0 HAVE the arm and report no version, so they fail closed. A
+    // straight switch would withhold a working, shipped lane from all of them.
+    const params = await runAndCaptureParams({
+      lane: "expert",
+      pageUrl: PR,
+      rosterVersion: null,
+    });
+    expect(params).toEqual({ topicOrFile: "Add retry to the client" });
   });
 });
 
@@ -1665,6 +1983,7 @@ describe("handleAgentRun — a candidate the user picked (C2.5)", () => {
       getOrigins: async () => [],
       getConnection: async () => conn,
       resolveItem: async () => ambiguous,
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async (_o: string, _t: string, _agent: string, params: unknown) => {
         seen.push({ params });
         return { ok: true as const, runId: "r1" };
@@ -1730,6 +2049,7 @@ describe("handleAgentRun — the glossary lane takes a term", () => {
       resolveItem: async () => {
         throw new Error("a term lane must not resolve the page");
       },
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
         seen.push({ agent, params });
         return { ok: true as const, runId: "r1" };
@@ -1913,6 +2233,7 @@ describe("service lanes on a home page", () => {
         resolveCalls += 1;
         throw new Error("resolve must not be called on a home page");
       },
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
         invoked.push({ agent, params });
         return { ok: true as const, runId: "run_1" };
@@ -1940,6 +2261,7 @@ describe("service lanes on a home page", () => {
       resolveItem: async () => {
         throw new Error("unused");
       },
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async () => ({ ok: true as const, runId: "run_2" }),
       getRun: async () => null,
       putRun: async (r: unknown) => {
@@ -1971,6 +2293,7 @@ describe("service lanes on a home page", () => {
       resolveItem: async () => {
         throw new Error("unused");
       },
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async () => {
         invokes += 1;
         return { ok: true as const, runId: "run_3" };
@@ -2002,6 +2325,7 @@ describe("service lanes on a home page", () => {
       resolveItem: async () => {
         throw new Error("unused");
       },
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async () => {
         throw new Error("must not invoke");
       },
@@ -2037,6 +2361,7 @@ describe("lane/surface pairing enforcement", () => {
         resolveItem: async () => {
           throw new Error("must not resolve");
         },
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not invoke");
         },
@@ -2059,6 +2384,7 @@ describe("lane/surface pairing enforcement", () => {
         resolveItem: async () => {
           throw new Error("must not resolve");
         },
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not invoke");
         },

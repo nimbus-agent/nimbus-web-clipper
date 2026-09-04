@@ -70,6 +70,36 @@ export const RESOLVE_FIXTURE = {
 } as const;
 
 /**
+ * `GET /v1/items/resolve-file` — C7's proposed forge-file probe (not shipped
+ * upstream yet; see `GATEWAY_PATHS.resolveFile`'s own doc comment). Mirrors the
+ * wire shape `resolveFile` (gateway-client.ts) parses: `{ ok: true, path }` on a
+ * hit, `{ ok: false, reason, repo }` on a miss. Never rendered in a screenshot
+ * for the same reason RESOLVE_FIXTURE isn't — the sample page's product is
+ * unknown-host — so this exists purely as the pinned wire-shape record
+ * `mock-gateway.test.ts` asserts against and the default a scenario-free call
+ * gets.
+ */
+export const RESOLVE_FILE_FIXTURE = { ok: true, path: "src/a.ts" } as const;
+
+/**
+ * The two miss reasons `FileMissReason` (src/shared/types.ts) closes over, each
+ * as its own fixture so a scenario can key either one to a coordinate and make
+ * both reachable — the panel renders a different sentence per reason, and a
+ * harness that could only ever produce one would leave the other unexercised.
+ */
+export const RESOLVE_FILE_MISS_UNTRACKED = {
+  ok: false,
+  reason: "remote_not_tracked",
+  repo: "acme/web",
+} as const;
+
+export const RESOLVE_FILE_MISS_NOT_INDEXED = {
+  ok: false,
+  reason: "file_not_indexed",
+  repo: "acme/web",
+} as const;
+
+/**
  * `POST /v1/items/fetch` — the contracted targeted-fetch route. The mock imitates
  * the gateway's WIRE format here, so `status`/`itemId` are correct — unlike
  * everywhere else in `src/`, which speaks the client's own camelCase vocabulary
@@ -340,6 +370,16 @@ export interface Scenario {
   readonly resolve?: Readonly<Record<string, unknown>>;
   /** Answer for any url absent from `resolve`. Defaults to RESOLVE_FIXTURE. */
   readonly resolveDefault?: unknown;
+  /**
+   * Keyed by `service:repo:refAndPath`, joined in that order from the three
+   * query params `GET /v1/items/resolve-file` receives — the same
+   * keyed-by-exact-request shape as `resolve` above, so a scenario can put a
+   * miss (either reason) on one coordinate while every other coordinate keeps
+   * getting the default hit.
+   */
+  readonly resolveFile?: Readonly<Record<string, unknown>>;
+  /** Answer for any coordinate absent from `resolveFile`. Defaults to RESOLVE_FILE_FIXTURE. */
+  readonly resolveFileDefault?: unknown;
   readonly related?: unknown;
   readonly ingest?: unknown;
   readonly itemsFetch?: unknown;

@@ -3,6 +3,9 @@ import {
   CLIP_INGEST,
   PAIR_CONFIRM,
   RELATED,
+  RESOLVE_FILE_FIXTURE,
+  RESOLVE_FILE_MISS_NOT_INDEXED,
+  RESOLVE_FILE_MISS_UNTRACKED,
   RESOLVE_FIXTURE,
   type Scenario,
 } from "../../scripts/screenshots/gateway-fixtures.ts";
@@ -52,6 +55,17 @@ describe("mock gateway fixtures — locked contract shape", () => {
     expect(body["found"]).toBe(true);
     expect(body["matchKind"]).toBe("exact");
     expect((body["item"] as Record<string, unknown>)["modified_at"]).toEqual(expect.any(Number));
+  });
+
+  it("serves GET /v1/items/resolve-file with the default hit fixture", async () => {
+    const res = await handleRequest(
+      new Request(
+        "http://127.0.0.1:8765/v1/items/resolve-file?service=github&repo=acme%2Fweb&refAndPath=main%2Fsrc%2Fa.ts",
+        { method: "GET", headers: { authorization: "Bearer test-token" } },
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(RESOLVE_FILE_FIXTURE);
   });
 
   it("serves POST /v1/items/fetch with an indexed outcome", async () => {
@@ -114,7 +128,7 @@ describe("the four egress-ledger reads", () => {
     // The outcome marker leads, because it carries a HIGHER id than the fetch it
     // describes and the read is newest-first — the ordering the page must cope with.
     expect(shapes).toEqual([
-      "outcome:items.fetch.outcome:" + "c3".repeat(32),
+      `outcome:items.fetch.outcome:${"c3".repeat(32)}`,
       "sync:sync.run:null",
       "sync:items.fetch:null",
       "http:agents.impact:nimbus-editor",
@@ -277,6 +291,30 @@ describe("scenarios", () => {
       scenario,
     );
     expect((await miss.json()).found).toBe(false);
+  });
+
+  test("resolve-file is keyed off service:repo:refAndPath, and both miss reasons are reachable", async () => {
+    const scenario: Scenario = {
+      resolveFile: {
+        "github:acme/web:main/src/untracked.ts": RESOLVE_FILE_MISS_UNTRACKED,
+        "github:acme/web:main/src/not-indexed.ts": RESOLVE_FILE_MISS_NOT_INDEXED,
+      },
+    };
+    const get = (refAndPath: string) =>
+      handleRequest(
+        new Request(
+          `http://127.0.0.1:8765/v1/items/resolve-file?service=github&repo=acme%2Fweb&refAndPath=${encodeURIComponent(refAndPath)}`,
+        ),
+        scenario,
+      );
+
+    // Absent from the scenario's map: falls back to the default hit fixture,
+    // same as `resolve`'s `resolveDefault` fallback above.
+    expect(await (await get("main/src/a.ts")).json()).toEqual(RESOLVE_FILE_FIXTURE);
+    expect(await (await get("main/src/untracked.ts")).json()).toEqual(RESOLVE_FILE_MISS_UNTRACKED);
+    expect(await (await get("main/src/not-indexed.ts")).json()).toEqual(
+      RESOLVE_FILE_MISS_NOT_INDEXED,
+    );
   });
 
   test("a status override wins over the body (rate limiting)", async () => {

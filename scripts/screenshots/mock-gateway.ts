@@ -21,6 +21,7 @@ import {
   INDEX_BRIEF_REPORT,
   PAIR_CONFIRM,
   RELATED,
+  RESOLVE_FILE_FIXTURE,
   RESOLVE_FIXTURE,
   type Scenario,
 } from "./gateway-fixtures.ts";
@@ -172,6 +173,21 @@ export async function handleRequest(
     const target = url.searchParams.get("url") ?? "";
     const keyed = scenario.resolve?.[target];
     return jsonResponse(keyed ?? scenario.resolveDefault ?? RESOLVE_FIXTURE);
+  }
+  // `GET /v1/items/resolve-file` — C7's proposed forge-file probe, not shipped
+  // upstream yet (see GATEWAY_PATHS.resolveFile's own doc comment). Same
+  // keyed-by-exact-request shape as `resolve` just above: the default answers
+  // a hit for any coordinate, and a scenario keys a specific coordinate to
+  // either miss fixture so both are reachable. No separate auth/scope check —
+  // it falls under the same generic `scenario.status` override every other
+  // path already gets, checked once above before routing.
+  if (req.method === "GET" && url.pathname === GATEWAY_PATHS.resolveFile) {
+    const service = url.searchParams.get("service") ?? "";
+    const repo = url.searchParams.get("repo") ?? "";
+    const refAndPath = url.searchParams.get("refAndPath") ?? "";
+    const target = `${service}:${repo}:${refAndPath}`;
+    const keyed = scenario.resolveFile?.[target];
+    return jsonResponse(keyed ?? scenario.resolveFileDefault ?? RESOLVE_FILE_FIXTURE);
   }
   // The four egress-ledger reads. GETs, checked before the POST-only gate below.
   // `egress` is matched before its three children because none of them is a

@@ -100,6 +100,7 @@ import {
   postClip,
   postRelated,
   probeHealth,
+  resolveFile,
   resolveItem,
 } from "./gateway-client.ts";
 import {
@@ -229,11 +230,18 @@ const agentStoreDeps = {
   getRun: (subject: RunSubject, lane: AgentLane) => storeGetRun(subject, lane, Date.now()),
 };
 
+// Bound here for the same reason `readConnectorHealth` is: `fetchAgentRoster` takes a
+// deps object with its own `doFetch`, and `handleResolve`'s (and `handleAgentRun`'s)
+// dep takes (origin, token). This is the one place the real implementation is wired.
+const readAgentRoster = (origin: string, token: string) =>
+  fetchAgentRoster({ origin, token, doFetch: fetch });
+
 const agentRunDeps = {
   getOrigins,
   getConnection,
   resolveItem,
   invokeAgent,
+  readAgentRoster,
   ...agentStoreDeps,
   // Persisting a `running` state is also the ONE place a run starts being polled:
   // wrapping the seam here (rather than threading a "start polling" call through
@@ -257,12 +265,6 @@ const agentStateDeps = { getOrigins, getConnection, resolveItem, ...agentStoreDe
 // fake and never has to know the store exists.
 const readConnectorHealth = (origin: string) =>
   storeReadConnectorHealth({ getConnectors }, origin, Date.now());
-
-// Bound here for the same reason `readConnectorHealth` is: `fetchAgentRoster` takes a
-// deps object with its own `doFetch`, and `handleResolve`'s dep takes (origin, token).
-// This is the one place the real implementation is wired.
-const readAgentRoster = (origin: string, token: string) =>
-  fetchAgentRoster({ origin, token, doFetch: fetch });
 
 // Runs currently being polled by an in-worker loop, keyed by runId. Lets the
 // alarm's resume skip a run already being handled locally: unlike the eviction
@@ -1124,7 +1126,7 @@ function routeIndexReads(message: unknown, respond: Respond): Routed {
   }
   if (isResolveRequest(message)) {
     handleResolve(
-      { getConnection, getOrigins, resolveItem, readConnectorHealth, readAgentRoster },
+      { getConnection, getOrigins, resolveItem, resolveFile, readConnectorHealth, readAgentRoster },
       message,
     )
       .then(respond)
@@ -1363,7 +1365,7 @@ const ambientDeps: AmbientDeps = {
   lastCued: (tabId) => lastCuedByTab.get(tabId),
   resolve: (pageUrl) =>
     handleResolve(
-      { getConnection, getOrigins, resolveItem, readConnectorHealth, readAgentRoster },
+      { getConnection, getOrigins, resolveItem, resolveFile, readConnectorHealth, readAgentRoster },
       { kind: "resolve", pageUrl },
     ),
   currentUrl: tabUrl,

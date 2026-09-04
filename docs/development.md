@@ -466,22 +466,18 @@ mock's fixed brief cannot produce.
 
 ## Manual verification — Item lanes and the version floor (C6)
 
-> **This pass cannot be run yet, and steps 2–5 will not pass against any
-> gateway that exists.** The item lanes are gated on the gateway reporting its
-> own version from `GET /v1/agents`, and that route serves `{ agents }` alone —
-> upstream Nimbus#1421 added the item **arm**, not the version **field**. With
-> no version, `meetsFloor` fails closed, so the three lanes are withheld on
-> every gateway, a locally built one included (a local build reports no version
-> at all rather than `0.0.0`, so it never reaches the development-build
-> allowance in `meetsFloor`). A tester following step 2 today will see the three
-> lanes absent and should conclude the *gateway* is missing the field, **not**
-> that the feature is broken. Run this pass once a gateway serves a `version`
-> there. Until then only two steps mean anything: **step 1**, which is exactly
-> today's state and includes its "the PR page is unaffected" check, and **step
-> 6**, which passes only vacuously — nothing offers an item lane anywhere yet, so
-> Confluence and CircleCI not offering one proves nothing about them. **Step 5 is
-> blocked with the rest**: with the three lanes withheld there is no lane in which
-> to observe the miss.
+> **This pass needs a gateway at v7.7.0 or later for steps 2–5 to pass.** The
+> item lanes are gated on the gateway reporting its own version from
+> `GET /v1/agents` — upstream Nimbus#1421 added the item **arm** in v7.5.0, and
+> Nimbus#1428 added the version **field** in v7.7.0. A gateway below 7.7.0
+> (7.5.0 and 7.6.0 included) reports no version, so `meetsFloor` fails closed
+> and the three lanes stay withheld — that is correct, not a bug: a gateway
+> that cannot say what it is has not told us it can answer. Below the floor,
+> only two steps mean anything: **step 1**, which is exactly that state and
+> includes its "the PR page is unaffected" check, and **step 6**, which passes
+> only vacuously — nothing offers an item lane below the floor, so Confluence
+> and CircleCI not offering one proves nothing about them. At or above the
+> floor, run the full pass below.
 
 Not a unit test, and it is the pass that catches what none of the above can:
 whether the gateway's rendered brief actually names the item it answered
@@ -491,24 +487,24 @@ its `GET /v1/agents` route does not exist, so `offeredLanes` reads
 `unavailable`, and the three item lanes are withheld on the issue — exactly
 the filtered set steps 1–2 below are checking. The mock cannot show the
 other half: a version at or above the floor, so the lanes offered and run. To
-verify both halves, pair against two gateway builds: one today (any build
-without the version field) and one once Nimbus#1421 ships the field (meaning a
-build that reports a `version` of at least `7.5.0` from `GET /v1/agents`). The
-second build does not exist yet.
+verify both halves, pair against two gateway builds: one below 7.7.0 (with or
+without the item arm — `meetsFloor` fails closed on either) and one at 7.7.0
+or later.
 
 Prereq: paired, a Jira issue Nimbus has indexed (a Linear issue or a PagerDuty
 incident works identically for steps 1–3), and — for step 6 — a Confluence
 page and a CircleCI pipeline, also indexed.
 
-1. **Below the floor:** run the gateway build WITHOUT Nimbus#1421. Open the
-   Jira issue. → header, freshness, Related, glossary — and none of the three
-   new lanes (*How did we get here*, *Who should I talk to*, *Who owns
-   this*). The PR page is unaffected by any of this: `impact`, `expert` and
-   `why` are all still offered there and still work.
-2. **At the floor:** restart with a gateway that both has Nimbus#1421 **and
-   reports a `version` at or past `7.5.0` from `GET /v1/agents`** — no such
-   build exists yet, which is what the note at the top of this section is
-   about; Nimbus#1421 shipped the arm without the field. Open the same Jira
+1. **Below the floor:** run a gateway build at v7.6.0 or earlier — it has the
+   item arm (Nimbus#1421, in v7.5.0) but predates the version field
+   (Nimbus#1428, in v7.7.0), so `GET /v1/agents` reports no version and
+   `meetsFloor` fails closed. Open the Jira issue. → header, freshness,
+   Related, glossary — and none of the three new lanes (*How did we get
+   here*, *Who should I talk to*, *Who owns this*). The PR page is unaffected
+   by any of this: `impact`, `expert` and `why` are all still offered there
+   and still work.
+2. **At the floor:** restart with a gateway that reports a `version` at or
+   past `7.7.0` from `GET /v1/agents` (Nimbus#1428). Open the same Jira
    issue. → *How did we get here*, *Who should I talk to* and *Who owns
    this* are all offered. Run each. (`meetsFloor` in
    `src/background/agents-capability.ts` also accepts `0.0.0` as a development
@@ -541,6 +537,19 @@ page and a CircleCI pipeline, also indexed.
    Confluence by design (upstream F8 — no graph entity for a `type: "page"`
    item; see `docs/architecture.md`'s "Item lanes on an issue or an incident"),
    CircleCI because it is not an item surface `LANE_RULES` names at all.
+7. **The file surface, both sides of the route — only one side can be run
+   today.** `GET /v1/items/resolve-file` is proposed, not shipped anywhere
+   upstream, so there is no gateway to test the positive case against yet:
+   all three lanes (*What breaks if this changes*, *Who knows this file*,
+   *Who owns this*) offered on a file the route resolves. What runs today is
+   the negative case, against any gateway that exists (none serve the
+   route): open a GitHub blob URL (a file, not a directory or the repo
+   root). → the page renders exactly as it did before this branch —
+   recognised, no lanes, no banner — silently, the same fail-quiet the
+   roster read makes elsewhere in this doc, not an error state. Run the
+   positive half once the route lands; it will need no version floor, only
+   the forge file arm (v7.6.0, Nimbus#1424) that a resolved file's lanes
+   already send.
 
 ## Manual verification — Setup that works (discovery, connection health, the trust panel)
 
@@ -793,7 +802,7 @@ bundle, and the real extension plumbing.
     absolutised against the page's own origin — and the body the gateway
     receives carries the same five under `source`. Needs the **gateway release
     that added it, 2.12.0**, or later for them to be stored (a floor from an
-    old release line — the gateway's own version has since passed **7.5.0**);
+    old release line — the gateway's own version has since passed **7.8.1**);
     an older gateway accepts the clip and drops them with no error. **[Same
     substitution as steps 9–10: driven through the
     panel's capture offer, which shares `shared/preview.ts` with the popup.]**
