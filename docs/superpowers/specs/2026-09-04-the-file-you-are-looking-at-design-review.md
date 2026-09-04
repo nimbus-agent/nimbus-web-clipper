@@ -70,6 +70,12 @@ This review identifies **5 critical implementation and contract clarifications**
   - Explicitly specify that `403 insufficient_scope` from `resolveFile` returns `{ ok: false, reason: "insufficient_scope", scopeGap }`, rendering standard scope guidance (`nimbus-related__status` with `scopeCommand`).
 
 ### Q2.4: Specification of Copy for the Five File Lane Titles
+
+**Moot for two of the five:** `ghost` and `conflicts` never shipped (§4.7 of the design), so
+the `ghost`/`conflicts` entries below name titles nothing renders. The `file`-surface
+overrides for `impact`/`expert`/`ownership` are the part that shipped, and shipped with
+different wording than this review guessed — see `SURFACE_LANE_TITLES.file` in
+`panel-in-page.ts` for the actual strings.
 * **Context:** §4.6 mentions adding "five lane titles" across `panel-in-page.ts` and `panel-view.ts`. `LANE_TITLES` requires default strings for `Record<AgentLane, string>`, and `SURFACE_LANE_TITLES` allows surface overrides.
 * **Issue:** The spec does not state the exact title strings for `ghost` and `conflicts`, nor whether `impact`, `expert`, and `ownership` use default PR titles or file-specific titles on `file`.
 * **Recommendation:** Explicitly document the title table:
@@ -96,6 +102,12 @@ This review identifies **5 critical implementation and contract clarifications**
   ]);
   ```
   `agentParams` handles `expert` on `pr` independently via `meetsFloor(roster.version, ITEM_ARM_FLOOR)`.
+* **Resolution:** shipped as a policy map, not a set — `needsItemArm` and `ITEM_ARM_PAIRS`
+  both name things that do not exist in the code. `agents-capability.ts` replaced the boolean
+  table with a `ReadonlyMap` from a `lane:surface` key to `"item-required" | "item-preferred"`
+  (`ITEM_ARM_POLICY`, read through `itemArmPolicy(lane, kind)`); `expert:pr` is
+  `"item-preferred"` rather than absent, and `offeredLanes` withholds only on
+  `"item-required"` — see §5.1 of the design this reviews.
 
 ---
 
@@ -143,7 +155,7 @@ This review identifies **5 critical implementation and contract clarifications**
 | **Branch with Multiple Slashes** | URL is `/blob/feat/jira-123/sub-fix/src/app.ts`. `refAndPath` is `feat/jira-123/sub-fix/src/app.ts`. | Client does not split; gateway splits against checkout file list. |
 | **SPA Route Change from PR to File** | User navigates from PR (`#482`) to a file view on GitHub without full page reload. | `checkNavigation` detects `kind` change (`pr` → `file`), cancels PR poll timers, updates `pinnedRecognition`, and issues `handleResolve`. |
 | **Gateway 7.5.0 (Item Arm, No Version)** | `roster.version` is `null`. `meetsFloor(null, "7.5.0")` is `false`. | `expert` on `pr` sends `{ topicOrFile: item.title }`; `expert` on `issue` is withheld. |
-| **Gateway 7.8.1 (Probe Route Available)** | Probe returns `200 { ok: true, path: "src/foo.ts" }`. | All 5 file lanes offered; agent invokes send `{ service, repo, refAndPath }`. |
+| **Gateway 7.8.1 (Probe Route Available)** | Probe returns `200 { ok: true, path: "src/foo.ts" }`. | All 3 file lanes offered (`ghost`/`conflicts` are out of scope, see §4.7 of the design); agent invokes send `{ service, repo, refAndPath }`. |
 
 ---
 
@@ -152,9 +164,9 @@ This review identifies **5 critical implementation and contract clarifications**
 1. **Storage Guard Test for File Subjects:** Add unit test in `agent-run-store.test.ts` verifying that `isRunSubject({ kind: "file", repo: "acme/web", refAndPath: "main/src/index.ts" })` returns `true` and round-trips through `putRun` / `getRun`.
 2. **Recognition Metadata Test:** Assert in `recognise.test.ts` that GitHub, GitLab, and Bitbucket file fixtures produce a `Recognition` object containing `forgeFile: { repo, refAndPath }`.
 3. **`offersCapture` Negative Test:** Assert in `capture-offer.test.ts` that `offersCapture({ kind: "file", ... })` is strictly `false` for both hit and miss states.
-4. **Table-Driven `needsItemArm` Test:** Test exhaustively all `(AgentLane, SurfaceKind)` combinations against `needsItemArm`, specifically verifying that `"expert:pr"` is `false` and `"why:pr"` is `false`.
+4. **Table-Driven `needsItemArm` Test:** Test exhaustively all `(AgentLane, SurfaceKind)` combinations against `needsItemArm`, specifically verifying that `"expert:pr"` is `false` and `"why:pr"` is `false`. (Shipped as `itemArmPolicy` over `ITEM_ARM_POLICY` — see the Q2.5 resolution above; `expert:pr` is `"item-preferred"`, not `false`, and there is no boolean to assert against.)
 5. **Probe Response Matrix Fixtures:** Test `handleResolve` with mock responses for:
-   - `200 { ok: true, path: "..." }` → returns 5 offered lanes, no banner.
+   - `200 { ok: true, path: "..." }` → returns the file surface's three offered lanes, no banner.
    - `200 { ok: false, reason: "remote_not_tracked" }` → returns 0 offered lanes, remote sentence.
    - `200 { ok: false, reason: "file_not_indexed" }` → returns 0 offered lanes, index sentence.
    - `404 Not Found` → returns 0 offered lanes, no banner.

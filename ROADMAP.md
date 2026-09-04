@@ -1098,7 +1098,7 @@ the editor structurally cannot.*
 
 ## Phase C6 — Lanes on an item 🟢/🟡
 
-### C6.1 Issue and incident get why, expert, ownership — and the panel stops guessing the lane list · 🟢/🟡 · M — ✅ client-complete, 🟡 gateway-blocked
+### C6.1 Issue and incident get why, expert, ownership — and the panel stops guessing the lane list · 🟢/🟡 · M — ✅ shipped
 > **What** A Jira issue, a Linear issue and a PagerDuty incident gain three agent
 > lanes — *how did we get here*, *who should I talk to*, *who owns this* —
 > answered about the one indexed item the page resolves to. The panel also stops
@@ -1137,22 +1137,16 @@ the editor structurally cannot.*
 > exactly the lanes the paired gateway's roster (and, for these three, its
 > version) says it can serve; and neither `pr`'s existing
 > `impact`/`expert`/`why` nor `home`'s `catchup`/`decisions`/`ownership`
-> changed behaviour. **Not yet met, and not by anything the client can do.**
-> The roster half is met and works against any gateway serving
-> `GET /v1/agents`; the last two clauses are met. The first is not: it is
-> gated on a gateway version this route does not serve.
-> **Depends — and this is the honest status.** `GET /v1/agents` upstream
-> answers `{ agents }` and nothing else (`packages/gateway/src/ipc/http-server.ts`,
-> `json({ agents: [...EXTERNAL_AGENT_NAMES] }, 200)`); Nimbus#1421 added the
-> item **arm**, not the **version field**. So `meetsFloor(null, …)` is false on
-> every gateway that exists, and the three item lanes are withheld from
-> everyone — including from a locally built gateway, which reports no version
-> at all rather than `0.0.0` and therefore fails closed before the
-> development-build allowance in `meetsFloor` can apply. The client is
-> complete; **propose and land a `version` field on `GET /v1/agents` upstream**
-> and this entry flips 🟡 → 🟢 with no client change and no re-pairing. The
-> manual checks in `docs/development.md` cannot be run until it does, and say
-> so.
+> changed behaviour. **All four clauses are now met.**
+> **Depends.** `GET /v1/agents` upstream answered `{ agents }` alone until
+> Nimbus#1428 added the **version field** in **v7.7.0**; Nimbus#1421 had
+> already added the item **arm**, in v7.5.0. `meetsFloor` needed both: below
+> 7.7.0 (7.5.0 and 7.6.0 included) the gateway has the arm but cannot say what
+> it is, so it fails closed and the three item lanes stay withheld — a
+> locally built gateway included, since a local build reports no version at
+> all rather than `0.0.0` and therefore fails closed before the
+> development-build allowance in `meetsFloor` can apply. At 7.7.0 or later the
+> lanes run. The manual checks in `docs/development.md` are runnable now.
 > **The honest bound: a Confluence page still gets none of these.** It indexes
 > upstream as `type: "page"`, which has no graph entity, and all three lanes
 > answer from graph edges — offering them there would mean a permanently empty
@@ -1161,19 +1155,13 @@ the editor structurally cannot.*
 > what it had: header, freshness, Related, `glossary`. **A gateway below the
 > version floor is bound the same honest way** — not offered the three lanes,
 > not shown them failing.
-> **Deferred here, with its trigger: `expert` on a pull request still sends
-> `{ topicOrFile: item.title }`.** §4.2 of the design wanted that switched to the
-> item arm too, and called the title arm what it is — client-side dishonesty,
-> because "who has touched things whose titles look like this" is not the
-> question the lane's label promises. It is deliberately not switched. The item
-> arm is floored, and with no gateway reporting a version the floor is failing
-> closed for 100% of them, so switching today would withhold a **working,
-> shipped** lane from every user to remove a wording problem. **Trigger:** once
-> gateways commonly report a version on `GET /v1/agents` — the same unblock the
-> Depends note above waits on — switch `expert` on `pr` to `{ itemUrl }` and
-> delete this note. Recorded here and not only in a code comment, because the
-> code comment is next to the line and this is the file a maintainer reads to
-> find out what is owed.
+> **The `expert`-on-`pr` deferral is resolved, not re-triggered.** §4.2 wanted
+> `expert` on a pull request switched from `{ topicOrFile: item.title }` to the
+> item arm; a straight switch was rejected because it would have withheld a
+> working, shipped lane from every gateway below the floor. It now sends
+> `{ itemUrl }` when the gateway meets `ITEM_ARM_FLOOR` and falls back to
+> `{ topicOrFile: item.title }` otherwise — floor-conditional, never withheld.
+> See C7's entry for the arm-policy table this needed.
 > **The ambiguous-page gap now reaches three surfaces, not one** — `pr`, `issue`
 > and `incident`, every surface an item lane runs on. C2.4's known
 > gap — a lane asked with the *page's* URL, which the gateway re-resolves and
@@ -1188,8 +1176,49 @@ the editor structurally cannot.*
 > correction note.
 > Full design:
 > [`docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md`](./docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md)
-> (§4; §5's file-page lanes are **C7**, blocked on an unreleased upstream PR and
-> not part of this entry).
+> (§4; §5's file-page lanes are **C7**, below, and not part of this entry).
+
+---
+
+## Phase C7 — The file you are looking at 🟢/🟡
+
+### C7.1 A source file gains impact, expert and ownership · 🟢/🟡 · M — ✅ shipped
+> **What** A GitHub, GitLab or Bitbucket file page (`.../blob/<ref>/<path>` and
+> the Bitbucket `/src/` equivalent) is a recognised surface. It gains **three**
+> agent lanes — *what breaks if this changes*, *who knows this file*, *who owns
+> this* — answered about the file, resolved against the reader's own checkout
+> by the gateway. **Not the five an earlier draft of the design named:** `ghost`
+> and `conflicts` are federation-only, the forge arm refuses namespaces, and
+> both would answer nothing on every gateway forever — see §4.7 of the design
+> for why that is a permanent exclusion, not a deferral.
+> **Why it wows** "What breaks if I touch this" and "who do I ask about it" are
+> questions every reader of unfamiliar code has, on a surface (a lone file, no
+> PR context) the panel previously did not even recognise.
+> **Touches** `src/shared/recognise/` (the three forge matchers, each carrying
+> the repo coordinate and an opaque `refAndPath` — the client cannot split a
+> branch name from a path and does not try), `src/background/handlers.ts` (the
+> `file` branch in `resolveForAgent`, the once-per-page probe run beside the
+> roster read), `src/background/gateway-client.ts` (`resolveFile`, its outcome
+> parser), `src/shared/messages.ts` (the probe's outcome on the resolve
+> response), `src/panel/panel-in-page.ts` (the file header,
+> `SURFACE_LANE_TITLES.file`, the two miss sentences, and offering the lanes
+> only on a resolved file — this surface's gate is the probe, not
+> `ITEM_ARM_POLICY`, which has no `file` rows).
+> **Approach** The gateway disambiguates `refAndPath` against the file list it
+> already holds for that repo — the same division of labour as C1.2's URL
+> parsing. A file the gateway cannot place gets **one** sentence, not a lane
+> each: `remote_not_tracked` ("no local checkout of this repo") is a different
+> fact and a different remediation from `file_not_indexed` (the repo is known,
+> the file is not), and the panel says which. A gateway old enough to 404 the
+> resolve probe leaves the page exactly as it rendered before — recognised, no
+> lanes, no banner — silently, the same fail-quiet the roster read makes.
+> **Done when** All three lanes run on a file the gateway resolves, against the
+> reader's own checkout; a file it cannot place shows the correct one of the
+> two miss sentences and no lanes; a gateway without the probe route changes
+> nothing about how the page renders. **Met.**
+> Full design:
+> [`docs/superpowers/specs/2026-09-04-the-file-you-are-looking-at-design.md`](./docs/superpowers/specs/2026-09-04-the-file-you-are-looking-at-design.md)
+> (§4; §4.7 for why not five; §5 for the C6.1 close-out this same branch shipped).
 
 ---
 

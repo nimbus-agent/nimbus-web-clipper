@@ -118,17 +118,16 @@ export async function fetchAgentRoster(deps: RosterDeps): Promise<AgentRoster> {
  * item lanes. The effective floor is the release that added the version field,
  * because a gateway that cannot say what it is has not told us it can answer.
  *
- * As of 2026-09-02 that release does not exist. Upstream `GET /v1/agents`
- * answers `{ agents }` alone — Nimbus#1421 shipped the arm, not the field — so
- * `meetsFloor(null, …)` is false everywhere and these three lanes are withheld
- * on EVERY gateway, a locally built one included: a local build reports no
- * version rather than `0.0.0`, so it fails closed before the development-build
- * allowance in `meetsFloor` can apply. The client is complete and waiting on the
- * field. Do not loosen the floor to make the lanes appear; a lane offered
- * against a gateway that cannot serve its arm is a `-32602` under a header that
- * promised an answer, which is the thing this gate exists to prevent.
+ * Upstream Nimbus#1428 added the `version` field in **v7.7.0**, so the floor now has
+ * its input. Note what did not change: 7.5.0 and 7.6.0 HAVE the arm and report no
+ * version, so they still fail closed and are offered no item-REQUIRED lanes. That is
+ * correct — a gateway that cannot say what it is has not told us it can answer — and
+ * it is exactly why `expert` on a pull request is `item-preferred` rather than
+ * required (see `ITEM_ARM_POLICY`).
  *
- * Do not raise this without a released gateway to point at.
+ * Do not lower this floor to make the lanes appear on an older gateway. A lane offered
+ * against a gateway that cannot serve its arm is a -32602 under a header that promised
+ * an answer, which is the thing this gate exists to prevent.
  */
 export const ITEM_ARM_FLOOR = "7.5.0";
 

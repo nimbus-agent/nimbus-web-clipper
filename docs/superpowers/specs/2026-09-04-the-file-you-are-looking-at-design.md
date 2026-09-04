@@ -376,7 +376,10 @@ Per F4, the cross-product does **not** have to grow a pair to keep
 `ITEM_ARM_SURFACES`. Leaving the table alone and adding a `meetsFloor` check
 inside `agentParams` is the tempting minimal change, and it is the one to
 refuse: it puts the answer to "does this pair use the item arm" in two places,
-which is what the table's own doc comment exists to prevent.
+which is what the table's own doc comment exists to prevent. (`ITEM_ARM_LANES`,
+`ITEM_ARM_SURFACES` and `needsItemArm` name the table this section is arguing
+*against* keeping; none of the three survived the change below — the shipped
+symbol is `ITEM_ARM_POLICY` / `itemArmPolicy`.)
 
 Instead the table stops being a boolean and starts naming the policy, so the two
 readers ask their own question of one source:

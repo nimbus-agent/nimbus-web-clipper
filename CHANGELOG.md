@@ -82,26 +82,22 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   is the gateway's job.
 
 - **A Jira issue, a Linear issue and a PagerDuty incident can now get agent
-  lanes — and stay dark until the gateway says it can serve them.**
-  Recognition reached these products in the last two releases and then had
-  nothing to run on them: an issue got a header, a freshness line, Related and
-  the glossary box, and no lane at all. The client half of *how did we get
-  here*, *who should I talk to* and *who owns this* — answered about the
-  indexed item the page resolves to — is complete and shipped here.
+  lanes.** Recognition reached these products in the last two releases and
+  then had nothing to run on them: an issue got a header, a freshness line,
+  Related and the glossary box, and no lane at all. *How did we get here*,
+  *who should I talk to* and *who owns this* now run there too, answered
+  about the indexed item the page resolves to.
 
-  **You will not see them yet, and that is deliberate.** Offering one of these
-  three lanes needs the gateway to accept an item URL, and its agent list
-  cannot say whether it does: all three agent *names* have been published for
-  releases, their item *arms* have not. So the client reads the gateway's own
-  version alongside that list and offers the three only at or above the release
-  that added the arm. **No released gateway reports a version on that route
-  today** — `GET /v1/agents` answers with the names alone — so on every gateway
-  that currently exists the three lanes are withheld, from everyone, including
-  developers running a locally built gateway (a local build reports no version
-  either, so it fails closed before the development-build allowance can apply).
-  The moment a gateway serves its version there, they light up with no change
-  to this extension and no re-pairing. Until then this entry describes a client
-  that is finished and waiting.
+  **Needs gateway 7.7.0 or later.** Offering one of these three lanes needs
+  the gateway to accept an item URL, and its agent list alone cannot say
+  whether it does: all three agent *names* have been published since 7.5.0,
+  their item *arms* since that same release — but nothing said which gateway
+  you were running until 7.7.0 added a version to `GET /v1/agents`. Below
+  7.7.0 (7.5.0 and 7.6.0 included) the gateway has the arm and cannot say what
+  it is, so it fails closed and the three lanes stay withheld — a locally
+  built gateway included, since a local build reports no version at all
+  rather than `0.0.0`. At 7.7.0 or later they run, with no change to this
+  extension and no re-pairing.
 
 - **The panel no longer offers a lane the paired gateway cannot serve.** The
   lane list was a hardcoded assertion about a gateway you might not be
@@ -115,6 +111,37 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   capability read leaves unconfirmed — and withholding them puts those pages
   back to exactly what they showed before this release. Not offered and failing
   are different things, and only one of them is honest.
+
+- **A source file on GitHub, GitLab or Bitbucket now gets three agent lanes.**
+  A file page — `.../blob/<ref>/<path>`, or Bitbucket's `/src/` equivalent —
+  was previously just a tab; opening the panel there now offers *what breaks
+  if this changes*, *who knows this file* and *who owns this*, answered about
+  the file resolved against the reader's own checkout. Branch names can
+  contain slashes, so the client sends the ref and path together, unsplit, and
+  the gateway disambiguates it against the repo's own file list.
+
+  **A file Nimbus cannot place says which of two things is true, not one
+  vague miss.** Either Nimbus has no local checkout of the repo at all, or it
+  has the repo but not that file — different facts with different fixes, and
+  the panel names the one that applies instead of a lane's worth of "not
+  found" repeated three times.
+
+  **Needs a gateway new enough to resolve the file at all.** A gateway that
+  does not yet serve the resolve route leaves the page exactly as it rendered
+  before this release — recognised, no lanes, no banner — silently. Nothing on
+  screen says the gateway is the reason, the same fail-quiet every other
+  capability gate in this client uses.
+
+- **`Who should review it` on a pull request now answers about the pull
+  request itself, on a gateway that can take it.** It has always sent the
+  PR's *title* to an agent that answers about topics — "who has touched things
+  whose titles look like this" — which is not the question the lane's label
+  promises, and was never switched because doing so unconditionally would
+  have silently turned the lane off on every gateway that could not yet accept
+  a PR address. It now sends the PR itself when the paired gateway is new
+  enough to serve it, and falls back to the old title-based question when it
+  is not — so the lane sharpens for gateways that can answer it and keeps
+  working, exactly as it always has, for the ones that cannot.
 
 ## [0.5.0] - 2026-08-24
 
