@@ -223,6 +223,17 @@ export type Recognition =
        * shared/recognise/index.ts.
        */
       readonly resolveUrl: string;
+      /**
+       * The forge coordinate, on a `file` recognition only — carried through from
+       * `Match.forgeFile` rather than re-derived, because the three forges spell the
+       * same coordinate differently and deriving it twice is the drift the registry
+       * exists to prevent.
+       *
+       * `refAndPath` is ref and path STILL JOINED. A branch name may contain slashes,
+       * so splitting it here would need the repository's branch list — a forge API call
+       * this client must never make. The gateway holds the file list and splits there.
+       */
+      readonly forgeFile?: { readonly repo: string; readonly refAndPath: string };
     }
   | { readonly ok: false; readonly reason: "unknown-host" | "unrecognised-path" };
 

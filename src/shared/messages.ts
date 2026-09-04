@@ -737,6 +737,16 @@ export function isScopeGap(v: unknown): v is ScopeGap {
   );
 }
 
+function isForgeFile(v: unknown): boolean {
+  // ABSENT is valid — every non-file recognition omits it. Present-but-malformed is not:
+  // this value reaches a gateway query string, so a non-string here would be coerced into
+  // one silently.
+  if (v === undefined) {
+    return true;
+  }
+  return isObject(v) && typeof v["repo"] === "string" && typeof v["refAndPath"] === "string";
+}
+
 function isRecognition(v: unknown): v is Recognition {
   if (!isObject(v)) {
     return false;
@@ -747,7 +757,8 @@ function isRecognition(v: unknown): v is Recognition {
       typeof v["kind"] === "string" &&
       typeof v["label"] === "string" &&
       typeof v["ref"] === "string" &&
-      typeof v["resolveUrl"] === "string"
+      typeof v["resolveUrl"] === "string" &&
+      isForgeFile(v["forgeFile"])
     );
   }
   return v["ok"] === false && typeof v["reason"] === "string";

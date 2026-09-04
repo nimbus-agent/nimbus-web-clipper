@@ -1019,3 +1019,22 @@ describe("the file surface", () => {
     if (r.ok) expect(r.kind).toBe("pr");
   });
 });
+
+describe("a file page carries its forge coordinate into the Recognition", () => {
+  it.each([
+    ["https://github.com/acme/web/blob/main/src/index.ts", "acme/web", "main/src/index.ts"],
+    [
+      "https://gitlab.com/group/sub/proj/-/blob/feat/x/src/a.ts",
+      "group/sub/proj",
+      "feat/x/src/a.ts",
+    ],
+    ["https://bitbucket.org/acme/web/src/main/src/a.ts", "acme/web", "main/src/a.ts"],
+  ])("%s", (url, repo, refAndPath) => {
+    const r = recognise(url, []);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.kind).toBe("file");
+    // The Match already carried this; the Recognition dropped it, which is the bug.
+    expect(r.forgeFile).toEqual({ repo, refAndPath });
+  });
+});

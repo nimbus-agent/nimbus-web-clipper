@@ -175,6 +175,7 @@ export function recognise(url: string, origins: readonly ConfiguredOrigin[]): Re
     label: labelFor(entry.product, match.kind),
     ref: match.ref,
     resolveUrl,
+    ...(match.forgeFile === undefined ? {} : { forgeFile: match.forgeFile }),
   };
 }
 

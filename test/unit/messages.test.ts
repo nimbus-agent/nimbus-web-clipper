@@ -329,6 +329,25 @@ describe("recognise message guards", () => {
       }),
     ).toBe(false);
   });
+
+  it("rejects a forgeFile whose fields are not strings", () => {
+    const base = {
+      ok: true,
+      product: "github",
+      kind: "file",
+      label: "GitHub file",
+      ref: "index.ts",
+      resolveUrl: "https://github.com/a/b/blob/main/index.ts",
+    };
+    const wrap = (recognition: unknown) =>
+      isRecognitionResponse({ kind: "recognition", ok: true, recognition });
+
+    expect(wrap({ ...base })).toBe(true);
+    expect(wrap({ ...base, forgeFile: { repo: "a/b", refAndPath: "main/index.ts" } })).toBe(true);
+    expect(wrap({ ...base, forgeFile: { repo: 1, refAndPath: "main/index.ts" } })).toBe(false);
+    expect(wrap({ ...base, forgeFile: { repo: "a/b" } })).toBe(false);
+    expect(wrap({ ...base, forgeFile: "a/b" })).toBe(false);
+  });
 });
 
 describe("resolve guards", () => {
