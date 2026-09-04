@@ -332,6 +332,27 @@ export type ResolveError =
   | "server_error";
 
 /**
+ * Why the gateway could not place a file. A CLOSED union, and the client branches on
+ * the value — upstream also flattens these into a -32602 message prefix on the agent
+ * route, and matching that prose is what this route exists to avoid.
+ */
+export type FileMissReason = "remote_not_tracked" | "file_not_indexed";
+
+/**
+ * What the file probe learned. `miss` has a sentence, `unsupported` is a gateway older
+ * than the route and says nothing, and `found` is the only arm that offers lanes.
+ *
+ * There is deliberately NO scope arm. A 403 travels the resolve response's existing
+ * `ok: false` + `scopeGap` path, which already reaches the panel's `needs-scope`
+ * header and the `nimbus clip scopes` command it prints — a second route to that
+ * screen could not carry the connection label `scopeCommand` needs.
+ */
+export type FileResolution =
+  | { readonly kind: "found"; readonly path: string }
+  | { readonly kind: "miss"; readonly reason: FileMissReason; readonly repo: string }
+  | { readonly kind: "unsupported" };
+
+/**
  * What a 403 tells us about a scope the paired token lacks, plus the label needed
  * to name the device in the fix command.
  *

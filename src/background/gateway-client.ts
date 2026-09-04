@@ -8,6 +8,8 @@ import {
   type ClipPostResult,
   type FetchError,
   type FetchOutcome,
+  type FileMissReason,
+  type FileResolution,
   type PairError,
   RESOLVE_MATCH_KINDS,
   type RelatedError,
@@ -430,6 +432,83 @@ export async function resolveItem(
   }
   if (res.status === 404) {
     return { ok: false, reason: "unsupported" };
+  }
+  return { ok: false, reason: "server_error" };
+}
+
+const FILE_MISS_REASONS: readonly FileMissReason[] = ["remote_not_tracked", "file_not_indexed"];
+
+function parseFileResolution(v: unknown): FileResolution | null {
+  if (!isObject(v)) {
+    return null;
+  }
+  if (v["ok"] === true) {
+    return typeof v["path"] === "string" ? { kind: "found", path: v["path"] } : null;
+  }
+  if (v["ok"] !== false) {
+    return null;
+  }
+  const reason = v["reason"];
+  const repo = v["repo"];
+  if (typeof reason !== "string" || typeof repo !== "string") {
+    return null;
+  }
+  return FILE_MISS_REASONS.includes(reason as FileMissReason)
+    ? { kind: "miss", reason: reason as FileMissReason, repo }
+    : null;
+}
+
+/**
+ * `GET /v1/items/resolve-file` — a bearer read under the `resolve` scope.
+ *
+ * Sends the coordinate the recogniser carried, UNSPLIT. The gateway holds the
+ * repository's file list and splits ref from path against it; a browser cannot,
+ * because a branch name may contain slashes.
+ *
+ * The 404 mapping is the load-bearing one and is NOT an error: it means a gateway
+ * older than this route, which is also a gateway we cannot confirm serves the forge
+ * arm. It resolves to `unsupported`, the panel withholds the lanes, and nothing is
+ * said — the same fail-quiet the roster read makes.
+ */
+export async function resolveFile(
+  origin: string,
+  token: string,
+  service: string,
+  repo: string,
+  refAndPath: string,
+  doFetch: FetchLike = fetch,
+): Promise<
+  | { ok: true; resolution: FileResolution }
+  | { ok: false; reason: ResolveError; scopeGap?: { required: string; granted: string[] } }
+> {
+  let res: Response;
+  try {
+    res = await getJson(
+      doFetch,
+      origin,
+      "resolveFile",
+      { service, repo, refAndPath },
+      { authorization: `Bearer ${token}` },
+      RESOLVE_TIMEOUT_MS,
+    );
+  } catch {
+    return { ok: false, reason: "unreachable" };
+  }
+  if (res.status === 200) {
+    const resolution = parseFileResolution(await readJson(res));
+    return resolution === null ? { ok: false, reason: "server_error" } : { ok: true, resolution };
+  }
+  if (res.status === 404) {
+    return { ok: true, resolution: { kind: "unsupported" } };
+  }
+  if (res.status === 401) {
+    return { ok: false, reason: "unauthorized" };
+  }
+  if (res.status === 403) {
+    const gap = parseScopeGap(await readJson(res));
+    return gap === null
+      ? { ok: false, reason: "insufficient_scope" }
+      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
   }
   return { ok: false, reason: "server_error" };
 }

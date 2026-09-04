@@ -21,6 +21,17 @@ export const GATEWAY_PATHS = {
   pairConfirm: "/v1/clips/pair/confirm",
   related: "/v1/clips/related",
   resolve: "/v1/items/resolve",
+  /**
+   * `GET /v1/items/resolve-file?service=&repo=&refAndPath=` — a bearer read under the
+   * `resolve` scope, NOT `agents`: it resolves and runs nothing, so a browser paired
+   * without `agents` still gets an honest answer instead of a 403.
+   *
+   * Its PRESENCE is also C7's capability signal. It ships strictly after the release
+   * that added the forge arm, so a 200 from here proves the arm exists — which is why
+   * the file lanes need no version floor. A 404 means a gateway older than the route:
+   * withhold, say nothing.
+   */
+  resolveFile: "/v1/items/resolve-file",
   itemsFetch: "/v1/items/fetch",
   /**
    * Unauthenticated liveness — the ONLY route this client calls without a bearer

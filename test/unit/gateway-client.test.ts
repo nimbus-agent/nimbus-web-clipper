@@ -9,6 +9,7 @@ import {
   postClip,
   postRelated,
   probeHealth,
+  resolveFile,
   resolveItem,
 } from "../../src/background/gateway-client.ts";
 import type { ClipPayload } from "../../src/shared/clip.ts";
@@ -582,6 +583,73 @@ describe("resolveItem", () => {
         reason: "server_error",
       });
     }
+  });
+});
+
+describe("resolveFile", () => {
+  const call = (status: number, body: unknown, seen?: string[]) =>
+    resolveFile("http://127.0.0.1:7474", "tok", "github", "acme/web", "main/src/a.ts", (async (
+      url: string,
+    ) => {
+      seen?.push(url);
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch);
+
+  it("percent-encodes the coordinate into the query", async () => {
+    const seen: string[] = [];
+    await call(200, { ok: true, path: "src/a.ts" }, seen);
+    // A branch name legitimately contains slashes and may contain anything else a
+    // ref allows; the shared getJson helper builds this with URLSearchParams.
+    expect(seen[0]).toContain("service=github");
+    expect(seen[0]).toContain("repo=acme%2Fweb");
+    expect(seen[0]).toContain("refAndPath=main%2Fsrc%2Fa.ts");
+  });
+
+  it("reads a hit", async () => {
+    expect(await call(200, { ok: true, path: "src/a.ts" })).toEqual({
+      ok: true,
+      resolution: { kind: "found", path: "src/a.ts" },
+    });
+  });
+
+  it.each(["remote_not_tracked", "file_not_indexed"] as const)(
+    "reads the %s miss as a value, never as prose",
+    async (reason) => {
+      expect(await call(200, { ok: false, reason, repo: "acme/web" })).toEqual({
+        ok: true,
+        resolution: { kind: "miss", reason, repo: "acme/web" },
+      });
+    },
+  );
+
+  it("rejects a miss reason outside the closed set", async () => {
+    // Fails closed: an unknown reason has no sentence, and inventing one would
+    // put words in the gateway's mouth.
+    expect(await call(200, { ok: false, reason: "banana", repo: "a/b" })).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
+  it("treats 404 as a gateway older than the route", async () => {
+    expect(await call(404, { error: "not_found" })).toEqual({
+      ok: true,
+      resolution: { kind: "unsupported" },
+    });
+  });
+
+  it("maps 403 to insufficient_scope with its gap", async () => {
+    // LEGACY_SCOPES is ["clip","briefs"], so every pre-scopes pairing lands here first.
+    expect(
+      await call(403, { error: "insufficient_scope", required: "resolve", granted: ["clip"] }),
+    ).toEqual({
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: { required: "resolve", granted: ["clip"] },
+    });
   });
 });
 
