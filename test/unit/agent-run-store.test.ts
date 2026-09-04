@@ -299,7 +299,18 @@ describe("agent-run-store", () => {
       },
       NOW,
     );
-    expect(await getRun(b, "impact", NOW)).toBeNull();
+    await putRun(
+      {
+        subject: b,
+        lane: "impact",
+        runId: "run_b",
+        state: { kind: "done", brief: "B" },
+        expiresAtMs: NOW + 1000,
+      },
+      NOW,
+    );
+    expect((await getRun(a, "impact", NOW))?.runId).toBe("run_a");
+    expect((await getRun(b, "impact", NOW))?.runId).toBe("run_b");
   });
 
   describe("run subjects", () => {
