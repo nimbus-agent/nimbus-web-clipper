@@ -120,6 +120,11 @@ function isRunSubject(v: unknown): v is RunSubject {
   if (v["kind"] === "term") {
     return typeof v["term"] === "string";
   }
+  // Both halves, matching `subjectValue`'s key: a row missing either would key
+  // differently on write than it validates on read.
+  if (v["kind"] === "file") {
+    return typeof v["repo"] === "string" && typeof v["refAndPath"] === "string";
+  }
   return v["kind"] === "service" && typeof v["service"] === "string";
 }
 
