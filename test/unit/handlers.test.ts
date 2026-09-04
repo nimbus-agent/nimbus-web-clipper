@@ -1439,7 +1439,7 @@ describe("handleAgentRun", () => {
   // refuses the pairing before `resolveForAgent` ever reaches the `file` branch. Written
   // now, alongside the branch it pins, so the branch is not merged untested; unskipped
   // in Task 6 once the lane table claims the surface.
-  it.skip("never resolves a file page as an indexed item — unskipped in Task 6", async () => {
+  it("never resolves a file page as an indexed item", async () => {
     let resolveCalls = 0;
     const res = await handleAgentRun(
       {

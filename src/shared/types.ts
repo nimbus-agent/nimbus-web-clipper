@@ -425,8 +425,13 @@ export type FetchError =
  * `preflight`, `premortem`, `whyPeek` and `negotiate` are absent because
  * upstream excludes them from the HTTP surface entirely
  * (HTTP_EXCLUDED_AGENT_METHODS in packages/gateway/src/ipc/agents-rpc.ts).
- * `ghost` and `conflicts` are absent because both require `{ file }` — a local
- * checkout the browser does not have.
+ * `ghost` and `conflicts` are absent, and the forge arm did NOT change that. Both
+ * build their entire result from `input.namespaces` upstream, and the forge shape
+ * refuses namespaces outright ("that shape answers locally only") — so under the one
+ * shape a browser can send, each returns an empty array on every gateway, forever.
+ * Offering them would put a header promising an answer over a permanent blank, which
+ * is the same reason a Confluence page gets no item lanes. This is a bound, not a
+ * deferral: see the C7 design spec §4.7.
  *
  * `glossary` is declared FIRST because order here is render order and it is the
  * only lane the user summons by name: it exists in a panel because they just
@@ -512,8 +517,11 @@ export const LANE_RULES: Record<AgentLane, LaneRule> = {
   // reason for the gate does not apply to it. The term you most need defined is
   // usually on the unfamiliar internal wiki that has no connector at all.
   glossary: { input: "term" },
-  impact: { input: "page", surfaces: { pr: "item" } },
-  expert: { input: "page", surfaces: { pr: "item", issue: "item", incident: "item" } },
+  impact: { input: "page", surfaces: { pr: "item", file: "file" } },
+  expert: {
+    input: "page",
+    surfaces: { pr: "item", issue: "item", incident: "item", file: "file" },
+  },
   // The third review question — and no longer only a review question. `agents.why`
   // has an `itemUrl` arm as well as its `prUrl` one, so "how did we get here" is
   // answerable about any indexed item with a graph entity: a Jira or Linear issue,
@@ -530,7 +538,7 @@ export const LANE_RULES: Record<AgentLane, LaneRule> = {
   // dashboard, one indexed item on an issue or an incident. See `LaneSurfaceMap`.
   ownership: {
     input: "page",
-    surfaces: { home: "service", issue: "item", incident: "item" },
+    surfaces: { home: "service", issue: "item", incident: "item", file: "file" },
   },
 };
 

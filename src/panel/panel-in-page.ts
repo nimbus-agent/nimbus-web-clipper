@@ -188,6 +188,16 @@ const ITEM_SURFACE_TITLES: Partial<Record<AgentLane, string>> = {
 const SURFACE_LANE_TITLES: Partial<Record<SurfaceKind, Partial<Record<AgentLane, string>>>> = {
   issue: ITEM_SURFACE_TITLES,
   incident: ITEM_SURFACE_TITLES,
+  /**
+   * A file gets its own object rather than sharing `ITEM_SURFACE_TITLES`. `ownership`
+   * happens to want the same words today, but an issue and a file are not the same
+   * kind of thing — sharing the literal would tie two independent reasons to change.
+   */
+  file: {
+    impact: "What breaks if this changes",
+    expert: "Who knows this file",
+    ownership: "Who owns this",
+  },
 };
 
 /** How often an OPEN panel re-asks the worker for a running lane's state — a
