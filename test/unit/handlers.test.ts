@@ -1440,12 +1440,16 @@ describe("handleAgentRun", () => {
     expect(invoked).toEqual([{ agent: "ownership", params: { service: "github" } }]);
   });
 
-  // Cannot pass until Task 6 puts `impact` on the `file` surface: `laneBelongsOnSurface`
-  // refuses the pairing before `resolveForAgent` ever reaches the `file` branch. Written
-  // now, alongside the branch it pins, so the branch is not merged untested; unskipped
-  // in Task 6 once the lane table claims the surface.
+  // A file page has no indexed item to resolve to — `resolveForAgent` takes the
+  // `forgeFile` branch and never calls `resolveItem` at all. Pins the forge params
+  // `invokeAgent` actually receives (a swapped repo/refAndPath or a dropped service
+  // would still pass a test that only checked `resolveCalls`) and the cache
+  // subject the run is stored under, so a regression that quietly fell back to
+  // resolving the file as an item — or sent the wrong forge coordinate — fails here.
   it("never resolves a file page as an indexed item", async () => {
     let resolveCalls = 0;
+    const invoked: Array<{ agent: string; params: unknown }> = [];
+    const puts: unknown[] = [];
     const res = await handleAgentRun(
       {
         getOrigins: async () => [],
@@ -1455,9 +1459,14 @@ describe("handleAgentRun", () => {
           return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
         },
         readAgentRoster: async () => ({ unavailable: true as const }),
-        invokeAgent: async () => ({ ok: true as const, runId: "r1" }),
+        invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+          invoked.push({ agent, params });
+          return { ok: true as const, runId: "r1" };
+        },
         getRun: async () => null,
-        putRun: async () => undefined,
+        putRun: async (run) => {
+          puts.push(run);
+        },
       },
       {
         kind: "agent-run",
@@ -1467,6 +1476,20 @@ describe("handleAgentRun", () => {
     );
     expect(resolveCalls).toBe(0);
     expect(res.state.kind).not.toBe("failed");
+    expect(invoked).toEqual([
+      {
+        agent: "impact",
+        params: { service: "github", repo: "acme/web", refAndPath: "main/src/index.ts" },
+      },
+    ]);
+    expect(puts).toEqual([
+      {
+        subject: { kind: "file", repo: "acme/web", refAndPath: "main/src/index.ts" },
+        lane: "impact",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+      },
+    ]);
   });
 
   it("the why lane is asked with the page's PR URL, not the item title, and unnormalised", async () => {

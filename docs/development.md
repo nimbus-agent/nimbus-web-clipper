@@ -495,11 +495,14 @@ Prereq: paired, a Jira issue Nimbus has indexed (a Linear issue or a PagerDuty
 incident works identically for steps 1–3), and — for step 6 — a Confluence
 page and a CircleCI pipeline, also indexed.
 
-1. **Below the floor:** run the gateway build WITHOUT Nimbus#1421. Open the
-   Jira issue. → header, freshness, Related, glossary — and none of the three
-   new lanes (*How did we get here*, *Who should I talk to*, *Who owns
-   this*). The PR page is unaffected by any of this: `impact`, `expert` and
-   `why` are all still offered there and still work.
+1. **Below the floor:** run a gateway build at v7.6.0 or earlier — it has the
+   item arm (Nimbus#1421, in v7.5.0) but predates the version field
+   (Nimbus#1428, in v7.7.0), so `GET /v1/agents` reports no version and
+   `meetsFloor` fails closed. Open the Jira issue. → header, freshness,
+   Related, glossary — and none of the three new lanes (*How did we get
+   here*, *Who should I talk to*, *Who owns this*). The PR page is unaffected
+   by any of this: `impact`, `expert` and `why` are all still offered there
+   and still work.
 2. **At the floor:** restart with a gateway that reports a `version` at or
    past `7.7.0` from `GET /v1/agents` (Nimbus#1428). Open the same Jira
    issue. → *How did we get here*, *Who should I talk to* and *Who owns

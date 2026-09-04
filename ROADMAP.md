@@ -1096,9 +1096,9 @@ the editor structurally cannot.*
 
 ---
 
-## Phase C6 — Lanes on an item 🟢/🟡
+## Phase C6 — Lanes on an item 🟢
 
-### C6.1 Issue and incident get why, expert, ownership — and the panel stops guessing the lane list · 🟢/🟡 · M — ✅ shipped
+### C6.1 Issue and incident get why, expert, ownership — and the panel stops guessing the lane list · 🟢 · M — ✅ shipped
 > **What** A Jira issue, a Linear issue and a PagerDuty incident gain three agent
 > lanes — *how did we get here*, *who should I talk to*, *who owns this* —
 > answered about the one indexed item the page resolves to. The panel also stops

@@ -926,7 +926,7 @@ function agentParams(
     // client's business.
     //
     // Every lane on a `file` surface takes the same shape, so this returns before the
-    // per-lane switch below rather than adding five identical cases to it.
+    // per-lane switch below rather than adding three identical cases to it.
     return {
       service: resolved.service,
       repo: resolved.repo,
