@@ -534,15 +534,19 @@ page and a CircleCI pipeline, also indexed.
    Confluence by design (upstream F8 — no graph entity for a `type: "page"`
    item; see `docs/architecture.md`'s "Item lanes on an issue or an incident"),
    CircleCI because it is not an item surface `LANE_RULES` names at all.
-7. **The file surface, both sides of the route.** Open a GitHub blob URL (a
-   file, not a directory or the repo root) against a gateway serving
-   `GET /v1/items/resolve-file` — a route check, not a `meetsFloor` one, so it
-   does not need the version floor above, only the forge file arm (v7.6.0,
-   Nimbus#1424) that a resolved file's lanes send. → *What breaks if this
-   changes*, *Who knows this file* and *Who owns this* are all offered.
-   Restart against a gateway that 404s that route. → the page renders with the
-   same three lanes withheld and no message about it — the same fail-quiet the
-   roster read makes elsewhere in this doc, not an error state.
+7. **The file surface, both sides of the route — only one side can be run
+   today.** `GET /v1/items/resolve-file` is proposed, not shipped anywhere
+   upstream, so there is no gateway to test the positive case against yet:
+   all three lanes (*What breaks if this changes*, *Who knows this file*,
+   *Who owns this*) offered on a file the route resolves. What runs today is
+   the negative case, against any gateway that exists (none serve the
+   route): open a GitHub blob URL (a file, not a directory or the repo
+   root). → the page renders exactly as it did before this branch —
+   recognised, no lanes, no banner — silently, the same fail-quiet the
+   roster read makes elsewhere in this doc, not an error state. Run the
+   positive half once the route lands; it will need no version floor, only
+   the forge file arm (v7.6.0, Nimbus#1424) that a resolved file's lanes
+   already send.
 
 ## Manual verification — Setup that works (discovery, connection health, the trust panel)
 

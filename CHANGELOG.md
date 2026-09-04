@@ -126,11 +126,14 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   the panel names the one that applies instead of a lane's worth of "not
   found" repeated three times.
 
-  **Needs a gateway new enough to resolve the file at all.** A gateway that
-  does not yet serve the resolve route leaves the page exactly as it rendered
-  before this release — recognised, no lanes, no banner — silently. Nothing on
-  screen says the gateway is the reason, the same fail-quiet every other
-  capability gate in this client uses.
+  **You will not see this yet, and no gateway anywhere can show it to you.**
+  Offering these lanes needs the gateway to resolve a forge file coordinate to
+  a path, and that route — `GET /v1/items/resolve-file` — is proposed, not
+  merged, not shipped anywhere upstream. Until it lands, opening a file page
+  renders exactly as it did before this release — recognised, no lanes, no
+  banner — for every user, silently, with nothing on screen to say the
+  gateway is the reason. This entry describes a client that is finished and
+  waiting.
 
 - **`Who should review it` on a pull request now answers about the pull
   request itself, on a gateway that can take it.** It has always sent the
