@@ -1340,15 +1340,24 @@ what it is has not told the panel it can answer. A development build (`0.0.0`,
 or any prerelease of the floor or later) is treated as satisfying any floor, so
 a gateway built locally from a feature branch — the ordinary way to run one on
 `127.0.0.1` while developing this extension — is not punished for not being a
-numbered release. `needsItemArm`
-(`agents-capability.ts`) is the single predicate both `offeredLanes` (deciding
-whether to offer the lane) and `agentParams` (`handlers.ts`, deciding which arm
-to actually send) read, so a surface floored in one place can never be sent the
-wrong params in the other. A gateway too old to answer `GET /v1/agents` at all
-is not second-guessed about the lanes it *did* serve before: on a pull request
-or a dashboard the panel renders exactly as it did, with nothing withheld — and
-on an issue or an incident the three unconfirmable lanes are withheld, which is
-also exactly as it did.
+numbered release. `itemArmPolicy`
+(`agents-capability.ts`) is the single table both `offeredLanes` (deciding
+whether to WITHHOLD the lane) and `agentParams` (`handlers.ts`, deciding which
+arm to actually send) read, so a pair required in one place can never be sent
+the wrong params in the other. It is a table of `"item-required" |
+"item-preferred"`, not a boolean, because those two callers ask genuinely
+different questions for one pair: `expert` on a pull request has shipped on
+`topicOrFile` for releases, so it is `item-preferred` — `agentParams` sends the
+sharper `itemUrl` once the roster proves the gateway meets the floor, but
+`offeredLanes` never withholds it, at any version, because a gateway below the
+floor still serves it on the arm it always has. Every other item pair (`why`,
+`expert` and `ownership` on `issue`/`incident`) is `item-required`: `agentParams`
+may send the item arm there unconditionally, because the lane was only offered
+in the first place once `offeredLanes` confirmed the floor. A gateway too old to
+answer `GET /v1/agents` at all is not second-guessed about the lanes it *did*
+serve before: on a pull request or a dashboard the panel renders exactly as it
+did, with nothing withheld — and on an issue or an incident the required lanes
+are withheld, which is also exactly as it did.
 
 **Live status: this half is gateway-blocked, and knowing that saves a bug
 report.** Upstream `GET /v1/agents` currently answers

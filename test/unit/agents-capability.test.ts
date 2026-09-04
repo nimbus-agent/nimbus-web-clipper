@@ -4,6 +4,7 @@ import {
   type AgentRoster,
   fetchAgentRoster,
   ITEM_ARM_FLOOR,
+  itemArmPolicy,
   meetsFloor,
   offeredLanes,
 } from "../../src/background/agents-capability.ts";
@@ -253,5 +254,55 @@ describe("offeredLanes", () => {
       "decisions",
       "ownership",
     ]);
+  });
+});
+
+describe("itemArmPolicy", () => {
+  it("requires the item arm on the two item surfaces", () => {
+    for (const lane of ["why", "expert", "ownership"] as const) {
+      for (const kind of ["issue", "incident"] as const) {
+        expect(itemArmPolicy(lane, kind)).toBe("item-required");
+      }
+    }
+  });
+
+  it("prefers — never requires — the item arm for expert on a pull request", () => {
+    // The distinction this table exists for. `expert` on a PR has shipped on
+    // topicOrFile for releases; flooring it would withhold a WORKING lane from every
+    // gateway below 7.7.0 to remove a wording problem.
+    expect(itemArmPolicy("expert", "pr")).toBe("item-preferred");
+  });
+
+  it("leaves why on a pull request alone", () => {
+    // It sends prUrl, an arm every released gateway serves. A cross-product of
+    // {why,expert,ownership} x {issue,incident,pr} would have floored it by accident.
+    expect(itemArmPolicy("why", "pr")).toBeNull();
+  });
+
+  it("has no policy for any file lane", () => {
+    for (const lane of AGENT_LANES) {
+      expect(itemArmPolicy(lane, "file")).toBeNull();
+    }
+  });
+});
+
+describe("offeredLanes and the floor", () => {
+  const roster = (version: string | null) => ({ names: [...AGENT_LANES], version });
+
+  it("withholds item-required lanes below the floor", () => {
+    expect(offeredLanes(roster(null), "issue")).not.toContain("why");
+  });
+
+  it("never withholds expert on a pull request, at any version", () => {
+    for (const v of [null, "7.0.0", "7.5.0", "7.8.1"]) {
+      expect(offeredLanes(roster(v), "pr")).toContain("expert");
+    }
+  });
+
+  it("returns null on an unreadable roster for the file surface", () => {
+    // "Do not filter" — no file lane needs the item arm. Safe ONLY because the probe
+    // in handleResolve gates the lanes upstream of this; if that gate is ever removed,
+    // this returns all three against a gateway we know nothing about.
+    expect(offeredLanes({ unavailable: true }, "file")).toBeNull();
   });
 });

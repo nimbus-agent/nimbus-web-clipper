@@ -53,7 +53,13 @@ import {
   type SurfaceKind,
 } from "../shared/types.ts";
 import type { RunSubject, StoredRun } from "./agent-run-store.ts";
-import { type AgentRoster, needsItemArm, offeredLanes } from "./agents-capability.ts";
+import {
+  type AgentRoster,
+  ITEM_ARM_FLOOR,
+  itemArmPolicy,
+  meetsFloor,
+  offeredLanes,
+} from "./agents-capability.ts";
 import type { CaptureOutcome } from "./capture-tab.ts";
 
 export interface CaptureDeps {
@@ -558,6 +564,12 @@ export interface AgentRunDeps {
   >;
   readonly getRun: (subject: RunSubject, lane: AgentLane) => Promise<StoredRun | null>;
   readonly putRun: (run: Omit<StoredRun, "expiresAtMs">) => Promise<void>;
+  /**
+   * What the paired gateway publishes it can do. Bound in `service-worker.ts`,
+   * mirroring `ResolveDeps`'s own field of the same shape — a handler test injects
+   * a fake and never learns the module exists.
+   */
+  readonly readAgentRoster: (origin: string, token: string) => Promise<AgentRoster>;
 }
 
 export interface AgentStateDeps {
@@ -899,7 +911,11 @@ type AgentParams =
   /** The forge coordinate, unsplit — `requireFileParam`'s forge arm upstream. */
   | { service: string; repo: string; refAndPath: string };
 
-function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }): AgentParams {
+function agentParams(
+  lane: AgentLane,
+  resolved: ResolveForAgent & { ok: true },
+  rosterVersion: string | null,
+): AgentParams {
   if (resolved.scope === "service") {
     return { service: resolved.service };
   }
@@ -934,21 +950,32 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
   // `undefined`, so a missing case is a compile error (TS2366) rather than a
   // runtime `never` assertion — the exhaustiveness check lives in the return type.
   // Do not "helpfully" add a `default:` back.
-  // `needsItemArm` (agents-capability.ts), NOT a second surface list written out
-  // here. It is the same predicate `offeredLanes` gates the floor on, and the two
-  // must agree by construction: a pair floored there and sent `prUrl` here would
-  // withhold a lane on one gateway and send the wrong arm on another.
-  const itemArm = needsItemArm(lane, resolved.surface);
+  //
+  // `itemArmPolicy` (agents-capability.ts), NOT a second surface list written out
+  // here. It is the same table `offeredLanes` gates the floor on, and the two must
+  // agree by construction: a pair required there and sent the wrong arm here would
+  // withhold a lane on one gateway and send it the wrong params on another.
+  const useItemArm = (surface: SurfaceKind): boolean => {
+    const policy = itemArmPolicy(lane, surface);
+    return (
+      policy === "item-required" ||
+      (policy === "item-preferred" && meetsFloor(rosterVersion, ITEM_ARM_FLOOR))
+    );
+  };
   switch (lane) {
     case "impact":
       // Never widened past `pr` (`LANE_RULES`): its non-PR arm answers about a
       // FILE, not an item, so an issue URL would be the wrong question.
       return { fileOrPrUrl: resolved.resolveUrl };
     case "why":
-      return itemArm ? { itemUrl: resolved.resolveUrl } : { prUrl: resolved.resolveUrl };
+      return useItemArm(resolved.surface)
+        ? { itemUrl: resolved.resolveUrl }
+        : { prUrl: resolved.resolveUrl };
     case "ownership":
       // Unreachable on `pr` — `LANE_RULES` gives ownership `home`, `issue` and
-      // `incident` only, and `home` returns at the `service` branch far above.
+      // `incident` only, and `home` returns at the `service` branch far above. Every
+      // reachable pair is `item-required` (`ITEM_ARM_POLICY`), so this needs no
+      // `useItemArm` check of its own.
       return { itemUrl: resolved.resolveUrl };
     case "glossary":
     case "catchup":
@@ -968,15 +995,15 @@ function agentParams(lane: AgentLane, resolved: ResolveForAgent & { ok: true }):
       // real new item-scope lane still needs its own case, or its name is left
       // unhandled and the switch stops being exhaustive.
       //
-      // `expert` itself: on `pr` this stays `topicOrFile`, and that is a deliberate
-      // hold rather than an oversight. Switching it would make `expert`/`pr` an
-      // item-arm pair, and the version floor would then withhold from every gateway
-      // that does not yet publish a version a lane that works today. The title arm
-      // answers a broader question than the label promises; trading a working lane
-      // for a sharper one is a change to make once the floor is commonly met, not
-      // at its introduction. On an `issue` or an `incident` there is no such
-      // history to protect, so those take the item arm.
-      return itemArm ? { itemUrl: resolved.resolveUrl } : { topicOrFile: resolved.item.title };
+      // `expert` itself: on `issue`/`incident` the arm is `item-required` — the lane
+      // was only offered because the floor was met, so sending it is safe. On `pr`
+      // it is `item-preferred`: `expert` has shipped there on `topicOrFile` for
+      // releases, so the lane is never withheld, and the sharper `itemUrl` is sent
+      // only once this gateway's roster proves it meets the floor. Trading a
+      // working lane for a sharper one is a per-request sharpening, not a gate.
+      return useItemArm(resolved.surface)
+        ? { itemUrl: resolved.resolveUrl }
+        : { topicOrFile: resolved.item.title };
   }
 }
 
@@ -1033,7 +1060,21 @@ export async function handleAgentRun(
     return { kind: "agent-state", lane: req.lane, state: cached.state };
   }
 
-  const params = agentParams(req.lane, resolved);
+  // One extra loopback GET per lane expansion, and the whole price of never
+  // withholding a working lane. Read fresh rather than cached with the pairing, for
+  // the same reason `handleResolve` does: an upgraded gateway must be reflected
+  // without re-pairing. A failed read is `unavailable`, never a throw — the lane
+  // must still run. Only the `item` scope's `agentParams` branch ever consults the
+  // version (`expert` on `pr`), so a `service`/`term`/`file` lane pays nothing for it.
+  const roster =
+    resolved.scope === "item"
+      ? await deps
+          .readAgentRoster(resolved.origin, resolved.token)
+          .catch(() => ({ unavailable: true as const }))
+      : null;
+  const rosterVersion = roster === null || "unavailable" in roster ? null : roster.version;
+
+  const params = agentParams(req.lane, resolved, rosterVersion);
   const invoked = await invokeWithRetry(deps, resolved.origin, resolved.token, req.lane, params);
   if (!invoked.ok) {
     const scopeGap =

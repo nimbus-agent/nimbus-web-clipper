@@ -1271,6 +1271,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           called = true;
           return { ok: false as const, reason: "server_error" as const };
@@ -1299,6 +1300,7 @@ describe("handleAgentRun", () => {
         ok: true as const,
         outcome: { kind: "found" as const, item, matchKind: "exact" as const },
       }),
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
         seen.push({ agent, params });
         return { ok: true as const, runId: "r1" };
@@ -1374,6 +1376,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async (_o: string, _t: string, _agent: string, params: unknown) => {
           invoked.push(params);
           return { ok: true as const, runId: "r1" };
@@ -1398,6 +1401,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "not-indexed" as const, fetchable: true },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not invoke for a page that resolves to nothing");
         },
@@ -1423,6 +1427,7 @@ describe("handleAgentRun", () => {
         resolveItem: async () => {
           throw new Error("must not resolve on a dashboard");
         },
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
           invoked.push({ agent, params });
           return { ok: true as const, runId: "r1" };
@@ -1449,6 +1454,7 @@ describe("handleAgentRun", () => {
           resolveCalls += 1;
           return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: false } };
         },
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => ({ ok: true as const, runId: "r1" }),
         getRun: async () => null,
         putRun: async () => undefined,
@@ -1480,6 +1486,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
           seen.push({ agent, params });
           return { ok: true as const, runId: "r1" };
@@ -1510,6 +1517,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           called = true;
           return { ok: true as const, runId: "r2" };
@@ -1542,6 +1550,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           called = true;
           return { ok: true as const, runId: "r-rerun" };
@@ -1570,6 +1579,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "not-indexed" as const, fetchable: true },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not be called");
         },
@@ -1593,6 +1603,7 @@ describe("handleAgentRun", () => {
           resolveCalled = true;
           return { ok: true as const, outcome: { kind: "not-indexed" as const, fetchable: true } };
         },
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not be called");
         },
@@ -1615,6 +1626,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => ({ ok: true as const, runId: "r9" }),
         getRun: async () => null,
         putRun: async (run) => {
@@ -1661,6 +1673,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           calls++;
           return calls === 1
@@ -1693,6 +1706,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           calls++;
           return { ok: false as const, reason: "busy" as const, retryAfterMs: 1000 };
@@ -1724,6 +1738,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           calls++;
           return calls === 1
@@ -1764,6 +1779,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           calls++;
           return calls === 1
@@ -1792,6 +1808,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => ({
           ok: false as const,
           reason: "insufficient_scope" as const,
@@ -1818,6 +1835,7 @@ describe("handleAgentRun", () => {
           ok: true as const,
           outcome: { kind: "found" as const, item, matchKind: "exact" as const },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => ({ ok: false as const, reason: "insufficient_scope" as const }),
         getRun: async () => null,
         putRun: async () => undefined,
@@ -1838,6 +1856,7 @@ describe("handleAgentRun", () => {
           reason: "insufficient_scope" as const,
           scopeGap: { required: "resolve", granted: ["clip"] },
         }),
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not be called");
         },
@@ -1851,6 +1870,77 @@ describe("handleAgentRun", () => {
       reason: "insufficient_scope",
       scopeGap: { label: "chrome", required: "resolve", granted: ["clip"] },
     });
+  });
+});
+
+// `expert`/`pr` is `item-preferred` (`itemArmPolicy`, agents-capability.ts): never
+// withheld, but sharpened to `itemUrl` once the roster proves the gateway meets
+// `ITEM_ARM_FLOOR`. Every other `handleAgentRun` test above injects a
+// `readAgentRoster` that answers `unavailable` (the pre-existing, honest default),
+// so none of them exercise this fork — it needs its own fixture with a title that
+// differs from every other lane's, so a wrong-arm assertion cannot pass by
+// coincidence with a shared fixture.
+describe("expert on a pull request", () => {
+  const conn = { origin: "http://127.0.0.1:8765", token: "t", label: "chrome", pairedAt: 0 };
+  const item = {
+    id: "gh-1",
+    service: "github",
+    type: "pr",
+    title: "Add retry to the client",
+    url: "https://github.com/acme/web/pull/1",
+    modifiedAt: 1,
+  };
+  const PR = "https://github.com/acme/web/pull/1";
+
+  // Not a pre-existing helper — built on this file's `handleAgentRun` harness for
+  // this task, capturing what the injected `invokeAgent` dep received.
+  async function runAndCaptureParams(opts: {
+    lane: "expert";
+    pageUrl: string;
+    rosterVersion: string | null;
+  }): Promise<unknown> {
+    const seen: unknown[] = [];
+    await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        invokeAgent: async (_o: string, _t: string, _agent: string, params: unknown) => {
+          seen.push(params);
+          return { ok: true as const, runId: "r1" };
+        },
+        // A roster that answers WITH a version, not `unavailable` — 7.5.0 and
+        // 7.6.0 both serve the roster and simply say nothing about themselves.
+        readAgentRoster: async () => ({ names: [...AGENT_LANES], version: opts.rosterVersion }),
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: opts.lane, pageUrl: opts.pageUrl },
+    );
+    return seen[0];
+  }
+
+  it("sends the item arm when the gateway meets the floor", async () => {
+    const params = await runAndCaptureParams({
+      lane: "expert",
+      pageUrl: PR,
+      rosterVersion: "7.8.1",
+    });
+    expect(params).toEqual({ itemUrl: "https://github.com/acme/web/pull/1" });
+  });
+
+  it("keeps the title arm below the floor, rather than withholding the lane", async () => {
+    // 7.5.0 and 7.6.0 HAVE the arm and report no version, so they fail closed. A
+    // straight switch would withhold a working, shipped lane from all of them.
+    const params = await runAndCaptureParams({
+      lane: "expert",
+      pageUrl: PR,
+      rosterVersion: null,
+    });
+    expect(params).toEqual({ topicOrFile: "Add retry to the client" });
   });
 });
 
@@ -1870,6 +1960,7 @@ describe("handleAgentRun — a candidate the user picked (C2.5)", () => {
       getOrigins: async () => [],
       getConnection: async () => conn,
       resolveItem: async () => ambiguous,
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async (_o: string, _t: string, _agent: string, params: unknown) => {
         seen.push({ params });
         return { ok: true as const, runId: "r1" };
@@ -1935,6 +2026,7 @@ describe("handleAgentRun — the glossary lane takes a term", () => {
       resolveItem: async () => {
         throw new Error("a term lane must not resolve the page");
       },
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
         seen.push({ agent, params });
         return { ok: true as const, runId: "r1" };
@@ -2118,6 +2210,7 @@ describe("service lanes on a home page", () => {
         resolveCalls += 1;
         throw new Error("resolve must not be called on a home page");
       },
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
         invoked.push({ agent, params });
         return { ok: true as const, runId: "run_1" };
@@ -2145,6 +2238,7 @@ describe("service lanes on a home page", () => {
       resolveItem: async () => {
         throw new Error("unused");
       },
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async () => ({ ok: true as const, runId: "run_2" }),
       getRun: async () => null,
       putRun: async (r: unknown) => {
@@ -2176,6 +2270,7 @@ describe("service lanes on a home page", () => {
       resolveItem: async () => {
         throw new Error("unused");
       },
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async () => {
         invokes += 1;
         return { ok: true as const, runId: "run_3" };
@@ -2207,6 +2302,7 @@ describe("service lanes on a home page", () => {
       resolveItem: async () => {
         throw new Error("unused");
       },
+      readAgentRoster: async () => ({ unavailable: true as const }),
       invokeAgent: async () => {
         throw new Error("must not invoke");
       },
@@ -2242,6 +2338,7 @@ describe("lane/surface pairing enforcement", () => {
         resolveItem: async () => {
           throw new Error("must not resolve");
         },
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not invoke");
         },
@@ -2264,6 +2361,7 @@ describe("lane/surface pairing enforcement", () => {
         resolveItem: async () => {
           throw new Error("must not resolve");
         },
+        readAgentRoster: async () => ({ unavailable: true as const }),
         invokeAgent: async () => {
           throw new Error("must not invoke");
         },
