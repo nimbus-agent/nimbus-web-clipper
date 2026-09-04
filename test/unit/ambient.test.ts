@@ -255,6 +255,10 @@ describe("a home page", () => {
             resolveItemCalls += 1;
             throw new Error("resolveItem must not be called on a home page");
           },
+          resolveFile: async () => ({
+            ok: true as const,
+            resolution: { kind: "unsupported" as const },
+          }),
           readConnectorHealth: async () => null,
           readAgentRoster: async () => ({ unavailable: true }),
         },

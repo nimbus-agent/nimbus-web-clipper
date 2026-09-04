@@ -27,6 +27,7 @@ import {
   type ClipError,
   type FetchError,
   type FetchOutcome,
+  type FileResolution,
   type LaneState,
   type PairError,
   RESOLVE_MATCH_KINDS,
@@ -480,6 +481,16 @@ export type ResolveResponse =
        * read produces, per surface, and the reasoning lives there.
        */
       readonly offeredLanes?: readonly AgentLane[];
+      /**
+       * What the file probe learned, on a `file` surface and only there.
+       *
+       * Absent on every other surface. Unlike `offeredLanes`, absence here is NOT
+       * fail-open: the panel offers file lanes only on `{ kind: "found" }`, so an
+       * absent value withholds. That asymmetry is deliberate — a lane list we failed
+       * to narrow is still a list we may offer, but a file we failed to place has no
+       * subject to answer about at all.
+       */
+      readonly file?: FileResolution;
     }
   | {
       readonly kind: "resolve";
@@ -799,6 +810,28 @@ function isAgentLaneList(v: unknown): v is readonly AgentLane[] {
   return Array.isArray(v) && v.every((x) => (AGENT_LANES as readonly string[]).includes(x));
 }
 
+const FILE_MISS_REASONS: readonly string[] = ["remote_not_tracked", "file_not_indexed"];
+
+function isFileResolution(v: unknown): v is FileResolution {
+  if (!isObject(v)) {
+    return false;
+  }
+  if (v["kind"] === "found") {
+    return typeof v["path"] === "string";
+  }
+  if (v["kind"] === "miss") {
+    // REJECTS a reason outside the closed set rather than coercing it, matching
+    // isConnectorHealth's own rule: the producer here is our own service worker,
+    // and a reason it did not send is a bug, not an upstream variation.
+    return (
+      typeof v["reason"] === "string" &&
+      FILE_MISS_REASONS.includes(v["reason"]) &&
+      typeof v["repo"] === "string"
+    );
+  }
+  return v["kind"] === "unsupported";
+}
+
 /** The recognition is required on BOTH arms: a gateway failure must not erase
  *  the fact that the client knows what page this is. */
 export function isResolveResponse(v: unknown): v is ResolveResponse {
@@ -809,7 +842,8 @@ export function isResolveResponse(v: unknown): v is ResolveResponse {
     return (
       isResolveOutcome(v["outcome"]) &&
       (v["connector"] === undefined || isConnectorHealth(v["connector"])) &&
-      (v["offeredLanes"] === undefined || isAgentLaneList(v["offeredLanes"]))
+      (v["offeredLanes"] === undefined || isAgentLaneList(v["offeredLanes"])) &&
+      (v["file"] === undefined || isFileResolution(v["file"]))
     );
   }
   return (

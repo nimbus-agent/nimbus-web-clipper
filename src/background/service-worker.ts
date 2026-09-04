@@ -100,6 +100,7 @@ import {
   postClip,
   postRelated,
   probeHealth,
+  resolveFile,
   resolveItem,
 } from "./gateway-client.ts";
 import {
@@ -1124,7 +1125,7 @@ function routeIndexReads(message: unknown, respond: Respond): Routed {
   }
   if (isResolveRequest(message)) {
     handleResolve(
-      { getConnection, getOrigins, resolveItem, readConnectorHealth, readAgentRoster },
+      { getConnection, getOrigins, resolveItem, resolveFile, readConnectorHealth, readAgentRoster },
       message,
     )
       .then(respond)
@@ -1363,7 +1364,7 @@ const ambientDeps: AmbientDeps = {
   lastCued: (tabId) => lastCuedByTab.get(tabId),
   resolve: (pageUrl) =>
     handleResolve(
-      { getConnection, getOrigins, resolveItem, readConnectorHealth, readAgentRoster },
+      { getConnection, getOrigins, resolveItem, resolveFile, readConnectorHealth, readAgentRoster },
       { kind: "resolve", pageUrl },
     ),
   currentUrl: tabUrl,

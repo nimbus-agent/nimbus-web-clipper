@@ -39,6 +39,7 @@ import {
   type Connection,
   type FetchError,
   type FetchOutcome,
+  type FileResolution,
   LANE_RULES,
   type LaneState,
   laneBelongsOnSurface,
@@ -235,6 +236,21 @@ export interface ResolveDeps {
   readonly getConnection: GetConnection;
   readonly resolveItem: ResolveItem;
   /**
+   * Resolve a `file` recognition's forge coordinate against the reader's local
+   * checkout. Mirrors `resolveItem`'s shape — same three failure-vs-success arms —
+   * but answers a different question: an item lookup never touches a filesystem.
+   */
+  readonly resolveFile: (
+    origin: string,
+    token: string,
+    service: string,
+    repo: string,
+    refAndPath: string,
+  ) => Promise<
+    | { ok: true; resolution: FileResolution }
+    | { ok: false; reason: ResolveError; scopeGap?: RawScopeGap }
+  >;
+  /**
    * Health for the gateway at `origin`, or null when it could not be read.
    *
    * NOTE the shape: the store (connector-health-store.ts) exports
@@ -369,6 +385,62 @@ export async function handleResolve(
       recognition,
       outcome: { kind: "not-indexed", fetchable: false },
       connector,
+      ...offered,
+    };
+  }
+  if (recognition.kind === "file") {
+    // No resolve call, and none is possible: a source file is not a connector item.
+    // The gateway maps the coordinate to the reader's own checkout instead — see
+    // `resolveForAgent`'s own `file` branch for the fuller version of this reasoning
+    // (a different function answering a different question: what a LANE is about,
+    // not what the PANEL shows).
+    //
+    // CONCURRENT with the roster read for the same reason as the home branch above:
+    // `offeredFor` reads nothing the probe produces, and serialising them would put
+    // the roster's 10s bound behind the probe's 8s one before a header can render.
+    // Neither read may move above the `getConnection()` check above: both carry the
+    // bearer token.
+    const coordinate = recognition.forgeFile;
+    const [probe, offered] = await Promise.all([
+      coordinate === undefined
+        ? // A `file` recognition without its coordinate is a recogniser bug, not a
+          // page condition — nothing to probe and nothing to claim. Guarding on
+          // `forgeFile !== undefined` at the `recognition.kind` check instead would
+          // let this case fall through to `deps.resolveItem` below, sending a forge
+          // blob URL to the item resolver — the exact trap Task 3 closed.
+          Promise.resolve({ ok: true as const, resolution: { kind: "unsupported" as const } })
+        : deps.resolveFile(
+            conn.origin,
+            conn.token,
+            PRODUCT_SERVICE_ID[recognition.product],
+            coordinate.repo,
+            coordinate.refAndPath,
+          ),
+      offeredFor(deps, conn.origin, conn.token, recognition.kind),
+    ]);
+    // A refused SCOPE travels the same path `resolveItem`'s 403 already does, below —
+    // that is what reaches the panel's `needs-scope` header and the `nimbus clip
+    // scopes` command it prints. The label comes from the connection, which only
+    // this layer holds.
+    if (!probe.ok && probe.reason === "insufficient_scope") {
+      return probe.scopeGap === undefined
+        ? { kind: "resolve", ok: false, recognition, reason: probe.reason }
+        : {
+            kind: "resolve",
+            ok: false,
+            recognition,
+            reason: probe.reason,
+            scopeGap: { label: conn.label, ...probe.scopeGap },
+          };
+    }
+    // Every OTHER refusal is silent: the page is still recognised, the header still
+    // renders, and we claim nothing about a file we could not ask about.
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: false },
+      file: probe.ok ? probe.resolution : { kind: "unsupported" },
       ...offered,
     };
   }
