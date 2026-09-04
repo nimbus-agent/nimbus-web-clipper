@@ -24,6 +24,8 @@ import {
   type CaptureError,
   type CaptureResult,
   type FetchTarget,
+  type FileMissReason,
+  type FileResolution,
   type LaneState,
   type Product,
   type Recognition,
@@ -111,6 +113,19 @@ const RESOLVE_MESSAGES: Record<string, string> = {
   // its way to avoid reusing the generic "Couldn't resolve this page." for.
   insufficient_scope:
     "This pairing can't resolve pages yet. Run nimbus clip status to find this device, then nimbus clip scopes.",
+};
+
+/**
+ * The two ways the file probe can miss, each with the repo the coordinate named —
+ * matching `RESOLVE_MESSAGES`/`FETCH_MESSAGES` above: an honest sentence per
+ * reason rather than one generic "not indexed" that would hide which of the two
+ * fixes (track the remote, index the file) actually applies.
+ */
+const FILE_MISS_SENTENCES: Record<FileMissReason, (repo: string) => string> = {
+  remote_not_tracked: (repo) =>
+    `Nimbus has no local checkout of \`${repo}\`, so it cannot answer about its files.`,
+  file_not_indexed: (repo) =>
+    `Nimbus has a checkout of \`${repo}\`, but this file is not in its index.`,
 };
 
 // `insufficient_scope` and `timeout` are handled BEFORE this map is consulted,
@@ -458,6 +473,19 @@ function headerFrom(res: unknown, nowMs: number, fetchSent: boolean): HeaderStat
       nowMs,
     };
   }
+  // Same reasoning as the `home` branch above: a `file` recognition's `outcome`
+  // is an inert `{kind:"not-indexed", fetchable:false}` (handlers.ts), filled in
+  // only because `ResolveResponse`'s ok arm requires one. The real answer is
+  // `res.file` — a 403 never reaches here (see this branch's own doc comment
+  // in messages.ts and `FileResolution`'s), so only `found`/`miss`/`unsupported`
+  // are possible.
+  if (res.recognition.ok && res.recognition.kind === "file") {
+    const file = res.file;
+    if (file === undefined || file.kind === "unsupported" || file.kind === "found") {
+      return { kind: "file", surface };
+    }
+    return { kind: "file", surface, banner: FILE_MISS_SENTENCES[file.reason](file.repo) };
+  }
   const outcome = res.outcome;
   if (outcome.kind === "found") {
     // A captured copy is keyed on the ITEM, never on "we just captured it" —
@@ -651,6 +679,10 @@ function createPanel(body: HTMLElement): {
    * same thing to `lanesFor`: do not filter.
    */
   let offeredLanes: readonly AgentLane[] | null = null;
+  /** The file probe's answer for the pinned page, or null on any other surface.
+   *  Read by `laneContext` — the header cannot serve as the gate, because it is the
+   *  same shape on a hit, a miss and a gateway too old for the route. */
+  let fileResolution: FileResolution | null = null;
   /** The last URL `checkNavigation` looked at — so a tick on an unchanged URL
    *  costs a string compare and nothing else. */
   let lastCheckedUrl = pinnedUrl;
@@ -920,7 +952,14 @@ function createPanel(body: HTMLElement): {
     const shown = shownHeader();
     return {
       surfaceKind: pinnedRecognition?.ok === true ? pinnedRecognition.kind : null,
-      pageSubject: shown.kind === "resolved" || shown.kind === "service" || shown.kind === "chosen",
+      pageSubject:
+        shown.kind === "resolved" ||
+        shown.kind === "service" ||
+        shown.kind === "chosen" ||
+        // A file page's lanes are gated on the PROBE, not on the header: the header
+        // is the same shape on a hit, a miss and an older gateway, and only a hit
+        // has a subject to answer about.
+        (shown.kind === "file" && fileResolution?.kind === "found"),
       pickedItemId: shown.kind === "chosen" ? shown.candidate.id : null,
       term,
       offered: offeredLanes,
@@ -1169,6 +1208,9 @@ function createPanel(body: HTMLElement): {
     // presence — see the "offered-lanes gate" describe block in
     // panel-in-page.test.ts for the reasoning trail.
     offeredLanes = null;
+    // A stale `found` from the previous page would offer lanes on a file the
+    // gateway has not placed for THIS one — see this slot's own doc comment.
+    fileResolution = null;
     navAway = false;
     header = { kind: "loading" };
     chosen = null;
@@ -1504,6 +1546,7 @@ function createPanel(body: HTMLElement): {
       if (res.ok) {
         offeredLanes = res.offeredLanes ?? null;
       }
+      fileResolution = res.ok === true ? (res.file ?? null) : null;
     }
     // Taken ONCE per repaint here, not re-read per rendered line — see the
     // `resolved` state's `nowMs` doc comment in panel-view.ts.

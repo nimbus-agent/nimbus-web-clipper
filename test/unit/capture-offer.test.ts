@@ -44,6 +44,17 @@ describe("offersCapture", () => {
     }
   });
 
+  test("never offers capture on a file page", () => {
+    // Not incidental: `offersCapture` ends in `default: return false`, so this arm is
+    // excluded by construction — and that exclusion is invisible at the call site.
+    // Clipping a forge's rendered blob page gives Nimbus neither a checkout nor an
+    // indexed repository, so the offer would be false.
+    expect(offersCapture({ kind: "file", surface: "GitHub file" })).toBe(false);
+    expect(offersCapture({ kind: "file", surface: "GitHub file", banner: "Nimbus has no…" })).toBe(
+      false,
+    );
+  });
+
   test("needs-scope does NOT offer capture — re-pairing fixes it", () => {
     expect(offersCapture({ kind: "needs-scope", surface: SURFACE, scopeGap: null })).toBe(false);
   });

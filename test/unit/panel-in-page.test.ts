@@ -2245,6 +2245,11 @@ describe("lanes appear only where they can answer", () => {
           modifiedAt: Date.now(),
         },
       },
+      // `headerFrom` reads `outcome` only off a NON-file recognition — a `file`
+      // one branches on `file` instead (see its own doc comment), so a file-kind
+      // caller must carry this for `pageSubject` to see a hit at all. Harmless on
+      // every other kind, which never looks at this field.
+      ...(kind === "file" ? { file: { kind: "found" as const, path: ref } } : {}),
     };
   }
 
@@ -2375,11 +2380,13 @@ describe("lanes appear only where they can answer", () => {
 
   // Renders through the real panel path exactly as the item-title case does —
   // `resolved()` is generic over `kind`, so a `file` recognition mounts the
-  // same way a `pr` or `issue` one does; only the outcome's `item`/`type` are
-  // placeholders `headerFrom` doesn't inspect for `pageSubject` purposes here.
-  // This is what pins the three titles character-exact: a mistyped or dropped
-  // entry in `SURFACE_LANE_TITLES.file` fails this, not a constant compared to
-  // itself.
+  // same way a `pr` or `issue` one does. Unlike the item case, though, the
+  // header this produces is `file`, not `resolved`: `pageSubject` gates a file
+  // page's lanes on the PROBE (`resolved()`'s synthetic `file: {kind:"found"}`
+  // above), not on the outcome — `outcome.item`/`type` here are placeholders
+  // `headerFrom` never reads for a `file` recognition. This is what pins the
+  // three titles character-exact: a mistyped or dropped entry in
+  // `SURFACE_LANE_TITLES.file` fails this, not a constant compared to itself.
   it.each(fileTitlePairs)("titles $lane for a file on $kind", async ({ lane, kind }) => {
     const root = await mountPanelWithResolve(
       resolved("github", kind, "acme/web main/src/index.ts"),
@@ -2391,6 +2398,49 @@ describe("lanes appear only where they can answer", () => {
     const root = await mountPanelWithResolve(resolved("jenkins", "build", "web #482"));
     expect(root.querySelector('[data-lane="impact"]')).toBeNull();
     expect(root.querySelector('[data-lane="expert"]')).toBeNull();
+  });
+
+  // `pageSubject` gates a file page's lanes on the PROBE, not on the header —
+  // the header renders identically on a hit, a miss, and a gateway too old for
+  // the route (see `laneContext` in panel-in-page.ts). These two pin the two
+  // ways the gate must stay CLOSED even though the header still says "file".
+  function fileResolve(product: string, ref: string, file: unknown): unknown {
+    return {
+      kind: "resolve",
+      ok: true,
+      recognition: {
+        ok: true,
+        product,
+        kind: "file",
+        label: `${product} file`,
+        ref,
+        resolveUrl: "https://example.test/x",
+      },
+      outcome: { kind: "not-indexed", fetchable: false },
+      file,
+    };
+  }
+
+  it("offers no agent lane on a file miss", async () => {
+    const root = await mountPanelWithResolve(
+      fileResolve("github", "acme/web main/src/index.ts", {
+        kind: "miss",
+        reason: "file_not_indexed",
+        repo: "acme/web",
+      }),
+    );
+    expect(root.querySelector('[data-lane="impact"]')).toBeNull();
+    expect(root.querySelector('[data-lane="expert"]')).toBeNull();
+    expect(root.querySelector('[data-lane="ownership"]')).toBeNull();
+  });
+
+  it("offers no agent lane on a file page an older gateway can't place", async () => {
+    const root = await mountPanelWithResolve(
+      fileResolve("github", "acme/web main/src/index.ts", { kind: "unsupported" }),
+    );
+    expect(root.querySelector('[data-lane="impact"]')).toBeNull();
+    expect(root.querySelector('[data-lane="expert"]')).toBeNull();
+    expect(root.querySelector('[data-lane="ownership"]')).toBeNull();
   });
 });
 

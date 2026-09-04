@@ -1154,6 +1154,25 @@ describe("the service header", () => {
   });
 });
 
+describe("the file header", () => {
+  it("names the surface and no more, on a hit", () => {
+    const el = renderHeader(document, { kind: "file", surface: "GitHub file" });
+    const lines = [...el.children].map((c) => c.textContent);
+    expect(lines).toEqual(["GitHub file"]);
+  });
+
+  it.each([
+    [
+      "remote_not_tracked",
+      "Nimbus has no local checkout of `acme/web`, so it cannot answer about its files.",
+    ],
+    ["file_not_indexed", "Nimbus has a checkout of `acme/web`, but this file is not in its index."],
+  ])("renders its own sentence for %s", (_reason, sentence) => {
+    const el = renderHeader(document, { kind: "file", surface: "GitHub file", banner: sentence });
+    expect(el.textContent).toContain(sentence);
+  });
+});
+
 describe("the captured-copy header", () => {
   const NOW = 1_700_000_000_000;
   const item = {
