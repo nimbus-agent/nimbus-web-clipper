@@ -2345,6 +2345,48 @@ describe("lanes appear only where they can answer", () => {
     expect(laneTitles(root)[lane]).toBe(ITEM_TITLES[lane]);
   });
 
+  // The `file` scope's own copy table — a second, disjoint object from
+  // `ITEM_TITLES` on purpose: `SURFACE_LANE_TITLES.file` is its own object in
+  // `panel-in-page.ts` (a file and an issue are not the same kind of thing even
+  // though `ownership`'s wording happens to coincide), so its test double must
+  // not collapse the two and hide a drift between them.
+  const FILE_TITLES: Readonly<Record<string, string>> = {
+    impact: "What breaks if this changes",
+    expert: "Who knows this file",
+    ownership: "Who owns this",
+  };
+
+  // Derived exactly like `itemTitlePairs` above, filtered on the `file` scope
+  // instead of `item` — the same mechanism, pointed at the surface `LANE_RULES`
+  // gained in this task rather than a hand-picked lane list that could drift
+  // from the table it is meant to check.
+  const fileTitlePairs = SURFACE_KINDS.flatMap((kind) =>
+    AGENT_LANES.filter((lane) => scopeForLane(lane, kind) === "file").map((lane) => ({
+      lane,
+      kind,
+    })),
+  );
+
+  // Same guard as `itemTitlePairs`: an empty derivation would make the
+  // `it.each` below vacuously pass if `file` ever lost every lane.
+  it("derives at least one file-scope pair", () => {
+    expect(fileTitlePairs.length).toBeGreaterThan(0);
+  });
+
+  // Renders through the real panel path exactly as the item-title case does —
+  // `resolved()` is generic over `kind`, so a `file` recognition mounts the
+  // same way a `pr` or `issue` one does; only the outcome's `item`/`type` are
+  // placeholders `headerFrom` doesn't inspect for `pageSubject` purposes here.
+  // This is what pins the three titles character-exact: a mistyped or dropped
+  // entry in `SURFACE_LANE_TITLES.file` fails this, not a constant compared to
+  // itself.
+  it.each(fileTitlePairs)("titles $lane for a file on $kind", async ({ lane, kind }) => {
+    const root = await mountPanelWithResolve(
+      resolved("github", kind, "acme/web main/src/index.ts"),
+    );
+    expect(laneTitles(root)[lane]).toBe(FILE_TITLES[lane]);
+  });
+
   it("offers no agent lane on a resolved Jenkins build", async () => {
     const root = await mountPanelWithResolve(resolved("jenkins", "build", "web #482"));
     expect(root.querySelector('[data-lane="impact"]')).toBeNull();
