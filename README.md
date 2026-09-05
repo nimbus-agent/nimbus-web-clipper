@@ -16,12 +16,16 @@ searchable alongside your Drive files, email, and bookmarks.
 - **Clip a selection** — highlight text and clip just that.
 - **Related items** — an on-demand panel surfaces related things already in your
   index, without leaving the tab.
-- **Know where you are** — the panel recognises a pull request, a build or an
-  issue (GitHub / GitLab / Bitbucket / Jenkins / Jira, self-hosted included) and
-  names the indexed item behind the page you are on.
+- **Know where you are** — the panel recognises a pull request, a build, an
+  issue, an incident, a product dashboard or a **source file** (GitHub / GitLab /
+  Bitbucket / Jenkins / Jira / Linear / Confluence / PagerDuty / CircleCI,
+  self-hosted included) and names the indexed item behind the page you are on.
 - **Run the agents from the page** — seven of the gateway's own agents answer
   about that item as panel lanes (impact, expert, why, catchup, decisions,
   ownership, glossary).
+- **Ask about the file you are reading** — on a source file, *what breaks if this
+  changes*, *who knows this file* and *who owns this*, answered against your own
+  checkout. Needs a gateway that serves the file-resolve route.
 - **Ask across your open tabs** — pick a set of tabs, ask one question, get a
   research brief with its sources named.
 - **See what was done for you** — an Activity page reads the gateway's
@@ -42,8 +46,10 @@ no cloud calls.
 > implemented — as are the later phases: page recognition and per-origin page
 > access (C1), the agent lanes (C2), targeted fetch and capture-as-last-resort
 > (C3), the Activity page over the gateway's egress ledger (C4.1, partial —
-> see the roadmap), and research briefs over your open tabs and your index
-> (C5). Tagging `vX.Y.Z` builds, signs and submits to both stores
+> see the roadmap), research briefs over your open tabs and your index
+> (C5), item lanes on an issue or an incident (C6), and the source-file lanes
+> (C7 — these need a gateway carrying the file-resolve route; on an older one
+> the page simply renders without them). Tagging `vX.Y.Z` builds, signs and submits to both stores
 > ([store/publishing.md](./store/publishing.md)); each store's own review then
 > gates the public rollout. See the
 > [changelog](./CHANGELOG.md) for the per-slice breakdown.
@@ -125,7 +131,7 @@ Nimbus gateway repository; this repo builds against that stable surface.
 
 - [Roadmap](./ROADMAP.md) — where this extension is going and why it wins
 - [Architecture](./docs/architecture.md) — how it's built today
-- [Documentation](./docs/) — design specs and architecture reference
+- [Documentation](./docs/) — the architecture reference and the manual-verification checklist
 - [Store assets](./store/) — listing copy, privacy policy, screenshots, and the
   [publishing guide](./store/publishing.md)
 - [Changelog](./CHANGELOG.md) — notable changes per release

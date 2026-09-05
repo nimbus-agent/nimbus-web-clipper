@@ -148,8 +148,9 @@ const FETCH_MESSAGES: Record<string, string> = {
 
 /**
  * The C2 agent lanes' summary labels — each phrased as the question its
- * agent answers, matching the design spec's own naming
- * (docs/superpowers/specs/2026-08-10-c2-agent-lanes-design.md).
+ * agent answers. The wording is load-bearing, not decorative: see
+ * `docs/architecture.md`'s "The agent lanes" section, which is where that
+ * reasoning lives now that the design spec has been pruned.
  *
  * Left here rather than moved into `panel-view.ts`, which nominally owns
  * render code but not a fixed copy table: `Lane.title` is caller-supplied by
