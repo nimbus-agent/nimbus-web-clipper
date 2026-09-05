@@ -8,6 +8,22 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Changed
+
+- **The three source-file lanes now actually run.** *What breaks if this
+  changes*, *Who knows this file* and *Who owns this* shipped in 0.9.0 against
+  `GET /v1/items/resolve-file`, a gateway route that did not exist anywhere —
+  so on every gateway in the world the panel probed, got a 404, withheld the
+  lanes and said nothing. The route landed upstream in Nimbus#1447 and ships in
+  the release after gateway 7.9.0. **Nothing in the extension changed and no
+  re-pairing is needed** — pair with a gateway carrying that release and the
+  lanes appear on a GitHub, GitLab or Bitbucket file page.
+  One bound worth knowing: the gateway can only resolve a checkout cloned from
+  `github.com`, `gitlab.com` or `bitbucket.org` with an `owner/name` path. A
+  self-hosted forge (GitHub Enterprise and friends) or a GitLab **subgroup**
+  project answers "Nimbus has no local checkout of this repository" however the
+  checkout is configured.
+
 ### Fixed
 
 - **Linear's dashboard match keyed only on the second path segment, so any

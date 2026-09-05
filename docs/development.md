@@ -537,19 +537,60 @@ page and a CircleCI pipeline, also indexed.
    Confluence by design (upstream F8 — no graph entity for a `type: "page"`
    item; see `docs/architecture.md`'s "Item lanes on an issue or an incident"),
    CircleCI because it is not an item surface `LANE_RULES` names at all.
-7. **The file surface, both sides of the route — only one side can be run
-   today.** `GET /v1/items/resolve-file` is proposed, not shipped anywhere
-   upstream, so there is no gateway to test the positive case against yet:
-   all three lanes (*What breaks if this changes*, *Who knows this file*,
-   *Who owns this*) offered on a file the route resolves. What runs today is
-   the negative case, against any gateway that exists (none serve the
-   route): open a GitHub blob URL (a file, not a directory or the repo
-   root). → the page renders exactly as it did before this branch —
-   recognised, no lanes, no banner — silently, the same fail-quiet the
-   roster read makes elsewhere in this doc, not an error state. Run the
-   positive half once the route lands; it will need no version floor, only
-   the forge file arm (v7.6.0, Nimbus#1424) that a resolved file's lanes
-   already send.
+7. **The file surface — the suite covers the client half; this step is the
+   other half.** `GET /v1/items/resolve-file` landed upstream in Nimbus#1447
+   and ships in the release after 7.9.0. The client rendering is now pinned by
+   `test/e2e/file-lanes.e2e.ts` against the mock, so what is left here is the
+   one thing a mock cannot prove: that a **real** gateway resolves a real
+   checkout. Against a gateway carrying #1447, with `resolve` in your token's
+   scopes, open a blob URL for a file in a repository you have cloned locally
+   and indexed (a file, not a directory or the repo root). → all three lanes
+   (*What breaks if this changes*, *Who knows this file*, *Who owns this*),
+   answered about that file. No version floor is involved: the route's
+   presence is the capability signal, and the forge file arm it needs shipped
+   in v7.6.0 (Nimbus#1424).
+   **Use `github.com` itself, not a self-hosted host** — upstream
+   `parseRemoteUrl` accepts only `github.com`, `gitlab.com` and
+   `bitbucket.org`, and requires an `owner/name` path of exactly two segments,
+   so a GitHub Enterprise blob URL or a GitLab subgroup project answers
+   `remote_not_tracked` no matter what you have cloned. That is a real bound,
+   not a misconfiguration; see the C7 design's §4.5 note on it.
+
+## Manual verification — The file surface (C7)
+
+**Steps 1–4 run on every PR** (`test/e2e/file-lanes.e2e.ts`), so this pass is
+not outstanding. Step 5 is the one a mock cannot make: the suite drives the
+mock gateway, which answers whatever fixture it is given, so it proves the
+client half — the coordinate the recogniser builds, the request the worker
+sends, and what the panel renders from each answer — and nothing about whether
+a real gateway can resolve a real checkout.
+
+That gap is structural, not an omission. Reaching a forge surface on loopback
+means registering the mock's origin as a **self-hosted** GitHub, and upstream
+`parseRemoteUrl` accepts only `github.com`, `gitlab.com` and `bitbucket.org`,
+so the origin the suite uses is one no real gateway could resolve even in
+principle. Step 5 therefore uses `github.com` itself.
+
+1. <!-- e2e:file-lanes-1 --> On a blob URL (`/{owner}/{repo}/blob/{ref}/{path}`)
+   with page access granted, open the panel. The header reads **GitHub file ·
+   `owner/repo` `filename`** and carries no banner.
+2. <!-- e2e:file-lanes-2 --> The three lanes are present under their **file**
+   titles — *What breaks if this changes*, *Who knows this file*, *Who owns
+   this* — not the item titles. Related is present too (it is withheld only on
+   a dashboard); there is no capture offer. Expanding one lane runs it through
+   to a brief.
+3. <!-- e2e:file-lanes-3 --> Each miss reason renders its own sentence and no
+   lanes: `remote_not_tracked` says Nimbus has no local checkout of the repo,
+   `file_not_indexed` says the checkout exists but the file is not in its
+   index. The two are never collapsed into one.
+4. <!-- e2e:file-lanes-4 --> Against a gateway that does not serve
+   `GET /v1/items/resolve-file`, the page renders exactly as it did before C7 —
+   recognised, named, no lanes, no banner, no error state. An older gateway is
+   not a fault.
+5. **(human — needs a real gateway.)** See item 7 of "Manual verification —
+   Item lanes and the version floor (C6)" above: the positive case against a
+   gateway carrying Nimbus#1447 and a repository you have actually cloned and
+   indexed.
 
 ## Manual verification — Setup that works (discovery, connection health, the trust panel)
 

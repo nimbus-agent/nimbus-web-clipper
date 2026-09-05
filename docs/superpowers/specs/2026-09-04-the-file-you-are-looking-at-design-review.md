@@ -24,10 +24,10 @@ This review identifies **5 critical implementation and contract clarifications**
 ### Q2.1: `forgeFile` Dropped by `recognise()` Pipeline
 * **Context:** §4.1 states that all three forge matchers emit `Match.forgeFile` with `refAndPath`, and that `resolveForAgent`'s `file` arm makes no resolve call.
 * **Problem in Codebase:**
-  - `Match` ([`rule.ts`](file:///C:/gitrep/nimbus-web-clipper/src/shared/recognise/rule.ts#L26)) carries `forgeFile?: { repo: string; refAndPath: string }`.
-  - However, `recognise()` ([`src/shared/recognise/index.ts`](file:///C:/gitrep/nimbus-web-clipper/src/shared/recognise/index.ts#L171-L179)) constructs `Recognition` without forwarding `match.forgeFile`.
-  - `Recognition` ([`src/shared/types.ts`](file:///C:/gitrep/nimbus-web-clipper/src/shared/types.ts#L211-L227)) currently lacks the `forgeFile` field, and `isRecognition` ([`src/shared/messages.ts`](file:///C:/gitrep/nimbus-web-clipper/src/shared/messages.ts#L740)) does not validate it.
-  - Furthermore, `resolveForAgent` in [`src/background/handlers.ts`](file:///C:/gitrep/nimbus-web-clipper/src/background/handlers.ts#L705-L720) does not have an `if (recognition.kind === "file")` branch and currently falls through to `resolveItem`.
+  - `Match` ([`rule.ts`](../../../src/shared/recognise/rule.ts)) carries `forgeFile?: { repo: string; refAndPath: string }`.
+  - However, `recognise()` ([`src/shared/recognise/index.ts`](../../../src/shared/recognise/index.ts)) constructs `Recognition` without forwarding `match.forgeFile`.
+  - `Recognition` ([`src/shared/types.ts`](../../../src/shared/types.ts)) currently lacks the `forgeFile` field, and `isRecognition` ([`src/shared/messages.ts`](../../../src/shared/messages.ts)) does not validate it.
+  - Furthermore, `resolveForAgent` in [`src/background/handlers.ts`](../../../src/background/handlers.ts) does not have an `if (recognition.kind === "file")` branch and currently falls through to `resolveItem`.
 * **Action Required:**
   1. Add `forgeFile?: { readonly repo: string; readonly refAndPath: string }` to `Recognition` (or discriminate by `kind: "file"`).
   2. Forward `match.forgeFile` inside `recognise()`.
@@ -36,9 +36,9 @@ This review identifies **5 critical implementation and contract clarifications**
   5. Include `src/shared/recognise/index.ts` in §4.6 (Files table).
 
 ### Q2.2: Stored Run Invalidation Bug in `agent-run-store.ts` (`isRunSubject`)
-* **Context:** §4.1 and [`agent-run-store.ts`](file:///C:/gitrep/nimbus-web-clipper/src/background/agent-run-store.ts#L75) define `RunSubject` with `{ kind: "file", repo: string, refAndPath: string }`.
+* **Context:** §4.1 and [`agent-run-store.ts`](../../../src/background/agent-run-store.ts) define `RunSubject` with `{ kind: "file", repo: string, refAndPath: string }`.
 * **Problem in Codebase:**
-  - The runtime storage guard `isRunSubject` ([`agent-run-store.ts:L113-124`](file:///C:/gitrep/nimbus-web-clipper/src/background/agent-run-store.ts#L113-L124)) validates `item`, `term`, and `service`, but **omits `file`**:
+  - The runtime storage guard `isRunSubject` ([`agent-run-store.ts:L113-124`](../../../src/background/agent-run-store.ts)) validates `item`, `term`, and `service`, but **omits `file`**:
     ```ts
     function isRunSubject(v: unknown): v is RunSubject {
       if (!isObject(v)) return false;
@@ -114,7 +114,7 @@ different wording than this review guessed — see `SURFACE_LANE_TITLES.file` in
 ## 3. Architecture & State Modeling Improvements
 
 ### I3.1: Dedicated `HeaderState` Arm for File Pages (`offersCapture` Isolation)
-* **Context:** [`offersCapture(state)`](file:///C:/gitrep/nimbus-web-clipper/src/shared/capture-offer.ts#L30) checks `state.kind`. On `not-indexed` (with `fetchable: false`), it returns `true` and appends `"Save a copy to Nimbus"`.
+* **Context:** [`offersCapture(state)`](../../../src/shared/capture-offer.ts) checks `state.kind`. On `not-indexed` (with `fetchable: false`), it returns `true` and appends `"Save a copy to Nimbus"`.
 * **Issue:**
   - If a file miss (`remote_not_tracked` / `file_not_indexed`) is represented as `not-indexed`, `offersCapture` would display a clip offer beneath the miss explanation.
   - Clipping a forge blob HTML page does not index a repository or create a local git checkout.
@@ -155,7 +155,7 @@ different wording than this review guessed — see `SURFACE_LANE_TITLES.file` in
 | **Branch with Multiple Slashes** | URL is `/blob/feat/jira-123/sub-fix/src/app.ts`. `refAndPath` is `feat/jira-123/sub-fix/src/app.ts`. | Client does not split; gateway splits against checkout file list. |
 | **SPA Route Change from PR to File** | User navigates from PR (`#482`) to a file view on GitHub without full page reload. | `checkNavigation` detects `kind` change (`pr` → `file`), cancels PR poll timers, updates `pinnedRecognition`, and issues `handleResolve`. |
 | **Gateway 7.5.0 (Item Arm, No Version)** | `roster.version` is `null`. `meetsFloor(null, "7.5.0")` is `false`. | `expert` on `pr` sends `{ topicOrFile: item.title }`; `expert` on `issue` is withheld. |
-| **Gateway 7.8.1 (Probe Route Available)** | Probe returns `200 { ok: true, path: "src/foo.ts" }`. | All 3 file lanes offered (`ghost`/`conflicts` are out of scope, see §4.7 of the design); agent invokes send `{ service, repo, refAndPath }`. |
+| **A gateway serving the probe route** (Nimbus#1447, the release after 7.9.0 — this review guessed 7.8.1 before the route landed) | Probe returns `200 { ok: true, path: "src/foo.ts" }`. | All 3 file lanes offered (`ghost`/`conflicts` are out of scope, see §4.7 of the design); agent invokes send `{ service, repo, refAndPath }`. |
 
 ---
 
