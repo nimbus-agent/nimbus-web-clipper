@@ -18,6 +18,10 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   the release after gateway 7.9.0. **Nothing in the extension changed and no
   re-pairing is needed** — pair with a gateway carrying that release and the
   lanes appear on a GitHub, GitLab or Bitbucket file page.
+  Your paired token does need the `resolve` scope. A browser paired before
+  scopes existed carries only `clip` and `briefs`, and gets a scope refusal
+  naming the fix: run `nimbus clip scopes` on the gateway to add `resolve` in
+  place. That is still not a re-pairing.
   One bound worth knowing: the gateway can only resolve a checkout cloned from
   `github.com`, `gitlab.com` or `bitbucket.org` with an `owner/name` path. A
   self-hosted forge (GitHub Enterprise and friends) or a GitLab **subgroup**

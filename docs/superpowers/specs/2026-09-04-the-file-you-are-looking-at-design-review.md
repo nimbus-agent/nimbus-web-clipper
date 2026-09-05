@@ -22,6 +22,17 @@ This review identifies **5 critical implementation and contract clarifications**
 ## 2. Critical Implementation & Contract Clarifications
 
 ### Q2.1: `forgeFile` Dropped by `recognise()` Pipeline
+
+> **✅ Resolved in #98 — this section describes the pre-implementation state.**
+> All three "Problem in Codebase" claims below were true when this review was
+> written and are false now: `recognise()` forwards `match.forgeFile`
+> (`src/shared/recognise/index.ts`), `Recognition` carries the field and
+> `isRecognition` validates it (`src/shared/types.ts`, `src/shared/messages.ts`),
+> and `resolveForAgent` has its `recognition.kind === "file"` branch
+> (`src/background/handlers.ts`). Kept rather than deleted because the review's
+> value is the record of what the design nearly shipped without — but read the
+> Action Required list as done, not outstanding.
+
 * **Context:** §4.1 states that all three forge matchers emit `Match.forgeFile` with `refAndPath`, and that `resolveForAgent`'s `file` arm makes no resolve call.
 * **Problem in Codebase:**
   - `Match` ([`rule.ts`](../../../src/shared/recognise/rule.ts)) carries `forgeFile?: { repo: string; refAndPath: string }`.

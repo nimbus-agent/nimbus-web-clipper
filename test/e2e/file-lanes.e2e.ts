@@ -3,7 +3,7 @@
  *
  * COVERS steps 1-4 (ids file-lanes-1..4): a resolved file names itself and
  * offers the three lanes under file-specific titles; one lane runs to a brief;
- * each miss reason renders its OWN sentence and no lanes; and a gateway that
+ * each miss reason renders its OWN sentence and no agent lanes; and a gateway that
  * does not serve the probe route leaves the page exactly as it rendered
  * before C7 — recognised, no lanes, no banner, silently.
  *
@@ -117,7 +117,7 @@ for (const { fixture, sentence } of [
     sentence: "Nimbus has a checkout of `acme/web`, but this file is not in its index.",
   },
 ]) {
-  test(`the ${fixture.reason} miss says so, and offers no lanes`, async () => {
+  test(`the ${fixture.reason} miss says so, and offers no agent lanes`, async () => {
     const scenario: Scenario = { resolveFileDefault: fixture };
     const h = await launchExtension({ scenario });
     try {
@@ -133,6 +133,7 @@ for (const { fixture, sentence } of [
       for (const lane of ["impact", "expert", "ownership"]) {
         await expect(page.locator(`[data-lane="${lane}"]`)).toHaveCount(0);
       }
+      await expect(page.locator('[data-lane="related"]')).toHaveCount(1);
       await expect(page.locator(".nimbus-related__capture")).toHaveCount(0);
     } finally {
       await h.close();
@@ -163,6 +164,10 @@ test("a gateway without the probe route changes nothing about the page", async (
     for (const lane of ["impact", "expert", "ownership"]) {
       await expect(page.locator(`[data-lane="${lane}"]`)).toHaveCount(0);
     }
+    // "Unchanged" has to include what STAYS. Without this, a regression that
+    // dropped Related on the 404 path would pass a test whose whole claim is
+    // that the page renders as it did before C7.
+    await expect(page.locator('[data-lane="related"]')).toHaveCount(1);
     await expect(page.locator(".nimbus-related__capture")).toHaveCount(0);
   } finally {
     await h.close();
