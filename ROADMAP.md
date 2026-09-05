@@ -362,7 +362,7 @@ is worthless without this — and half of C1 is buildable today.*
 > message boundary on the `not-indexed` / `unresolvable` / `ambiguous` arms,
 > unrendered for now; it is **C3.1**'s targeted-sync trigger.
 > **This closes out the contract adaptation** tracked in
-> [`docs/superpowers/specs/2026-08-07-c1-upstream-reconciliation.md`](./docs/superpowers/specs/2026-08-07-c1-upstream-reconciliation.md):
+> `docs/architecture.md` (the design spec was pruned on delivery):
 > the client was originally built against a guessed shape while the gateway
 > route was still proposed; both landed, and this phase closed the gap between
 > them.
@@ -398,7 +398,7 @@ is worthless without this — and half of C1 is buildable today.*
 > Closed: the panel pins the page it was opened on, so its header and its lanes
 > can no longer describe different items, and it offers a deliberate re-read when
 > you navigate away — see
-> `docs/superpowers/specs/2026-08-11-panel-page-context-design.md`.
+> `docs/architecture.md` (the design spec was pruned on delivery).
 > **The deferred ambient half has now landed too:** on a host the user has
 > granted page access to and separately switched a per-host "Surface
 > automatically" toggle on for, landing on a page that resolves to exactly one
@@ -406,7 +406,7 @@ is worthless without this — and half of C1 is buildable today.*
 > it opens this same user-summoned panel; the panel itself is unchanged. Every
 > non-`found` resolve outcome is silence, not a cue that leads nowhere, and
 > nothing is invoked ambiently — no agent, no lane. See
-> `docs/superpowers/specs/2026-08-13-ambient-surfacing-design.md`.
+> `docs/architecture.md` (the design spec was pruned on delivery).
 
 ### C1.4 Per-origin, opt-in recognition · 🟢 · S — ✅ shipped
 > **What** Recognition needs to see the URL of pages that are not the gateway —
@@ -519,7 +519,7 @@ that already exist, without leaving the tab.*
 > See **C2.4** below for a browser-viable version of "why". This roadmap
 > previously named both as if they were reachable here; that was wrong, not a
 > simplification made for time — corrected as part of landing this phase. Full
-> reasoning: `docs/superpowers/specs/2026-08-10-c2-agent-lanes-design.md`.
+> reasoning: `docs/architecture.md` (the design spec was pruned on delivery).
 > **Done when** Each lane returns a cited brief for the resolved item, or a
 > plain "couldn't answer, and here's why" — never a silent empty lane. ✅ — see
 > `AGENT_ERRORS` (`src/shared/types.ts`) and `renderLaneBody`
@@ -601,7 +601,7 @@ that already exist, without leaving the tab.*
 > connector, not a page's item, so dropping them onto an item page (a repo, a
 > board) would put the same connector-wide answer on every page of that host.
 > They needed a surface whose scope matches theirs, which did not exist. Full
-> reasoning: `docs/superpowers/specs/2026-08-13-c2-3-service-lanes-design.md`.
+> reasoning: `docs/architecture.md` (the design spec was pruned on delivery).
 > **Why it wows** Each surface grows its own reason to keep the panel open.
 > **Approach** One lane at a time, each earning its place on a real page. A lane
 > that fires everywhere is noise, and noise is how ambient UI dies.
@@ -686,7 +686,7 @@ that already exist, without leaving the tab.*
 > that asks the index — `resolvePrSubject`, keyed off the same
 > `resolveItemByUrl` path this extension's own resolve already uses — correct
 > for every forge and every self-hosted instance without a host table.
-> Full design: `docs/superpowers/specs/2026-08-19-why-from-a-pull-request-design.md`.
+> Full design: `docs/architecture.md` (the design spec was pruned on delivery).
 > **Done when** A lane answers "why does this change exist" for a resolved
 > pull request, without requiring the browser to have a local checkout of
 > anything. ✅ — the lane gated exactly as `impact`/`expert` did at the time
@@ -836,7 +836,7 @@ answer is to ask the gateway to go and get it, not to shred the DOM.*
 > working — retrying beats scraping. See
 > [`docs/architecture.md`](./docs/architecture.md#capture-as-the-last-resort-phase-c32).
 > Full reasoning:
-> `docs/superpowers/specs/2026-08-16-capture-as-last-resort-design.md`.
+> `docs/architecture.md` (the design spec was pruned on delivery).
 
 ## Phase C4 — Trust for a client that fetches 🟢/🟡
 
@@ -871,7 +871,7 @@ grow a second half to match.*
 > id. That superseded the original plan to derive identity by parsing the URL
 > before the fetch, which would have needed a normalised parser exported from
 > five connectors. See
-> [`docs/superpowers/specs/2026-08-23-gateway-activity-ledger-design.md`](./docs/superpowers/specs/2026-08-23-gateway-activity-ledger-design.md).
+> `docs/architecture.md` (the design spec was pruned on delivery).
 > The design reads the upstream and settles the question this brief left open:
 > **yes, a targeted sync is ledgered.** `sync/targeted-fetch.ts` appends one row
 > per fetch before calling the connector, and agent runs over HTTP append one
@@ -949,7 +949,7 @@ the editor structurally cannot.*
 > **Done when** A set of open tabs becomes one cited brief, a page that cannot be
 > read is named rather than silently dropped, and nothing claims a destination it
 > cannot know. ✅ Full reasoning:
-> [`docs/superpowers/specs/2026-08-17-research-briefs-design.md`](./docs/superpowers/specs/2026-08-17-research-briefs-design.md).
+> `docs/architecture.md` (the design spec was pruned on delivery).
 
 ### C5.2 Corrections this phase records
 > **5.1 "Ask-your-clips" is superseded, not delivered.** Its stated dependency —
@@ -1029,7 +1029,7 @@ the editor structurally cannot.*
 > only C5.2's note that it was coming. 2.3's status line below and C5.1's
 > qualifier above record the other two the design's own *Corrections to the
 > roadmap* lists. Full reasoning:
-> [`docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md`](./docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md).
+> `docs/architecture.md` (the design spec was pruned on delivery).
 
 ### C5.4 Briefs over your index · 🟢 · M — ✅ shipped
 > **What** One checkbox in the composer — **Also search what Nimbus has
@@ -1092,7 +1092,7 @@ the editor structurally cannot.*
 > says so. This entry is itself a correction: Phase C5 had no brief for this
 > work, only C5.2's note that it was coming, which this entry's update now
 > marks resolved. Full reasoning:
-> [`docs/superpowers/specs/2026-08-19-briefs-over-your-index-design.md`](./docs/superpowers/specs/2026-08-19-briefs-over-your-index-design.md).
+> `docs/architecture.md` (the design spec was pruned on delivery).
 
 ---
 
@@ -1175,7 +1175,7 @@ the editor structurally cannot.*
 > once, here, rather than left as a fourth silent copy. See **C2.5**'s
 > correction note.
 > Full design:
-> [`docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md`](./docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md)
+> `docs/architecture.md` (the design spec was pruned on delivery)
 > (§4; §5's file-page lanes are **C7**, below, and not part of this entry).
 
 ---
@@ -1239,8 +1239,9 @@ the editor structurally cannot.*
 > of host, so it reaches the route and gets that answer. Widening it is a
 > separate feature with its own config surface, not a defect in this one.
 > Full design:
-> [`docs/superpowers/specs/2026-09-04-the-file-you-are-looking-at-design.md`](./docs/superpowers/specs/2026-09-04-the-file-you-are-looking-at-design.md)
-> (§4; §4.7 for why not five; §5 for the C6.1 close-out this same branch shipped).
+> `docs/architecture.md` (the design spec was pruned on delivery)
+> (why only three lanes and not five — `ghost` and `conflicts` are federation-only —
+> is recorded in that architecture section too).
 
 ---
 
@@ -1373,7 +1374,7 @@ endpoint.*
 > ("multiple highlights on a page become a single clip") is deliberately
 > **unmet**: **C5.2** re-aimed this item at a brief's source list rather than a
 > clip, and **C5.3** is where it landed. See
-> [`docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md`](./docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md).
+> `docs/architecture.md` (the design spec was pruned on delivery).
 
 ### 2.4 Full-page vs. readable toggle · 🟢 · S
 > **What** Let the user choose readable extraction or the full page content.
@@ -1403,7 +1404,7 @@ endpoint.*
 > own body-cap and embedding consequences. JSON-LD reaches the client only via
 > Readability, which returns nothing at all on a page it cannot read, so hard
 > pages get `<meta>` tags only. See
-> [`docs/superpowers/specs/2026-08-20-faithful-metadata-and-canonical-url-design.md`](./docs/superpowers/specs/2026-08-20-faithful-metadata-and-canonical-url-design.md).
+> `docs/architecture.md` (the design spec was pruned on delivery).
 
 ### 2.6 Hard-page robustness · 🟢 · M
 > **What** Reliable capture on SPAs, infinite-scroll, and lazy-rendered content.
@@ -1480,7 +1481,7 @@ organizing after.*
 > opt-in. It resolves the page to a single indexed item and names it, rather
 > than counting related hits — a stronger, narrower claim than "3 related items
 > in Nimbus" that only fires when there is one real answer. See **C1.3** above
-> and `docs/superpowers/specs/2026-08-13-ambient-surfacing-design.md`.
+> and `docs/architecture.md` (the design spec was pruned on delivery).
 
 ### 3.5 Zero-config gateway discovery · 🟢 · S — ✅ shipped
 > **What** Find the local gateway automatically so pairing is the only setup step.
@@ -1531,7 +1532,7 @@ engine to grow.*
 > source, which the lane already renders, is the only "open" that exists. If a
 > deep-link primitive is ever proposed upstream this becomes a one-line client
 > change.
-> Design: `docs/superpowers/specs/2026-08-16-richer-related-lane-design.md`.
+> Design: `docs/architecture.md` (the design spec was pruned on delivery).
 
 ### 4.2 Related-on-selection · 🟢 · S — ✅ shipped
 > **What** Highlight text → see what's related to *that*, not just the page.
@@ -1714,9 +1715,11 @@ Every PR runs `typecheck`, `lint`, `test`, `build`, and `check-build` (see
 A 🟡 item is blocked on the Nimbus gateway growing a new surface. The client work
 can be *designed* and even *stubbed* here, but the contract is decided upstream:
 
-1. Write the client-side brief here (or in a `docs/superpowers/specs/` design) —
-   including the **shape** of the endpoint you'd need (request/response), tagged
-   clearly as *proposed, not yet contracted*.
+1. Write the client-side brief here (or in a `docs/superpowers/specs/` design —
+   that directory is a workspace for work in flight, and its contents are pruned
+   once the feature ships, so anything still true afterwards belongs in
+   `docs/architecture.md`) — including the **shape** of the endpoint you'd need
+   (request/response), tagged clearly as *proposed, not yet contracted*.
 2. Open the contract proposal in the [Nimbus gateway repo](https://github.com/nimbus-agent/Nimbus).
    The gateway is the authority; it decides the versioned shape.
 3. Once the surface ships and is versioned, the item flips 🟡 → 🟢 and the client

@@ -526,8 +526,7 @@ page and a CircleCI pipeline, also indexed.
    not found — so each lane reports "does not resolve to an indexed item with
    a graph entity" under a header naming the item you just picked. This is a
    known limitation, not fixed here — see
-   `docs/superpowers/specs/2026-08-31-lanes-for-every-recognised-page-design.md`'s
-   limitations note. Record what you actually see; do not change client code
+   `docs/architecture.md`'s "Item lanes on an issue or an incident (Phase C6)". Record what you actually see; do not change client code
    to hide it.
 5. **The miss:** open a Jira issue that is NOT indexed. → one honest "this
    page is not in your index" per lane, from the existing `not_resolved`

@@ -645,9 +645,7 @@ not-indexed, fetchable ─{ click "Fetch this from GitHub" }─►  panel-in-pag
 C1.3 shipped the panel **user-summoned** and said why: ambient auto-surfacing
 waits until the lanes have real answers. C2 gave them real answers, so this
 slice adds the other half — a small cue that tells you the panel would have
-something to say, before you ask it. Full reasoning, including the four
-decisions behind the shape of it:
-[`docs/superpowers/specs/2026-08-13-ambient-surfacing-design.md`](./superpowers/specs/2026-08-13-ambient-surfacing-design.md).
+something to say, before you ask it.
 
 On a host the user has **granted page access to** and **switched "Surface
 automatically" on for**, landing on a page that resolves to exactly one
@@ -1126,9 +1124,6 @@ terminal *"Saved a copy of …"* confirmation rendered once, right after a
 successful save, which is what makes the unrecognised path honest without
 needing the gateway to ever be asked about that URL again.
 
-Full reasoning:
-[`docs/superpowers/specs/2026-08-16-capture-as-last-resort-design.md`](./superpowers/specs/2026-08-16-capture-as-last-resort-design.md).
-
 ### Item lanes vs. service lanes (Phase C2.3)
 
 `impact`, `expert` and `why` answer about *this pull request* — a resolved
@@ -1267,8 +1262,6 @@ own action beside it — briefs are rendered with `textContent` and never parsed
 and a client that greps gateway prose breaks silently the first time upstream
 rewords a sentence.
 
-Full reasoning: `docs/superpowers/specs/2026-08-13-c2-3-service-lanes-design.md`.
-
 ### Item lanes on an issue or an incident (Phase C6)
 
 `why`, `expert` and `ownership` now also belong on `issue` and `incident` —
@@ -1377,6 +1370,64 @@ this generalisation, `impact`'s render sent one param shape per lane; `why` on
 an issue and `why` on a PR now need different arms for the same lane, and
 `ownership` on `home` and `ownership` on `issue` already did. See "Which lanes
 appear where" above for the `LaneSurfaceMap` table this is built on.
+
+### The file surface (Phase C7)
+
+A GitHub, GitLab or Bitbucket **file** page — `/{owner}/{repo}/blob/{ref}/{path}`,
+and Bitbucket's `/src/` equivalent — is its own `SurfaceKind`, `file`. It gains
+three lanes, phrased for a file rather than an item: *What breaks if this
+changes* (`impact`), *Who knows this file* (`expert`), *Who owns this*
+(`ownership`). `SURFACE_LANE_TITLES.file` is a separate object from the item
+titles precisely so the two can diverge; do not collapse them because they
+happen to share `ownership` today.
+
+**The coordinate crosses the wire unsplit, deliberately.** The recogniser emits
+`{ repo, refAndPath }` where `refAndPath` is everything after `/blob/` — ref and
+path still joined. A branch name may contain slashes, so `feat/auth-v2/src/a.ts`
+is ambiguous without the repository's branch list, and a browser could only learn
+that by calling the forge. The gateway holds the file list and tries the splits.
+The client must never attempt that split.
+
+**The probe is the capability gate — there is no version floor.** The panel calls
+`GET /v1/items/resolve-file` once per page (`resolve` scope, not `agents` — it
+resolves and runs nothing). Its four outcomes must never collapse into fewer:
+
+| Outcome | Panel |
+| --- | --- |
+| `found` | the three lanes, answered about the file |
+| `remote_not_tracked` | one sentence: no local checkout of this repo. No lanes |
+| `file_not_indexed` | one sentence: checkout exists, file is not in it. No lanes |
+| `unsupported` (404) | recognised, named, **no lanes and no banner** — silently |
+
+A `FILE_ARM_FLOOR` mirroring `ITEM_ARM_FLOOR` would be wrong here. `ITEM_ARM_FLOOR`
+exists because `GET /v1/agents` lists agent *names*, not their *arms*. This route
+ships strictly after the forge arm it needs, so its **presence** proves that arm
+exists — a direct capability probe that cannot drift the way a floor constant
+needs raising.
+
+The 404 arm is load-bearing and easy to break. It is what every gateway older
+than the route does, and it must stay a silent, correct degradation rather than
+an error state. `test/e2e/file-lanes.e2e.ts` pins it.
+
+**Related is still offered on a file.** The Related lane is withheld on `home`
+alone; a file takes the same arm as every other recognised surface. Whether a
+blob page's title is a good `/v1/clips/related` key is an open product question —
+the answer today is "it is offered", and the e2e records that rather than
+asserting it away.
+
+**Two lanes are permanently excluded, not deferred.** `ghost` and `conflicts` are
+federation-only and the gateway's forge arm refuses namespaces, so both would
+answer nothing on every gateway forever.
+
+**The bound worth knowing before filing a bug.** The gateway walks a
+`tracks_remote` edge that only `parseRemoteUrl` writes, and that accepts exactly
+three hosts — `github.com`, `gitlab.com`, `bitbucket.org` — with an `owner/name`
+path of exactly two segments. So a **self-hosted** forge (GitHub Enterprise and
+friends) and any **GitLab subgroup** project answer `remote_not_tracked` however
+the reader's checkout is configured, because no `repo` entity can exist for them.
+The client recognises self-hosted forges and sends `service: "github"` regardless
+of host, so it reaches the route and gets that answer. That is upstream's bound,
+not a defect here; widening it is a separate feature with its own config surface.
 
 ### The connector-health gate
 
@@ -1549,8 +1600,7 @@ pressure, but a passage exists in exactly one place and was put there by hand,
 so a refusal the user can act on beats a silent loss. The collect gesture
 itself reuses `captureTab` — the same call the clip path makes — rather than
 the menu click's browser-truncated `selectionText`, so a passage can never be
-a silently short excerpt. Full reasoning:
-[`docs/superpowers/specs/2026-08-18-passages-as-brief-sources-design.md`](./superpowers/specs/2026-08-18-passages-as-brief-sources-design.md).
+a silently short excerpt.
 
 ### Why there is a local disclosure log
 
@@ -1629,8 +1679,7 @@ to widen after the gateway does — fails loudly rather than drifting.
 The index widens what a brief may draw on; it does not replace what the user
 chose — `POST /v1/briefs` 400s on an empty `sources` array regardless of
 `useIndex`, so a brief cannot be built from the index alone, and the composer
-still requires at least one picked tab or passage. Full reasoning:
-[`docs/superpowers/specs/2026-08-19-briefs-over-your-index-design.md`](./superpowers/specs/2026-08-19-briefs-over-your-index-design.md).
+still requires at least one picked tab or passage.
 
 ### What the client cannot promise
 
@@ -1648,8 +1697,6 @@ this one — `2026-08-17-brief-synthesis-destination-design` on the
 `dev/asafgolombek/briefs-prerun-disclosure` branch: a synthesis policy echoed at
 create, a request-side `requireLocal` that may only tighten it, and the `model`
 egress class raised behind a router chokepoint.
-
-Full reasoning: `docs/superpowers/specs/2026-08-17-research-briefs-design.md`.
 
 ## The activity ledger (Phase C4.1)
 
@@ -1806,6 +1853,10 @@ changes here are potential upstream contributions.
 | — | Page access is opt-in (configured per origin, granted per host) and never widens the network destination | `optional_host_permissions` (inert at install) + `src/browser/permissions.ts`; `shared/origins.ts` is deliberately a separate validator from `shared/gateway.ts` |
 | **I30** | Pairing is fail-closed — token minted only in an owner-opened window | Gateway; extension redeems, never assumes |
 | **I13** | A targeted fetch is a WRITE (outbound provider request), gated by an explicit click and its own `fetch` scope — never fired on panel open | `src/panel/panel-in-page.ts`'s `sendFetch` (button click only) + the gateway's `fetch` token scope; see [the targeted-fetch path](#the-targeted-fetch-path) |
-| — | The bearer token / pairing code is never logged, never in a page DOM | `noConsole` in `src/` (Biome); token held only in the SW + storage |
+| — | The bearer token / pairing code is never logged, never in a page DOM, never serialized into the offline queue, and absent from every response type the panel or popup can see | `noConsole` in `src/` (Biome); token held only in the SW + storage; `ConnectionResponse` has no `token` field and `flushQueue` reads it at send time |
+| — | **No declared `content_scripts`.** Every in-page surface — capture, panel, toast, cue — is injected on demand via `chrome.scripting`, so the extension runs on no page until something asks it to | `src/manifest/manifest.ts` declares none; `src/browser/scripting.ts` is the only injection path |
+| — | **Gateway- and page-supplied strings are rendered with `textContent`, never `innerHTML`, and never through a markdown-to-HTML pass.** The 15 mentions of `innerHTML` in `src/` are all comments saying why it is not used; there is not one assignment | `src/shared/dom.ts` is the shared builder every view goes through |
+| — | An outbound link carries `rel="noopener noreferrer"`, and a URL becomes a link at all only after it parses | `src/panel/panel-view.ts`, `src/shared/dom.ts` |
+| — | Resolution is **at-most-one**. A non-exact match is labelled a closest match, never presented as the page you are on | `resolveItemByUrl` upstream returns one item or none; the panel prints "Closest match — this page's exact URL isn't indexed" rather than silently substituting it |
 | — | No `console.*` in `src/`; strict TypeScript, no `any` | `biome.json` (`noConsole`, `noExplicitAny`) + `tsc --noEmit` |
 | — | The wire contract is not redesigned here | Owned by the Nimbus gateway repo; this repo builds against it |
