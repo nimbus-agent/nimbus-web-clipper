@@ -1180,9 +1180,9 @@ the editor structurally cannot.*
 
 ---
 
-## Phase C7 — The file you are looking at 🟢/🟡
+## Phase C7 — The file you are looking at 🟢
 
-### C7.1 A source file gains impact, expert and ownership · 🟢/🟡 · M — ✅ client-complete, 🟡 gateway-blocked
+### C7.1 A source file gains impact, expert and ownership · 🟢 · M — ✅ shipped
 > **What** A GitHub, GitLab or Bitbucket file page (`.../blob/<ref>/<path>` and
 > the Bitbucket `/src/` equivalent) is a recognised surface. It gains **three**
 > agent lanes — *what breaks if this changes*, *who knows this file*, *who owns
@@ -1216,23 +1216,28 @@ the editor structurally cannot.*
 > **Done when** All three lanes run on a file the gateway resolves, against the
 > reader's own checkout; a file it cannot place shows the correct one of the
 > two miss sentences and no lanes; a gateway without the probe route changes
-> nothing about how the page renders. **Not yet met, and not by anything the
-> client can do.** Every client-side clause is met: the surface recognises,
-> the three lanes are wired to the probe's result, the two miss sentences are
-> correct, and a gateway without the route renders unchanged. The first
-> clause is not, and cannot be tested against a real gateway: no gateway
-> anywhere serves `GET /v1/items/resolve-file`, so today every gateway takes
-> the withheld branch.
-> **Depends — and this is the honest status.** `GET /v1/items/resolve-file`
-> is proposed in the design this entry links below, in its own worktree in
-> the Nimbus repo — not merged, not shipped, not landed anywhere upstream.
-> The forge arm the three lanes send once a file resolves
-> (`{ service, repo, refAndPath }`) shipped in v7.6.0 (Nimbus#1424); the
-> route that resolves a forge coordinate to a `path` in the first place did
-> not ship alongside it and does not exist. The client is complete;
-> **land the proposed route upstream** and this entry flips 🟡 → 🟢 with no
-> client change and no re-pairing. The manual check in `docs/development.md`
-> cannot be run until it does, and says so.
+> nothing about how the page renders. ✅ **Met.** The client half was complete
+> at #98; what was missing was a gateway that could answer.
+> **Status** `GET /v1/items/resolve-file` landed upstream in **Nimbus#1447**
+> and ships in the release after 7.9.0 — a thin read over `resolveFileByRemote`
+> under the existing `resolve` scope, returning `path` alone and never the
+> reader's local `repoRoot`. It needed no client change and no re-pairing, as
+> this entry predicted. The forge arm the lanes send once a file resolves
+> (`{ service, repo, refAndPath }`) had already shipped in v7.6.0
+> (Nimbus#1424). There is no version floor on either half: the route's
+> **presence** is the capability signal the panel probes.
+> Client rendering is now pinned end to end by `test/e2e/file-lanes.e2e.ts` —
+> the hit, both miss sentences, and the fail-quiet 404 branch that made this
+> feature silently inert for as long as it shipped without a gateway.
+> **One bound, worth knowing before you file a bug.** Upstream
+> `parseRemoteUrl` accepts only `github.com`, `gitlab.com` and `bitbucket.org`,
+> and requires an `owner/name` path of exactly two segments. A **self-hosted**
+> forge — GitHub Enterprise, self-hosted GitLab/Bitbucket — and any **GitLab
+> subgroup** project therefore answer `remote_not_tracked` however the reader's
+> checkout is configured, because no `repo` entity can exist for them. The
+> client recognises self-hosted forges and sends `service: "github"` regardless
+> of host, so it reaches the route and gets that answer. Widening it is a
+> separate feature with its own config surface, not a defect in this one.
 > Full design:
 > [`docs/superpowers/specs/2026-09-04-the-file-you-are-looking-at-design.md`](./docs/superpowers/specs/2026-09-04-the-file-you-are-looking-at-design.md)
 > (§4; §4.7 for why not five; §5 for the C6.1 close-out this same branch shipped).
