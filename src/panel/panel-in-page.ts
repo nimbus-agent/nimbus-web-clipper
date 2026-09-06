@@ -1403,6 +1403,10 @@ function createPanel(body: HTMLElement): {
 
   function paint(): void {
     readOpenState();
+    // One timestamp for this whole repaint, not a different one per lane —
+    // see freshness.ts's doc comment on the convention, and the `relatedBody`
+    // assignment below for the same pattern.
+    const nowMs = Date.now();
     const shown = shownHeader();
     // Which lanes render is `lanesFor` (lane-input.ts), against the context
     // assembled just below. Two gates, one per kind of lane:
@@ -1443,7 +1447,7 @@ function createPanel(body: HTMLElement): {
         // nothing — the only lane in this panel that is shown precisely so it can
         // say why it will not ask.
         laneCanRun(lane, laneCtx)
-          ? renderLaneBody(doc, laneState[lane], Date.now(), runLane(lane))
+          ? renderLaneBody(doc, laneState[lane], nowMs, runLane(lane))
           : renderError(doc, termRefusal()),
     }));
     // No related lane on a dashboard: `/v1/clips/related` keyed on a dashboard's
