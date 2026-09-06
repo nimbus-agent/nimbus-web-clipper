@@ -102,8 +102,8 @@ Note that `handleAgentRun` (`handlers.ts:1043`) is the *invoke* path and is not
 where this happens; it short-circuits on a cached `running`/`done` and never sees
 a poll body.
 
-`LaneState`'s `done` arm grows **two** optional fields, and they are siblings —
-`synthesis` is deliberately *not* nested inside `findings`:
+`LaneState`'s `done` arm grows **three** optional fields, and `gaps` and
+`synthesis` are siblings of `findings`, deliberately not nested inside it:
 
 ```ts
 | {
