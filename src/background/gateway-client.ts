@@ -646,7 +646,21 @@ export async function invokeAgent(
 /** The terminal answer a 200 body can carry, or a `server_error` when it is malformed. */
 type AgentRunBody =
   | { ok: true; status: "running" }
-  | { ok: true; status: "done"; brief: string }
+  | {
+      ok: true;
+      status: "done";
+      brief: string;
+      /**
+       * The typed brief the markdown was flattened from, and why that markdown
+       * looks the way it does. Both are carried as `unknown` deliberately: this
+       * function is handed a poll response and does NOT know which agent
+       * produced it, so narrowing happens where the lane is known
+       * (`terminalLaneState`). Passing `unknown` further than that would be the
+       * passthrough `types.ts` forbids - it stops here.
+       */
+      findings?: unknown;
+      synthesis?: unknown;
+    }
   | { ok: true; status: "failed"; failureReason?: string }
   | { ok: false; reason: AgentError };
 
@@ -667,9 +681,19 @@ function parseAgentRunBody(data: unknown): AgentRunBody {
   // A `done` run with no brief is malformed — rendering an empty lane would
   // violate the phase's "never a silent empty lane" rule.
   if (data["status"] === "done") {
-    return typeof data["brief"] === "string"
-      ? { ok: true, status: "done", brief: data["brief"] }
-      : { ok: false, reason: "server_error" };
+    if (typeof data["brief"] !== "string") {
+      return { ok: false, reason: "server_error" };
+    }
+    // Absent keys stay absent rather than becoming `undefined` values - the
+    // store persists this object, and an explicit `findings: undefined` would
+    // serialise differently from a missing key.
+    return {
+      ok: true,
+      status: "done",
+      brief: data["brief"],
+      ...(data["findings"] === undefined ? {} : { findings: data["findings"] }),
+      ...(data["synthesis"] === undefined ? {} : { synthesis: data["synthesis"] }),
+    };
   }
   if (data["status"] === "failed") {
     if (data["failureReason"] === undefined) {
@@ -696,7 +720,7 @@ export async function getAgentRun(
   doFetch: FetchLike = fetch,
 ): Promise<
   | { ok: true; status: "running" }
-  | { ok: true; status: "done"; brief: string }
+  | { ok: true; status: "done"; brief: string; findings?: unknown; synthesis?: unknown }
   // `failureReason` is OPTIONAL, not always present: upstream builds the body as
   // `...(run.error === null ? {} : { failureReason: run.error })`
   // (ipc/http-server.ts), so an absent one is a well-formed "the run failed, no
