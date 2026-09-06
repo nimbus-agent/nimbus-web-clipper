@@ -207,4 +207,43 @@ describe("laneFindingsFrom", () => {
     expect(laneFindingsFrom("expert", validWhy)).toBeUndefined();
     expect(laneFindingsFrom("glossary", validWhy)).toBeUndefined();
   });
+
+  // `WhyChangeSubject.url` is non-nullable, unlike `WhyItemSubject.url`
+  // (`string | null`) — the split the spec and two code comments make the
+  // most noise about (why-view.ts, findings-guards.ts), and previously
+  // unpinned by any test.
+  test("rejects a changeSubject whose url is null — that field is non-nullable", () => {
+    expect(
+      laneFindingsFrom("why", {
+        ...validWhy,
+        changeSubject: {
+          itemId: "i",
+          entityId: "e",
+          repo: "acme/web",
+          number: 1,
+          url: null,
+          title: "t",
+          modifiedAt: null,
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  test("rejects a malformed itemSubject", () => {
+    expect(
+      laneFindingsFrom("why", {
+        ...validWhy,
+        itemSubject: {
+          itemId: "i",
+          entityId: "e",
+          number: null,
+          url: null,
+          title: "t",
+          modifiedAt: null,
+          service: "jira",
+          // `type` missing entirely — isWhyItemSubject requires it.
+        },
+      }),
+    ).toBeUndefined();
+  });
 });
