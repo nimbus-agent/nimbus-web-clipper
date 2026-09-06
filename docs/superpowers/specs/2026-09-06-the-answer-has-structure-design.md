@@ -389,9 +389,12 @@ Structured rendering **narrows** the attack surface rather than widening it.
   from the gateway). When it returns null the raw string renders as **text**, per
   that function's own documented rule: the user still sees what was claimed and
   simply cannot click it into an executable scheme.
-- These are the first clickable references in the panel. They are sourced from
-  the gateway's index, not parsed out of model prose — which is the distinction
-  that makes them safe to add now when a markdown pass still is not.
+- These are the first clickable references inside an agent lane's own answer
+  body — `renderHit` and `candidateLine` (§4.4's precedent) already link
+  Related items and resolved candidates, but no lane has ever linked its own
+  findings. They are sourced from the gateway's index, not parsed out of model
+  prose — which is the distinction that makes them safe to add now when a
+  markdown pass still is not.
 
 ### 4.8 Storage, privacy and size
 

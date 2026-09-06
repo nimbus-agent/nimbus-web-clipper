@@ -63,8 +63,9 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   and the typed object that paragraph was flattened from — and the client read
   only the paragraph. It now reads both. *Why* renders as findings grouped by
   kind, each with its date and, where the gateway supplied one, **a link you can
-  click** — the first clickable references in the panel, and they come from your
-  index rather than from parsing model output. All seven lanes additionally
+  click** — the first clickable references inside an agent lane's own answer,
+  and they come from your index rather than from parsing model output. All
+  seven lanes additionally
   render two things that were always on the wire and never shown: the **gaps**
   that explain an empty answer, with the remediation the gateway supplied, and a
   line saying whether a **model** wrote the answer and whether it was local or

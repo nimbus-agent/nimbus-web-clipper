@@ -1260,9 +1260,11 @@ first. This phase reads both, one lane at a time.*
 > gateway supplied) and `synthesis` (whether a model wrote the answer, and
 > whether it stayed local) render as **siblings** of `findings`, so they show
 > on **all seven lanes** — including the six this slice does not model yet.
-> **Why it wows** These are the first clickable references the panel has ever
-> shown, sourced from the gateway's own index rather than parsed out of model
-> prose, and the first honest answer to "why is this lane empty" instead of a
+> **Why it wows** These are the first clickable references inside an agent
+> lane's own answer body — the panel has linked Related items and resolved
+> candidates since Slice 2, but never a lane's own findings — sourced from
+> the gateway's own index rather than parsed out of model prose, and the
+> first honest answer to "why is this lane empty" instead of a
 > blank box under a header.
 > **Touches** `src/shared/findings.ts` (new — the SDK-typed and mirrored
 > field shapes), `src/shared/findings-guards.ts` (new — element-level guards,

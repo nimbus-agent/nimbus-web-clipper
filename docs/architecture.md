@@ -961,15 +961,15 @@ exactly the shape each agent's own scope expects, no more.
   by a per-lane module under `src/panel/findings/`, never by `panel-view.ts`
   parsing `brief` itself. The `textContent` rule above is unchanged; it now
   applies **per field** rather than to one blob — a `findings` string (`why`'s
-  `title` and `detail` today, and any string field a later
-  `LaneFindings` arm adds) is exactly as attacker-adjacent as the paragraph
-  it used to be flattened into, and a URL
-  inside `findings` goes through `safeHttpUrl` before it is ever allowed to
-  become an `href`, rendering as plain text on rejection rather than being
-  dropped. A lane whose arm this build does not have yet, or whose `findings`
-  payload fails its guard, renders exactly the `brief` paragraph described
-  above — the fallback this bullet documents is also the mechanism that keeps
-  a partially-shipped `LaneFindings` union safe to ship one arm at a time.
+  `title` and `detail` today, and any string field a later `LaneFindings` arm
+  adds) is exactly as attacker-adjacent as the paragraph it used to be
+  flattened into, and a URL inside `findings` goes through `safeHttpUrl`
+  before it is ever allowed to become an `href`, rendering as plain text on
+  rejection rather than being dropped. A lane whose arm this build does not
+  have yet, or whose `findings` payload fails its guard, renders exactly the
+  `brief` paragraph described above — the fallback this bullet documents is
+  also the mechanism that keeps a partially-shipped `LaneFindings` union safe
+  to ship one arm at a time.
 - **No `busy` `AgentError` member.** A 429 from the invoke route never
   reaches the panel as a failure. `invokeAgent` (`gateway-client.ts`) reports
   it as `{ ok: false, reason: "busy", retryAfterMs }`; `handlers.ts`'s
