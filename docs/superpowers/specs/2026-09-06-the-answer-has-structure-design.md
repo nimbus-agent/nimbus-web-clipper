@@ -109,20 +109,35 @@ a poll body.
 | {
     readonly kind: "done";
     readonly brief: string;
+    readonly gaps?: readonly GapNote[];
     readonly findings?: LaneFindings;
     readonly synthesis?: SynthesisProvenance;
   }
 ```
 
-`LaneFindings` is a discriminated union on `kind`:
-`expert | impact | catchup | why | ownership | decisions | glossary`.
+`LaneFindings` is a discriminated union on `kind`, and it **grows one arm per
+slice** — `why` in C8.1, three more in C8.2, three more in C8.3. An arm that does
+not exist yet behaves exactly like a guard rejection: no findings, prose body.
 
-**Why `synthesis` is a sibling, not a child.** Nesting it inside `findings` would
-tie provenance to the one thing most likely to be dropped — a guard rejection
-(§4.3) or the byte bound (§4.8). Provenance would then vanish in exactly the case
-where the reader most needs it: a lane that fell back to prose, where "was this
-written by a model, and did it stay on my machine?" is unchanged and still
-answerable. As siblings, the prose fallback keeps its provenance line.
+**Why `gaps` and `synthesis` are siblings, not children.** Both are universal —
+`gaps` sits on `AgentBriefBase`, so every agent carries it, and `synthesis` is a
+top-level field of the response. Nesting either inside `findings` would tie it to
+the one thing most likely to be missing: a guard rejection (§4.3), the byte bound
+(§4.8), or simply a lane whose arm this slice has not added yet. They would then
+vanish in exactly the case where the reader most needs them — a lane that fell
+back to prose, where "why is this empty?" and "did a model write this, and did it
+stay on my machine?" are unchanged and still answerable.
+
+This is what makes §4.5's promise — gaps and provenance on **all seven** lanes —
+deliverable in C8.1, when only one lane has a findings arm. Extracting them does
+not require knowing which agent answered.
+
+**`findings` holds a client projection, not the wire object verbatim.** Each arm
+carries only the lane-specific payload this client renders; the base fields
+(`gaps`, `agentVersion`, `generatedAt`, `latencyMs`) are not duplicated inside it.
+The SDK types type the *parse*; the projection is what is persisted. That keeps
+`gaps` single-sourced and keeps the stored payload close to what §4.8's byte
+bound is actually protecting.
 
 `isSynthesisProvenance` is its own guard in `src/shared/messages.ts`, narrowing
 the three-arm union (§4.5) rather than accepting a bare object.
@@ -163,11 +178,20 @@ so a malformed payload costs the structured view and nothing else.
 
 ### 4.2 Type provenance and the SDK seam
 
-| lane | brief type | guard |
+| type | source | guard |
 | --- | --- | --- |
-| `expert` `impact` `catchup` `why` | `import type` from `@nimbus-dev/sdk` | written here (§4.3) |
-| `ownership` `decisions` `glossary` | local mirror, `src/shared/` | written here (§4.3) |
+| `expert` `impact` `catchup` `why` briefs | `import type` from `@nimbus-dev/sdk` | written here (§4.3) |
+| `ownership` `decisions` `glossary` briefs | local mirror, `src/shared/` | written here (§4.3) |
 | `GapNote` (all seven) | `import type` from `@nimbus-dev/sdk` | written here |
+| `SynthesisProvenance` | **local mirror** — see below | written here |
+
+**`SynthesisProvenance` is a fourth mirror, not an SDK import.** It is declared in
+the gateway's `agents/_lib/synthesize.ts` and is exported nowhere in
+`@nimbus-dev/sdk` — the SDK models brief *shapes*, and provenance is a property
+of the response that carries one. So it is mirrored locally on the same terms as
+the other three, and publishing it is added to the upstream list (§9). This is
+worth stating because §4.1 makes provenance a universal field: it is the one
+mirrored type that C8.1 cannot defer.
 
 `@nimbus-dev/sdk@^1.32.0` is added as a **devDependency, imported type-only**.
 Type-only imports are erased at build, so:
@@ -487,6 +511,10 @@ Designed side by side in their own worktrees; the client never waits on them.
   gateway is intended and that a name earns its place only once all three exist,
   so this is real work, not a rubber stamp. When it lands, the three mirrors
   (§4.2) become re-exports and then disappear.
+- **`nimbus-sdk`** — publish `SynthesisProvenance` (§4.2). It is a property of
+  the `briefReady` payload the SDK already models (`BriefReadyPayload`), so its
+  absence there is an omission rather than a boundary, and every consumer that
+  wants to say "a model wrote this, and it was local" mirrors it by hand today.
 - **`nimbus-sdk`** — feedback that `createBriefGuard` is dispatch-level, not
   render-level (§4.3). Consumers rendering from these briefs need their own
   depth, and the factory's doc comment should say so.
