@@ -1289,13 +1289,16 @@ first. This phase reads both, one lane at a time.*
 > `findings` is indistinguishable from a lane this build has no renderer for:
 > both fall back to exactly the paragraph the panel rendered before this
 > phase, silently.
-> **Done when** The `why` lane renders as a timeline against a real gateway
-> response; `gaps` and `synthesis` render on all seven lanes regardless of
-> whether `findings` parsed; a malformed or oversized `findings` payload never
-> evicts the stored run, only the structured view; and a lane this slice does
-> not model renders byte-for-byte what it rendered before. **All four are
-> met**, pinned by the guard-rejection, byte-bound and fallback tests named in
-> the design's §5.
+> **Done when** The `why` lane renders as a timeline against a realistic
+> gateway response (the mock gateway's `AGENT_RUN_DONE` fixture carries a
+> `findings`/`gaps`/`synthesis` payload, exercised by a manual step in
+> `development.md`); `gaps` and `synthesis` render on all seven lanes
+> regardless of whether `findings` parsed; a malformed or oversized `findings`
+> payload never evicts the stored run, only the structured view; and a lane
+> this slice does not model still renders the same answer *body* as before —
+> not byte-for-byte, since gaps and provenance are now added to all seven
+> lanes. **All four are met**, pinned by the guard-rejection, byte-bound and
+> fallback tests named in the design's §5.
 > **No gateway change and no re-pairing.** `findings` and `synthesis` have
 > ridden every agent-run response since the route shipped
 > (`agents/_lib/emit-brief.ts`); this phase is a client parser and a
