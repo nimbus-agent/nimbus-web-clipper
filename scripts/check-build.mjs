@@ -54,6 +54,27 @@ for (const target of TARGETS) {
     }
   }
 
+  // `@nimbus-dev/sdk` must stay `import type`-only (see src/shared/findings.ts's
+  // header comment): a value import would put SDK runtime code into the shipped
+  // bundle. Nothing else enforces this — Biome's `useImportType` is not
+  // configured here, and esbuild does not typecheck — so grepping the built
+  // output for the package name is the only thing that would actually catch a
+  // plain `import { X } from "@nimbus-dev/sdk"` before it ships.
+  for (const file of REQUIRED_FILES) {
+    if (!file.endsWith(".js")) {
+      continue;
+    }
+    const bundlePath = `${dir}/${file}`;
+    if (!existsSync(bundlePath)) {
+      continue; // already reported as missing above
+    }
+    if (readFileSync(bundlePath, "utf8").includes("nimbus-dev")) {
+      failures.push(
+        `${target}: ${file} contains "nimbus-dev" — @nimbus-dev/sdk must stay import-type-only`,
+      );
+    }
+  }
+
   const manifestPath = `${dir}/manifest.json`;
   if (!existsSync(manifestPath)) {
     continue;
