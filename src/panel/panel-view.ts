@@ -20,6 +20,8 @@ import type {
   ResolveMatchKind,
   ScopeGap,
 } from "../shared/types.ts";
+import { renderGaps, renderProvenance } from "./findings/shared-view.ts";
+import { renderWhyFindings } from "./findings/why-view.ts";
 import { groupHits, humaniseType } from "./related-groups.ts";
 
 export function renderError(doc: Document, message: string): HTMLElement {
@@ -905,7 +907,12 @@ export function renderCapturePreview(
  * page, select a term, or a gateway that has the agents surface at all) — a
  * Re-run there would just fail identically.
  */
-export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => void): HTMLElement {
+export function renderLaneBody(
+  doc: Document,
+  state: LaneState,
+  nowMs: number,
+  onRerun?: () => void,
+): HTMLElement {
   const box = doc.createElement("div");
   box.className = "nimbus-related__lane-body";
 
@@ -921,21 +928,41 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
   }
 
   if (state.kind === "done") {
-    const pre = doc.createElement("pre");
-    pre.className = "nimbus-related__brief";
-    // textContent, NEVER innerHTML, and never a markdown-to-HTML pass.
-    //
-    // This string is the agent's brief. On a gateway with an LLM configured it is
-    // MODEL OUTPUT, and it renders inside a Shadow DOM overlaying the user's
-    // authenticated session on github.com. Parsing it would be a direct XSS path
-    // from whatever the model emitted.
-    //
-    // The cost is real and accepted: no headings, no bold, no clickable links. A
-    // safe renderer (allow-listed subset, or a sanitiser) is a separate,
-    // deliberate decision — not something to add here because the output looks
-    // plain.
-    pre.textContent = state.brief;
-    box.append(pre);
+    // The structured view REPLACES the prose body when we have it, and falls
+    // back to the prose `<pre>` when we do not — a guard rejection, the storage
+    // byte bound, or a lane whose `LaneFindings` arm has not shipped. That
+    // fallback is the existing code path, unchanged, and nothing announces it.
+    if (state.findings !== undefined) {
+      box.append(renderWhyFindings(doc, state.findings, nowMs));
+    } else {
+      const pre = doc.createElement("pre");
+      pre.className = "nimbus-related__brief";
+      // textContent, NEVER innerHTML, and never a markdown-to-HTML pass.
+      //
+      // This string is the agent's brief. On a gateway with an LLM configured it is
+      // MODEL OUTPUT, and it renders inside a Shadow DOM overlaying the user's
+      // authenticated session on github.com. Parsing it would be a direct XSS path
+      // from whatever the model emitted.
+      //
+      // The cost is real and accepted: no headings, no bold, no clickable links. A
+      // safe renderer (allow-listed subset, or a sanitiser) is a separate,
+      // deliberate decision — not something to add here because the output looks
+      // plain.
+      pre.textContent = state.brief;
+      box.append(pre);
+    }
+    // Gaps and provenance are SIBLINGS of findings and render on every lane,
+    // including one that fell back to prose. That is the whole reason they are
+    // not nested inside `findings`.
+    if (state.gaps !== undefined) {
+      const gaps = renderGaps(doc, state.gaps);
+      if (gaps !== null) {
+        box.append(gaps);
+      }
+    }
+    if (state.synthesis !== undefined) {
+      box.append(renderProvenance(doc, state.synthesis));
+    }
     return box;
   }
 

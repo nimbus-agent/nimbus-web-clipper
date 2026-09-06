@@ -594,10 +594,14 @@ describe("renderHeader — fetch outcomes", () => {
 
 describe("renderLaneBody", () => {
   it("renders a brief as TEXT, never as markup", () => {
-    const el = renderLaneBody(document, {
-      kind: "done",
-      brief: "## Impact\n\n<img src=x onerror=alert(1)>\n\n- a\n- b",
-    });
+    const el = renderLaneBody(
+      document,
+      {
+        kind: "done",
+        brief: "## Impact\n\n<img src=x onerror=alert(1)>\n\n- a\n- b",
+      },
+      NOW,
+    );
     // The brief is gateway-generated and, on a configured gateway, LLM-generated.
     // Parsing it would be an XSS path from model output into a Shadow DOM over the
     // user's authenticated session.
@@ -609,13 +613,13 @@ describe("renderLaneBody", () => {
   });
 
   it("shows progress while running, with no result text", () => {
-    const el = renderLaneBody(document, { kind: "running", runId: "r1" });
+    const el = renderLaneBody(document, { kind: "running", runId: "r1" }, NOW);
     expect(el.textContent).toContain("Working");
   });
 
   it("offers Re-run on a stale run, and states why", () => {
     const seen: string[] = [];
-    const el = renderLaneBody(document, { kind: "failed", reason: "stale" }, () =>
+    const el = renderLaneBody(document, { kind: "failed", reason: "stale" }, NOW, () =>
       seen.push("rerun"),
     );
     expect(el.textContent?.toLowerCase()).toContain("gone");
@@ -632,7 +636,7 @@ describe("renderLaneBody", () => {
     // `agent_failed` belongs here: the run reached the agent and the agent could not
     // answer, which a retry may well fix. It is NOT `server_error` — the call worked.
     for (const reason of ["stale", "unreachable", "server_error", "agent_failed"] as const) {
-      const el = renderLaneBody(document, { kind: "failed", reason }, () => undefined);
+      const el = renderLaneBody(document, { kind: "failed", reason }, NOW, () => undefined);
       expect(el.querySelector("button")).not.toBeNull();
     }
   });
@@ -647,7 +651,7 @@ describe("renderLaneBody", () => {
   // narrowed the cache short-circuit to running/done, so a Re-run re-invokes).
   it("tells an unpaired user to pair, and still offers the re-run", () => {
     const seen: string[] = [];
-    const el = renderLaneBody(document, { kind: "failed", reason: "not_paired" }, () =>
+    const el = renderLaneBody(document, { kind: "failed", reason: "not_paired" }, NOW, () =>
       seen.push("rerun"),
     );
     const text = el.textContent?.toLowerCase() ?? "";
@@ -668,6 +672,7 @@ describe("renderLaneBody", () => {
         reason: "agent_failed",
         detail: "<img src=x onerror=alert(1)> no LLM configured",
       },
+      NOW,
       () => undefined,
     );
     // The tag-stripped substring alone would also pass a lossy sanitiser — assert
@@ -682,6 +687,7 @@ describe("renderLaneBody", () => {
     const el = renderLaneBody(
       document,
       { kind: "failed", reason: "agent_failed" },
+      NOW,
       () => undefined,
     );
     expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
@@ -699,18 +705,22 @@ describe("renderLaneBody", () => {
       "not_resolved",
       "no_term",
     ] as const) {
-      const el = renderLaneBody(document, { kind: "failed", reason }, () => undefined);
+      const el = renderLaneBody(document, { kind: "failed", reason }, NOW, () => undefined);
       expect(el.querySelector("button")).toBeNull();
       expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
     }
   });
 
   it("names the agents scope on a scope failure, not resolve or fetch", () => {
-    const el = renderLaneBody(document, {
-      kind: "failed",
-      reason: "insufficient_scope",
-      scopeGap: { label: "chrome", required: "agents", granted: ["clip", "resolve"] },
-    });
+    const el = renderLaneBody(
+      document,
+      {
+        kind: "failed",
+        reason: "insufficient_scope",
+        scopeGap: { label: "chrome", required: "agents", granted: ["clip", "resolve"] },
+      },
+      NOW,
+    );
     expect(el.textContent).toContain("nimbus clip scopes chrome --set clip,resolve,agents");
   });
 
@@ -726,7 +736,7 @@ describe("renderLaneBody", () => {
       "unreachable",
       "server_error",
     ] as const) {
-      const el = renderLaneBody(document, { kind: "failed", reason });
+      const el = renderLaneBody(document, { kind: "failed", reason }, NOW);
       expect(el.textContent?.trim().length ?? 0).toBeGreaterThan(0);
     }
   });
@@ -739,6 +749,7 @@ describe("renderLaneBody", () => {
     const el = renderLaneBody(
       document,
       { kind: "failed", reason: "not_resolved" },
+      NOW,
       () => undefined,
     );
     const text = el.textContent?.toLowerCase() ?? "";
@@ -750,7 +761,12 @@ describe("renderLaneBody", () => {
   // "couldn't pin this page to one indexed item" for a missing selection would
   // send the user off to fix a page that is fine.
   it("blames neither the page nor the gateway for a missing term", () => {
-    const el = renderLaneBody(document, { kind: "failed", reason: "no_term" }, () => undefined);
+    const el = renderLaneBody(
+      document,
+      { kind: "failed", reason: "no_term" },
+      NOW,
+      () => undefined,
+    );
     const text = el.textContent?.toLowerCase() ?? "";
     expect(text).toContain("select");
     expect(text).not.toContain("indexed item");
@@ -761,11 +777,13 @@ describe("renderLaneBody", () => {
     const gateway = renderLaneBody(
       document,
       { kind: "failed", reason: "unsupported" },
+      NOW,
       () => undefined,
     );
     const page = renderLaneBody(
       document,
       { kind: "failed", reason: "not_resolved" },
+      NOW,
       () => undefined,
     );
     expect(gateway.textContent?.toLowerCase()).toContain("gateway");
@@ -776,6 +794,7 @@ describe("renderLaneBody", () => {
     const el = renderLaneBody(
       document,
       { kind: "failed", reason: "agent_failed" },
+      NOW,
       () => undefined,
     );
     expect(el.textContent?.toLowerCase()).not.toContain("error");
@@ -788,13 +807,66 @@ describe("renderLaneBody", () => {
     const seen = new Map<string, string>();
     for (const reason of AGENT_ERRORS) {
       const text = (
-        renderLaneBody(document, { kind: "failed", reason }, () => undefined).textContent ?? ""
+        renderLaneBody(document, { kind: "failed", reason }, NOW, () => undefined).textContent ?? ""
       ).trim();
       expect(text.length).toBeGreaterThan(0);
       const clash = seen.get(text);
       expect(clash, `"${reason}" renders the same text as "${clash}"`).toBeUndefined();
       seen.set(text, reason);
     }
+  });
+
+  test("a done state without findings renders the prose brief, as before", () => {
+    const el = renderLaneBody(document, { kind: "done", brief: "prose text" }, NOW);
+    expect(el.querySelector("pre.nimbus-related__brief")?.textContent).toBe("prose text");
+    expect(el.querySelector(".nimbus-findings")).toBeNull();
+  });
+
+  test("gaps and provenance render even when findings are absent", () => {
+    // The sibling-not-child decision, pinned: a lane that fell back to prose can
+    // still say why it is empty and whether a model wrote it.
+    const el = renderLaneBody(
+      document,
+      {
+        kind: "done",
+        brief: "prose",
+        gaps: [{ category: "empty_index", detail: "Nothing indexed." }],
+        synthesis: { attempted: true, used: true, model: "llama3", remote: false },
+      },
+      NOW,
+    );
+    expect(el.querySelector("pre.nimbus-related__brief")).not.toBeNull();
+    expect(el.textContent).toContain("Nothing indexed.");
+    expect(el.textContent).toContain("llama3");
+  });
+
+  test("structured findings replace the prose body", () => {
+    const el = renderLaneBody(
+      document,
+      {
+        kind: "done",
+        brief: "prose",
+        findings: {
+          kind: "why",
+          findings: [
+            {
+              lane: "ticket",
+              title: "T",
+              detail: "d",
+              url: null,
+              occurredAt: null,
+              entityId: null,
+            },
+          ],
+          subject: null,
+          changeSubject: null,
+          itemSubject: null,
+        },
+      },
+      NOW,
+    );
+    expect(el.querySelector("pre.nimbus-related__brief")).toBeNull();
+    expect(el.querySelector(".nimbus-findings")).not.toBeNull();
   });
 });
 

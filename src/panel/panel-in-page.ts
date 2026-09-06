@@ -1443,7 +1443,7 @@ function createPanel(body: HTMLElement): {
         // nothing — the only lane in this panel that is shown precisely so it can
         // say why it will not ask.
         laneCanRun(lane, laneCtx)
-          ? renderLaneBody(doc, laneState[lane], runLane(lane))
+          ? renderLaneBody(doc, laneState[lane], Date.now(), runLane(lane))
           : renderError(doc, termRefusal()),
     }));
     // No related lane on a dashboard: `/v1/clips/related` keyed on a dashboard's
