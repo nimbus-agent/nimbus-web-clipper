@@ -24,6 +24,7 @@ import {
   type TabNavigation,
   tabUrl,
 } from "../browser/tabs.ts";
+import { gapsOfBrief, laneFindingsFrom, synthesisFrom } from "../shared/findings-guards.ts";
 import {
   isAgentRunRequest,
   isAgentStateRequest,
@@ -308,7 +309,13 @@ let pairingGeneration = 0;
  */
 function terminalLaneState(
   result:
-    | { readonly ok: true; readonly status: "done"; readonly brief: string }
+    | {
+        readonly ok: true;
+        readonly status: "done";
+        readonly brief: string;
+        readonly findings?: unknown;
+        readonly synthesis?: unknown;
+      }
     | { readonly ok: true; readonly status: "failed"; readonly failureReason?: string }
     | {
         readonly ok: false;
@@ -316,10 +323,23 @@ function terminalLaneState(
         readonly scopeGap?: { readonly required: string; readonly granted: string[] };
       },
   label: string,
+  lane: AgentLane,
 ): LaneState {
   if (result.ok) {
     if (result.status === "done") {
-      return { kind: "done", brief: result.brief };
+      // The one place `unknown` becomes typed. `gaps` and `synthesis` are read
+      // without reference to the lane — both are universal — so they survive a
+      // lane whose findings arm does not exist yet, which is six of seven here.
+      const gaps = gapsOfBrief(result.findings);
+      const synthesis = synthesisFrom(result.synthesis);
+      const findings = laneFindingsFrom(lane, result.findings);
+      return {
+        kind: "done",
+        brief: result.brief,
+        ...(gaps === undefined ? {} : { gaps }),
+        ...(findings === undefined ? {} : { findings }),
+        ...(synthesis === undefined ? {} : { synthesis }),
+      };
     }
     return result.failureReason === undefined || result.failureReason.trim() === ""
       ? { kind: "failed", reason: "agent_failed" }
@@ -426,7 +446,7 @@ async function tickAgentPoll(
     subject: run.subject,
     lane: run.lane,
     runId: run.runId,
-    state: terminalLaneState(result, conn.label),
+    state: terminalLaneState(result, conn.label, run.lane),
   });
 }
 
