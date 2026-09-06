@@ -363,6 +363,98 @@ describe("agent-run-store", () => {
       expect((await getRun(subject, "expert", NOW))?.runId).toBe("r1");
     });
 
+    describe("findings sanitisation", () => {
+      it("a stored run with malformed findings survives and replays as prose", async () => {
+        // readGuarded DISCARDS any entry whose guard returns false (keyed-store.ts).
+        // Validating findings at the entry level would therefore throw away the whole
+        // run, including a perfectly good brief. That is the regression this pins.
+        chrome.storage.local.set({
+          agentRuns: {
+            [realKey("item", "i1", "why")]: {
+              subject: { kind: "item", id: "i1" },
+              lane: "why",
+              runId: "r1",
+              state: {
+                kind: "done",
+                brief: "good text",
+                findings: { kind: "why", findings: [42] },
+              },
+              expiresAtMs: NOW + 60_000,
+              writtenAtMs: NOW,
+            },
+          },
+        });
+        const found = await getRun({ kind: "item", id: "i1" }, "why", NOW);
+        expect(found?.state).toEqual({ kind: "done", brief: "good text" });
+      });
+
+      it("valid gaps and synthesis survive a malformed findings payload", async () => {
+        chrome.storage.local.set({
+          agentRuns: {
+            [realKey("item", "i2", "why")]: {
+              subject: { kind: "item", id: "i2" },
+              lane: "why",
+              runId: "r2",
+              state: {
+                kind: "done",
+                brief: "b",
+                gaps: [{ category: "empty_index", detail: "d" }],
+                synthesis: { attempted: false, reason: "disabled" },
+                findings: { kind: "why", findings: [42] },
+              },
+              expiresAtMs: NOW + 60_000,
+              writtenAtMs: NOW,
+            },
+          },
+        });
+        const found = await getRun({ kind: "item", id: "i2" }, "why", NOW);
+        expect(found?.state).toEqual({
+          kind: "done",
+          brief: "b",
+          gaps: [{ category: "empty_index", detail: "d" }],
+          synthesis: { attempted: false, reason: "disabled" },
+        });
+      });
+
+      it("findings past the byte bound are dropped, brief and synthesis kept", async () => {
+        const big = Array.from({ length: 400 }, (_, i) => ({
+          lane: "ticket" as const,
+          title: "t".repeat(80),
+          detail: "d".repeat(80),
+          url: null,
+          occurredAt: i,
+          entityId: null,
+        }));
+        await putRun(
+          {
+            subject: { kind: "item", id: "i3" },
+            lane: "why",
+            runId: "r3",
+            state: {
+              kind: "done",
+              brief: "b",
+              synthesis: { attempted: false, reason: "disabled" },
+              findings: {
+                kind: "why",
+                findings: big,
+                subject: null,
+                changeSubject: null,
+                itemSubject: null,
+              },
+            },
+            expiresAtMs: NOW + 60_000,
+          },
+          NOW,
+        );
+        const found = await getRun({ kind: "item", id: "i3" }, "why", NOW);
+        expect(found?.state).toEqual({
+          kind: "done",
+          brief: "b",
+          synthesis: { attempted: false, reason: "disabled" },
+        });
+      });
+    });
+
     it("drops a stored entry written in the old itemId shape", async () => {
       // The pre-subject shape. Dropping it costs at most one re-run: this store
       // is a ten-minute cache, not durable state. Written through

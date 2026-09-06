@@ -10,6 +10,8 @@
 // `running`) would otherwise read the same snapshot and the second write would
 // silently clobber the first.
 import { storageSet } from "../browser/storage.ts";
+import type { LaneFindings } from "../shared/findings.ts";
+import { gapNotesFrom, laneFindingsFrom, synthesisFrom } from "../shared/findings-guards.ts";
 import { isAgentError, isScopeGap } from "../shared/messages.ts";
 import { AGENT_LANES, type AgentLane, type LaneState } from "../shared/types.ts";
 import { createWriteChain, readGuarded } from "./keyed-store.ts";
@@ -143,6 +145,11 @@ function isLaneState(v: unknown): v is LaneState {
     return typeof v["runId"] === "string";
   }
   if (v["kind"] === "done") {
+    // Deliberately checks `brief` ONLY. `readGuarded` DISCARDS an entry whose
+    // guard returns false, so validating `findings` here would evict the whole
+    // run — brief included — because one optional field was malformed. That is
+    // the opposite of the degradation this phase promises. Validation moves to
+    // `sanitiseState` below, which is a projection rather than a gate.
     return typeof v["brief"] === "string";
   }
   if (v["kind"] === "failed") {
@@ -184,12 +191,36 @@ function readAll(): Promise<Record<string, StoredEntry>> {
   return readGuarded(STORE_KEY, isStoredEntry);
 }
 
+/**
+ * Drop structured fields that do not survive their guards, keeping the run.
+ *
+ * Storage is external input — a hand-edited value, a partial write, or a payload
+ * written by an older build whose shapes have since moved. Any of those costs
+ * the structured view and nothing else.
+ */
+function sanitiseState(state: LaneState, lane: AgentLane): LaneState {
+  if (state.kind !== "done") {
+    return state;
+  }
+  const gaps = state.gaps === undefined ? undefined : gapNotesFrom(state.gaps);
+  const synthesis = state.synthesis === undefined ? undefined : synthesisFrom(state.synthesis);
+  const findings =
+    state.findings === undefined ? undefined : laneFindingsFrom(lane, state.findings);
+  return {
+    kind: "done",
+    brief: state.brief,
+    ...(gaps === undefined ? {} : { gaps }),
+    ...(findings === undefined ? {} : { findings }),
+    ...(synthesis === undefined ? {} : { synthesis }),
+  };
+}
+
 /** Strip the internal `writtenAtMs` bookkeeping field before it crosses the
  *  public `StoredRun` boundary — callers (soon: a message to the panel) must
  *  never see it. */
 function toStoredRun(entry: StoredEntry): StoredRun {
   const { subject, lane, runId, state, expiresAtMs } = entry;
-  return { subject, lane, runId, state, expiresAtMs };
+  return { subject, lane, runId, state: sanitiseState(state, lane), expiresAtMs };
 }
 
 export async function getRun(
@@ -209,17 +240,64 @@ export async function getRun(
 const exclusively = createWriteChain();
 
 /**
+ * The most findings we will persist for one run, in UTF-8 BYTES.
+ *
+ * Bytes, not `String.length` — that counts UTF-16 code units, undercounts every
+ * non-ASCII title, and would disagree with how every other cap in this repo is
+ * stated (`BRIEF_CAPS.extractionCapBytes` is 200 KB UTF-8).
+ *
+ * Sized against the store's own limits rather than picked: 16 runs at 16 KB is a
+ * 256 KB worst case, which sits alongside the clip queue and the passage
+ * collection without crowding them. Over the bound we DROP findings and keep the
+ * run — the opposite of the passage store's refuse-never-evict rule, and
+ * deliberately so: a passage was put there by hand and exists in exactly one
+ * place, while findings are a cache of something the gateway will re-derive.
+ * Refusing the write here would lose the brief too.
+ */
+export const MAX_FINDINGS_BYTES = 16 * 1024;
+
+function findingsBytes(findings: LaneFindings): number {
+  return new TextEncoder().encode(JSON.stringify(findings)).length;
+}
+
+/**
+ * Strip `findings` from a state, keeping everything else.
+ *
+ * Rebuilt explicitly rather than by rest-destructuring off `findings`: biome's
+ * `noUnusedVariables` is set to "error" here, and the discarded binding is
+ * exactly the shape that rule exists to catch. Spelling the survivors out also
+ * makes it obvious that `gaps` and `synthesis` are deliberately kept.
+ */
+function withoutFindings(state: LaneState): LaneState {
+  if (state.kind !== "done") {
+    return state;
+  }
+  return {
+    kind: "done",
+    brief: state.brief,
+    ...(state.gaps === undefined ? {} : { gaps: state.gaps }),
+    ...(state.synthesis === undefined ? {} : { synthesis: state.synthesis }),
+  };
+}
+
+/**
  * The cap is enforced on WRITE, not only on read: `putRun` evicts before
  * writing, so the store can never exceed MAX_STORED_RUNS entries at any moment.
  * That is what makes a startup cleanup sweep unnecessary — the worst resting
  * state is MAX_STORED_RUNS stale entries, each dropped the moment it is read.
  */
 export function putRun(run: StoredRun, nowMs: number): Promise<void> {
+  const bounded =
+    run.state.kind === "done" &&
+    run.state.findings !== undefined &&
+    findingsBytes(run.state.findings) > MAX_FINDINGS_BYTES
+      ? { ...run, state: withoutFindings(run.state) }
+      : run;
   return exclusively(async () => {
     const all = await readAll();
-    const key = makeKey(run.subject, run.lane);
+    const key = makeKey(bounded.subject, bounded.lane);
     const entries = Object.entries(all).filter(([k]) => k !== key);
-    entries.push([key, { ...run, writtenAtMs: nowMs }]);
+    entries.push([key, { ...bounded, writtenAtMs: nowMs }]);
     // Oldest write survives longest against the cap; evict by writtenAtMs, not
     // by incidental object-key insertion order.
     entries.sort(([, a], [, b]) => a.writtenAtMs - b.writtenAtMs);
