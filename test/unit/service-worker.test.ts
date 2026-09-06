@@ -1291,6 +1291,82 @@ describe("agent run polling — survives eviction", () => {
     expect(harness.alarmsClear).toHaveBeenCalledWith(AGENT_POLL_ALARM);
   });
 
+  // `terminalLaneState` (service-worker.ts) is "the one place `unknown`
+  // becomes typed", and it wires `gaps` and `synthesis` from two DIFFERENT
+  // places on the wire response: `gaps` is read OUT OF the `findings` object
+  // (`gapsOfBrief`), while `synthesis` is a SIBLING field of `findings`, not
+  // nested inside it. Seeds its own `why` run rather than reusing
+  // `seedRunningRun` — that helper is hardcoded to the `impact` lane, which has
+  // no `LaneFindings` arm and so could never exercise this narrowing.
+  test("a done why-lane poll result narrows findings, gaps and synthesis onto LaneState", async () => {
+    await loadPairedAtNow();
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        subject: { kind: "item", id: "gh-1" },
+        lane: "why",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 60_000,
+      },
+      NOW,
+    );
+    stubFetch(() =>
+      jsonRes(200, {
+        status: "done",
+        brief: "answered",
+        // `gaps` lives INSIDE the wire `findings` object (it rides
+        // `AgentBriefBase` on every agent's brief) — not beside it.
+        findings: {
+          kind: "why",
+          gaps: [{ category: "empty_index", detail: "nothing indexed" }],
+          findings: [
+            {
+              lane: "authorship",
+              title: "Asaf",
+              detail: "wrote it",
+              url: "https://github.com/acme/web/pull/1",
+              occurredAt: null,
+              entityId: null,
+            },
+          ],
+          subject: null,
+          changeSubject: null,
+          itemSubject: null,
+        },
+        // `synthesis` is a SIBLING of `findings` on the wire response, never
+        // nested inside it.
+        synthesis: { attempted: true, used: true, model: "local-fixture", remote: false },
+      }),
+    );
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    const found = await getRun({ kind: "item", id: "gh-1" }, "why", NOW);
+    expect(found?.state).toEqual({
+      kind: "done",
+      brief: "answered",
+      gaps: [{ category: "empty_index", detail: "nothing indexed" }],
+      findings: {
+        kind: "why",
+        findings: [
+          {
+            lane: "authorship",
+            title: "Asaf",
+            detail: "wrote it",
+            url: "https://github.com/acme/web/pull/1",
+            occurredAt: null,
+            entityId: null,
+          },
+        ],
+        subject: null,
+        changeSubject: null,
+        itemSubject: null,
+      },
+      synthesis: { attempted: true, used: true, model: "local-fixture", remote: false },
+    });
+  });
+
   test("a stale poll result is terminal and does not auto-re-invoke", async () => {
     await loadPairedAtNow();
     await seedRunningRun();
