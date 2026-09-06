@@ -939,6 +939,20 @@ exactly the shape each agent's own scope expects, no more.
   moment the cause is fixed (a scope granted, a gateway brought back up). Note
   the panel paints one optimistic "Working…" frame on any expand that sends
   `agent-run` — including a cached hit, since the paint precedes the round trip.
+  **Persisting `findings` (Phase C8) widens what sits in `chrome.storage.local`
+  in kind, not just size** — item ids, person ids, evidence rows, not only a
+  paragraph — and that is stated here rather than inherited silently, because
+  upstream deliberately does not persist agent briefs to disk at all, calling
+  it a privacy expansion; this client already made the opposite call for
+  `brief` text, bounded by the same TTL, and extends it to `findings`. Size is
+  bounded separately: `putRun` (`agent-run-store.ts`) measures one run's
+  `findings` in UTF-8 bytes (`MAX_FINDINGS_BYTES`, 16 KiB) before persisting,
+  and over that bound it **drops findings and keeps the run** — storing
+  `{ kind: "done", brief, gaps, synthesis }` instead of refusing the write.
+  That is the opposite of the passage store's refuse-rather-than-evict rule,
+  deliberately: a passage was put there by hand and exists in exactly one
+  place, while findings are a cache of something the gateway will re-derive,
+  so losing the write would lose the `brief` too.
 - **The brief renders as `textContent`, never parsed, never `innerHTML`.** On a
   gateway with an LLM configured, the brief is model output rendered inside a
   Shadow DOM that overlays the user's authenticated session on the page it was
