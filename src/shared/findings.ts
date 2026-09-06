@@ -46,7 +46,12 @@ export type SynthesisProvenance =
       readonly attempted: false;
       readonly reason: "disabled" | "no_eligible_provider" | "reserved_extraction_failed";
     }
-  | { readonly attempted: true; readonly used: true; readonly model: string; readonly remote: boolean }
+  | {
+      readonly attempted: true;
+      readonly used: true;
+      readonly model: string;
+      readonly remote: boolean;
+    }
   | {
       readonly attempted: true;
       readonly used: false;
