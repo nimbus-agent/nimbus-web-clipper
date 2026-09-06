@@ -7,6 +7,7 @@
       "devDependencies": {
         "@biomejs/biome": "^2.5.11",
         "@mozilla/readability": "^0.6.0",
+        "@nimbus-dev/sdk": "^1.32.0",
         "@playwright/test": "^1.62.1",
         "@types/chrome": "^0.2.8",
         "@types/node": "^26.4.1",
@@ -181,6 +182,8 @@
     "@mozilla/readability": ["@mozilla/readability@0.6.0", "", {}, "sha512-juG5VWh4qAivzTAeMzvY9xs9HY5rAcr2E4I7tiSSCokRFi7XIZCAu92ZkSTsIj1OPceCifL3cpfteP3pDT9/QQ=="],
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@1.1.5", "", { "dependencies": { "@tybys/wasm-util": "^0.10.2" }, "peerDependencies": { "@emnapi/core": "^1.7.1", "@emnapi/runtime": "^1.7.1" } }, "sha512-AWPoBRJ9tsnVhor4sjO7rkni+7p+2IAEFj6cx06UgP10jkQHqay/36uRV/bFkgrh18D9vb4cr8Q0Pthskgzy+Q=="],
+
+    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.34.0", "", {}, "sha512-/dN1jMx2KIM11AbHKzqkKY/Y3wcUllfj3lb3aHqXpVUTn70ETE7C673REdP0V77kyh9RE+T5+3VFZ6QRV1k/Rg=="],
 
     "@oxc-project/types": ["@oxc-project/types@0.137.0", "", {}, "sha512-WT+Gb24i8hmvo85AIv2oEYouEXkRlKAlT9WaCa3TfLgNCN+GhrJOGZuIlMouAh38Qe4QOx26eUOVsq70qXrywA=="],
 
