@@ -58,21 +58,20 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 ### Added
 
 - **The *why does this change exist* lane is now a timeline you can follow, and
-  every lane says why it is empty.** The gateway has always sent two forms of an
-  agent's answer on the same response — the markdown paragraph the panel rendered,
-  and the typed object that paragraph was flattened from — and the client read
-  only the paragraph. It now reads both. *Why* renders as findings grouped by
-  kind, each with its date and, where the gateway supplied one, **a link you can
-  click** — the first clickable references inside an agent lane's own answer,
-  and they come from your index rather than from parsing model output. All
-  seven lanes additionally
-  render two things that were always on the wire and never shown: the **gaps**
-  that explain an empty answer, with the remediation the gateway supplied, and a
-  line saying whether a **model** wrote the answer and whether it was local or
-  remote. **No gateway change and no re-pairing** — this is the client reading
-  what it was already being sent. A lane whose structure this build does not
-  model yet, or whose payload does not survive validation, renders exactly the
-  paragraph it rendered before, silently.
+  every lane says why it is empty.** The gateway has always sent two forms of
+  an agent's answer on the same response — the markdown paragraph the panel
+  rendered, and the typed object that paragraph was flattened from — and the
+  client read only the paragraph. It now reads both. *Why* renders as findings
+  grouped by kind, each with its date and, where the gateway supplied one,
+  **a link you can click** — the first clickable references inside an agent
+  lane's own answer, and they come from your index rather than from parsing
+  model output. All seven lanes additionally render two things that were always
+  on the wire and never shown: the **gaps** that explain an empty answer, with
+  the remediation the gateway supplied, and a line saying whether a **model**
+  wrote the answer and whether it was local or remote. **No gateway change and no
+  re-pairing** — this is the client reading what it was already being sent. A
+  lane whose structure this build does not model yet, or whose payload does not
+  survive validation, renders exactly the paragraph it rendered before, silently.
 - **Linear and CircleCI are now recognised.** Nimbus had nothing to say on
   either — a Linear issue or a CircleCI pipeline was just a tab, and their
   dashboards offered none of the three connector-scoped lanes GitHub's or
