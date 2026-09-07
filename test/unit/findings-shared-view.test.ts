@@ -28,6 +28,28 @@ describe("findingLink", () => {
   test("renders text for a null url", () => {
     expect(findingLink(document, "Title", null).tagName).toBe("SPAN");
   });
+
+  test("renders text, not a link, for a data: url", () => {
+    const el = findingLink(document, "Title", "data:text/plain,hello");
+    expect(el.tagName).toBe("SPAN");
+    expect(el.querySelector("a")).toBeNull();
+    // safeHttpUrl's contract: a rejected URL is shown as text, never hidden.
+    expect(el.textContent).toBe("Title");
+  });
+
+  test("renders text, not a link, for a relative url (findingLink passes no base)", () => {
+    const el = findingLink(document, "Title", "/relative/path");
+    expect(el.tagName).toBe("SPAN");
+    expect(el.querySelector("a")).toBeNull();
+    expect(el.textContent).toBe("Title");
+  });
+
+  test("renders text, not a link, for an unparseable url string", () => {
+    const el = findingLink(document, "Title", "not a url at all");
+    expect(el.tagName).toBe("SPAN");
+    expect(el.querySelector("a")).toBeNull();
+    expect(el.textContent).toBe("Title");
+  });
 });
 
 describe("renderGaps", () => {
