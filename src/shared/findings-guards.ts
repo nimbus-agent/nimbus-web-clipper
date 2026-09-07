@@ -661,6 +661,35 @@ export function ownershipFindingsFrom(raw: Record<string, unknown>): OwnershipFi
 }
 
 /**
+ * One parser per lane, keyed by `AgentLane`.
+ *
+ * A `Record<AgentLane, ...>` rather than a switch, and that is the exhaustiveness
+ * net: adding a lane to `AGENT_LANES` (types.ts) without adding it here fails to
+ * compile, because the key set must be total. It carries no unreachable arm, so
+ * it costs no permanently-uncovered line - the reason `renderFindings`
+ * (panel-view.ts) has no `default` and no `satisfies never` either.
+ *
+ * A switch was tried first and does NOT work here. `renderFindings` gets
+ * exhaustiveness free because its return type has no `undefined` arm; this
+ * function's does, for the guard rejection below, so a missing case just falls
+ * through. Routing through a `let result: LaneFindings | undefined` does not
+ * rescue it - the variable is legally unassigned, definite-assignment analysis
+ * never runs, and deleting the `ownership` arm was verified to compile clean.
+ * A lane silently returning `undefined` drops it to the prose brief with nothing
+ * said, which is precisely the failure this net exists to make impossible.
+ */
+const LANE_PARSERS: Record<AgentLane, (raw: Record<string, unknown>) => LaneFindings | undefined> =
+  {
+    why: whyFindingsFrom,
+    glossary: glossaryFindingsFrom,
+    decisions: decisionsFindingsFrom,
+    expert: expertFindingsFrom,
+    impact: impactFindingsFrom,
+    catchup: catchupFindingsFrom,
+    ownership: ownershipFindingsFrom,
+  };
+
+/**
  * Narrow a raw `findings` payload against the lane that asked for it.
  *
  * `undefined` for a payload whose `kind` disagrees with the lane, and for
@@ -671,40 +700,5 @@ export function laneFindingsFrom(lane: AgentLane, raw: unknown): LaneFindings | 
   if (!isObject(raw) || raw["kind"] !== lane) {
     return undefined;
   }
-  // One arm per lane in `AGENT_LANES` (types.ts), same shape as `renderFindings`
-  // (panel-view.ts): a `switch` with no `default`. That function's return type
-  // has no `undefined` arm, so a missing case is a compile error on its own;
-  // this function's return type already includes `undefined` for a guard
-  // rejection above, so the same trick needs the assignment-to-`result`
-  // indirection below — TypeScript's definite-assignment analysis only
-  // proves `result` assigned on every path when the switch is exhaustive over
-  // `AgentLane`'s literal members, so a lane added to `AGENT_LANES` without a
-  // case here fails to compile ("used before being assigned"), never falls
-  // through to a runtime `undefined` and never needs a `default` arm that no
-  // test could ever reach.
-  let result: LaneFindings | undefined;
-  switch (lane) {
-    case "why":
-      result = whyFindingsFrom(raw);
-      break;
-    case "glossary":
-      result = glossaryFindingsFrom(raw);
-      break;
-    case "decisions":
-      result = decisionsFindingsFrom(raw);
-      break;
-    case "expert":
-      result = expertFindingsFrom(raw);
-      break;
-    case "impact":
-      result = impactFindingsFrom(raw);
-      break;
-    case "catchup":
-      result = catchupFindingsFrom(raw);
-      break;
-    case "ownership":
-      result = ownershipFindingsFrom(raw);
-      break;
-  }
-  return result;
+  return LANE_PARSERS[lane](raw);
 }
