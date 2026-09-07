@@ -43,6 +43,7 @@ function renderRow(doc: Document, finding: ImpactFinding): HTMLElement {
   row.append(title);
 
   const service = doc.createElement("span");
+  service.className = "nimbus-findings__item-when";
   service.textContent = finding.serviceId;
   row.append(service);
 
