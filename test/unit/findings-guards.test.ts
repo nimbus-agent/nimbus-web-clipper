@@ -218,11 +218,6 @@ describe("laneFindingsFrom", () => {
     expect(laneFindingsFrom("why", { ...validWhy, kind: "expert" })).toBeUndefined();
   });
 
-  test("returns undefined for a lane with no arm yet", () => {
-    expect(laneFindingsFrom("expert", validWhy)).toBeUndefined();
-    expect(laneFindingsFrom("glossary", validWhy)).toBeUndefined();
-  });
-
   // `WhyChangeSubject.url` is non-nullable, unlike `WhyItemSubject.url`
   // (`string | null`) — the split the spec and two code comments make the
   // most noise about (why-view.ts, findings-guards.ts), and previously

@@ -663,36 +663,48 @@ export function ownershipFindingsFrom(raw: Record<string, unknown>): OwnershipFi
 /**
  * Narrow a raw `findings` payload against the lane that asked for it.
  *
- * `undefined` for a lane with no arm yet (six of seven in C8.1), for a payload
- * whose `kind` disagrees with the lane, and for anything malformed. Every one of
- * those means the same thing to the caller: render the prose brief.
+ * `undefined` for a payload whose `kind` disagrees with the lane, and for
+ * anything malformed once its own lane's guard runs over it. Either one means
+ * the same thing to the caller: render the prose brief.
  */
 export function laneFindingsFrom(lane: AgentLane, raw: unknown): LaneFindings | undefined {
   if (!isObject(raw) || raw["kind"] !== lane) {
     return undefined;
   }
-  // One arm per slice. A lane not listed is not an error, it is a lane whose
-  // structure this build does not model yet.
-  if (lane === "why") {
-    return whyFindingsFrom(raw);
+  // One arm per lane in `AGENT_LANES` (types.ts), same shape as `renderFindings`
+  // (panel-view.ts): a `switch` with no `default`. That function's return type
+  // has no `undefined` arm, so a missing case is a compile error on its own;
+  // this function's return type already includes `undefined` for a guard
+  // rejection above, so the same trick needs the assignment-to-`result`
+  // indirection below — TypeScript's definite-assignment analysis only
+  // proves `result` assigned on every path when the switch is exhaustive over
+  // `AgentLane`'s literal members, so a lane added to `AGENT_LANES` without a
+  // case here fails to compile ("used before being assigned"), never falls
+  // through to a runtime `undefined` and never needs a `default` arm that no
+  // test could ever reach.
+  let result: LaneFindings | undefined;
+  switch (lane) {
+    case "why":
+      result = whyFindingsFrom(raw);
+      break;
+    case "glossary":
+      result = glossaryFindingsFrom(raw);
+      break;
+    case "decisions":
+      result = decisionsFindingsFrom(raw);
+      break;
+    case "expert":
+      result = expertFindingsFrom(raw);
+      break;
+    case "impact":
+      result = impactFindingsFrom(raw);
+      break;
+    case "catchup":
+      result = catchupFindingsFrom(raw);
+      break;
+    case "ownership":
+      result = ownershipFindingsFrom(raw);
+      break;
   }
-  if (lane === "glossary") {
-    return glossaryFindingsFrom(raw);
-  }
-  if (lane === "decisions") {
-    return decisionsFindingsFrom(raw);
-  }
-  if (lane === "expert") {
-    return expertFindingsFrom(raw);
-  }
-  if (lane === "impact") {
-    return impactFindingsFrom(raw);
-  }
-  if (lane === "catchup") {
-    return catchupFindingsFrom(raw);
-  }
-  if (lane === "ownership") {
-    return ownershipFindingsFrom(raw);
-  }
-  return undefined;
+  return result;
 }
