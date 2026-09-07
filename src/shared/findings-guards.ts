@@ -13,6 +13,9 @@
 // reads them - and no further. A field we do not render is not a field we gate
 // on, because an over-strict guard rejects briefs we could have rendered.
 import type {
+  CatchupFindings,
+  CatchupItem,
+  CatchupSection,
   DecisionEvidence,
   DecisionsEntry,
   DecisionsFindings,
@@ -494,6 +497,62 @@ export function impactFindingsFrom(raw: Record<string, unknown>): ImpactFindings
   };
 }
 
+function isCatchupItem(v: unknown): v is CatchupItem {
+  return (
+    isObject(v) &&
+    typeof v["itemId"] === "string" &&
+    typeof v["title"] === "string" &&
+    typeof v["modifiedAt"] === "number" &&
+    typeof v["relevanceScore"] === "number" &&
+    isStringArray(v["relevanceReasons"])
+  );
+}
+
+function isCatchupSection(v: unknown): v is CatchupSection {
+  return (
+    isObject(v) &&
+    typeof v["serviceId"] === "string" &&
+    typeof v["totalItemsInWindow"] === "number" &&
+    Array.isArray(v["items"]) &&
+    v["items"].every(isCatchupItem)
+  );
+}
+
+function isCatchupInvolvement(v: unknown): v is CatchupFindings["involvement"] {
+  return (
+    isObject(v) &&
+    isStringArray(v["ownedServices"]) &&
+    isStringArray(v["activeRepos"]) &&
+    isStringArray(v["incidentServices"]) &&
+    isStringArray(v["collaboratorPersonIds"])
+  );
+}
+
+/**
+ * `selfPersonId` and `involvement` are kept — see `CatchupFindings`'s own
+ * comment for why, unlike `query`, which is dropped like every other lane's
+ * echo of its own request. `involvement` is copied through as the ONE object
+ * `isCatchupInvolvement` validated, never rebuilt field-by-field: rebuilding it
+ * is exactly the flattening that broke `decisionsFindingsFrom`'s idempotence.
+ */
+export function catchupFindingsFrom(raw: Record<string, unknown>): CatchupFindings | undefined {
+  if (!isNullableString(raw["selfPersonId"])) {
+    return undefined;
+  }
+  if (!isCatchupInvolvement(raw["involvement"])) {
+    return undefined;
+  }
+  if (!Array.isArray(raw["sections"]) || !raw["sections"].every(isCatchupSection)) {
+    return undefined;
+  }
+  return {
+    kind: "catchup",
+    selfPersonId: raw["selfPersonId"],
+    involvement: raw["involvement"],
+    sections: raw["sections"] as readonly CatchupSection[],
+  };
+}
+
 /**
  * Narrow a raw `findings` payload against the lane that asked for it.
  *
@@ -521,6 +580,9 @@ export function laneFindingsFrom(lane: AgentLane, raw: unknown): LaneFindings | 
   }
   if (lane === "impact") {
     return impactFindingsFrom(raw);
+  }
+  if (lane === "catchup") {
+    return catchupFindingsFrom(raw);
   }
   return undefined;
 }

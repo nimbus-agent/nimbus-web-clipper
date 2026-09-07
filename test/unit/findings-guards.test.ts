@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type {
+  CatchupFindings,
   DecisionsFindings,
   ExpertFindings,
   GlossaryFindings,
@@ -8,6 +9,7 @@ import type {
   WhyFindings,
 } from "../../src/shared/findings.ts";
 import {
+  catchupFindingsFrom,
   decisionsFindingsFrom,
   expertFindingsFrom,
   gapNotesFrom,
@@ -608,6 +610,126 @@ describe("ImpactFindings pins the fields we read", () => {
   });
 });
 
+const validCatchupItem = {
+  itemId: "github:acme/web#9",
+  title: "Cut the release branch",
+  modifiedAt: 1_700_000_000_000,
+  relevanceScore: 0.7,
+  relevanceReasons: ["you own billing-service"],
+};
+
+const validCatchupSection = {
+  serviceId: "billing-service",
+  totalItemsInWindow: 1,
+  items: [validCatchupItem],
+};
+
+const validCatchup = {
+  kind: "catchup",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { sinceMs: 1_600_000_000_000 },
+  selfPersonId: "person:1",
+  involvement: {
+    ownedServices: ["billing-service"],
+    activeRepos: ["acme/web"],
+    incidentServices: [],
+    collaboratorPersonIds: ["person:2"],
+  },
+  sections: [validCatchupSection],
+};
+
+describe("catchupFindingsFrom", () => {
+  test("projects a valid brief, dropping the base fields and query", () => {
+    expect(catchupFindingsFrom(validCatchup)).toEqual({
+      kind: "catchup",
+      selfPersonId: "person:1",
+      involvement: validCatchup.involvement,
+      sections: validCatchup.sections,
+    });
+  });
+
+  test("accepts a null selfPersonId - an ordinary state, not malformed input", () => {
+    expect(catchupFindingsFrom({ ...validCatchup, selfPersonId: null })).toEqual({
+      kind: "catchup",
+      selfPersonId: null,
+      involvement: validCatchup.involvement,
+      sections: validCatchup.sections,
+    });
+  });
+
+  test("accepts empty involvement arrays - an ordinary state, not malformed input", () => {
+    const emptyInvolvement = {
+      ownedServices: [],
+      activeRepos: [],
+      incidentServices: [],
+      collaboratorPersonIds: [],
+    };
+    expect(catchupFindingsFrom({ ...validCatchup, involvement: emptyInvolvement })).toEqual({
+      kind: "catchup",
+      selfPersonId: "person:1",
+      involvement: emptyInvolvement,
+      sections: validCatchup.sections,
+    });
+  });
+
+  test("accepts empty sections - a quiet window, not malformed input", () => {
+    expect(catchupFindingsFrom({ ...validCatchup, sections: [] })).toEqual({
+      kind: "catchup",
+      selfPersonId: "person:1",
+      involvement: validCatchup.involvement,
+      sections: [],
+    });
+  });
+
+  test("rejects a section whose items is not an array", () => {
+    const section = { ...validCatchupSection, items: "nope" };
+    expect(catchupFindingsFrom({ ...validCatchup, sections: [section] })).toBeUndefined();
+  });
+
+  test("rejects malformed items rather than rendering a partial list", () => {
+    // The SDK-style shallow guard would admit these; ours must not (§4.3).
+    const section = { ...validCatchupSection, items: [42, null] };
+    expect(catchupFindingsFrom({ ...validCatchup, sections: [section] })).toBeUndefined();
+  });
+
+  test("rejects a non-string-array relevanceReasons", () => {
+    const item = { ...validCatchupItem, relevanceReasons: [1, 2] };
+    const section = { ...validCatchupSection, items: [item] };
+    expect(catchupFindingsFrom({ ...validCatchup, sections: [section] })).toBeUndefined();
+  });
+
+  test("rejects a missing involvement key", () => {
+    const without = { ...validCatchup } as Record<string, unknown>;
+    delete without["involvement"];
+    expect(catchupFindingsFrom(without)).toBeUndefined();
+  });
+
+  test("rejects an involvement field that is not a string array", () => {
+    const involvement = { ...validCatchup.involvement, ownedServices: [1, 2] };
+    expect(catchupFindingsFrom({ ...validCatchup, involvement })).toBeUndefined();
+  });
+});
+
+describe("CatchupFindings pins the fields we read", () => {
+  test("carries exactly the four projected keys", () => {
+    const value: CatchupFindings = {
+      kind: "catchup",
+      selfPersonId: null,
+      involvement: {
+        ownedServices: [],
+        activeRepos: [],
+        incidentServices: [],
+        collaboratorPersonIds: [],
+      },
+      sections: [],
+    };
+    expect(Object.keys(value).sort()).toEqual(["involvement", "kind", "sections", "selfPersonId"]);
+  });
+});
+
 describe("laneFindingsFrom is idempotent over its own projection", () => {
   // `sanitiseState` (agent-run-store.ts) re-runs `laneFindingsFrom` over the
   // STORED PROJECTION on every read — not the wire object. A guard that
@@ -630,6 +752,7 @@ describe("laneFindingsFrom is idempotent over its own projection", () => {
     ["decisions", validDecisions],
     ["expert", validExpert],
     ["impact", validImpact],
+    ["catchup", validCatchup],
   ];
 
   test.each(IDEMPOTENCE_CASES)("%s round-trips through its own projection", (lane, wire) => {

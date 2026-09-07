@@ -11,6 +11,8 @@
 // import would put SDK code into the shipped bundle, which the "bundled, no
 // runtime deps" rule forbids.
 import type {
+  CatchupItem,
+  CatchupSection,
   Evidence,
   ExpertFinding,
   GapNote,
@@ -23,6 +25,8 @@ import type {
 } from "@nimbus-dev/sdk";
 
 export type {
+  CatchupItem,
+  CatchupSection,
   Evidence,
   ExpertFinding,
   GapNote,
@@ -256,6 +260,37 @@ export type ImpactFindings = {
 };
 
 /**
+ * The `catchup` lane's payload, as a client projection of `CatchupBrief`
+ * (§4.1). `query` is not projected, same reasoning as `ExpertFindings`: the
+ * panel already knows what was asked (it asked for everything `sinceMs`).
+ *
+ * `selfPersonId` and `involvement` ARE kept, unlike `query` — they are not an
+ * echo of the request, they are the whole basis on which the window was
+ * filtered down to *this reader*, and the flattened markdown never prints
+ * `involvement` at all. `involvement` is kept as the wire's own nested object,
+ * verbatim, rather than flattened into sibling fields on this type: flattening
+ * is exactly what made `decisionsFindingsFrom` fail its own idempotence check
+ * (see that guard's comment), so every nested object in this projection is
+ * copied through unchanged instead.
+ *
+ * `sections` keeps `CatchupSection`/`CatchupItem` as the SDK types them,
+ * including `totalItemsInWindow` alongside `items` — the truncation fact a
+ * reader needs to tell a quiet window from a truncated one, which the prose
+ * also never prints.
+ */
+export type CatchupFindings = {
+  readonly kind: "catchup";
+  readonly selfPersonId: string | null;
+  readonly involvement: {
+    readonly ownedServices: readonly string[];
+    readonly activeRepos: readonly string[];
+    readonly incidentServices: readonly string[];
+    readonly collaboratorPersonIds: readonly string[];
+  };
+  readonly sections: readonly CatchupSection[];
+};
+
+/**
  * The per-lane structured payload. ONE ARM PER SLICE: `why` in C8.1,
  * `glossary` and `decisions` in C8.2, the four link-less lanes in C8.3.
  *
@@ -267,4 +302,5 @@ export type LaneFindings =
   | GlossaryFindings
   | DecisionsFindings
   | ExpertFindings
-  | ImpactFindings;
+  | ImpactFindings
+  | CatchupFindings;

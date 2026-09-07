@@ -21,6 +21,7 @@ import type {
   ResolveMatchKind,
   ScopeGap,
 } from "../shared/types.ts";
+import { renderCatchupFindings } from "./findings/catchup-view.ts";
 import { renderDecisionsFindings } from "./findings/decisions-view.ts";
 import { renderExpertFindings } from "./findings/expert-view.ts";
 import { renderGlossaryFindings } from "./findings/glossary-view.ts";
@@ -912,6 +913,8 @@ function renderFindings(doc: Document, findings: LaneFindings, nowMs: number): H
       return renderExpertFindings(doc, findings, nowMs);
     case "impact":
       return renderImpactFindings(doc, findings, nowMs);
+    case "catchup":
+      return renderCatchupFindings(doc, findings, nowMs);
   }
 }
 
