@@ -1,8 +1,13 @@
 import { describe, expect, test } from "vitest";
-import type { SynthesisProvenance, WhyFindings } from "../../src/shared/findings.ts";
+import type {
+  GlossaryFindings,
+  SynthesisProvenance,
+  WhyFindings,
+} from "../../src/shared/findings.ts";
 import {
   gapNotesFrom,
   gapsOfBrief,
+  glossaryFindingsFrom,
   laneFindingsFrom,
   synthesisFrom,
 } from "../../src/shared/findings-guards.ts";
@@ -245,5 +250,118 @@ describe("laneFindingsFrom", () => {
         },
       }),
     ).toBeUndefined();
+  });
+});
+
+const validSource = {
+  itemId: "github:acme/web#1",
+  title: "Auth rewrite",
+  url: "https://example.test/pr/1",
+  service: "github",
+  modifiedAt: 1_700_000_000_000,
+};
+
+const validGlossary = {
+  kind: "glossary",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { term: "peek", limit: 5 },
+  mode: "term",
+  matchedVia: "exact",
+  suggestions: [],
+  stats: { total: 1, pending: 0, vetoed: 0, manual: 0, lastPassAt: null, truncatedSources: 0 },
+  entries: [
+    {
+      term: "peek",
+      definition: "A read that does not consume.",
+      definitionSource: "snippet",
+      docFreq: 6,
+      score: 0.82,
+      serviceSpread: 2,
+      firstSeenAt: 1_600_000_000_000,
+      lastSeenAt: 1_700_000_000_000,
+      topSources: [validSource],
+      synonyms: ["peeking"],
+      nearMisses: ["peak"],
+    },
+  ],
+};
+
+describe("glossaryFindingsFrom", () => {
+  test("projects a valid brief, dropping the base fields and stats", () => {
+    expect(glossaryFindingsFrom(validGlossary)).toEqual({
+      kind: "glossary",
+      mode: "term",
+      matchedVia: "exact",
+      suggestions: [],
+      entries: validGlossary.entries,
+    });
+  });
+
+  test("accepts a miss with suggestions and no entries", () => {
+    const miss = {
+      ...validGlossary,
+      mode: "miss",
+      matchedVia: null,
+      entries: [],
+      suggestions: ["peak"],
+    };
+    expect(glossaryFindingsFrom(miss)?.kind).toBe("glossary");
+  });
+
+  test("accepts a null definition and a null definitionSource", () => {
+    const e = { ...validGlossary.entries[0], definition: null, definitionSource: null };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).not.toBeUndefined();
+  });
+
+  test("accepts a source whose url is null", () => {
+    const e = { ...validGlossary.entries[0], topSources: [{ ...validSource, url: null }] };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).not.toBeUndefined();
+  });
+
+  test("rejects an unknown mode, matchedVia, or definitionSource", () => {
+    expect(glossaryFindingsFrom({ ...validGlossary, mode: "nope" })).toBeUndefined();
+    expect(glossaryFindingsFrom({ ...validGlossary, matchedVia: "fuzzy" })).toBeUndefined();
+    const e = { ...validGlossary.entries[0], definitionSource: "guess" };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).toBeUndefined();
+  });
+
+  test("rejects malformed elements rather than rendering a partial list", () => {
+    // The SDK-style shallow guard would admit these; ours must not.
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [42] })).toBeUndefined();
+    expect(glossaryFindingsFrom({ ...validGlossary, suggestions: [null] })).toBeUndefined();
+    const e = { ...validGlossary.entries[0], topSources: [null] };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).toBeUndefined();
+    const e2 = { ...validGlossary.entries[0], synonyms: [7] };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e2] })).toBeUndefined();
+  });
+
+  test("rejects a date string where an epoch number is required", () => {
+    const e = { ...validGlossary.entries[0], lastSeenAt: "2026-01-01T00:00:00Z" };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).toBeUndefined();
+  });
+});
+
+describe("GlossaryFindings pins the fields we read", () => {
+  // Same reason as the existing WhyFindings pin: these are local mirrors of a
+  // type another repo owns, and nothing enforces they stay in step. A rename
+  // upstream surfaces here as a failure rather than as a wrong render.
+  test("carries exactly the five projected keys", () => {
+    const value: GlossaryFindings = {
+      kind: "glossary",
+      mode: "term",
+      entries: [],
+      matchedVia: null,
+      suggestions: [],
+    };
+    expect(Object.keys(value).sort()).toEqual([
+      "entries",
+      "kind",
+      "matchedVia",
+      "mode",
+      "suggestions",
+    ]);
   });
 });

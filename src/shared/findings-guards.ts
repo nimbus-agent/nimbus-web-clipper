@@ -14,11 +14,16 @@
 // on, because an over-strict guard rejects briefs we could have rendered.
 import type {
   GapNote,
+  GlossaryEntry,
+  GlossaryFindings,
+  GlossaryMatchedVia,
+  GlossarySourceRef,
   LaneFindings,
   SynthesisDiscardReason,
   SynthesisProvenance,
   WhyChangeSubject,
   WhyFinding,
+  WhyFindings,
   WhyItemSubject,
   WhySubject,
 } from "./findings.ts";
@@ -245,7 +250,7 @@ function optionalSubject<T>(v: unknown, is: (x: unknown) => x is T): T | null | 
   return is(v) ? v : undefined;
 }
 
-function whyFindingsFrom(raw: Record<string, unknown>): LaneFindings | undefined {
+function whyFindingsFrom(raw: Record<string, unknown>): WhyFindings | undefined {
   if (!Array.isArray(raw["findings"]) || !raw["findings"].every(isWhyFinding)) {
     return undefined;
   }
@@ -261,6 +266,75 @@ function whyFindingsFrom(raw: Record<string, unknown>): LaneFindings | undefined
     subject,
     changeSubject,
     itemSubject,
+  };
+}
+
+const GLOSSARY_MODES = ["list", "term", "miss"] as const;
+const GLOSSARY_MATCHED_VIA = ["exact", "synonym"] as const;
+const GLOSSARY_DEFINITION_SOURCES = ["llm", "snippet", "manual"] as const;
+
+function isStringArray(v: unknown): v is readonly string[] {
+  return Array.isArray(v) && v.every((s) => typeof s === "string");
+}
+
+function isGlossarySourceRef(v: unknown): v is GlossarySourceRef {
+  return (
+    isObject(v) &&
+    typeof v["itemId"] === "string" &&
+    typeof v["title"] === "string" &&
+    isNullableString(v["url"]) &&
+    typeof v["service"] === "string" &&
+    typeof v["modifiedAt"] === "number"
+  );
+}
+
+function isGlossaryEntry(v: unknown): v is GlossaryEntry {
+  return (
+    isObject(v) &&
+    typeof v["term"] === "string" &&
+    isNullableString(v["definition"]) &&
+    (v["definitionSource"] === null ||
+      (typeof v["definitionSource"] === "string" &&
+        (GLOSSARY_DEFINITION_SOURCES as readonly string[]).includes(v["definitionSource"]))) &&
+    typeof v["docFreq"] === "number" &&
+    typeof v["score"] === "number" &&
+    typeof v["serviceSpread"] === "number" &&
+    typeof v["firstSeenAt"] === "number" &&
+    typeof v["lastSeenAt"] === "number" &&
+    Array.isArray(v["topSources"]) &&
+    v["topSources"].every(isGlossarySourceRef) &&
+    isStringArray(v["synonyms"]) &&
+    isStringArray(v["nearMisses"])
+  );
+}
+
+export function glossaryFindingsFrom(raw: Record<string, unknown>): GlossaryFindings | undefined {
+  const mode = raw["mode"];
+  if (typeof mode !== "string" || !(GLOSSARY_MODES as readonly string[]).includes(mode)) {
+    return undefined;
+  }
+  const matchedVia = raw["matchedVia"];
+  if (
+    matchedVia !== null &&
+    !(
+      typeof matchedVia === "string" &&
+      (GLOSSARY_MATCHED_VIA as readonly string[]).includes(matchedVia)
+    )
+  ) {
+    return undefined;
+  }
+  if (!Array.isArray(raw["entries"]) || !raw["entries"].every(isGlossaryEntry)) {
+    return undefined;
+  }
+  if (!isStringArray(raw["suggestions"])) {
+    return undefined;
+  }
+  return {
+    kind: "glossary",
+    mode: mode as GlossaryFindings["mode"],
+    matchedVia: matchedVia as GlossaryMatchedVia,
+    entries: raw["entries"] as readonly GlossaryEntry[],
+    suggestions: raw["suggestions"],
   };
 }
 
