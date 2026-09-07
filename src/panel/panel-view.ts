@@ -4,6 +4,7 @@
 // attacker-influenceable, so plain-text rendering is the XSS backstop.
 import { offersCapture } from "../shared/capture-offer.ts";
 import { type ConnectorHealth, gatePolicy } from "../shared/connector-health.ts";
+import type { LaneFindings } from "../shared/findings.ts";
 import { formatAge } from "../shared/freshness.ts";
 import { buildFetchPreview, type ClipPreview, type FetchPreview } from "../shared/preview.ts";
 import { renderPreview } from "../shared/preview-view.ts";
@@ -20,6 +21,7 @@ import type {
   ResolveMatchKind,
   ScopeGap,
 } from "../shared/types.ts";
+import { renderGlossaryFindings } from "./findings/glossary-view.ts";
 import { renderGaps, renderProvenance } from "./findings/shared-view.ts";
 import { renderWhyFindings } from "./findings/why-view.ts";
 import { groupHits, humaniseType } from "./related-groups.ts";
@@ -888,6 +890,23 @@ export function renderCapturePreview(
 }
 
 /**
+ * Dispatch a typed findings payload to its lane's renderer.
+ *
+ * A `switch` with a `return` in every arm and NO `default`: exhaustiveness is
+ * enforced by the declared return type, so adding an arm to `LaneFindings`
+ * without a case here is a compile error. Deliberately not a `satisfies never`
+ * backstop — Sonar counts that line as permanently uncovered.
+ */
+function renderFindings(doc: Document, findings: LaneFindings, nowMs: number): HTMLElement {
+  switch (findings.kind) {
+    case "why":
+      return renderWhyFindings(doc, findings, nowMs);
+    case "glossary":
+      return renderGlossaryFindings(doc, findings, nowMs);
+  }
+}
+
+/**
  * Renders the `done` lane body — the structured `findings` view when we have
  * one, the prose fallback `<pre>` when we do not, and then `gaps` /
  * `synthesis` as siblings of that choice. See the header comment on
@@ -904,7 +923,7 @@ function renderDoneLaneBody(
   // byte bound, or a lane whose `LaneFindings` arm has not shipped. That
   // fallback is the existing code path, unchanged, and nothing announces it.
   if (state.findings !== undefined) {
-    box.append(renderWhyFindings(doc, state.findings, nowMs));
+    box.append(renderFindings(doc, state.findings, nowMs));
   } else {
     const pre = doc.createElement("pre");
     pre.className = "nimbus-related__brief";

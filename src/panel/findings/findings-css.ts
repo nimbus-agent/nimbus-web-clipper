@@ -19,10 +19,24 @@ export const FINDINGS_CSS = `
   .nimbus-findings__provenance { margin: 8px 0 0; font-size: 11px; opacity: 0.7; }
   .nimbus-findings__empty { margin: 0; font-size: 12px; opacity: 0.8; }
   .nimbus-findings__subject { margin: 0 0 8px; font-weight: 600; }
+  .nimbus-findings__badge {
+    margin-right: 6px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: var(--nimbus-border);
+    color: var(--nimbus-muted);
+    font-size: 10px;
+    font-weight: 400;
+    text-transform: uppercase;
+  }
+  .nimbus-findings__subject .nimbus-findings__badge {
+    margin-left: 6px;
+    margin-right: 0;
+  }
   .nimbus-findings__group { margin: 0 0 10px; }
   .nimbus-findings__group-title { font-size: 11px; text-transform: uppercase; opacity: 0.7; }
   .nimbus-findings__item { margin: 0 0 6px; }
   .nimbus-findings__item-detail { display: block; font-size: 12px; opacity: 0.85; }
   .nimbus-findings__item-detail:empty { display: none; }
-  .nimbus-findings__item-when { font-size: 11px; opacity: 0.6; }
+  .nimbus-findings__item-when { margin-left: 6px; font-size: 11px; opacity: 0.6; }
 `;

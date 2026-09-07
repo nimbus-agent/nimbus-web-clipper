@@ -868,6 +868,27 @@ describe("renderLaneBody", () => {
     expect(el.querySelector("pre.nimbus-related__brief")).toBeNull();
     expect(el.querySelector(".nimbus-findings")).not.toBeNull();
   });
+
+  test("a done state with glossary findings renders the structured view, not prose", () => {
+    const el = renderLaneBody(
+      document,
+      {
+        kind: "done",
+        brief: "prose",
+        findings: {
+          kind: "glossary",
+          mode: "term",
+          entries: [],
+          matchedVia: null,
+          suggestions: ["peak"],
+        },
+      },
+      NOW,
+    );
+    expect(el.querySelector("pre.nimbus-related__brief")).toBeNull();
+    expect(el.querySelector(".nimbus-findings")).not.toBeNull();
+    expect(el.textContent?.toLowerCase()).toContain("did you mean");
+  });
 });
 
 describe("the navigated-away notice", () => {

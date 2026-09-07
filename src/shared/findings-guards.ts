@@ -349,7 +349,13 @@ export function laneFindingsFrom(lane: AgentLane, raw: unknown): LaneFindings | 
   if (!isObject(raw) || raw["kind"] !== lane) {
     return undefined;
   }
-  // One arm per slice. C8.2 and C8.3 add cases here; a lane not listed is not an
-  // error, it is a lane whose structure this build does not model yet.
-  return lane === "why" ? whyFindingsFrom(raw) : undefined;
+  // One arm per slice. A lane not listed is not an error, it is a lane whose
+  // structure this build does not model yet.
+  if (lane === "why") {
+    return whyFindingsFrom(raw);
+  }
+  if (lane === "glossary") {
+    return glossaryFindingsFrom(raw);
+  }
+  return undefined;
 }

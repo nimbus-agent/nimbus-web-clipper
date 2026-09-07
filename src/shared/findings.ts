@@ -141,10 +141,10 @@ export type GlossaryFindings = {
 };
 
 /**
- * The per-lane structured payload. ONE ARM PER SLICE: `why` here (C8.1),
- * expert/impact/ownership in C8.2, catchup/decisions/glossary in C8.3.
+ * The per-lane structured payload. ONE ARM PER SLICE: `why` in C8.1,
+ * `glossary` and `decisions` in C8.2, the four link-less lanes in C8.3.
  *
  * A lane whose arm does not exist yet behaves exactly like a guard rejection —
  * no findings, prose body, and its gaps and provenance still render.
  */
-export type LaneFindings = WhyFindings;
+export type LaneFindings = WhyFindings | GlossaryFindings;
