@@ -36,7 +36,11 @@
 import { expect, test } from "@playwright/test";
 import type { Harness } from "../../scripts/e2e/launch.ts";
 import { launchExtension } from "../../scripts/e2e/launch.ts";
-import { AGENT_RUN_DONE, type Scenario } from "../../scripts/screenshots/gateway-fixtures.ts";
+import {
+  AGENT_RUN_DONE,
+  AGENT_RUN_DONE_GLOSSARY,
+  type Scenario,
+} from "../../scripts/screenshots/gateway-fixtures.ts";
 import { GATEWAY_PATHS } from "../../src/shared/gateway.ts";
 import { PANEL_HOST_ID, PANEL_SELECTION_HOOK } from "../../src/shared/panel-host.ts";
 import { MAX_TERM_LENGTH } from "../../src/shared/term.ts";
@@ -103,7 +107,12 @@ async function deliverSelection(
 }
 
 test("Define in Nimbus opens a closed panel with the glossary lane already answered, recognised page or not", async () => {
-  const h = await launchExtension();
+  // The default fixture (AGENT_RUN_DONE) is `why`-shaped, so a glossary invoke
+  // against it fails `laneFindingsFrom`'s `kind` check and falls back to
+  // prose. This test's whole point is the STRUCTURED render, so it opts into
+  // the glossary-shaped fixture the mock can serve any agent via `Scenario`.
+  const scenario: Scenario = { agentRun: AGENT_RUN_DONE_GLOSSARY };
+  const h = await launchExtension({ scenario });
   try {
     // No origins configured — deliberately unrecognised (input-lanes-4's own
     // page). The mock's /sample is under no built-in or configured origin, so
@@ -122,11 +131,22 @@ test("Define in Nimbus opens a closed panel with the glossary lane already answe
     await deliverSelection(h.sw, url, "cache", "define"); // hand it the selection
 
     // input-lanes-1: the panel is open, the glossary lane is already
-    // expanded, and it answers.
+    // expanded, and it answers — with the STRUCTURED view (AGENT_RUN_DONE_GLOSSARY's
+    // own doc comment): the term heading, its definition, and a link back to
+    // the one source that carries a URL (the other, `url: null`, renders as
+    // plain text — glossary-view.ts's `findingLink`).
     const glossaryLane = page.locator('[data-lane="glossary"]');
     await expect(glossaryLane).toHaveCount(1);
     await expect(glossaryLane.locator("summary")).toHaveText("“cache”");
-    await expect(glossaryLane.locator(".nimbus-related__brief")).toHaveText(AGENT_RUN_DONE.brief);
+    const findings = glossaryLane.locator(".nimbus-findings");
+    await expect(findings.locator(".nimbus-findings__subject")).toContainText("cache");
+    await expect(findings.locator(".nimbus-findings__item-detail").first()).toHaveText(
+      "A layer that stores a computed result so a later call can reuse it instead of recomputing.",
+    );
+    await expect(findings.locator(".nimbus-findings__item a[href]")).toHaveAttribute(
+      "href",
+      "https://github.com/acme/web/pull/482",
+    );
 
     // input-lanes-4: this is the "slice's central claim" — the lane works on
     // a page Nimbus does not recognise, AND the PAGE lanes stay absent (there
@@ -144,7 +164,10 @@ test("Define in Nimbus opens a closed panel with the glossary lane already answe
 });
 
 test("Define in Nimbus on a second word retitles the still-open panel instead of reopening it", async () => {
-  const h = await launchExtension();
+  // Same reason as the previous test: opt into the glossary-shaped fixture so
+  // both selections below render structure, not the prose fallback.
+  const scenario: Scenario = { agentRun: AGENT_RUN_DONE_GLOSSARY };
+  const h = await launchExtension({ scenario });
   try {
     const page = await h.context.newPage();
     const url = `${h.origin}/sample`;
@@ -155,7 +178,12 @@ test("Define in Nimbus on a second word retitles the still-open panel instead of
     await deliverSelection(h.sw, url, "alpha", "define");
     const glossaryLane = page.locator('[data-lane="glossary"]');
     await expect(glossaryLane.locator("summary")).toHaveText("“alpha”");
-    await expect(glossaryLane.locator(".nimbus-related__brief")).toHaveText(AGENT_RUN_DONE.brief);
+    const findingsAlpha = glossaryLane.locator(".nimbus-findings");
+    await expect(findingsAlpha.locator(".nimbus-findings__subject")).toContainText("cache");
+    await expect(findingsAlpha.locator(".nimbus-findings__item a[href]")).toHaveAttribute(
+      "href",
+      "https://github.com/acme/web/pull/482",
+    );
 
     // input-lanes-2: a SECOND selection while the panel is still open is
     // delivered the SAME way — no re-injection — which is exactly the toggle
@@ -166,7 +194,12 @@ test("Define in Nimbus on a second word retitles the still-open panel instead of
 
     await expect(page.locator(`#${PANEL_HOST_ID}`)).toHaveCount(1);
     await expect(glossaryLane.locator("summary")).toHaveText("“beta”");
-    await expect(glossaryLane.locator(".nimbus-related__brief")).toHaveText(AGENT_RUN_DONE.brief);
+    const findingsBeta = glossaryLane.locator(".nimbus-findings");
+    await expect(findingsBeta.locator(".nimbus-findings__subject")).toContainText("cache");
+    await expect(findingsBeta.locator(".nimbus-findings__item a[href]")).toHaveAttribute(
+      "href",
+      "https://github.com/acme/web/pull/482",
+    );
   } finally {
     await h.close();
   }

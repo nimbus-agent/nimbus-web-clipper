@@ -13,12 +13,20 @@
 // reads them - and no further. A field we do not render is not a field we gate
 // on, because an over-strict guard rejects briefs we could have rendered.
 import type {
+  DecisionEvidence,
+  DecisionsEntry,
+  DecisionsFindings,
   GapNote,
+  GlossaryEntry,
+  GlossaryFindings,
+  GlossaryMatchedVia,
+  GlossarySourceRef,
   LaneFindings,
   SynthesisDiscardReason,
   SynthesisProvenance,
   WhyChangeSubject,
   WhyFinding,
+  WhyFindings,
   WhyItemSubject,
   WhySubject,
 } from "./findings.ts";
@@ -245,7 +253,7 @@ function optionalSubject<T>(v: unknown, is: (x: unknown) => x is T): T | null | 
   return is(v) ? v : undefined;
 }
 
-function whyFindingsFrom(raw: Record<string, unknown>): LaneFindings | undefined {
+function whyFindingsFrom(raw: Record<string, unknown>): WhyFindings | undefined {
   if (!Array.isArray(raw["findings"]) || !raw["findings"].every(isWhyFinding)) {
     return undefined;
   }
@@ -264,6 +272,134 @@ function whyFindingsFrom(raw: Record<string, unknown>): LaneFindings | undefined
   };
 }
 
+const GLOSSARY_MATCHED_VIA = ["exact", "synonym"] as const;
+const GLOSSARY_DEFINITION_SOURCES = ["llm", "snippet", "manual"] as const;
+
+function isStringArray(v: unknown): v is readonly string[] {
+  return Array.isArray(v) && v.every((s) => typeof s === "string");
+}
+
+function isGlossarySourceRef(v: unknown): v is GlossarySourceRef {
+  return (
+    isObject(v) &&
+    typeof v["itemId"] === "string" &&
+    typeof v["title"] === "string" &&
+    isNullableString(v["url"]) &&
+    typeof v["service"] === "string" &&
+    typeof v["modifiedAt"] === "number"
+  );
+}
+
+function isGlossaryEntry(v: unknown): v is GlossaryEntry {
+  return (
+    isObject(v) &&
+    typeof v["term"] === "string" &&
+    isNullableString(v["definition"]) &&
+    (v["definitionSource"] === null ||
+      (typeof v["definitionSource"] === "string" &&
+        (GLOSSARY_DEFINITION_SOURCES as readonly string[]).includes(v["definitionSource"]))) &&
+    typeof v["docFreq"] === "number" &&
+    typeof v["score"] === "number" &&
+    typeof v["serviceSpread"] === "number" &&
+    typeof v["firstSeenAt"] === "number" &&
+    typeof v["lastSeenAt"] === "number" &&
+    Array.isArray(v["topSources"]) &&
+    v["topSources"].every(isGlossarySourceRef) &&
+    isStringArray(v["synonyms"]) &&
+    isStringArray(v["nearMisses"])
+  );
+}
+
+export function glossaryFindingsFrom(raw: Record<string, unknown>): GlossaryFindings | undefined {
+  // `mode` is deliberately NOT gated on — the renderer never reads it (it
+  // branches on `entries.length` instead), so it is not projected either. See
+  // `GlossaryFindings`'s own comment.
+  const matchedVia = raw["matchedVia"];
+  if (
+    matchedVia !== null &&
+    !(
+      typeof matchedVia === "string" &&
+      (GLOSSARY_MATCHED_VIA as readonly string[]).includes(matchedVia)
+    )
+  ) {
+    return undefined;
+  }
+  if (!Array.isArray(raw["entries"]) || !raw["entries"].every(isGlossaryEntry)) {
+    return undefined;
+  }
+  if (!isStringArray(raw["suggestions"])) {
+    return undefined;
+  }
+  return {
+    kind: "glossary",
+    matchedVia: matchedVia as GlossaryMatchedVia,
+    entries: raw["entries"] as readonly GlossaryEntry[],
+    suggestions: raw["suggestions"],
+  };
+}
+
+const EVIDENCE_KINDS = ["source", "pr", "commit", "migration", "iac", "adr"] as const;
+const EXTRACTION_SOURCES = ["llm", "snippet"] as const;
+
+function isDecisionEvidence(v: unknown): v is DecisionEvidence {
+  return (
+    isObject(v) &&
+    typeof v["kind"] === "string" &&
+    (EVIDENCE_KINDS as readonly string[]).includes(v["kind"]) &&
+    isNullableString(v["entityId"]) &&
+    isNullableString(v["itemId"]) &&
+    typeof v["label"] === "string" &&
+    isNullableString(v["url"]) &&
+    isNullableNumber(v["occurredAt"])
+  );
+}
+
+function isDecisionsEntry(v: unknown): v is DecisionsEntry {
+  return (
+    isObject(v) &&
+    typeof v["id"] === "string" &&
+    typeof v["statement"] === "string" &&
+    isNullableString(v["rationale"]) &&
+    isStringArray(v["alternatives"]) &&
+    typeof v["confidence"] === "number" &&
+    typeof v["decidedAt"] === "number" &&
+    typeof v["hasAdr"] === "boolean" &&
+    (v["extractionSource"] === null ||
+      (typeof v["extractionSource"] === "string" &&
+        (EXTRACTION_SOURCES as readonly string[]).includes(v["extractionSource"]))) &&
+    Array.isArray(v["evidence"]) &&
+    v["evidence"].every(isDecisionEvidence)
+  );
+}
+
+export function decisionsFindingsFrom(raw: Record<string, unknown>): DecisionsFindings | undefined {
+  // NOTE: `agentVersion` is deliberately NOT checked against the literal 1.
+  // `DecisionsBrief` types it as `number`, unlike every other brief, so
+  // asserting 1 would reject valid briefs.
+  if (!Array.isArray(raw["entries"]) || !raw["entries"].every(isDecisionsEntry)) {
+    return undefined;
+  }
+  // Accept the wire shape (stats.truncatedSources) AND this module's own
+  // projection (a flat truncatedSources): sanitiseState re-runs this guard over
+  // the STORED projection on every read, so a guard that cannot parse its own
+  // output silently destroys the findings it just produced.
+  const stats = raw["stats"];
+  const truncated =
+    stats === undefined
+      ? raw["truncatedSources"]
+      : isObject(stats)
+        ? stats["truncatedSources"]
+        : undefined;
+  if (typeof truncated !== "number") {
+    return undefined;
+  }
+  return {
+    kind: "decisions",
+    entries: raw["entries"] as readonly DecisionsEntry[],
+    truncatedSources: truncated,
+  };
+}
+
 /**
  * Narrow a raw `findings` payload against the lane that asked for it.
  *
@@ -275,7 +411,16 @@ export function laneFindingsFrom(lane: AgentLane, raw: unknown): LaneFindings | 
   if (!isObject(raw) || raw["kind"] !== lane) {
     return undefined;
   }
-  // One arm per slice. C8.2 and C8.3 add cases here; a lane not listed is not an
-  // error, it is a lane whose structure this build does not model yet.
-  return lane === "why" ? whyFindingsFrom(raw) : undefined;
+  // One arm per slice. A lane not listed is not an error, it is a lane whose
+  // structure this build does not model yet.
+  if (lane === "why") {
+    return whyFindingsFrom(raw);
+  }
+  if (lane === "glossary") {
+    return glossaryFindingsFrom(raw);
+  }
+  if (lane === "decisions") {
+    return decisionsFindingsFrom(raw);
+  }
+  return undefined;
 }

@@ -164,6 +164,92 @@ export interface AgentRunWhyFindingsWire {
   readonly itemSubject: null;
 }
 
+/**
+ * Wire shape of the `glossary` lane's structured brief, exactly as the
+ * gateway's own glossary brief type sends it (`glossary-types.ts`, Nimbus
+ * repo — one of the three briefs `@nimbus-dev/sdk` deliberately does not
+ * publish, same as the client's `GlossaryFindings` mirror in
+ * `src/shared/findings.ts`). `gaps` nests inside `findings` here, same as
+ * `AgentRunWhyFindingsWire` above — `gapsOfBrief` (findings-guards.ts) reads
+ * it off the raw findings object for every agent, not just `why`.
+ */
+export interface AgentRunGlossaryFindingsWire {
+  readonly kind: "glossary";
+  readonly agentVersion: 1;
+  readonly generatedAt: number;
+  readonly latencyMs: number;
+  readonly gaps: readonly {
+    readonly category: string;
+    readonly detail: string;
+    readonly remediation?: string;
+  }[];
+  readonly mode: "list" | "term" | "miss";
+  readonly matchedVia: "exact" | "synonym" | null;
+  readonly entries: readonly {
+    readonly term: string;
+    readonly definition: string | null;
+    readonly definitionSource: "llm" | "snippet" | "manual" | null;
+    readonly docFreq: number;
+    readonly score: number;
+    readonly serviceSpread: number;
+    readonly firstSeenAt: number;
+    readonly lastSeenAt: number;
+    readonly topSources: readonly {
+      readonly itemId: string;
+      readonly title: string;
+      readonly url: string | null;
+      readonly service: string;
+      readonly modifiedAt: number;
+    }[];
+    readonly synonyms: readonly string[];
+    readonly nearMisses: readonly string[];
+  }[];
+  readonly suggestions: readonly string[];
+}
+
+/**
+ * Wire shape of the `decisions` lane's structured brief, exactly as the
+ * gateway's own decisions brief type sends it (`decisions-types.ts`, Nimbus
+ * repo — one of the three briefs `@nimbus-dev/sdk` deliberately does not
+ * publish, same as the client's `DecisionsFindings` mirror in
+ * `src/shared/findings.ts`). `stats` NESTS `truncatedSources` here, exactly as
+ * `decisionsFindingsFrom` (findings-guards.ts) expects on the wire — the
+ * client's own projection flattens it onto the top level instead, which is
+ * the distinction that guard's idempotence test exists to pin.
+ */
+export interface AgentRunDecisionsFindingsWire {
+  readonly kind: "decisions";
+  readonly agentVersion: number;
+  readonly generatedAt: number;
+  readonly latencyMs: number;
+  readonly gaps: readonly {
+    readonly category: string;
+    readonly detail: string;
+    readonly remediation?: string;
+  }[];
+  readonly entries: readonly {
+    readonly id: string;
+    readonly statement: string;
+    readonly rationale: string | null;
+    readonly alternatives: readonly string[];
+    readonly confidence: number;
+    readonly decidedAt: number;
+    readonly hasAdr: boolean;
+    readonly extractionSource: "llm" | "snippet" | null;
+    readonly evidence: readonly {
+      readonly kind: "source" | "pr" | "commit" | "migration" | "iac" | "adr";
+      readonly entityId: string | null;
+      readonly itemId: string | null;
+      readonly label: string;
+      readonly url: string | null;
+      readonly occurredAt: number | null;
+    }[];
+  }[];
+  readonly stats: {
+    readonly truncatedSources: number;
+  };
+}
+
 /** Wire shape of `synthesis` — a sibling field of `findings`, never nested
  *  inside it (see `terminalLaneState`, service-worker.ts). */
 export interface AgentRunSynthesisWire {
@@ -190,7 +276,10 @@ export interface AgentRunSynthesisWire {
 export interface AgentRunDoneResponse {
   readonly status: "done";
   readonly brief: string;
-  readonly findings?: AgentRunWhyFindingsWire;
+  readonly findings?:
+    | AgentRunWhyFindingsWire
+    | AgentRunGlossaryFindingsWire
+    | AgentRunDecisionsFindingsWire;
   readonly synthesis?: AgentRunSynthesisWire;
 }
 
@@ -252,6 +341,143 @@ export const AGENT_RUN_DONE: AgentRunDoneResponse = {
       modifiedAt: 1_700_000_000_000 - ONE_DAY_MS,
     },
     itemSubject: null,
+  },
+  synthesis: {
+    attempted: true,
+    used: true,
+    model: "local-fixture",
+    remote: false,
+  },
+};
+
+/**
+ * `GET /v1/agents/runs/{id}` for a `glossary` invoke — a second done response,
+ * not a variant of {@link AGENT_RUN_DONE}: the mock answers every agent with
+ * the same fixture by default (mock-gateway.ts), so a test that wants the
+ * glossary lane's STRUCTURED render has to opt in via `Scenario.agentRun` (see
+ * input-lanes.e2e.ts). One entry, shaped to satisfy `glossaryFindingsFrom`
+ * (findings-guards.ts) with the field combination that exercises the
+ * renderer's two real branches: a `definitionSource` (so the badge renders),
+ * two `topSources` — one with a `url` (`findingLink` emits an `<a>`) and one
+ * with `url: null` (it emits a plain `<span>` instead) — and a non-empty
+ * `synonyms` list.
+ */
+export const AGENT_RUN_DONE_GLOSSARY: AgentRunDoneResponse = {
+  status: "done",
+  brief: "“cache” is defined below, with its two source mentions.",
+  findings: {
+    kind: "glossary",
+    agentVersion: 1,
+    generatedAt: 1_700_000_000_000,
+    latencyMs: 180,
+    gaps: [],
+    mode: "term",
+    matchedVia: "exact",
+    entries: [
+      {
+        term: "cache",
+        definition:
+          "A layer that stores a computed result so a later call can reuse it instead of recomputing.",
+        definitionSource: "llm",
+        docFreq: 4,
+        score: 0.82,
+        serviceSpread: 2,
+        firstSeenAt: 1_700_000_000_000 - ONE_WEEK_MS,
+        lastSeenAt: 1_700_000_000_000 - ONE_DAY_MS,
+        topSources: [
+          {
+            itemId: "gh-pr-482",
+            title: "Cache the readability pass",
+            url: "https://github.com/acme/web/pull/482",
+            service: "github",
+            modifiedAt: 1_700_000_000_000 - ONE_DAY_MS,
+          },
+          {
+            itemId: "note_cache_001",
+            title: "Note — caching strategy tradeoffs",
+            url: null,
+            service: "note",
+            modifiedAt: 1_700_000_000_000 - 2 * ONE_DAY_MS,
+          },
+        ],
+        synonyms: ["memoization"],
+        nearMisses: [],
+      },
+    ],
+    suggestions: [],
+  },
+  synthesis: {
+    attempted: true,
+    used: true,
+    model: "local-fixture",
+    remote: false,
+  },
+};
+
+/**
+ * `GET /v1/agents/runs/{id}` for a `decisions` invoke — a third done response,
+ * same reasoning as {@link AGENT_RUN_DONE_GLOSSARY}: the mock answers every
+ * agent with {@link AGENT_RUN_DONE} by default, so a test that wants the
+ * `decisions` lane's STRUCTURED render opts in via `Scenario.agentRun`. Two
+ * entries, shaped to satisfy `decisionsFindingsFrom` (findings-guards.ts) with
+ * the field combination that exercises the renderer's real branches: an ADR
+ * badge on one entry and not the other, a rationale and alternatives on one
+ * and neither on the other, one evidence row with a `url` (`findingLink`
+ * emits an `<a>`) and one with `url: null` (a plain `<span>` instead), and a
+ * non-zero `stats.truncatedSources` so the per-window caveat line renders.
+ */
+export const AGENT_RUN_DONE_DECISIONS: AgentRunDoneResponse = {
+  status: "done",
+  brief: "Two decisions were extracted from this connector's indexed history.",
+  findings: {
+    kind: "decisions",
+    agentVersion: 1,
+    generatedAt: 1_700_000_000_000,
+    latencyMs: 260,
+    gaps: [],
+    entries: [
+      {
+        id: "d1",
+        statement: "Use WAL mode for the index database.",
+        rationale: "Concurrent readers during a sync pass need to keep reading.",
+        alternatives: ["Rollback journal"],
+        confidence: 0.9,
+        decidedAt: 1_700_000_000_000 - ONE_DAY_MS,
+        hasAdr: true,
+        extractionSource: "snippet",
+        evidence: [
+          {
+            kind: "pr",
+            entityId: "gh-pr-482",
+            itemId: "github:acme/web#482",
+            label: "Cache the readability pass",
+            url: "https://github.com/acme/web/pull/482",
+            occurredAt: 1_700_000_000_000 - ONE_DAY_MS,
+          },
+        ],
+      },
+      {
+        id: "d2",
+        statement: "Retry a failed egress append at most once.",
+        rationale: null,
+        alternatives: [],
+        confidence: 0.6,
+        decidedAt: 1_700_000_000_000 - ONE_WEEK_MS,
+        hasAdr: false,
+        extractionSource: "llm",
+        evidence: [
+          {
+            kind: "commit",
+            entityId: null,
+            itemId: null,
+            label: "Note — retry policy discussion",
+            url: null,
+            occurredAt: 1_700_000_000_000 - ONE_WEEK_MS,
+          },
+        ],
+      },
+    ],
+    stats: { truncatedSources: 2 },
   },
   synthesis: {
     attempted: true,

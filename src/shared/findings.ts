@@ -83,10 +83,130 @@ export type WhyFindings = {
 };
 
 /**
- * The per-lane structured payload. ONE ARM PER SLICE: `why` here (C8.1),
- * expert/impact/ownership in C8.2, catchup/decisions/glossary in C8.3.
+ * How a queried term was resolved; `null` when nothing matched.
+ *
+ * MIRRORED, not imported — `glossary` is one of the three briefs
+ * `@nimbus-dev/sdk` deliberately does not publish (its `agent-names.ts` states
+ * that lagging the gateway is the intended state). Retiring this mirror is
+ * tracked in the design's §9. Source of truth:
+ * `packages/gateway/src/agents/_lib/glossary-types.ts` in the Nimbus repo.
+ */
+export type GlossaryMatchedVia = "exact" | "synonym" | null;
+
+/** Where a definition came from. `null` when the term has no definition yet. */
+export type GlossaryDefinitionSource = "llm" | "snippet" | "manual";
+
+export type GlossarySourceRef = {
+  readonly itemId: string;
+  readonly title: string;
+  /** The only URL in the glossary tree. Null when the indexed item carried none. */
+  readonly url: string | null;
+  readonly service: string;
+  readonly modifiedAt: number;
+};
+
+export type GlossaryEntry = {
+  readonly term: string;
+  readonly definition: string | null;
+  readonly definitionSource: GlossaryDefinitionSource | null;
+  readonly docFreq: number;
+  /**
+   * The value the list is ORDERED by. Rendered deliberately: upstream records
+   * that showing only `docFreq` while sorting on this made the visible number
+   * contradict the visible order.
+   */
+  readonly score: number;
+  readonly serviceSpread: number;
+  readonly firstSeenAt: number;
+  readonly lastSeenAt: number;
+  readonly topSources: readonly GlossarySourceRef[];
+  readonly synonyms: readonly string[];
+  readonly nearMisses: readonly string[];
+};
+
+/**
+ * The `glossary` lane's payload, as a client projection (§4.1).
+ *
+ * `stats` is deliberately not projected: every field on it is a corpus-level
+ * diagnostic the panel does not render. `gaps` is the honesty channel and lives
+ * as a sibling on `LaneState`.
+ */
+export type GlossaryFindings = {
+  readonly kind: "glossary";
+  readonly entries: readonly GlossaryEntry[];
+  /**
+   * How the resolved term was matched. Rendered as a badge on the term
+   * heading when `"synonym"` — a fact worth surfacing, since it tells the
+   * reader the word they selected is not the canonical one. `"exact"` and
+   * `null` render nothing extra.
+   *
+   * `mode` (list/term/miss) is deliberately NOT projected here, unlike
+   * `matchedVia`: the renderer branches only on `entries.length`, never on
+   * `mode`, so gating on it would reject briefs this client could render —
+   * exactly the rule this module's header states.
+   */
+  readonly matchedVia: GlossaryMatchedVia;
+  readonly suggestions: readonly string[];
+};
+
+/**
+ * MIRRORED, not imported — `decisions` is the second of the three briefs
+ * `@nimbus-dev/sdk` does not publish. Source of truth:
+ * `packages/gateway/src/decisions/decision-types.ts` and
+ * `agents/_lib/decisions-types.ts` in the Nimbus repo. Retiring this mirror is
+ * tracked in the design's §9.
+ */
+export type EvidenceKind = "source" | "pr" | "commit" | "migration" | "iac" | "adr";
+
+/** How the decision was extracted from its source. */
+export type ExtractionSource = "llm" | "snippet";
+
+export type DecisionEvidence = {
+  readonly kind: EvidenceKind;
+  readonly entityId: string | null;
+  readonly itemId: string | null;
+  readonly label: string;
+  /** The only URL in the decisions tree. */
+  readonly url: string | null;
+  readonly occurredAt: number | null;
+};
+
+export type DecisionsEntry = {
+  readonly id: string;
+  readonly statement: string;
+  readonly rationale: string | null;
+  readonly alternatives: readonly string[];
+  readonly confidence: number;
+  readonly decidedAt: number;
+  readonly hasAdr: boolean;
+  readonly extractionSource: ExtractionSource | null;
+  readonly evidence: readonly DecisionEvidence[];
+};
+
+/**
+ * The `decisions` lane's payload, as a client projection (§4.1).
+ *
+ * `explain` is not projected: it is populated only when the caller asks for it
+ * and this client never does, so it is always empty. `matchedVia` is a routing
+ * detail of the service filter, not something a reader can act on. From `stats`
+ * only `truncatedSources` survives — it is the honesty signal, and the rest are
+ * corpus diagnostics.
+ */
+export type DecisionsFindings = {
+  readonly kind: "decisions";
+  readonly entries: readonly DecisionsEntry[];
+  /**
+   * How many source items in this window were indexed with a truncated body.
+   * Rendered as a caveat: a decision extracted from a cut body may be partial.
+   */
+  readonly truncatedSources: number;
+};
+
+/**
+ * The per-lane structured payload. ONE ARM PER SLICE: `why` in C8.1,
+ * `glossary` and `decisions` in C8.2, the four link-less lanes in C8.3.
  *
  * A lane whose arm does not exist yet behaves exactly like a guard rejection —
  * no findings, prose body, and its gaps and provenance still render.
  */
-export type LaneFindings = WhyFindings;
+export type LaneFindings = WhyFindings | GlossaryFindings | DecisionsFindings;

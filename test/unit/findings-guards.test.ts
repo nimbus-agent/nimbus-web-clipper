@@ -1,8 +1,15 @@
 import { describe, expect, test } from "vitest";
-import type { SynthesisProvenance, WhyFindings } from "../../src/shared/findings.ts";
+import type {
+  DecisionsFindings,
+  GlossaryFindings,
+  SynthesisProvenance,
+  WhyFindings,
+} from "../../src/shared/findings.ts";
 import {
+  decisionsFindingsFrom,
   gapNotesFrom,
   gapsOfBrief,
+  glossaryFindingsFrom,
   laneFindingsFrom,
   synthesisFrom,
 } from "../../src/shared/findings-guards.ts";
@@ -245,5 +252,237 @@ describe("laneFindingsFrom", () => {
         },
       }),
     ).toBeUndefined();
+  });
+});
+
+const validSource = {
+  itemId: "github:acme/web#1",
+  title: "Auth rewrite",
+  url: "https://example.test/pr/1",
+  service: "github",
+  modifiedAt: 1_700_000_000_000,
+};
+
+const validGlossary = {
+  kind: "glossary",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { term: "peek", limit: 5 },
+  mode: "term",
+  matchedVia: "exact",
+  suggestions: [],
+  stats: { total: 1, pending: 0, vetoed: 0, manual: 0, lastPassAt: null, truncatedSources: 0 },
+  entries: [
+    {
+      term: "peek",
+      definition: "A read that does not consume.",
+      definitionSource: "snippet",
+      docFreq: 6,
+      score: 0.82,
+      serviceSpread: 2,
+      firstSeenAt: 1_600_000_000_000,
+      lastSeenAt: 1_700_000_000_000,
+      topSources: [validSource],
+      synonyms: ["peeking"],
+      nearMisses: ["peak"],
+    },
+  ],
+};
+
+describe("glossaryFindingsFrom", () => {
+  test("projects a valid brief, dropping the base fields, stats, and mode", () => {
+    // `mode` is on the wire (validGlossary carries it) but is not projected:
+    // the renderer never reads it, so the guard does not gate on it either.
+    expect(glossaryFindingsFrom(validGlossary)).toEqual({
+      kind: "glossary",
+      matchedVia: "exact",
+      suggestions: [],
+      entries: validGlossary.entries,
+    });
+  });
+
+  test("accepts a miss with suggestions and no entries", () => {
+    const miss = {
+      ...validGlossary,
+      mode: "miss",
+      matchedVia: null,
+      entries: [],
+      suggestions: ["peak"],
+    };
+    expect(glossaryFindingsFrom(miss)?.kind).toBe("glossary");
+  });
+
+  test("accepts an unknown mode — it is not gated on", () => {
+    // A field we do not render is not a field we gate on: the day the
+    // gateway adds a new `mode` value, this lane must not lose its
+    // structured render for a value no renderer would have consulted.
+    expect(glossaryFindingsFrom({ ...validGlossary, mode: "something-new" })).not.toBeUndefined();
+    const noMode = { ...validGlossary } as Record<string, unknown>;
+    delete noMode["mode"];
+    expect(glossaryFindingsFrom(noMode)).not.toBeUndefined();
+  });
+
+  test("accepts a null definition and a null definitionSource", () => {
+    const e = { ...validGlossary.entries[0], definition: null, definitionSource: null };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).not.toBeUndefined();
+  });
+
+  test("accepts a source whose url is null", () => {
+    const e = { ...validGlossary.entries[0], topSources: [{ ...validSource, url: null }] };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).not.toBeUndefined();
+  });
+
+  test("rejects an unknown matchedVia or definitionSource", () => {
+    expect(glossaryFindingsFrom({ ...validGlossary, matchedVia: "fuzzy" })).toBeUndefined();
+    const e = { ...validGlossary.entries[0], definitionSource: "guess" };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).toBeUndefined();
+  });
+
+  test("rejects malformed elements rather than rendering a partial list", () => {
+    // The SDK-style shallow guard would admit these; ours must not.
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [42] })).toBeUndefined();
+    expect(glossaryFindingsFrom({ ...validGlossary, suggestions: [null] })).toBeUndefined();
+    const e = { ...validGlossary.entries[0], topSources: [null] };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).toBeUndefined();
+    const e2 = { ...validGlossary.entries[0], synonyms: [7] };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e2] })).toBeUndefined();
+  });
+
+  test("rejects a date string where an epoch number is required", () => {
+    const e = { ...validGlossary.entries[0], lastSeenAt: "2026-01-01T00:00:00Z" };
+    expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).toBeUndefined();
+  });
+});
+
+describe("GlossaryFindings pins the fields we read", () => {
+  // Same reason as the existing WhyFindings pin: these are local mirrors of a
+  // type another repo owns, and nothing enforces they stay in step. A rename
+  // upstream surfaces here as a failure rather than as a wrong render.
+  test("carries exactly the four projected keys", () => {
+    const value: GlossaryFindings = {
+      kind: "glossary",
+      entries: [],
+      matchedVia: null,
+      suggestions: [],
+    };
+    expect(Object.keys(value).sort()).toEqual(["entries", "kind", "matchedVia", "suggestions"]);
+  });
+});
+
+const validEvidence = {
+  kind: "pr",
+  entityId: "e1",
+  itemId: "github:acme/web#7",
+  label: "Adopt SQLite WAL",
+  url: "https://example.test/pr/7",
+  occurredAt: 1_700_000_000_000,
+};
+
+const validDecisions = {
+  kind: "decisions",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { sinceMs: 1, service: "github", minConfidence: 0.5, explain: false },
+  stats: { total: 1, pending: 0, extracted: 1, vetoed: 0, lastPassAt: null, truncatedSources: 2 },
+  entries: [
+    {
+      id: "d1",
+      statement: "Use WAL mode for the index database.",
+      rationale: "Concurrent readers during a sync pass.",
+      alternatives: ["Rollback journal"],
+      confidence: 0.9,
+      decidedAt: 1_700_000_000_000,
+      hasAdr: true,
+      extractionSource: "snippet",
+      evidence: [validEvidence],
+      explain: [],
+      matchedVia: "repo",
+    },
+  ],
+};
+
+describe("decisionsFindingsFrom", () => {
+  test("projects a valid brief, keeping only truncatedSources from stats", () => {
+    const out = decisionsFindingsFrom(validDecisions);
+    expect(out?.kind).toBe("decisions");
+    expect(out).toMatchObject({ truncatedSources: 2 });
+    expect(Object.keys(out ?? {}).sort()).toEqual(["entries", "kind", "truncatedSources"]);
+  });
+
+  test("accepts agentVersion values other than 1", () => {
+    // DecisionsBrief types agentVersion as `number`, unlike every other brief's
+    // literal 1. Asserting === 1 here would reject valid briefs.
+    expect(decisionsFindingsFrom({ ...validDecisions, agentVersion: 2 })).not.toBeUndefined();
+  });
+
+  test("accepts nullable rationale, extractionSource, and evidence ids", () => {
+    const e = { ...validDecisions.entries[0], rationale: null, extractionSource: null };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e] })).not.toBeUndefined();
+    const ev = { ...validEvidence, entityId: null, itemId: null, url: null, occurredAt: null };
+    const e2 = { ...validDecisions.entries[0], evidence: [ev] };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e2] })).not.toBeUndefined();
+  });
+
+  test("rejects an unknown evidence kind or extraction source", () => {
+    const ev = { ...validEvidence, kind: "tweet" };
+    const e = { ...validDecisions.entries[0], evidence: [ev] };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e] })).toBeUndefined();
+    const e2 = { ...validDecisions.entries[0], extractionSource: "vibes" };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e2] })).toBeUndefined();
+  });
+
+  test("rejects malformed elements rather than rendering a partial list", () => {
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [null] })).toBeUndefined();
+    const e = { ...validDecisions.entries[0], evidence: [42] };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e] })).toBeUndefined();
+    const e2 = { ...validDecisions.entries[0], alternatives: [null] };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e2] })).toBeUndefined();
+  });
+
+  test("rejects a missing or non-numeric truncatedSources", () => {
+    const s = { ...validDecisions.stats, truncatedSources: "2" };
+    expect(decisionsFindingsFrom({ ...validDecisions, stats: s })).toBeUndefined();
+    expect(decisionsFindingsFrom({ ...validDecisions, stats: {} })).toBeUndefined();
+  });
+});
+
+describe("DecisionsFindings pins the fields we read", () => {
+  test("carries exactly the three projected keys", () => {
+    const value: DecisionsFindings = { kind: "decisions", entries: [], truncatedSources: 0 };
+    expect(Object.keys(value).sort()).toEqual(["entries", "kind", "truncatedSources"]);
+  });
+});
+
+describe("laneFindingsFrom is idempotent over its own projection", () => {
+  // `sanitiseState` (agent-run-store.ts) re-runs `laneFindingsFrom` over the
+  // STORED PROJECTION on every read — not the wire object. A guard that
+  // cannot parse its own output silently destroys the findings it just
+  // produced, on the very next repaint. This was a real, shipped bug:
+  // `decisionsFindingsFrom` read `truncatedSources` from the nested wire
+  // location (`stats.truncatedSources`) but emitted it flattened onto the
+  // projection, so `laneFindingsFrom("decisions", laneFindingsFrom("decisions",
+  // wire))` returned `undefined` — the lane silently fell back to prose on
+  // every repaint in production. `why` and `glossary` happened to survive only
+  // because their projections are already flat.
+  //
+  // EVERY arm of `LaneFindings` is listed here so a C8.3 arm that skips this
+  // property is caught immediately, the same way this one was not.
+  const IDEMPOTENCE_CASES: ReadonlyArray<
+    readonly [Parameters<typeof laneFindingsFrom>[0], unknown]
+  > = [
+    ["why", validWhy],
+    ["glossary", validGlossary],
+    ["decisions", validDecisions],
+  ];
+
+  test.each(IDEMPOTENCE_CASES)("%s round-trips through its own projection", (lane, wire) => {
+    const once = laneFindingsFrom(lane, wire);
+    expect(once).not.toBeUndefined();
+    const twice = laneFindingsFrom(lane, once);
+    expect(twice).toEqual(once);
   });
 });
