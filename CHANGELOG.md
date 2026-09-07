@@ -17,8 +17,8 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   matches your index does hold, rather than an empty answer. *What got decided*
   now lists the decisions themselves, each with its rationale, the alternatives
   that were considered, and the pull requests, commits and ADRs it was extracted
-  from; where a decision came from a source whose body was indexed truncated, it
-  says so. As in the first slice, a gateway that sends nothing new is unaffected
+  from, plus a count of how many sources in the window were indexed with a
+  truncated body. As in the first slice, a gateway that sends nothing new is unaffected
   and no re-pairing is needed — this is the client reading more of what it was
   already sent. The four remaining lanes still render their paragraph.
 
