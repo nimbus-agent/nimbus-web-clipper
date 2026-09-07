@@ -437,12 +437,12 @@ building so the context menu is re-registered.
 
 ## Manual verification — Service lanes (C2.3)
 
-**Steps 1–4 run on every PR** (`test/e2e/service-lanes.e2e.ts`), so this pass
-is no longer outstanding — the summary form folded into "Manual verification —
-Setup that works" below (item 8) is now redundant with the suite for the same
-four steps; it stays as a quick human sanity check, not as the thing that
-proves the slice works. Steps 5 and 6 still need a human pass — see their own
-notes below.
+**Steps 1–4 and 7 run on every PR** (`test/e2e/service-lanes.e2e.ts`), so this
+pass is no longer outstanding for them — the summary form folded into "Manual
+verification — Setup that works" below (item 8) is now redundant with the
+suite for the same four steps; it stays as a quick human sanity check, not as
+the thing that proves the slice works. Steps 5 and 6 still need a human pass —
+see their own notes below.
 
 Prereq: paired, gateway running, a token scoped with `agents` (`resolve` and
 `fetch` are not required — a service lane needs neither, see
@@ -480,6 +480,12 @@ mock's fixed brief cannot produce.
    configured).** With no `[[filesystem.roots]]` configured, *Who owns what*
    renders the gateway's gap brief including its `nimbus index add` line — not
    a blank lane.
+7. <!-- e2e:service-lanes-7 --> **The `decisions` lane's structured findings
+   (C8.2):** on the dashboard, expand *What got decided*. It renders the
+   decisions themselves — each with its rationale and alternatives where
+   recorded, an `ADR` badge where one exists, and its evidence rows linked
+   wherever a URL exists — plus a count of how many sources in the window were
+   indexed with a truncated body, never the flattened paragraph.
 
 ## Manual verification — Item lanes and the version floor (C6)
 

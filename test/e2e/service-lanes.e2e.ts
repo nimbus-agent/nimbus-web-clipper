@@ -35,7 +35,11 @@
  */
 import { expect, test } from "@playwright/test";
 import { launchExtension } from "../../scripts/e2e/launch.ts";
-import { AGENT_RUN_DONE, type Scenario } from "../../scripts/screenshots/gateway-fixtures.ts";
+import {
+  AGENT_RUN_DONE,
+  AGENT_RUN_DONE_DECISIONS,
+  type Scenario,
+} from "../../scripts/screenshots/gateway-fixtures.ts";
 import { GATEWAY_PATHS } from "../../src/shared/gateway.ts";
 import { PANEL_HOST_ID } from "../../src/shared/panel-host.ts";
 import { gotoRecognisedPage, togglePanel } from "./helpers.ts";
@@ -45,6 +49,7 @@ export const COVERS = [
   "service-lanes-2",
   "service-lanes-3",
   "service-lanes-4",
+  "service-lanes-7",
 ] as const;
 
 test("a dashboard's service lanes name the scope, run to a brief, and replay from cache on reopen", async () => {
@@ -165,6 +170,76 @@ test("a resolved pull request shows the item lanes, never the service lanes", as
     await expect(page.locator('[data-lane="catchup"]')).toHaveCount(0);
     await expect(page.locator('[data-lane="decisions"]')).toHaveCount(0);
     await expect(page.locator('[data-lane="ownership"]')).toHaveCount(0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("a dashboard's decisions lane renders its structured findings, not prose", async () => {
+  // service-lanes-7: `decisions` is service-scoped ({input: "page", surfaces:
+  // {home: "service"}}), so this reuses the home-dashboard harness
+  // service-lanes-1..4 already build above. The default fixture (AGENT_RUN_DONE)
+  // is `why`-shaped, so a `decisions` invoke against it fails
+  // `laneFindingsFrom`'s `kind` check and falls back to prose — same reasoning
+  // as input-lanes.e2e.ts opting into AGENT_RUN_DONE_GLOSSARY. This test opts
+  // into AGENT_RUN_DONE_DECISIONS instead, and is also the regression test for
+  // the critical fix to `decisionsFindingsFrom`: without it, `sanitiseState`
+  // re-parsing the stored projection on every read would strip these findings
+  // right back out, and this test would see the prose fallback it exists to
+  // rule out.
+  const scenario: Scenario = { agentRun: AGENT_RUN_DONE_DECISIONS };
+  const h = await launchExtension({ scenario });
+  try {
+    await h.sw.evaluate(async (origin) => {
+      await chrome.storage.local.set({
+        origins: [{ origin: `${origin}/sample`, product: "github" }],
+      });
+    }, h.origin);
+
+    const url = `${h.origin}/sample`;
+    const page = await h.context.newPage();
+    await page.goto(url);
+    await page.bringToFront();
+    await togglePanel(h.sw, url);
+
+    const decisionsLane = page.locator('[data-lane="decisions"]');
+    await expect(decisionsLane.locator("summary")).toHaveText("What got decided");
+    await decisionsLane.locator("summary").click();
+
+    // The structured render, not the prose fallback.
+    await expect(decisionsLane.locator("pre.nimbus-related__brief")).toHaveCount(0);
+    const findings = decisionsLane.locator(".nimbus-findings");
+    await expect(findings).toHaveCount(1);
+
+    // Both decisions render, one with an ADR badge and one without.
+    await expect(findings.locator(".nimbus-findings__subject").first()).toContainText(
+      "Use WAL mode for the index database.",
+    );
+    await expect(findings.locator(".nimbus-findings__badge").first()).toHaveText("ADR");
+
+    // The rationale and alternatives of the first decision.
+    await expect(findings.locator(".nimbus-findings__item-detail").first()).toHaveText(
+      "Concurrent readers during a sync pass need to keep reading.",
+    );
+    await expect(findings.locator(".nimbus-findings__item-detail").nth(1)).toHaveText(
+      "Considered instead: Rollback journal",
+    );
+
+    // Evidence: one row links out, the other (url: null) is plain text.
+    await expect(findings.locator(".nimbus-findings__item a[href]")).toHaveAttribute(
+      "href",
+      "https://github.com/acme/web/pull/482",
+    );
+    await expect(findings.locator(".nimbus-findings__item").last()).toContainText(
+      "Note — retry policy discussion",
+    );
+    await expect(findings.locator(".nimbus-findings__item").last().locator("a")).toHaveCount(0);
+
+    // The per-window truncated-sources caveat — an aggregate, not a
+    // per-decision attribution.
+    await expect(findings.locator(".nimbus-findings__provenance")).toHaveText(
+      "2 sources in this window were indexed with truncated bodies.",
+    );
   } finally {
     await h.close();
   }
