@@ -24,6 +24,8 @@ import type {
   GlossaryFindings,
   GlossaryMatchedVia,
   GlossarySourceRef,
+  ImpactFinding,
+  ImpactFindings,
   LaneFindings,
   SynthesisDiscardReason,
   SynthesisProvenance,
@@ -452,6 +454,46 @@ export function expertFindingsFrom(raw: Record<string, unknown>): ExpertFindings
   };
 }
 
+const IMPACT_CATEGORIES = [
+  "service",
+  "pipeline",
+  "dashboard",
+  "oncall_rotation",
+  "downstream_repo",
+] as const;
+
+/**
+ * `affectedItemId` is validated because it is a field the wire sends and the
+ * projection keeps (see `ImpactFindings`'s comment on why) — not because the
+ * renderer reads it. It is a `graph_entity.id`, not an item id.
+ */
+function isImpactFinding(v: unknown): v is ImpactFinding {
+  return (
+    isObject(v) &&
+    typeof v["category"] === "string" &&
+    (IMPACT_CATEGORIES as readonly string[]).includes(v["category"]) &&
+    typeof v["affectedItemId"] === "string" &&
+    typeof v["affectedTitle"] === "string" &&
+    typeof v["serviceId"] === "string" &&
+    typeof v["hops"] === "number" &&
+    typeof v["pathSummary"] === "string"
+  );
+}
+
+export function impactFindingsFrom(raw: Record<string, unknown>): ImpactFindings | undefined {
+  if (!isNullableString(raw["startEntityId"])) {
+    return undefined;
+  }
+  if (!Array.isArray(raw["affected"]) || !raw["affected"].every(isImpactFinding)) {
+    return undefined;
+  }
+  return {
+    kind: "impact",
+    startEntityId: raw["startEntityId"],
+    affected: raw["affected"] as readonly ImpactFinding[],
+  };
+}
+
 /**
  * Narrow a raw `findings` payload against the lane that asked for it.
  *
@@ -476,6 +518,9 @@ export function laneFindingsFrom(lane: AgentLane, raw: unknown): LaneFindings | 
   }
   if (lane === "expert") {
     return expertFindingsFrom(raw);
+  }
+  if (lane === "impact") {
+    return impactFindingsFrom(raw);
   }
   return undefined;
 }

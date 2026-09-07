@@ -3,6 +3,7 @@ import type {
   DecisionsFindings,
   ExpertFindings,
   GlossaryFindings,
+  ImpactFindings,
   SynthesisProvenance,
   WhyFindings,
 } from "../../src/shared/findings.ts";
@@ -12,6 +13,7 @@ import {
   gapNotesFrom,
   gapsOfBrief,
   glossaryFindingsFrom,
+  impactFindingsFrom,
   laneFindingsFrom,
   synthesisFrom,
 } from "../../src/shared/findings-guards.ts";
@@ -530,6 +532,82 @@ describe("ExpertFindings pins the fields we read", () => {
   });
 });
 
+const validImpactFinding = {
+  // `affectedItemId` is a `graph_entity.id`, not an item id - see findings.ts.
+  // It is still accepted here (the field exists on the wire), just never
+  // projected or rendered.
+  category: "service",
+  affectedItemId: "entity:456",
+  affectedTitle: "billing-service",
+  serviceId: "billing",
+  hops: 1,
+  pathSummary: "billing-service depends directly on payments-api",
+};
+
+const validImpact = {
+  kind: "impact",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { fileOrPrUrl: "https://github.com/acme/web/pull/42" },
+  startEntityId: "entity:123",
+  affected: [validImpactFinding],
+};
+
+describe("impactFindingsFrom", () => {
+  test("projects a valid brief, dropping the base fields and query", () => {
+    expect(impactFindingsFrom(validImpact)).toEqual({
+      kind: "impact",
+      startEntityId: "entity:123",
+      affected: validImpact.affected,
+    });
+  });
+
+  test("accepts a null startEntityId - the start not resolving is a real state", () => {
+    expect(impactFindingsFrom({ ...validImpact, startEntityId: null })).toEqual({
+      kind: "impact",
+      startEntityId: null,
+      affected: validImpact.affected,
+    });
+  });
+
+  test("rejects a missing startEntityId key", () => {
+    const without = { ...validImpact } as Record<string, unknown>;
+    delete without["startEntityId"];
+    expect(impactFindingsFrom(without)).toBeUndefined();
+  });
+
+  test("rejects an unknown category", () => {
+    const finding = { ...validImpactFinding, category: "database" };
+    expect(impactFindingsFrom({ ...validImpact, affected: [finding] })).toBeUndefined();
+  });
+
+  test("rejects a non-numeric hops", () => {
+    const finding = { ...validImpactFinding, hops: "1" };
+    expect(impactFindingsFrom({ ...validImpact, affected: [finding] })).toBeUndefined();
+  });
+
+  test("rejects an element missing affectedTitle", () => {
+    const finding = { ...validImpactFinding } as Record<string, unknown>;
+    delete finding["affectedTitle"];
+    expect(impactFindingsFrom({ ...validImpact, affected: [finding] })).toBeUndefined();
+  });
+
+  test("rejects malformed elements rather than rendering a partial list", () => {
+    // The SDK-style shallow guard would admit these; ours must not (§4.3).
+    expect(impactFindingsFrom({ ...validImpact, affected: [null] })).toBeUndefined();
+    expect(impactFindingsFrom({ ...validImpact, affected: [42, null] })).toBeUndefined();
+  });
+});
+
+describe("ImpactFindings pins the fields we read", () => {
+  test("carries exactly the three projected keys", () => {
+    const value: ImpactFindings = { kind: "impact", startEntityId: null, affected: [] };
+    expect(Object.keys(value).sort()).toEqual(["affected", "kind", "startEntityId"]);
+  });
+});
+
 describe("laneFindingsFrom is idempotent over its own projection", () => {
   // `sanitiseState` (agent-run-store.ts) re-runs `laneFindingsFrom` over the
   // STORED PROJECTION on every read — not the wire object. A guard that
@@ -551,6 +629,7 @@ describe("laneFindingsFrom is idempotent over its own projection", () => {
     ["glossary", validGlossary],
     ["decisions", validDecisions],
     ["expert", validExpert],
+    ["impact", validImpact],
   ];
 
   test.each(IDEMPOTENCE_CASES)("%s round-trips through its own projection", (lane, wire) => {

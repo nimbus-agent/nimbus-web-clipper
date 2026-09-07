@@ -14,6 +14,7 @@ import type {
   Evidence,
   ExpertFinding,
   GapNote,
+  ImpactFinding,
   WhyChangeSubject,
   WhyFinding,
   WhyItemSubject,
@@ -25,6 +26,7 @@ export type {
   Evidence,
   ExpertFinding,
   GapNote,
+  ImpactFinding,
   WhyChangeSubject,
   WhyFinding,
   WhyItemSubject,
@@ -228,10 +230,41 @@ export type ExpertFindings = {
 };
 
 /**
+ * The `impact` lane's payload, as a client projection of `ImpactBrief` (§4.1).
+ *
+ * `query` is not projected, same reasoning as `ExpertFindings`: the panel
+ * already knows what was asked.
+ *
+ * **`ImpactFinding.affectedItemId` is not an item id.** It is a
+ * `graph_entity.id` — every one of the gateway's five impact sub-lanes selects
+ * `e.id FROM graph_entity` (`agents/impact.ts:218,264,308,343,378`). So is
+ * `startEntityId`, or the synthetic `` `item:${id}` `` string on the topic arm.
+ * Spec §4.6 records this. Neither field is rendered as an item reference, given
+ * a resolver, or shown to the reader at all — `affectedTitle` is what a reader
+ * can use, and this projection keeps `affectedItemId` only because the guard
+ * validates the field the wire sends, not because anything downstream reads it.
+ *
+ * `startEntityId` stays `string | null` rather than being dropped: `null` means
+ * the change's own start point did not resolve in the graph, which is a
+ * reportable fact distinct from "nothing downstream is indexed" — collapsing
+ * the two would make a real gap look like a clean, empty result.
+ */
+export type ImpactFindings = {
+  readonly kind: "impact";
+  readonly startEntityId: string | null;
+  readonly affected: readonly ImpactFinding[];
+};
+
+/**
  * The per-lane structured payload. ONE ARM PER SLICE: `why` in C8.1,
  * `glossary` and `decisions` in C8.2, the four link-less lanes in C8.3.
  *
  * A lane whose arm does not exist yet behaves exactly like a guard rejection —
  * no findings, prose body, and its gaps and provenance still render.
  */
-export type LaneFindings = WhyFindings | GlossaryFindings | DecisionsFindings | ExpertFindings;
+export type LaneFindings =
+  | WhyFindings
+  | GlossaryFindings
+  | DecisionsFindings
+  | ExpertFindings
+  | ImpactFindings;
