@@ -57,7 +57,18 @@ function jsOptions(target) {
     logLevel: "info",
     entryPoints: ENTRIES.map((e) => ({ in: e.in, out: e.out })),
     outdir: `dist/${target}`,
+    // Consumed by scripts/check-build.mjs to assert no bundle actually pulled
+    // in @nimbus-dev/sdk's runtime code — see the comment there for why the
+    // metafile's `inputs`, not the bundle text, is what that check reads.
+    metafile: true,
   };
+}
+
+// Written into dist/<target>/ (git-ignored, alongside the bundles it describes)
+// so scripts/check-build.mjs can inspect what esbuild actually pulled into each
+// target's bundles, not just what the minified output text happens to contain.
+function writeMetafile(target, metafile) {
+  writeFileSync(`dist/${target}/meta.json`, JSON.stringify(metafile));
 }
 
 function copyAssets(target) {
@@ -81,7 +92,8 @@ function copyFileFlat(from, to) {
 async function runBuild() {
   rmSync("dist", { recursive: true, force: true });
   for (const target of BROWSER_TARGETS) {
-    await build(jsOptions(target));
+    const result = await build(jsOptions(target));
+    writeMetafile(target, result.metafile);
     copyAssets(target);
   }
   process.stdout.write(
@@ -92,6 +104,11 @@ async function runBuild() {
 async function runWatch() {
   for (const target of BROWSER_TARGETS) {
     const ctx = await context(jsOptions(target));
+    // One eager rebuild so a metafile exists from the start (watch mode's own
+    // rebuilds on file changes do not re-run this write) — good enough for dev
+    // reload; check-build's own runs go through runBuild above.
+    const result = await ctx.rebuild();
+    writeMetafile(target, result.metafile);
     await ctx.watch();
     copyAssets(target);
   }

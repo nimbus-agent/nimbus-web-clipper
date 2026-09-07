@@ -57,21 +57,35 @@ for (const target of TARGETS) {
   // `@nimbus-dev/sdk` must stay `import type`-only (see src/shared/findings.ts's
   // header comment): a value import would put SDK runtime code into the shipped
   // bundle. Nothing else enforces this — Biome's `useImportType` is not
-  // configured here, and esbuild does not typecheck — so grepping the built
-  // output for the package name is the only thing that would actually catch a
-  // plain `import { X } from "@nimbus-dev/sdk"` before it ships.
-  for (const file of REQUIRED_FILES) {
-    if (!file.endsWith(".js")) {
-      continue;
+  // configured here, and esbuild does not typecheck.
+  //
+  // This reads esbuild's own metafile (`metafile: true` in esbuild.mjs, written
+  // to `dist/<target>/meta.json`) and asserts none of its `inputs` resolved to a
+  // path under `node_modules/@nimbus-dev`. That inspects what esbuild actually
+  // pulled into the bundle, not the output text: `esbuild.mjs` builds with
+  // `bundle: true` and `format: "iife"`, which INLINES a dependency's code
+  // without necessarily preserving its package specifier as a string anywhere
+  // in the minified output — so grepping the built JS for "nimbus-dev" would
+  // not reliably catch a value import once esbuild renamed/minified past it.
+  const metaPath = `${dir}/meta.json`;
+  if (!existsSync(metaPath)) {
+    failures.push(`${target}: missing meta.json (did you run \`bun run build\`?)`);
+  } else {
+    let metafile;
+    try {
+      metafile = JSON.parse(readFileSync(metaPath, "utf8"));
+    } catch (err) {
+      failures.push(`${target}: meta.json is not valid JSON (${err.message})`);
     }
-    const bundlePath = `${dir}/${file}`;
-    if (!existsSync(bundlePath)) {
-      continue; // already reported as missing above
-    }
-    if (readFileSync(bundlePath, "utf8").includes("nimbus-dev")) {
-      failures.push(
-        `${target}: ${file} contains "nimbus-dev" — @nimbus-dev/sdk must stay import-type-only`,
+    if (metafile !== undefined) {
+      const sdkInputs = Object.keys(metafile.inputs ?? {}).filter((input) =>
+        input.includes("node_modules/@nimbus-dev"),
       );
+      if (sdkInputs.length > 0) {
+        failures.push(
+          `${target}: bundle pulled in @nimbus-dev/sdk at runtime (${sdkInputs.join(", ")}) — it must stay import-type-only`,
+        );
+      }
     }
   }
 
