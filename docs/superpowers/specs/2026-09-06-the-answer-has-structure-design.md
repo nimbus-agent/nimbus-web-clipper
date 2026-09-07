@@ -469,9 +469,38 @@ because an unmodelled lane renders today's prose.
 
 - **C8.1** — the entry path (§4.1: parser, `LaneState`, store guard, byte bound),
   `gaps` + provenance on all seven lanes (§4.5), and the `why` renderer (§4.4).
-  Ships the flagship and the honesty win together.
-- **C8.2** — `expert`, `impact`, `ownership`.
-- **C8.3** — `catchup`, `decisions`, `glossary`.
+  Ships the flagship and the honesty win together. ✅ **Shipped** in v0.6.0.
+- **C8.2** — `glossary` and `decisions`.
+- **C8.3** — `expert`, `impact`, `ownership`, `catchup`.
+
+### 6.1 Why C8.2 and C8.3 were re-cut after C8.1
+
+The original split was `expert`/`impact`/`ownership`, then
+`catchup`/`decisions`/`glossary`. It was drawn before §4.6's link inventory
+existed, and that inventory cuts straight across it: **every lane in the original
+C8.2 is link-less**, and both lanes that carry real URLs sat in the slice after.
+As drawn, the next release would have shipped three lanes that gain structure but
+not the thing C8.1's readers actually noticed — a reference you can follow.
+
+So the two link-carrying lanes go next:
+
+- **`glossary`** — `entries[].topSources[].url`. It also has the widest reach of
+  any lane in the product: its `LANE_RULES` entry is `{input: "term"}` with no
+  surface restriction, so it renders on **any** page, including one the
+  recogniser rejects outright. Every other lane needs a recognised, resolved
+  item. Structuring it lands on more pages than the other five combined.
+- **`decisions`** — `entries[].evidence[].url`.
+
+C8.3 then takes the four link-less lanes together. That is the right shape for
+them: they are the lanes an upstream reverse `itemId → URL` read (§9) would light
+up, so if it lands first they ship with references the first time instead of
+needing a second pass — and if it does not, they ship as structured lists, which
+is still a gain over prose.
+
+**The cost of the re-cut is one extra local mirror in this slice.** `decisions`
+and `glossary` are both among the three brief types the SDK does not publish
+(§4.2), where the original C8.2 carried only `ownership`. That is a known,
+sanctioned cost, not a new one — and §9's SDK proposal retires all of them.
 
 ## 7. Corrections this phase records
 
