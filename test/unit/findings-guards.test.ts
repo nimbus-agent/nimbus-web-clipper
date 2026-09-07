@@ -453,3 +453,33 @@ describe("DecisionsFindings pins the fields we read", () => {
     expect(Object.keys(value).sort()).toEqual(["entries", "kind", "truncatedSources"]);
   });
 });
+
+describe("laneFindingsFrom is idempotent over its own projection", () => {
+  // `sanitiseState` (agent-run-store.ts) re-runs `laneFindingsFrom` over the
+  // STORED PROJECTION on every read — not the wire object. A guard that
+  // cannot parse its own output silently destroys the findings it just
+  // produced, on the very next repaint. This was a real, shipped bug:
+  // `decisionsFindingsFrom` read `truncatedSources` from the nested wire
+  // location (`stats.truncatedSources`) but emitted it flattened onto the
+  // projection, so `laneFindingsFrom("decisions", laneFindingsFrom("decisions",
+  // wire))` returned `undefined` — the lane silently fell back to prose on
+  // every repaint in production. `why` and `glossary` happened to survive only
+  // because their projections are already flat.
+  //
+  // EVERY arm of `LaneFindings` is listed here so a C8.3 arm that skips this
+  // property is caught immediately, the same way this one was not.
+  const IDEMPOTENCE_CASES: ReadonlyArray<
+    readonly [Parameters<typeof laneFindingsFrom>[0], unknown]
+  > = [
+    ["why", validWhy],
+    ["glossary", validGlossary],
+    ["decisions", validDecisions],
+  ];
+
+  test.each(IDEMPOTENCE_CASES)("%s round-trips through its own projection", (lane, wire) => {
+    const once = laneFindingsFrom(lane, wire);
+    expect(once).not.toBeUndefined();
+    const twice = laneFindingsFrom(lane, once);
+    expect(twice).toEqual(once);
+  });
+});

@@ -382,14 +382,24 @@ export function decisionsFindingsFrom(raw: Record<string, unknown>): DecisionsFi
   if (!Array.isArray(raw["entries"]) || !raw["entries"].every(isDecisionsEntry)) {
     return undefined;
   }
+  // Accept the wire shape (stats.truncatedSources) AND this module's own
+  // projection (a flat truncatedSources): sanitiseState re-runs this guard over
+  // the STORED projection on every read, so a guard that cannot parse its own
+  // output silently destroys the findings it just produced.
   const stats = raw["stats"];
-  if (!isObject(stats) || typeof stats["truncatedSources"] !== "number") {
+  const truncated =
+    stats === undefined
+      ? raw["truncatedSources"]
+      : isObject(stats)
+        ? stats["truncatedSources"]
+        : undefined;
+  if (typeof truncated !== "number") {
     return undefined;
   }
   return {
     kind: "decisions",
     entries: raw["entries"] as readonly DecisionsEntry[],
-    truncatedSources: stats["truncatedSources"],
+    truncatedSources: truncated,
   };
 }
 

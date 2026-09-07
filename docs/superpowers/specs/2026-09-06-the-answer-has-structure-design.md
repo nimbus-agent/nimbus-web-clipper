@@ -176,6 +176,25 @@ and sanitises on the way out: the read path strips findings that fail
 synthesis }`. Validation moves from the eviction boundary to a projection step,
 so a malformed payload costs the structured view and nothing else.
 
+**Corollary — every arm guard must be idempotent over its own projection.**
+`sanitiseState` re-parses the STORED PROJECTION on every read, not the wire
+object — so `laneFindingsFrom(lane, laneFindingsFrom(lane, wire))` must equal
+`laneFindingsFrom(lane, wire)` for every arm, or the projection is silently
+destroyed on the very next repaint after it is written. This is not a
+hypothetical: C8.2 shipped a `decisions` guard that read `truncatedSources`
+from the wire's nested `stats.truncatedSources` but emitted it flattened onto
+the projection, so the guard could parse the wire but not its own output — the
+`decisions` lane never rendered structured findings in production, only in the
+unit tests that fed it wire-shaped input and never round-tripped the result.
+`why` and `glossary` happened to survive C8.2 only because their projections
+are already flat; nothing about the design *guaranteed* that.
+
+The rule for a guard that projects a nested or renamed wire field: **accept
+both the wire shape and the flat projection shape** on read, the same way
+`decisionsFindingsFrom` was fixed to. C8.3 adds four more arms — `expert`,
+`impact`, `ownership`, `catchup` — and each one's guard must be checked against
+this property before it ships, not after a repaint silently drops it.
+
 ### 4.2 Type provenance and the SDK seam
 
 | type | source | guard |

@@ -8,6 +8,7 @@ import {
   MAX_STORED_TERM_RUNS,
   putRun,
 } from "../../src/background/agent-run-store.ts";
+import type { DecisionsFindings } from "../../src/shared/findings.ts";
 import { installChromeMock } from "./helpers/chrome-mock.ts";
 
 const NOW = 1_800_000_000_000;
@@ -452,6 +453,54 @@ describe("agent-run-store", () => {
           brief: "b",
           synthesis: { attempted: false, reason: "disabled" },
         });
+      });
+
+      // The regression `laneFindingsFrom`'s own idempotence test also pins
+      // (findings-guards.test.ts): `sanitiseState` re-runs the lane's guard
+      // over the STORED projection on every `getRun`, not the wire object. A
+      // decisions guard that could parse the wire but not its own projection
+      // would strip these findings right back out on this very read — the
+      // existing tests in this block only covered *malformed* and *oversized*
+      // findings, which is exactly why nothing caught that bug.
+      it("valid decisions findings survive a put -> get round trip", async () => {
+        const findings: DecisionsFindings = {
+          kind: "decisions",
+          entries: [
+            {
+              id: "d1",
+              statement: "Use WAL mode for the index database.",
+              rationale: "Concurrent readers during a sync pass.",
+              alternatives: ["Rollback journal"],
+              confidence: 0.9,
+              decidedAt: 1_700_000_000_000,
+              hasAdr: true,
+              extractionSource: "snippet",
+              evidence: [
+                {
+                  kind: "pr",
+                  entityId: "e1",
+                  itemId: "github:acme/web#7",
+                  label: "Adopt SQLite WAL",
+                  url: "https://example.test/pr/7",
+                  occurredAt: 1_700_000_000_000,
+                },
+              ],
+            },
+          ],
+          truncatedSources: 3,
+        };
+        await putRun(
+          {
+            subject: { kind: "service", service: "github" },
+            lane: "decisions",
+            runId: "r4",
+            state: { kind: "done", brief: "b", findings },
+            expiresAtMs: NOW + 60_000,
+          },
+          NOW,
+        );
+        const found = await getRun({ kind: "service", service: "github" }, "decisions", NOW);
+        expect(found?.state).toEqual({ kind: "done", brief: "b", findings });
       });
     });
 
