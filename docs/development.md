@@ -732,9 +732,10 @@ more than one indexed item (the panel shows a chooser when it does).
    has stopped describing.
 10. **(human — Firefox; the harness loads the Chrome build).** Repeat 1, 2, 6
     and 8 in Firefox.
-11. **The `glossary` lane's structured findings (C8.2):** against a real
-    gateway (the mock gateway's fixed fixture is shaped for the `why` lane, so
-    it cannot exercise this one), repeat step 1 for a term with more than one
+11. **(human — needs a real gateway; the mock's *default* fixture is
+    why-shaped, though the e2e suite opts into a glossary one)** **The
+    `glossary` lane's structured findings (C8.2):** against a real gateway,
+    repeat step 1 for a term with more than one
     `topSources` row — one item with a URL, one without (an indexed item that
     itself carries no URL, such as a local note, supplies the second). → the
     lane shows the term, its definition, a meta line (mentions, service
