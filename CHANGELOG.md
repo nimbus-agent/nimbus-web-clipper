@@ -162,14 +162,15 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   the panel names the one that applies instead of a lane's worth of "not
   found" repeated three times.
 
-  **You will not see this yet, and no gateway anywhere can show it to you.**
-  Offering these lanes needs the gateway to resolve a forge file coordinate to
-  a path, and that route — `GET /v1/items/resolve-file` — is proposed, not
-  merged, not shipped anywhere upstream. Until it lands, opening a file page
-  renders exactly as it did before this release — recognised, no lanes, no
-  banner — for every user, silently, with nothing on screen to say the
-  gateway is the reason. This entry describes a client that is finished and
-  waiting.
+  **This shipped ahead of the gateway.** Offering these lanes needs the
+  gateway to resolve a forge file coordinate to a path, and that route —
+  `GET /v1/items/resolve-file` — had not shipped anywhere upstream as of this
+  release: opening a file page rendered exactly as it did before it —
+  recognised, no lanes, no banner — for every user, silently, with nothing on
+  screen to say the gateway was the reason. This entry described a client
+  that was finished and waiting. The route has since landed (Nimbus#1447) and
+  ships in the release after gateway 7.9.0 — see the entry near the top of
+  [Unreleased] above for the current state.
 
 - **`Who should review it` on a pull request now answers about the pull
   request itself, on a gateway that can take it.** It has always sent the
