@@ -1,12 +1,14 @@
 import { describe, expect, test } from "vitest";
 import type {
   DecisionsFindings,
+  ExpertFindings,
   GlossaryFindings,
   SynthesisProvenance,
   WhyFindings,
 } from "../../src/shared/findings.ts";
 import {
   decisionsFindingsFrom,
+  expertFindingsFrom,
   gapNotesFrom,
   gapsOfBrief,
   glossaryFindingsFrom,
@@ -457,6 +459,77 @@ describe("DecisionsFindings pins the fields we read", () => {
   });
 });
 
+const validEvidenceItem = {
+  itemId: "github:acme/web#7",
+  type: "pr_authored",
+  serviceId: "github",
+  title: "Adopt SQLite WAL",
+  modifiedAt: 1_700_000_000_000,
+  weight: 0.6,
+};
+
+const validExpert = {
+  kind: "expert",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { topicOrFile: "src/index.ts", itemUrl: null },
+  ranked: [
+    {
+      personId: "person:1",
+      displayName: "Ada Lovelace",
+      evidence: [validEvidenceItem],
+      score: 0.91,
+      confidence: "high",
+    },
+  ],
+};
+
+describe("expertFindingsFrom", () => {
+  test("projects a valid brief, dropping the base fields", () => {
+    expect(expertFindingsFrom(validExpert)).toEqual({
+      kind: "expert",
+      ranked: validExpert.ranked,
+    });
+  });
+
+  test("rejects a ranked element missing displayName", () => {
+    const finding = { ...validExpert.ranked[0] };
+    const withoutDisplayName = { ...finding } as Record<string, unknown>;
+    delete withoutDisplayName["displayName"];
+    expect(expertFindingsFrom({ ...validExpert, ranked: [withoutDisplayName] })).toBeUndefined();
+  });
+
+  test("rejects an unknown confidence", () => {
+    const finding = { ...validExpert.ranked[0], confidence: "certain" };
+    expect(expertFindingsFrom({ ...validExpert, ranked: [finding] })).toBeUndefined();
+  });
+
+  test("rejects an unknown evidence type", () => {
+    const ev = { ...validEvidenceItem, type: "carrier_pigeon" };
+    const finding = { ...validExpert.ranked[0], evidence: [ev] };
+    expect(expertFindingsFrom({ ...validExpert, ranked: [finding] })).toBeUndefined();
+  });
+
+  test("rejects malformed evidence elements rather than rendering a partial list", () => {
+    // The SDK-style shallow guard would admit these; ours must not (§4.3).
+    const finding = { ...validExpert.ranked[0], evidence: [42, null] };
+    expect(expertFindingsFrom({ ...validExpert, ranked: [finding] })).toBeUndefined();
+  });
+
+  test("rejects malformed ranked elements rather than rendering a partial list", () => {
+    expect(expertFindingsFrom({ ...validExpert, ranked: [42, null] })).toBeUndefined();
+  });
+});
+
+describe("ExpertFindings pins the fields we read", () => {
+  test("carries exactly the two projected keys", () => {
+    const value: ExpertFindings = { kind: "expert", ranked: [] };
+    expect(Object.keys(value).sort()).toEqual(["kind", "ranked"]);
+  });
+});
+
 describe("laneFindingsFrom is idempotent over its own projection", () => {
   // `sanitiseState` (agent-run-store.ts) re-runs `laneFindingsFrom` over the
   // STORED PROJECTION on every read — not the wire object. A guard that
@@ -477,6 +550,7 @@ describe("laneFindingsFrom is idempotent over its own projection", () => {
     ["why", validWhy],
     ["glossary", validGlossary],
     ["decisions", validDecisions],
+    ["expert", validExpert],
   ];
 
   test.each(IDEMPOTENCE_CASES)("%s round-trips through its own projection", (lane, wire) => {

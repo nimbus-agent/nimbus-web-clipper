@@ -11,6 +11,8 @@
 // import would put SDK code into the shipped bundle, which the "bundled, no
 // runtime deps" rule forbids.
 import type {
+  Evidence,
+  ExpertFinding,
   GapNote,
   WhyChangeSubject,
   WhyFinding,
@@ -19,7 +21,16 @@ import type {
   WhySubject,
 } from "@nimbus-dev/sdk";
 
-export type { GapNote, WhyChangeSubject, WhyFinding, WhyItemSubject, WhyLane, WhySubject };
+export type {
+  Evidence,
+  ExpertFinding,
+  GapNote,
+  WhyChangeSubject,
+  WhyFinding,
+  WhyItemSubject,
+  WhyLane,
+  WhySubject,
+};
 
 /**
  * Why a synthesized rewrite was, or was not, used.
@@ -203,10 +214,24 @@ export type DecisionsFindings = {
 };
 
 /**
+ * The `expert` lane's payload, as a client projection of `ExpertBrief` (§4.1).
+ *
+ * `query` is not projected: the panel already knows what was asked (it asked
+ * it), so echoing the topic back adds nothing the renderer needs. This is the
+ * first of C8.3's four link-less lanes: `Evidence.itemId` is a genuine item
+ * id, but this client has no id→URL resolver, so evidence titles render as
+ * plain text, never as `findingLink`.
+ */
+export type ExpertFindings = {
+  readonly kind: "expert";
+  readonly ranked: readonly ExpertFinding[];
+};
+
+/**
  * The per-lane structured payload. ONE ARM PER SLICE: `why` in C8.1,
  * `glossary` and `decisions` in C8.2, the four link-less lanes in C8.3.
  *
  * A lane whose arm does not exist yet behaves exactly like a guard rejection —
  * no findings, prose body, and its gaps and provenance still render.
  */
-export type LaneFindings = WhyFindings | GlossaryFindings | DecisionsFindings;
+export type LaneFindings = WhyFindings | GlossaryFindings | DecisionsFindings | ExpertFindings;

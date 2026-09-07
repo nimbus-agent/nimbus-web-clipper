@@ -22,6 +22,7 @@ import type {
   ScopeGap,
 } from "../shared/types.ts";
 import { renderDecisionsFindings } from "./findings/decisions-view.ts";
+import { renderExpertFindings } from "./findings/expert-view.ts";
 import { renderGlossaryFindings } from "./findings/glossary-view.ts";
 import { renderGaps, renderProvenance } from "./findings/shared-view.ts";
 import { renderWhyFindings } from "./findings/why-view.ts";
@@ -906,6 +907,8 @@ function renderFindings(doc: Document, findings: LaneFindings, nowMs: number): H
       return renderGlossaryFindings(doc, findings, nowMs);
     case "decisions":
       return renderDecisionsFindings(doc, findings, nowMs);
+    case "expert":
+      return renderExpertFindings(doc, findings, nowMs);
   }
 }
 

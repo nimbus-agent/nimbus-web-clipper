@@ -16,6 +16,9 @@ import type {
   DecisionEvidence,
   DecisionsEntry,
   DecisionsFindings,
+  Evidence,
+  ExpertFinding,
+  ExpertFindings,
   GapNote,
   GlossaryEntry,
   GlossaryFindings,
@@ -400,6 +403,55 @@ export function decisionsFindingsFrom(raw: Record<string, unknown>): DecisionsFi
   };
 }
 
+const EVIDENCE_TYPES = [
+  "pr_authored",
+  "pr_reviewed",
+  "issue_opened",
+  "issue_resolved",
+  "incident_resolved",
+  "commit_authored",
+  "chat_mention",
+  "chat_post",
+] as const;
+
+const CONFIDENCE_LEVELS = ["high", "medium", "low"] as const;
+
+function isEvidence(v: unknown): v is Evidence {
+  return (
+    isObject(v) &&
+    typeof v["itemId"] === "string" &&
+    typeof v["type"] === "string" &&
+    (EVIDENCE_TYPES as readonly string[]).includes(v["type"]) &&
+    typeof v["serviceId"] === "string" &&
+    typeof v["title"] === "string" &&
+    typeof v["modifiedAt"] === "number" &&
+    typeof v["weight"] === "number"
+  );
+}
+
+function isExpertFinding(v: unknown): v is ExpertFinding {
+  return (
+    isObject(v) &&
+    typeof v["personId"] === "string" &&
+    typeof v["displayName"] === "string" &&
+    Array.isArray(v["evidence"]) &&
+    v["evidence"].every(isEvidence) &&
+    typeof v["score"] === "number" &&
+    typeof v["confidence"] === "string" &&
+    (CONFIDENCE_LEVELS as readonly string[]).includes(v["confidence"])
+  );
+}
+
+export function expertFindingsFrom(raw: Record<string, unknown>): ExpertFindings | undefined {
+  if (!Array.isArray(raw["ranked"]) || !raw["ranked"].every(isExpertFinding)) {
+    return undefined;
+  }
+  return {
+    kind: "expert",
+    ranked: raw["ranked"] as readonly ExpertFinding[],
+  };
+}
+
 /**
  * Narrow a raw `findings` payload against the lane that asked for it.
  *
@@ -421,6 +473,9 @@ export function laneFindingsFrom(lane: AgentLane, raw: unknown): LaneFindings | 
   }
   if (lane === "decisions") {
     return decisionsFindingsFrom(raw);
+  }
+  if (lane === "expert") {
+    return expertFindingsFrom(raw);
   }
   return undefined;
 }
