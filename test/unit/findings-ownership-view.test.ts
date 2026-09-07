@@ -87,27 +87,40 @@ describe("renderOwnershipFindings", () => {
     expect(row?.querySelector(".nimbus-findings__badge")?.textContent).toBe("unresolved");
   });
 
-  test("renders no ownerCount/ownersAboveFloor line when both are null", () => {
+  test("renders an explicit unavailable marker, never a blank, when ownerCount/ownersAboveFloor are null", () => {
     const el = renderOwnershipFindings(document, findings(), NOW);
     expect(el.textContent).not.toMatch(/of \d+ owners/);
+    expect(el.textContent).toMatch(/owner count unavailable/i);
+  });
+
+  test("renders an unavailable marker when only one of the pair is recorded", () => {
+    const el = renderOwnershipFindings(
+      document,
+      findings({ target: target({ ownerCount: 4, ownersAboveFloor: null }) }),
+      NOW,
+    );
+    expect(el.textContent).not.toMatch(/of \d+ owners/);
+    expect(el.textContent).toMatch(/owner count unavailable/i);
   });
 
   test("renders the ownerCount/ownersAboveFloor line only when both are recorded", () => {
     const el = renderOwnershipFindings(
       document,
-      findings({ target: target({ ownerCount: 4, ownersAboveFloor: 2 }) }),
+      findings({ target: target({ ownerCount: 4, ownersAboveFloor: 2, truncated: false }) }),
       NOW,
     );
     expect(el.textContent).toContain("2 of 4 owners above the floor");
+    expect(el.textContent).not.toMatch(/unavailable/i);
   });
 
-  test("renders no truncation note when truncated is null", () => {
+  test("renders an explicit unavailable marker, never silence, when truncated is null", () => {
     const el = renderOwnershipFindings(
       document,
       findings({ target: target({ truncated: null }) }),
       NOW,
     );
-    expect(el.textContent).not.toMatch(/truncated/i);
+    expect(el.textContent).not.toContain("This owner list was truncated.");
+    expect(el.textContent).toMatch(/truncation status unavailable/i);
   });
 
   test("renders no truncation note when truncated is false", () => {

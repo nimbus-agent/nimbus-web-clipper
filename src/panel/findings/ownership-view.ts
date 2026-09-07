@@ -10,12 +10,14 @@
 //
 // Two nullability facts drive most of this file. `ownerCount`,
 // `ownersAboveFloor` and `truncated` being `null` means NOT RECORDED — never
-// zero, never "not truncated" — so each renders only when it is recorded, and
-// says nothing at all otherwise; a line reading "0 owners" or a truncation
-// note's silent absence would both misreport an unrecorded value as a known
-// one. And `resolved: false` means `externalId` is a `git:<email>` fallback
-// with no matched person row, so `label` is an email address, not a person the
-// index actually knows — the "unresolved" badge is what tells the two apart.
+// zero, never "not truncated" — so each renders an explicit "unavailable"
+// marker when it is not recorded, rather than rendering nothing: a line
+// reading "0 owners" would misreport an unrecorded value as a known zero, and
+// silence would make "not recorded" indistinguishable from "nothing to show"
+// (spec §4.4, `:326` and `:631`). And `resolved: false` means `externalId` is
+// a `git:<email>` fallback with no matched person row, so `label` is an email
+// address, not a person the index actually knows — the "unresolved" badge is
+// what tells the two apart.
 import type {
   OwnershipCoverage,
   OwnershipFindings,
@@ -60,9 +62,9 @@ function renderOwnerRow(doc: Document, owner: OwnershipOwner): HTMLElement {
 
 /**
  * One target (the requested path, or its parent directory) as a group: its
- * subject line, its owner rows or the "no owners" line, the recorded
- * count/floor note, and a truncation note — each of the last two present only
- * when its underlying field is recorded, per this file's header.
+ * subject line, its owner rows or the "no owners" line, the count/floor note,
+ * and a truncation note — the last two say "unavailable" rather than nothing
+ * when their underlying field is not recorded, per this file's header.
  */
 function renderTargetGroup(
   doc: Document,
@@ -98,20 +100,27 @@ function renderTargetGroup(
     }
   }
 
-  // `null` means not recorded, not zero — say nothing rather than guess.
-  if (target.ownerCount !== null && target.ownersAboveFloor !== null) {
-    const count = doc.createElement("p");
-    count.className = "nimbus-findings__item-detail";
-    count.textContent = `${target.ownersAboveFloor} of ${target.ownerCount} owners above the floor.`;
-    group.append(count);
-  }
+  // `null` means not recorded, not zero — say so explicitly rather than
+  // guessing OR staying silent, either of which would misreport an unrecorded
+  // value as a known one.
+  const count = doc.createElement("p");
+  count.className = "nimbus-findings__item-detail";
+  count.textContent =
+    target.ownerCount === null || target.ownersAboveFloor === null
+      ? "Owner count unavailable."
+      : `${target.ownersAboveFloor} of ${target.ownerCount} owners above the floor.`;
+  group.append(count);
 
-  // `null` means not recorded, not "not truncated" — only the `true` arm
-  // renders anything.
-  if (target.truncated === true) {
+  // `null` means not recorded, not "not truncated" — that arm renders its own
+  // "unavailable" marker rather than falling silent, which would make it
+  // indistinguishable from the `false` (known, not truncated) arm.
+  if (target.truncated !== false) {
     const note = doc.createElement("p");
     note.className = "nimbus-findings__provenance";
-    note.textContent = "This owner list was truncated.";
+    note.textContent =
+      target.truncated === null
+        ? "Truncation status unavailable."
+        : "This owner list was truncated.";
     group.append(note);
   }
 

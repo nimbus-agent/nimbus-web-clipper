@@ -2,13 +2,15 @@
 // "Who knows this" as a ranked list of people and the evidence behind the
 // ranking — rather than a paragraph naming a name.
 //
-// `personId` and `score` never surface in the flattened markdown at all, and
-// `confidence` and per-evidence `weight` are the ranking's own reasoning:
-// without them the order is unexplained, the same defect the `glossary` lane
-// had when it showed `docFreq` while sorting on `score`. `weight` itself is
-// still not rendered — the renderer orders by the ranking the gateway already
-// computed and shows `confidence` as the reader-facing signal, the same way
-// `glossary` shows `score` but not every corpus diagnostic behind it.
+// `personId` and `score` never surface in the flattened markdown at all.
+// `confidence` and `score` are the ranking's own reasoning: printing one while
+// sorting by the other would be the same defect the `glossary` lane had when
+// it showed `docFreq` while printing nothing about `score`, the value the list
+// is actually ordered by (spec §4.4) — so both render, as badges. Per-evidence
+// `weight` stays unrendered: the renderer orders evidence by the ranking the
+// gateway already computed rather than re-deriving it from `weight` for
+// display. `personId` also stays unrendered — it is an opaque id with nothing
+// for a reader to act on.
 //
 // This lane renders NO result links: `Evidence.itemId` is a genuine `item.id`,
 // but this client has no id→URL resolver, so both `displayName` and evidence
@@ -45,6 +47,10 @@ function renderPerson(doc: Document, entry: ExpertFinding, nowMs: number): HTMLE
   confidence.className = "nimbus-findings__badge";
   confidence.textContent = entry.confidence;
   head.append(confidence);
+  const score = doc.createElement("span");
+  score.className = "nimbus-findings__badge";
+  score.textContent = `score ${entry.score}`;
+  head.append(score);
   box.append(head);
 
   for (const ev of entry.evidence) {

@@ -46,6 +46,17 @@ describe("renderExpertFindings", () => {
     expect(badge?.textContent).toBe("high");
   });
 
+  test("renders score as a badge alongside confidence - the ranking's own reasoning", () => {
+    const el = renderExpertFindings(
+      document,
+      findings({ ranked: [rankedEntry({ score: 0.91 })] }),
+      NOW,
+    );
+    const badges = [...el.querySelectorAll(".nimbus-findings__subject .nimbus-findings__badge")];
+    const texts = badges.map((b) => b.textContent);
+    expect(texts).toContain("score 0.91");
+  });
+
   test("renders an evidence title as a span, never an anchor", () => {
     const el = renderExpertFindings(document, findings(), NOW);
     expect(el.querySelector("a")).toBeNull();
