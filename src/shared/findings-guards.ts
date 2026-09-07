@@ -13,6 +13,9 @@
 // reads them - and no further. A field we do not render is not a field we gate
 // on, because an over-strict guard rejects briefs we could have rendered.
 import type {
+  DecisionEvidence,
+  DecisionsEntry,
+  DecisionsFindings,
   GapNote,
   GlossaryEntry,
   GlossaryFindings,
@@ -335,6 +338,58 @@ export function glossaryFindingsFrom(raw: Record<string, unknown>): GlossaryFind
     matchedVia: matchedVia as GlossaryMatchedVia,
     entries: raw["entries"] as readonly GlossaryEntry[],
     suggestions: raw["suggestions"],
+  };
+}
+
+const EVIDENCE_KINDS = ["source", "pr", "commit", "migration", "iac", "adr"] as const;
+const EXTRACTION_SOURCES = ["llm", "snippet"] as const;
+
+function isDecisionEvidence(v: unknown): v is DecisionEvidence {
+  return (
+    isObject(v) &&
+    typeof v["kind"] === "string" &&
+    (EVIDENCE_KINDS as readonly string[]).includes(v["kind"]) &&
+    isNullableString(v["entityId"]) &&
+    isNullableString(v["itemId"]) &&
+    typeof v["label"] === "string" &&
+    isNullableString(v["url"]) &&
+    isNullableNumber(v["occurredAt"])
+  );
+}
+
+function isDecisionsEntry(v: unknown): v is DecisionsEntry {
+  return (
+    isObject(v) &&
+    typeof v["id"] === "string" &&
+    typeof v["statement"] === "string" &&
+    isNullableString(v["rationale"]) &&
+    isStringArray(v["alternatives"]) &&
+    typeof v["confidence"] === "number" &&
+    typeof v["decidedAt"] === "number" &&
+    typeof v["hasAdr"] === "boolean" &&
+    (v["extractionSource"] === null ||
+      (typeof v["extractionSource"] === "string" &&
+        (EXTRACTION_SOURCES as readonly string[]).includes(v["extractionSource"]))) &&
+    Array.isArray(v["evidence"]) &&
+    v["evidence"].every(isDecisionEvidence)
+  );
+}
+
+export function decisionsFindingsFrom(raw: Record<string, unknown>): DecisionsFindings | undefined {
+  // NOTE: `agentVersion` is deliberately NOT checked against the literal 1.
+  // `DecisionsBrief` types it as `number`, unlike every other brief, so
+  // asserting 1 would reject valid briefs.
+  if (!Array.isArray(raw["entries"]) || !raw["entries"].every(isDecisionsEntry)) {
+    return undefined;
+  }
+  const stats = raw["stats"];
+  if (!isObject(stats) || typeof stats["truncatedSources"] !== "number") {
+    return undefined;
+  }
+  return {
+    kind: "decisions",
+    entries: raw["entries"] as readonly DecisionsEntry[],
+    truncatedSources: stats["truncatedSources"],
   };
 }
 

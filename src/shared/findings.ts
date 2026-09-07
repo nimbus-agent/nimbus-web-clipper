@@ -141,6 +141,59 @@ export type GlossaryFindings = {
 };
 
 /**
+ * MIRRORED, not imported — `decisions` is the second of the three briefs
+ * `@nimbus-dev/sdk` does not publish. Source of truth:
+ * `packages/gateway/src/decisions/decision-types.ts` and
+ * `agents/_lib/decisions-types.ts` in the Nimbus repo. Retiring this mirror is
+ * tracked in the design's §9.
+ */
+export type EvidenceKind = "source" | "pr" | "commit" | "migration" | "iac" | "adr";
+
+/** How the decision was extracted from its source. */
+export type ExtractionSource = "llm" | "snippet";
+
+export type DecisionEvidence = {
+  readonly kind: EvidenceKind;
+  readonly entityId: string | null;
+  readonly itemId: string | null;
+  readonly label: string;
+  /** The only URL in the decisions tree. */
+  readonly url: string | null;
+  readonly occurredAt: number | null;
+};
+
+export type DecisionsEntry = {
+  readonly id: string;
+  readonly statement: string;
+  readonly rationale: string | null;
+  readonly alternatives: readonly string[];
+  readonly confidence: number;
+  readonly decidedAt: number;
+  readonly hasAdr: boolean;
+  readonly extractionSource: ExtractionSource | null;
+  readonly evidence: readonly DecisionEvidence[];
+};
+
+/**
+ * The `decisions` lane's payload, as a client projection (§4.1).
+ *
+ * `explain` is not projected: it is populated only when the caller asks for it
+ * and this client never does, so it is always empty. `matchedVia` is a routing
+ * detail of the service filter, not something a reader can act on. From `stats`
+ * only `truncatedSources` survives — it is the honesty signal, and the rest are
+ * corpus diagnostics.
+ */
+export type DecisionsFindings = {
+  readonly kind: "decisions";
+  readonly entries: readonly DecisionsEntry[];
+  /**
+   * How many source items in this window were indexed with a truncated body.
+   * Rendered as a caveat: a decision extracted from a cut body may be partial.
+   */
+  readonly truncatedSources: number;
+};
+
+/**
  * The per-lane structured payload. ONE ARM PER SLICE: `why` in C8.1,
  * `glossary` and `decisions` in C8.2, the four link-less lanes in C8.3.
  *

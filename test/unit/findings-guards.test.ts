@@ -1,10 +1,12 @@
 import { describe, expect, test } from "vitest";
 import type {
+  DecisionsFindings,
   GlossaryFindings,
   SynthesisProvenance,
   WhyFindings,
 } from "../../src/shared/findings.ts";
 import {
+  decisionsFindingsFrom,
   gapNotesFrom,
   gapsOfBrief,
   glossaryFindingsFrom,
@@ -363,5 +365,91 @@ describe("GlossaryFindings pins the fields we read", () => {
       "mode",
       "suggestions",
     ]);
+  });
+});
+
+const validEvidence = {
+  kind: "pr",
+  entityId: "e1",
+  itemId: "github:acme/web#7",
+  label: "Adopt SQLite WAL",
+  url: "https://example.test/pr/7",
+  occurredAt: 1_700_000_000_000,
+};
+
+const validDecisions = {
+  kind: "decisions",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { sinceMs: 1, service: "github", minConfidence: 0.5, explain: false },
+  stats: { total: 1, pending: 0, extracted: 1, vetoed: 0, lastPassAt: null, truncatedSources: 2 },
+  entries: [
+    {
+      id: "d1",
+      statement: "Use WAL mode for the index database.",
+      rationale: "Concurrent readers during a sync pass.",
+      alternatives: ["Rollback journal"],
+      confidence: 0.9,
+      decidedAt: 1_700_000_000_000,
+      hasAdr: true,
+      extractionSource: "snippet",
+      evidence: [validEvidence],
+      explain: [],
+      matchedVia: "repo",
+    },
+  ],
+};
+
+describe("decisionsFindingsFrom", () => {
+  test("projects a valid brief, keeping only truncatedSources from stats", () => {
+    const out = decisionsFindingsFrom(validDecisions);
+    expect(out?.kind).toBe("decisions");
+    expect(out).toMatchObject({ truncatedSources: 2 });
+    expect(Object.keys(out ?? {}).sort()).toEqual(["entries", "kind", "truncatedSources"]);
+  });
+
+  test("accepts agentVersion values other than 1", () => {
+    // DecisionsBrief types agentVersion as `number`, unlike every other brief's
+    // literal 1. Asserting === 1 here would reject valid briefs.
+    expect(decisionsFindingsFrom({ ...validDecisions, agentVersion: 2 })).not.toBeUndefined();
+  });
+
+  test("accepts nullable rationale, extractionSource, and evidence ids", () => {
+    const e = { ...validDecisions.entries[0], rationale: null, extractionSource: null };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e] })).not.toBeUndefined();
+    const ev = { ...validEvidence, entityId: null, itemId: null, url: null, occurredAt: null };
+    const e2 = { ...validDecisions.entries[0], evidence: [ev] };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e2] })).not.toBeUndefined();
+  });
+
+  test("rejects an unknown evidence kind or extraction source", () => {
+    const ev = { ...validEvidence, kind: "tweet" };
+    const e = { ...validDecisions.entries[0], evidence: [ev] };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e] })).toBeUndefined();
+    const e2 = { ...validDecisions.entries[0], extractionSource: "vibes" };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e2] })).toBeUndefined();
+  });
+
+  test("rejects malformed elements rather than rendering a partial list", () => {
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [null] })).toBeUndefined();
+    const e = { ...validDecisions.entries[0], evidence: [42] };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e] })).toBeUndefined();
+    const e2 = { ...validDecisions.entries[0], alternatives: [null] };
+    expect(decisionsFindingsFrom({ ...validDecisions, entries: [e2] })).toBeUndefined();
+  });
+
+  test("rejects a missing or non-numeric truncatedSources", () => {
+    const s = { ...validDecisions.stats, truncatedSources: "2" };
+    expect(decisionsFindingsFrom({ ...validDecisions, stats: s })).toBeUndefined();
+    expect(decisionsFindingsFrom({ ...validDecisions, stats: {} })).toBeUndefined();
+  });
+});
+
+describe("DecisionsFindings pins the fields we read", () => {
+  test("carries exactly the three projected keys", () => {
+    const value: DecisionsFindings = { kind: "decisions", entries: [], truncatedSources: 0 };
+    expect(Object.keys(value).sort()).toEqual(["entries", "kind", "truncatedSources"]);
   });
 });
