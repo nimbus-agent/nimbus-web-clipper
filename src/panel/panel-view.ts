@@ -20,6 +20,8 @@ import type {
   ResolveMatchKind,
   ScopeGap,
 } from "../shared/types.ts";
+import { renderGaps, renderProvenance } from "./findings/shared-view.ts";
+import { renderWhyFindings } from "./findings/why-view.ts";
 import { groupHits, humaniseType } from "./related-groups.ts";
 
 export function renderError(doc: Document, message: string): HTMLElement {
@@ -886,41 +888,24 @@ export function renderCapturePreview(
 }
 
 /**
- * Renders the body of one agent lane — never the shared "related" lane, which
- * keeps its own `relatedBody` render path.
- *
- * Re-run is offered for five of the ten `AgentError` reasons — `not_paired`,
- * `stale`, `unreachable`, `server_error`, `agent_failed` — and withheld for the
- * other five (`unauthorized`, `insufficient_scope`, `unsupported`,
- * `not_resolved`, `no_term`).
- *
- * `stale`/`unreachable`/`server_error` are transport-level blips, and
- * `agent_failed` means the run reached the agent and it could not answer (which a
- * retry may well do differently — it is NOT `server_error`, because the call
- * itself worked). `not_paired` is the one whose remedy is on ANOTHER surface and
- * still keeps the button: pairing happens in Options, but the retry belongs here,
- * and the copy names pairing first so the button is never the whole instruction —
- * see its branch below. The five without a button need a different fix elsewhere
- * AND have nothing here to retry into (re-authenticate, grant a scope, index the
- * page, select a term, or a gateway that has the agents surface at all) — a
- * Re-run there would just fail identically.
+ * Renders the `done` lane body — the structured `findings` view when we have
+ * one, the prose fallback `<pre>` when we do not, and then `gaps` /
+ * `synthesis` as siblings of that choice. See the header comment on
+ * `renderLaneBody` below for the fallback and sibling rules this preserves.
  */
-export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => void): HTMLElement {
-  const box = doc.createElement("div");
-  box.className = "nimbus-related__lane-body";
-
-  if (state.kind === "collapsed") {
-    // Never requested yet — nothing to say. The lane's own summary label is the
-    // only UI here until the caller (Task 8) triggers a run.
-    return box;
-  }
-
-  if (state.kind === "running") {
-    box.append(line(doc, "nimbus-related__status", "Working…"));
-    return box;
-  }
-
-  if (state.kind === "done") {
+function renderDoneLaneBody(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<LaneState, { kind: "done" }>,
+  nowMs: number,
+): void {
+  // The structured view REPLACES the prose body when we have it, and falls
+  // back to the prose `<pre>` when we do not — a guard rejection, the storage
+  // byte bound, or a lane whose `LaneFindings` arm has not shipped. That
+  // fallback is the existing code path, unchanged, and nothing announces it.
+  if (state.findings !== undefined) {
+    box.append(renderWhyFindings(doc, state.findings, nowMs));
+  } else {
     const pre = doc.createElement("pre");
     pre.className = "nimbus-related__brief";
     // textContent, NEVER innerHTML, and never a markdown-to-HTML pass.
@@ -936,10 +921,34 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
     // plain.
     pre.textContent = state.brief;
     box.append(pre);
-    return box;
   }
+  // Gaps and provenance are SIBLINGS of findings and render on every lane,
+  // including one that fell back to prose. That is the whole reason they are
+  // not nested inside `findings`.
+  if (state.gaps !== undefined) {
+    const gaps = renderGaps(doc, state.gaps);
+    if (gaps !== null) {
+      box.append(gaps);
+    }
+  }
+  if (state.synthesis !== undefined) {
+    box.append(renderProvenance(doc, state.synthesis));
+  }
+}
 
-  // state.kind === "failed" from here on.
+/**
+ * Renders the `failed` lane body — one branch per `AgentError` reason. See the
+ * header comment on `renderLaneBody` below for which five reasons get a
+ * working Re-run button and why the other five deliberately do not; the
+ * `not_paired` branch immediately below is the one that comment calls out by
+ * name.
+ */
+function renderFailedLaneBody(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<LaneState, { kind: "failed" }>,
+  onRerun?: () => void,
+): void {
   if (state.reason === "not_paired") {
     // This is a LIVE gap, not a leftover: `resolveForAgent` (handlers.ts) reads
     // the connection itself and short-circuits with its own `not_paired` the
@@ -970,23 +979,23 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
       ),
     );
     box.append(actionButton(doc, "nimbus-related__action", "Re-run", () => onRerun?.()));
-    return box;
+    return;
   }
   if (state.reason === "unauthorized") {
     box.append(
       line(doc, "nimbus-related__status", "Nimbus rejected this pairing. Re-pair in Options."),
     );
-    return box;
+    return;
   }
   if (state.reason === "insufficient_scope") {
     appendScopeGuidance(doc, box, "This pairing can't run agents yet.", state.scopeGap ?? null);
-    return box;
+    return;
   }
   if (state.reason === "unsupported") {
     // A claim about the GATEWAY (404: unknown agent, or no agents surface at
     // all) — never reused for `not_resolved`, which is a condition of the page.
     box.append(line(doc, "nimbus-related__status", "This Nimbus gateway can't run agents yet."));
-    return box;
+    return;
   }
   if (state.reason === "not_resolved") {
     // A condition of the PAGE (unrecognised, or a resolve miss/ambiguous
@@ -1010,7 +1019,7 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
     box.append(
       line(doc, "nimbus-related__status", "Nimbus couldn't pin this page to one indexed item."),
     );
-    return box;
+    return;
   }
   if (state.reason === "no_term") {
     // A term lane asked to run with no term. The panel materialises a term lane
@@ -1023,24 +1032,24 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
     box.append(
       line(doc, "nimbus-related__status", "Select a word or phrase first — this lane needs one."),
     );
-    return box;
+    return;
   }
   if (state.reason === "stale") {
     box.append(line(doc, "nimbus-related__status", "This run is gone — re-run it."));
     box.append(actionButton(doc, "nimbus-related__action", "Re-run", () => onRerun?.()));
-    return box;
+    return;
   }
   if (state.reason === "unreachable") {
     box.append(line(doc, "nimbus-related__status", "Couldn't connect to Nimbus."));
     box.append(actionButton(doc, "nimbus-related__action", "Re-run", () => onRerun?.()));
-    return box;
+    return;
   }
   if (state.reason === "server_error") {
     // The CALL failed here — distinct from `agent_failed` below, where the call
     // succeeded and the agent itself could not answer.
     box.append(line(doc, "nimbus-related__status", "Nimbus had an error running this lane."));
     box.append(actionButton(doc, "nimbus-related__action", "Re-run", () => onRerun?.()));
-    return box;
+    return;
   }
 
   // Exhaustiveness backstop: every other `AgentError` member returns above, so
@@ -1049,12 +1058,12 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
   // `state.reason` stops narrowing to `never` and this line fails to compile —
   // instead of the new reason silently falling through to a blank lane.
   //
-  // Returns `box` here, NOT `state.reason` — `isAgentStateResponse`
+  // Returns plainly here, NOT `state.reason` — `isAgentStateResponse`
   // (messages.ts) validates `reason` against `AGENT_ERRORS` before this
   // function ever sees a `LaneState`, so this branch should be unreachable in
-  // practice. But `renderLaneBody` is typed to return `HTMLElement`, and
+  // practice. But `renderLaneBody`'s `box` is an `HTMLElement`, and
   // `details.append(...)` accepts a plain string just as happily as a node —
-  // if that guard ever grew a hole, returning the never-typed value directly
+  // if that guard ever grew a hole, appending the never-typed value directly
   // (as the sibling backstop in `renderHeader` above does) would put a raw
   // reason CODE on screen as the lane body instead of failing loudly. The
   // `satisfies never` below still does its compile-time job — a future unhandled
@@ -1064,7 +1073,7 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
     // silence it: identical exhaustiveness check, no throwaway binding, and nothing
     // for a reader to mistake for a discarded call.
     state.reason satisfies never;
-    return box;
+    return;
   }
   // The run reached the agent and it could not answer — the CALL succeeded, so
   // this must not read like `server_error` above.
@@ -1075,6 +1084,59 @@ export function renderLaneBody(doc: Document, state: LaneState, onRerun?: () => 
     box.append(line(doc, "nimbus-related__status", state.detail));
   }
   box.append(actionButton(doc, "nimbus-related__action", "Re-run", () => onRerun?.()));
+}
+
+/**
+ * Renders the body of one agent lane — never the shared "related" lane, which
+ * keeps its own `relatedBody` render path.
+ *
+ * Re-run is offered for five of the ten `AgentError` reasons — `not_paired`,
+ * `stale`, `unreachable`, `server_error`, `agent_failed` — and withheld for the
+ * other five (`unauthorized`, `insufficient_scope`, `unsupported`,
+ * `not_resolved`, `no_term`).
+ *
+ * `stale`/`unreachable`/`server_error` are transport-level blips, and
+ * `agent_failed` means the run reached the agent and it could not answer (which a
+ * retry may well do differently — it is NOT `server_error`, because the call
+ * itself worked). `not_paired` is the one whose remedy is on ANOTHER surface and
+ * still keeps the button: pairing happens in Options, but the retry belongs here,
+ * and the copy names pairing first so the button is never the whole instruction —
+ * see its branch in `renderFailedLaneBody` above. The five without a button need
+ * a different fix elsewhere AND have nothing here to retry into (re-authenticate,
+ * grant a scope, index the page, select a term, or a gateway that has the agents
+ * surface at all) — a Re-run there would just fail identically.
+ *
+ * The `done` and `failed` bodies are built by `renderDoneLaneBody` and
+ * `renderFailedLaneBody` above — this function stays a short dispatcher over
+ * `state.kind` so it reads at a glance.
+ */
+export function renderLaneBody(
+  doc: Document,
+  state: LaneState,
+  nowMs: number,
+  onRerun?: () => void,
+): HTMLElement {
+  const box = doc.createElement("div");
+  box.className = "nimbus-related__lane-body";
+
+  if (state.kind === "collapsed") {
+    // Never requested yet — nothing to say. The lane's own summary label is the
+    // only UI here until the caller (Task 8) triggers a run.
+    return box;
+  }
+
+  if (state.kind === "running") {
+    box.append(line(doc, "nimbus-related__status", "Working…"));
+    return box;
+  }
+
+  if (state.kind === "done") {
+    renderDoneLaneBody(doc, box, state, nowMs);
+    return box;
+  }
+
+  // state.kind === "failed" from here on.
+  renderFailedLaneBody(doc, box, state, onRerun);
   return box;
 }
 

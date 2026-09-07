@@ -1070,3 +1070,39 @@ describe("isPassageClearRequest", () => {
     expect(isPassageClearRequest(null)).toBe(false);
   });
 });
+
+describe("isLaneState guards the done arm's structured fields", () => {
+  const base = { kind: "done", brief: "b" };
+
+  test("accepts a done state with no structured fields", () => {
+    expect(isAgentStateResponse({ kind: "agent-state", lane: "why", state: base })).toBe(true);
+  });
+
+  test("accepts well-formed gaps, findings and synthesis", () => {
+    const state = {
+      ...base,
+      gaps: [{ category: "empty_index", detail: "d" }],
+      findings: {
+        kind: "why",
+        findings: [],
+        subject: null,
+        changeSubject: null,
+        itemSubject: null,
+      },
+      synthesis: { attempted: true, used: true, model: "m", remote: false },
+    };
+    expect(isAgentStateResponse({ kind: "agent-state", lane: "why", state })).toBe(true);
+  });
+
+  test("rejects malformed structured fields rather than passing them through", () => {
+    // The boundary guard is the last place a bad shape can be stopped before a
+    // renderer reads it as a typed value.
+    for (const bad of [
+      { ...base, gaps: [null] },
+      { ...base, findings: { kind: "why", findings: [42] } },
+      { ...base, synthesis: { attempted: true, used: true, model: "m" } },
+    ]) {
+      expect(isAgentStateResponse({ kind: "agent-state", lane: "why", state: bad })).toBe(false);
+    }
+  });
+});

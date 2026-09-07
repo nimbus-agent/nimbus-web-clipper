@@ -1245,6 +1245,113 @@ the editor structurally cannot.*
 
 ---
 
+## Phase C8 — The answer has structure 🟢/🟡
+
+*Theme: the gateway has always sent two forms of an agent's answer on the same
+response — the flattened markdown paragraph the panel renders, and the typed
+object that paragraph was flattened from. The client has only ever read the
+first. This phase reads both, one lane at a time.*
+
+### C8.1 `why` becomes a timeline, and every lane gets gaps and provenance · 🟢 · M — ✅ shipped
+> **What** `GET /v1/agents/runs/{id}` narrows into `LaneState.done` as a typed
+> `LaneFindings`, on the *why* lane first: a timeline grouped by kind
+> (`authorship`, `pull_request`, `ticket`, `discussion`, `driver`,
+> `downstream`), each entry with its date and, where the gateway supplied one,
+> a clickable link. `gaps` (why an answer is empty, with the remediation the
+> gateway supplied) and `synthesis` (whether a model wrote the answer, and
+> whether it stayed local) render as **siblings** of `findings`, so they show
+> on **all seven lanes** — including the six this slice does not model yet.
+> **Why it wows** These are the first clickable references inside an agent
+> lane's own answer body — the panel has linked Related items and resolved
+> candidates since Slice 2, but never a lane's own findings — sourced from
+> the gateway's own index rather than parsed out of model prose, and the
+> first honest answer to "why is this lane empty" instead of a
+> blank box under a header.
+> **Touches** `src/shared/findings.ts` (new — the SDK-typed and mirrored
+> field shapes), `src/shared/findings-guards.ts` (new — element-level guards,
+> written at render depth because the SDK's own guards are dispatch-level
+> only), `src/background/gateway-client.ts` (`findings`/`synthesis` carried
+> off the poll body as `unknown`), `src/background/service-worker.ts`
+> (`terminalLaneState` narrows against the lane it is now handed),
+> `src/shared/types.ts` / `src/shared/messages.ts` (`LaneState.done` grows
+> `gaps?`/`findings?`/`synthesis?`, `isLaneState` takes the lane), `agent-run-store.ts`
+> (sanitises rather than evicts on a bad `findings` payload, and a byte bound
+> that drops `findings` — never `brief` or `synthesis` — above 16 KiB rather
+> than refusing the write), `src/panel/findings/` (new — `shared-view.ts`,
+> `findings-css.ts`, `why-view.ts`), `src/panel/panel-view.ts` (`renderLaneBody`
+> composes the new renderer and gained a required `nowMs` parameter).
+> **Approach** `@nimbus-dev/sdk` is added as a type-only devDependency — zero
+> runtime bytes, verified by grepping the built bundle rather than trusting
+> the linter, since esbuild does not typecheck. `findings` stays `unknown`
+> everywhere it crosses a boundary that does not know the lane (the gateway
+> client, the storage guard's eviction path); it is narrowed only where the
+> lane identity is known, which is `terminalLaneState` on the way in and a
+> sanitising projection on the way out of storage. Absent or guard-rejected
+> `findings` is indistinguishable from a lane this build has no renderer for:
+> both fall back to exactly the paragraph the panel rendered before this
+> phase, silently.
+> **Done when** The `why` lane renders as a timeline against a realistic
+> gateway response (the mock gateway's `AGENT_RUN_DONE` fixture carries a
+> `findings`/`gaps`/`synthesis` payload, exercised by a manual step in
+> `development.md`); `gaps` and `synthesis` render on all seven lanes
+> regardless of whether `findings` parsed; a malformed or oversized `findings`
+> payload never evicts the stored run, only the structured view; and a lane
+> this slice does not model still renders the same answer *body* as before —
+> not byte-for-byte, since gaps and provenance are now added to all seven
+> lanes. **All four are met**, pinned by the guard-rejection, byte-bound and
+> fallback tests named in the design's §5.
+> **No gateway change and no re-pairing.** `findings` and `synthesis` have
+> ridden every agent-run response since the route shipped
+> (`agents/_lib/emit-brief.ts`); this phase is a client parser and a
+> renderer, nothing else.
+> Full design:
+> [`docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md`](./docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md)
+> (§4.1–§4.5 for the entry path and the `why` renderer; §6 for the slicing
+> below).
+
+### C8.2 `expert`, `impact` and `ownership` gain their renderers · 🟡 · M
+> **What** Three more `LaneFindings` arms: ranked reviewers with their evidence
+> and the `personId`/`score` the markdown flattening drops, impacted items
+> grouped by category with hop counts, and per-target owner tables that say
+> *unavailable* rather than *complete* when a count was never recorded.
+> **Why it wows** `expert` and `impact` are two of the three original C2
+> lanes — the ones every recognised page can already reach — gaining the
+> detail their markdown paragraph has always thrown away.
+> **Touches** `src/panel/findings/expert-view.ts`, `impact-view.ts`,
+> `ownership-view.ts` (new), plus the matching arms on `LaneFindings` and
+> their guards in `src/shared/findings.ts` / `findings-guards.ts`.
+> **Approach** Same entry path as C8.1 — no gateway-side or message-boundary
+> change, one more arm per lane in the dispatch table `laneFindingsFrom`
+> already has. `impact` and `expert`'s evidence carry only ids
+> (`affectedItemId`, an evidence row's `itemId`), not URLs, so neither gets a
+> link this slice (see the design's §4.6 on the reverse resolver that would
+> change that).
+> **Done when** All three lanes render their typed answer against a real
+> gateway response, and a malformed or absent payload on any of the three
+> falls back exactly as C8.1's fallback does.
+
+### C8.3 `catchup`, `decisions` and `glossary` gain their renderers · 🟡 · M
+> **What** The last three `LaneFindings` arms: `catchup`'s sections by service
+> — including `involvement`, which upstream's own markdown renderer never
+> prints at all — `decisions`' rationale/alternatives/evidence with an honesty
+> caveat on truncated sources, and `glossary`'s three modes (`term` / `miss` /
+> `list`), sorted by the same `score` it is ranked on rather than the
+> `docFreq` alone that today's paragraph shows.
+> **Why it wows** Closes out the seven-lane set. `catchup` and `decisions` are
+> home-dashboard lanes with the densest answers of the seven — exactly where a
+> flattened paragraph loses the most.
+> **Touches** `src/panel/findings/catchup-view.ts`, `decisions-view.ts`,
+> `glossary-view.ts` (new), plus their `LaneFindings` arms and guards.
+> **Approach** Identical shape to C8.2. `decisions.entries[].evidence[]` and
+> `glossary.entries[].topSources[]` do carry URLs, so those two get the
+> shared link builder C8.1 already factored out; `catchup` does not.
+> **Done when** All three lanes render their typed answer against a real
+> gateway response, `decisions` and `glossary` links pass through
+> `safeHttpUrl` exactly as `why`'s do, and a malformed or absent payload on
+> any of the three falls back exactly as C8.1's fallback does.
+
+---
+
 ## Phase 1 — Trust you can see 🟢
 
 *Theme: turn the invisible privacy guarantee into a visible, provable feature —

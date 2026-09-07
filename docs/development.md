@@ -284,7 +284,7 @@ the gateway.
 
 Prereq: paired, gateway running, a token scoped with `resolve`, `fetch` and
 `agents` (grant it if needed: `nimbus clip scopes <label> --set
-clip,briefs,resolve,fetch,agents`) for steps 1–2 below; step 3 deliberately
+clip,briefs,resolve,fetch,agents`) for steps 1–3 below; step 4 deliberately
 pairs with `agents` withheld to exercise the scope-gap guidance. To exercise
 steps 1–2 reproducibly, run `bun run mock-gateway` and pair against
 `http://127.0.0.1:8765` — its mock agent routes always return a fixed run id
@@ -295,14 +295,31 @@ in "Working…" long enough to make a manual pass flaky.
    (e.g. via the mock gateway's `/sample`, or a real recognised, indexed PR)
    and press `Alt+Shift+R`. → Below Related, three collapsed lanes read *"What
    breaks if it lands"*, *"Who should review it"* and *"Why does this change
-   exist"*. Expand one. → It shows
-   "Working…" briefly, then the brief as plain text (no bold, no links, no
-   headings — even if the brief contains something that looks like markup).
-   Collapse and re-expand it → the same brief reappears with no second
-   "Working…" flash and no second network call (confirm in the gateway's own
-   log, or DevTools' Network panel, that only one `POST /v1/agents/<lane>`
-   fired).
-2. **Close and reopen the panel mid-run:** against a gateway slow enough to
+   exist"*. Expand *What breaks if it lands* or *Who should review it*. → It
+   shows "Working…" briefly, then the brief as plain text (no bold, no links,
+   no headings — even if the brief contains something that looks like
+   markup). Collapse and re-expand it → the same brief reappears with no
+   second "Working…" flash and no second network call (confirm in the
+   gateway's own log, or DevTools' Network panel, that only one
+   `POST /v1/agents/<lane>` fired). *Why does this change exist* is the one
+   lane with a structured renderer this phase — see the next step.
+2. **The `why` lane's structured findings (C8.1):** against the mock gateway,
+   expand *Why does this change exist* on the same PR. → "Working…" briefly,
+   then a **timeline**, not a plain-text paragraph: a subject heading linking
+   to the pull request (`AGENT_RUN_DONE.findings.changeSubject`,
+   `gateway-fixtures.ts`), grouped under *Authorship*, *Pull requests* and
+   *Tickets* headings (`LANE_TITLES`, `why-view.ts`) in that fixed order
+   regardless of which the gateway emitted first, each row a clickable
+   `https://` link except the authorship row, whose `url` is `null` and
+   renders as plain text instead. Below the timeline, a shaded gap note (*no
+   chat connector is indexed…*) with its remediation command on its own
+   line, then *"Assembled
+   by Nimbus…"* or *"Written by local-fixture, a local model."* depending on
+   the fixture's `synthesis` arm. In dark mode (OS or browser set to dark)
+   every link is legible — accent-coloured, not the browser's blue-underline
+   default — and the gap note visibly stands apart from the answer above it,
+   not just another paragraph in the same colour.
+3. **Close and reopen the panel mid-run:** against a gateway slow enough to
    stay `running` for a few seconds (a real gateway with an LLM configured;
    the mock gateway is too fast for this step), expand a lane, then close the
    panel (`Alt+Shift+R` or Esc) before it settles, and wait past however long
@@ -315,7 +332,7 @@ in "Working…" long enough to make a manual pass flaky.
    that is not a second run. What must NOT happen is a second
    `POST /v1/agents/<lane>` (confirm in the gateway's log or DevTools' Network
    panel): the cached `done` short-circuits inside the worker.
-3. **Scope guidance, `resolve`+`fetch` only:** scope a token with `resolve` and
+4. **Scope guidance, `resolve`+`fetch` only:** scope a token with `resolve` and
    `fetch` but not `agents` (`nimbus clip scopes <label> --set
    clip,briefs,resolve,fetch`), open a recognised, resolved page, and expand a
    lane. → "This pairing can't run agents yet." plus a pasteable
@@ -324,7 +341,7 @@ in "Working…" long enough to make a manual pass flaky.
    scope set, `agents` named as the missing one) — not a hand-edited
    placeholder, and not the `resolve`/`fetch` guidance from the checklists
    above (a different scope, a different fix).
-4. Repeat 1 in Firefox.
+5. Repeat 1 in Firefox.
 
 ### The eviction check — why this one stays manual
 

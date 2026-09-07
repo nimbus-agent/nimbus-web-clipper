@@ -984,6 +984,32 @@ describe("getAgentRun", () => {
       });
     }
   });
+
+  it("carries findings and synthesis through untouched", async () => {
+    const body = {
+      status: "done",
+      brief: "text",
+      findings: { kind: "why", findings: [] },
+      synthesis: { attempted: false, reason: "disabled" },
+    };
+    const doFetch = async () => jsonRes(body);
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "run-1", doFetch)).toEqual({
+      ok: true,
+      status: "done",
+      brief: "text",
+      findings: { kind: "why", findings: [] },
+      synthesis: { attempted: false, reason: "disabled" },
+    });
+  });
+
+  it("omits findings and synthesis entirely when the body carries neither", async () => {
+    const doFetch = async () => jsonRes({ status: "done", brief: "b" });
+    expect(await getAgentRun("http://127.0.0.1:8765", "t", "run-1", doFetch)).toEqual({
+      ok: true,
+      status: "done",
+      brief: "b",
+    });
+  });
 });
 
 describe("probeHealth", () => {

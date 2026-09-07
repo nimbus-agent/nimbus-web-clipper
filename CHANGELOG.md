@@ -11,7 +11,8 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 ### Changed
 
 - **The three source-file lanes now actually run.** *What breaks if this
-  changes*, *Who knows this file* and *Who owns this* shipped in 0.9.0 against
+  changes*, *Who knows this file* and *Who owns this* shipped unreleased, after
+  v0.5.0, against
   `GET /v1/items/resolve-file`, a gateway route that did not exist anywhere —
   so on every gateway in the world the panel probed, got a 404, withheld the
   lanes and said nothing. The route landed upstream in Nimbus#1447 and ships in
@@ -56,6 +57,21 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **The *why does this change exist* lane is now a timeline you can follow, and
+  every lane says why it is empty.** The gateway has always sent two forms of
+  an agent's answer on the same response — the markdown paragraph the panel
+  rendered, and the typed object that paragraph was flattened from — and the
+  client read only the paragraph. It now reads both. *Why* renders as findings
+  grouped by kind, each with its date and, where the gateway supplied one,
+  **a link you can click** — the first clickable references inside an agent
+  lane's own answer, and they come from your index rather than from parsing
+  model output. All seven lanes additionally render two things that were always
+  on the wire and never shown: the **gaps** that explain an empty answer, with
+  the remediation the gateway supplied, and a line saying whether a **model**
+  wrote the answer and whether it was local or remote. **No gateway change and no
+  re-pairing** — this is the client reading what it was already being sent. A
+  lane whose structure this build does not model yet, or whose payload does not
+  survive validation, renders exactly the paragraph it rendered before, silently.
 - **Linear and CircleCI are now recognised.** Nimbus had nothing to say on
   either — a Linear issue or a CircleCI pipeline was just a tab, and their
   dashboards offered none of the three connector-scoped lanes GitHub's or
@@ -146,14 +162,15 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   the panel names the one that applies instead of a lane's worth of "not
   found" repeated three times.
 
-  **You will not see this yet, and no gateway anywhere can show it to you.**
-  Offering these lanes needs the gateway to resolve a forge file coordinate to
-  a path, and that route — `GET /v1/items/resolve-file` — is proposed, not
-  merged, not shipped anywhere upstream. Until it lands, opening a file page
-  renders exactly as it did before this release — recognised, no lanes, no
-  banner — for every user, silently, with nothing on screen to say the
-  gateway is the reason. This entry describes a client that is finished and
-  waiting.
+  **This shipped ahead of the gateway.** Offering these lanes needs the
+  gateway to resolve a forge file coordinate to a path, and that route —
+  `GET /v1/items/resolve-file` — had not shipped anywhere upstream as of this
+  release: opening a file page rendered exactly as it did before it —
+  recognised, no lanes, no banner — for every user, silently, with nothing on
+  screen to say the gateway was the reason. This entry described a client
+  that was finished and waiting. The route has since landed (Nimbus#1447) and
+  ships in the release after gateway 7.9.0 — see the entry near the top of
+  [Unreleased] above for the current state.
 
 - **`Who should review it` on a pull request now answers about the pull
   request itself, on a gateway that can take it.** It has always sent the

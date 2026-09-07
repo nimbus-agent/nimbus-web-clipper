@@ -118,16 +118,80 @@ export interface AgentInvokeResponse {
   readonly runId: string;
 }
 
+// Fixed epoch-ms literals, never Date.now(): same reasoning as RESOLVE_FIXTURE
+// above — a live value would make this pinned fixture drift between runs.
+const ONE_DAY_MS = 86_400_000;
+const ONE_WEEK_MS = 7 * ONE_DAY_MS;
+
+/**
+ * Wire shape of the `why` lane's structured brief, exactly as the gateway's
+ * `WhyBrief` (`@nimbus-dev/sdk`) sends it — deliberately NOT `WhyFindings`
+ * from `src/shared/findings.ts`, same reasoning as `RelatedHitWire` above:
+ * this mimics the GATEWAY's shape, which nests `gaps` (and the other
+ * `AgentBriefBase` fields) inside the findings object itself, while the
+ * client's `WhyFindings` projection deliberately excludes `gaps` — it is
+ * stored once as a sibling of `findings` on `LaneState` (see that type's own
+ * comment in `src/shared/findings.ts`).
+ */
+export interface AgentRunWhyFindingsWire {
+  readonly kind: "why";
+  readonly agentVersion: 1;
+  readonly generatedAt: number;
+  readonly latencyMs: number;
+  readonly gaps: readonly {
+    readonly category: string;
+    readonly detail: string;
+    readonly remediation?: string;
+  }[];
+  readonly findings: readonly {
+    readonly lane: string;
+    readonly title: string;
+    readonly detail: string;
+    readonly url: string | null;
+    readonly occurredAt: number | null;
+    readonly entityId: string | null;
+  }[];
+  readonly subject: null;
+  readonly changeSubject: {
+    readonly itemId: string;
+    readonly entityId: string;
+    readonly repo: string;
+    readonly number: number | null;
+    readonly url: string;
+    readonly title: string;
+    readonly modifiedAt: number | null;
+  } | null;
+  readonly itemSubject: null;
+}
+
+/** Wire shape of `synthesis` — a sibling field of `findings`, never nested
+ *  inside it (see `terminalLaneState`, service-worker.ts). */
+export interface AgentRunSynthesisWire {
+  readonly attempted: true;
+  readonly used: true;
+  readonly model: string;
+  readonly remote: boolean;
+}
+
 /**
  * `GET /v1/agents/runs/{id}` — the mock reports every run as `done` immediately,
  * with a fixed brief, so a lane never sits in `running` long enough to make a
  * screenshot flaky. A fixed literal, never generated: same reasoning as
  * `FETCH_FIXTURE`'s id above — a live id/brief would make the asserted fixture
  * drift between runs, which is the opposite of what a pinned screenshot needs.
+ *
+ * `findings`/`synthesis` are shaped as a realistic `why` answer — `kind` is
+ * checked against the invoking lane (`laneFindingsFrom`, findings-guards.ts),
+ * so only a `why` invoke ever parses this as structured; the other six lanes
+ * fall back to `brief` exactly as before. This is what lets
+ * `development.md`'s agent-lane manual step describe a real timeline instead
+ * of only the flattened paragraph.
  */
 export interface AgentRunDoneResponse {
   readonly status: "done";
   readonly brief: string;
+  readonly findings?: AgentRunWhyFindingsWire;
+  readonly synthesis?: AgentRunSynthesisWire;
 }
 
 export const AGENT_INVOKE: AgentInvokeResponse = {
@@ -139,12 +203,63 @@ export const AGENT_RUN_DONE: AgentRunDoneResponse = {
   brief:
     "This change touches only the readability cache path; no other module calls " +
     "into it. Low blast radius — safe to land once tests are green.",
+  findings: {
+    kind: "why",
+    agentVersion: 1,
+    generatedAt: 1_700_000_000_000,
+    latencyMs: 420,
+    gaps: [
+      {
+        category: "missing_connector",
+        detail: "No chat connector is indexed, so discussion around this change is not searchable.",
+        remediation: "Run `nimbus index add --connector slack` to index chat history.",
+      },
+    ],
+    findings: [
+      {
+        lane: "authorship",
+        title: "Asaf Golombek",
+        detail: "Wrote the original readability cache in this file.",
+        url: null,
+        occurredAt: 1_700_000_000_000 - ONE_WEEK_MS,
+        entityId: "person:asaf",
+      },
+      {
+        lane: "pull_request",
+        title: "Cache the readability pass",
+        detail: "Introduced the cache this change touches.",
+        url: "https://github.com/acme/web/pull/482",
+        occurredAt: 1_700_000_000_000 - ONE_DAY_MS,
+        entityId: "gh-pr-482",
+      },
+      {
+        lane: "ticket",
+        title: "Clipper is slow on large articles",
+        detail: "The ticket this change was written to close.",
+        url: "https://acme.atlassian.net/browse/PLAT-91",
+        occurredAt: 1_700_000_000_000 - 2 * ONE_DAY_MS,
+        entityId: "jira:PLAT-91",
+      },
+    ],
+    subject: null,
+    changeSubject: {
+      itemId: "github:acme/web#482",
+      entityId: "gh-pr-482",
+      repo: "acme/web",
+      number: 482,
+      url: "https://github.com/acme/web/pull/482",
+      title: "Cache the readability pass",
+      modifiedAt: 1_700_000_000_000 - ONE_DAY_MS,
+    },
+    itemSubject: null,
+  },
+  synthesis: {
+    attempted: true,
+    used: true,
+    model: "local-fixture",
+    remote: false,
+  },
 };
-
-// Fixed epoch-ms literals, never Date.now(): same reasoning as RESOLVE_FIXTURE
-// above — a live value would make this pinned fixture drift between runs.
-const ONE_DAY_MS = 86_400_000;
-const ONE_WEEK_MS = 7 * ONE_DAY_MS;
 
 export const RELATED: RelatedResponse = {
   items: [

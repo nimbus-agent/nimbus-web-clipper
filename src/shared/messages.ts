@@ -12,6 +12,7 @@ import type {
   EgressVerdict,
   LedgerOutcome,
 } from "./egress.ts";
+import { gapNotesFrom, laneFindingsFrom, synthesisFrom } from "./findings-guards.ts";
 import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
@@ -1029,7 +1030,7 @@ export function isPassageClearRequest(v: unknown): v is PassageClearRequest {
  * gateway-client.ts and never reaches here (mirrors isResolveOutcome/isLedgerOutcome
  * above).
  */
-function isLaneState(v: unknown): v is LaneState {
+function isLaneState(v: unknown, lane: AgentLane): v is LaneState {
   if (!isObject(v)) {
     return false;
   }
@@ -1040,7 +1041,18 @@ function isLaneState(v: unknown): v is LaneState {
     return typeof v["runId"] === "string";
   }
   if (v["kind"] === "done") {
-    return typeof v["brief"] === "string";
+    if (typeof v["brief"] !== "string") {
+      return false;
+    }
+    // Each optional field must be ABSENT or well-formed. Re-uses the same
+    // predicates the SW narrowed with, rather than a second hand-rolled copy —
+    // the predicate-vs-type drift class that already shipped once as
+    // `isResolvedItem`. `lane` is in scope here because the envelope carries it.
+    return (
+      (v["gaps"] === undefined || gapNotesFrom(v["gaps"]) !== undefined) &&
+      (v["synthesis"] === undefined || synthesisFrom(v["synthesis"]) !== undefined) &&
+      (v["findings"] === undefined || laneFindingsFrom(lane, v["findings"]) !== undefined)
+    );
   }
   return (
     v["kind"] === "failed" &&
@@ -1052,7 +1064,10 @@ function isLaneState(v: unknown): v is LaneState {
 
 export function isAgentStateResponse(v: unknown): v is AgentStateResponse {
   return (
-    isObject(v) && v["kind"] === "agent-state" && isAgentLane(v["lane"]) && isLaneState(v["state"])
+    isObject(v) &&
+    v["kind"] === "agent-state" &&
+    isAgentLane(v["lane"]) &&
+    isLaneState(v["state"], v["lane"])
   );
 }
 

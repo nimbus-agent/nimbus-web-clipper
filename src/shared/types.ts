@@ -1,4 +1,5 @@
 import type { CanonicalRejection } from "./canonical.ts";
+import type { GapNote, LaneFindings, SynthesisProvenance } from "./findings.ts";
 
 /**
  * The page's own account of itself, as sent in `POST /v1/clips`'s `source`
@@ -575,17 +576,33 @@ export function scopeForLane(lane: AgentLane, kind: SurfaceKind): LaneScope | nu
 /**
  * What one lane is doing. `collapsed` is also the state of a lane never opened.
  *
- * The run route's `findings` field is deliberately NOT modelled on the `done`
- * arm below. Upstream types it `unknown` — "the shape is per-agent" — and
- * nothing in the panel renders it; the resolve slice already had to prune
- * exactly such a per-item catch-all. Recorded here so a future reader editing
- * this type alone has the reasoning: add `findings` back only alongside a
- * concrete renderer for it, never as a passthrough `unknown`.
+ * The run route's `findings` is modelled as of Phase C8, on the terms the
+ * previous version of this comment set: "add `findings` back only alongside a
+ * concrete renderer for it, never as a passthrough `unknown`." Both hold.
+ * Upstream still types it `unknown` because the shape is per-agent — but each
+ * agent's shape is published and stable in `@nimbus-dev/sdk`, so `LaneFindings`
+ * is a real union rather than a catch-all, and narrowing happens in
+ * `terminalLaneState` where the lane is known. Nothing `unknown` crosses the
+ * SW→panel boundary.
+ *
+ * `gaps` and `synthesis` are SIBLINGS of `findings`, not fields inside it. Both
+ * are universal — `gaps` rides `AgentBriefBase` on every agent, `synthesis` is a
+ * top-level field of the response — so nesting them would tie them to the one
+ * thing most likely to be missing: a guard rejection, the storage byte bound, or
+ * a lane whose `LaneFindings` arm has not shipped yet. They must survive all
+ * three, because a lane that fell back to prose can still say why it is empty
+ * and whether a model wrote it.
  */
 export type LaneState =
   | { readonly kind: "collapsed" }
   | { readonly kind: "running"; readonly runId: string }
-  | { readonly kind: "done"; readonly brief: string }
+  | {
+      readonly kind: "done";
+      readonly brief: string;
+      readonly gaps?: readonly GapNote[];
+      readonly findings?: LaneFindings;
+      readonly synthesis?: SynthesisProvenance;
+    }
   | {
       readonly kind: "failed";
       readonly reason: AgentError;
