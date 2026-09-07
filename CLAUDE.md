@@ -5,8 +5,9 @@
 `nimbus-web-clipper` is a Chrome + Firefox **MV3 browser extension** that clips
 web pages (readable article or selection) into the user's local-first
 [Nimbus](https://github.com/nimbus-agent/Nimbus) index, and surfaces related
-indexed items in an on-demand panel. Phases C1–C6 grew it past clipping: it
-recognises the page you are on (PR / build / issue / incident), runs the
+indexed items in an on-demand panel. Phases C1–C7 grew it past clipping: it
+recognises the page you are on (PR / build / issue / incident / source file),
+runs the
 gateway's agents against it as panel lanes — offering only the lanes the paired
 gateway publishes, whenever it can say what those are — asks research briefs across your open tabs, and
 reads the gateway's egress ledger back as an activity page. It is a **thin client**:
@@ -37,8 +38,12 @@ shape here.
 - `POST /v1/clips/related` — bearer-authed read; related indexed items for the
   current page. Body `{ title?, canonicalUrl?, selection?, limit? }`.
 
-Those three are the original surface. Phases C1–C6 added more, each behind its
-own token scope: `GET /v1/items/resolve` (`resolve`), `POST /v1/items/fetch`
+Those three are the original surface. Phases C1–C7 added more, each behind its
+own token scope: `GET /v1/items/resolve` (`resolve`),
+`GET /v1/items/resolve-file` (`resolve` too — it maps a forge file coordinate
+`{service, repo, refAndPath}` to a path in the reader's own checkout. Landed
+upstream in Nimbus#1447, ships after gateway 7.9.0, and its **presence is the
+capability signal** — do NOT add a version floor for it), `POST /v1/items/fetch`
 (`fetch` — an I13 **write**, it causes an outbound provider request),
 `POST /v1/agents/{agent}` + `GET /v1/agents/runs/{id}` + the `GET /v1/agents`
 roster C6 reads to decide which lanes to offer (`agents`), the five
@@ -140,9 +145,12 @@ monorepo's git history.)
   `mock-gateway.ts`)
 - `docs/` — `architecture.md` is the how-it's-built reference (load-bearing
   decisions, layer map, clip pipeline, the offline-queue + rate-limit-pause state
-  machines); per-feature design specs live in `docs/superpowers/specs/` (spec→plan
-  layout; plans and review notes are pruned once a feature ships and live on in
-  git history); `development.md` is the dev-load + manual-verification checklist
+  machines) and is where a durable decision LIVES; `docs/superpowers/` is a
+  workspace for work in flight — specs, plans and review notes are all **pruned
+  once the feature ships** and live on in git history, so anything still true
+  after delivery must be written into `architecture.md` (or this file) BEFORE
+  its spec is deleted, never left only in the spec; `development.md` is the
+  dev-load + manual-verification checklist
   for the surfaces that aren't unit-tested (capture-in-page, popup/options DOM, SW
   glue); `store/` holds the store listing + publishing docs
 - `ROADMAP.md` (repo root) — the vision-first roadmap: north star, the four
