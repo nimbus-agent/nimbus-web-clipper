@@ -4,14 +4,24 @@
 // This lane has the widest reach of any in the product: its `LANE_RULES` entry
 // is `{input: "term"}` with no surface restriction, so it renders on ANY page,
 // including one the recogniser rejects outright. Every other lane needs a
-// recognised, resolved item. It is also one of only two whose findings carry a
-// real URL (`topSources[].url`).
-import type { GlossaryEntry, GlossaryFindings } from "../../shared/findings.ts";
+// recognised, resolved item. It is also one of the only two REMAINING lanes
+// whose findings carry a real URL (`topSources[].url`) — `why` (C8.1) already
+// carries three of its own.
+import type { GlossaryEntry, GlossaryFindings, GlossaryMatchedVia } from "../../shared/findings.ts";
 import { formatAge } from "../../shared/freshness.ts";
 import { findingLink, renderEmptyLine } from "./shared-view.ts";
 
-/** A term's own heading: the term, and where its definition came from. */
-function renderTermHead(doc: Document, entry: GlossaryEntry): HTMLElement {
+/**
+ * A term's own heading: the term, where its definition came from, and — when
+ * the term was matched via a synonym rather than exactly — a badge saying so.
+ * A synonym match is a fact worth surfacing: it tells the reader the word
+ * they selected is not the canonical one. `"exact"` and `null` add nothing.
+ */
+function renderTermHead(
+  doc: Document,
+  entry: GlossaryEntry,
+  matchedVia: GlossaryMatchedVia,
+): HTMLElement {
   const head = doc.createElement("p");
   head.className = "nimbus-findings__subject";
   const term = doc.createElement("span");
@@ -25,6 +35,12 @@ function renderTermHead(doc: Document, entry: GlossaryEntry): HTMLElement {
     // one nobody has to second-guess.
     src.textContent = entry.definitionSource === "manual" ? "authored" : entry.definitionSource;
     head.append(src);
+  }
+  if (matchedVia === "synonym") {
+    const via = doc.createElement("span");
+    via.className = "nimbus-findings__badge";
+    via.textContent = "matched via synonym";
+    head.append(via);
   }
   return head;
 }
@@ -54,10 +70,15 @@ function renderTermList(
   return row;
 }
 
-function renderEntry(doc: Document, entry: GlossaryEntry, nowMs: number): HTMLElement {
+function renderEntry(
+  doc: Document,
+  entry: GlossaryEntry,
+  nowMs: number,
+  matchedVia: GlossaryMatchedVia,
+): HTMLElement {
   const box = doc.createElement("div");
   box.className = "nimbus-findings__group";
-  box.append(renderTermHead(doc, entry));
+  box.append(renderTermHead(doc, entry, matchedVia));
 
   const definition = doc.createElement("p");
   definition.className = "nimbus-findings__item-detail";
@@ -108,7 +129,7 @@ export function renderGlossaryFindings(
   }
 
   for (const entry of findings.entries) {
-    box.append(renderEntry(doc, entry, nowMs));
+    box.append(renderEntry(doc, entry, nowMs, findings.matchedVia));
   }
   return box;
 }

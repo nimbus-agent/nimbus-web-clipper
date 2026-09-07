@@ -292,10 +292,11 @@ const validGlossary = {
 };
 
 describe("glossaryFindingsFrom", () => {
-  test("projects a valid brief, dropping the base fields and stats", () => {
+  test("projects a valid brief, dropping the base fields, stats, and mode", () => {
+    // `mode` is on the wire (validGlossary carries it) but is not projected:
+    // the renderer never reads it, so the guard does not gate on it either.
     expect(glossaryFindingsFrom(validGlossary)).toEqual({
       kind: "glossary",
-      mode: "term",
       matchedVia: "exact",
       suggestions: [],
       entries: validGlossary.entries,
@@ -313,6 +314,16 @@ describe("glossaryFindingsFrom", () => {
     expect(glossaryFindingsFrom(miss)?.kind).toBe("glossary");
   });
 
+  test("accepts an unknown mode — it is not gated on", () => {
+    // A field we do not render is not a field we gate on: the day the
+    // gateway adds a new `mode` value, this lane must not lose its
+    // structured render for a value no renderer would have consulted.
+    expect(glossaryFindingsFrom({ ...validGlossary, mode: "something-new" })).not.toBeUndefined();
+    const noMode = { ...validGlossary } as Record<string, unknown>;
+    delete noMode["mode"];
+    expect(glossaryFindingsFrom(noMode)).not.toBeUndefined();
+  });
+
   test("accepts a null definition and a null definitionSource", () => {
     const e = { ...validGlossary.entries[0], definition: null, definitionSource: null };
     expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).not.toBeUndefined();
@@ -323,8 +334,7 @@ describe("glossaryFindingsFrom", () => {
     expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).not.toBeUndefined();
   });
 
-  test("rejects an unknown mode, matchedVia, or definitionSource", () => {
-    expect(glossaryFindingsFrom({ ...validGlossary, mode: "nope" })).toBeUndefined();
+  test("rejects an unknown matchedVia or definitionSource", () => {
     expect(glossaryFindingsFrom({ ...validGlossary, matchedVia: "fuzzy" })).toBeUndefined();
     const e = { ...validGlossary.entries[0], definitionSource: "guess" };
     expect(glossaryFindingsFrom({ ...validGlossary, entries: [e] })).toBeUndefined();
@@ -350,21 +360,14 @@ describe("GlossaryFindings pins the fields we read", () => {
   // Same reason as the existing WhyFindings pin: these are local mirrors of a
   // type another repo owns, and nothing enforces they stay in step. A rename
   // upstream surfaces here as a failure rather than as a wrong render.
-  test("carries exactly the five projected keys", () => {
+  test("carries exactly the four projected keys", () => {
     const value: GlossaryFindings = {
       kind: "glossary",
-      mode: "term",
       entries: [],
       matchedVia: null,
       suggestions: [],
     };
-    expect(Object.keys(value).sort()).toEqual([
-      "entries",
-      "kind",
-      "matchedVia",
-      "mode",
-      "suggestions",
-    ]);
+    expect(Object.keys(value).sort()).toEqual(["entries", "kind", "matchedVia", "suggestions"]);
   });
 });
 

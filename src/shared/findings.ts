@@ -133,9 +133,18 @@ export type GlossaryEntry = {
  */
 export type GlossaryFindings = {
   readonly kind: "glossary";
-  /** `term` = resolved; `miss` = unknown term with suggestions; `list` = no argument. */
-  readonly mode: "list" | "term" | "miss";
   readonly entries: readonly GlossaryEntry[];
+  /**
+   * How the resolved term was matched. Rendered as a badge on the term
+   * heading when `"synonym"` — a fact worth surfacing, since it tells the
+   * reader the word they selected is not the canonical one. `"exact"` and
+   * `null` render nothing extra.
+   *
+   * `mode` (list/term/miss) is deliberately NOT projected here, unlike
+   * `matchedVia`: the renderer branches only on `entries.length`, never on
+   * `mode`, so gating on it would reject briefs this client could render —
+   * exactly the rule this module's header states.
+   */
   readonly matchedVia: GlossaryMatchedVia;
   readonly suggestions: readonly string[];
 };

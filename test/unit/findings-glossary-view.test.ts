@@ -33,7 +33,6 @@ function entry(over: Record<string, unknown> = {}) {
 function findings(over: Partial<GlossaryFindings> = {}): GlossaryFindings {
   return {
     kind: "glossary",
-    mode: "term",
     entries: [entry()],
     matchedVia: "exact",
     suggestions: [],
@@ -74,7 +73,7 @@ describe("renderGlossaryFindings", () => {
   test("a miss renders its suggestions as did-you-mean and no entries", () => {
     const el = renderGlossaryFindings(
       document,
-      findings({ mode: "miss", entries: [], matchedVia: null, suggestions: ["peak", "peck"] }),
+      findings({ entries: [], matchedVia: null, suggestions: ["peak", "peck"] }),
       NOW,
     );
     expect(el.textContent?.toLowerCase()).toContain("did you mean");
@@ -85,7 +84,7 @@ describe("renderGlossaryFindings", () => {
   test("a miss with no suggestions says the term is unknown", () => {
     const el = renderGlossaryFindings(
       document,
-      findings({ mode: "miss", entries: [], matchedVia: null, suggestions: [] }),
+      findings({ entries: [], matchedVia: null, suggestions: [] }),
       NOW,
     );
     expect(el.querySelector(".nimbus-findings__empty")).not.toBeNull();
@@ -94,8 +93,25 @@ describe("renderGlossaryFindings", () => {
   test("renders the score, so the visible number matches the visible order", () => {
     // Upstream's own note: showing only docFreq while sorting on score made the
     // number contradict the order.
-    const el = renderGlossaryFindings(document, findings({ mode: "list" }), NOW);
+    const el = renderGlossaryFindings(document, findings(), NOW);
     expect(el.textContent).toContain("0.82");
+  });
+
+  test("a synonym match badges the term heading", () => {
+    const el = renderGlossaryFindings(document, findings({ matchedVia: "synonym" }), NOW);
+    expect(el.textContent?.toLowerCase()).toContain("matched via synonym");
+  });
+
+  test("an exact match, or no match at all, adds no matched-via text", () => {
+    const exact = renderGlossaryFindings(document, findings({ matchedVia: "exact" }), NOW);
+    expect(exact.textContent?.toLowerCase()).not.toContain("matched via");
+
+    const none = renderGlossaryFindings(
+      document,
+      findings({ entries: [], matchedVia: null, suggestions: [] }),
+      NOW,
+    );
+    expect(none.textContent?.toLowerCase()).not.toContain("matched via");
   });
 
   test("renders synonyms and near misses when present", () => {
@@ -118,8 +134,8 @@ describe("renderGlossaryFindings", () => {
     expect(el.querySelector("b")).toBeNull();
   });
 
-  test("renders an empty line when a list mode returns nothing", () => {
-    const el = renderGlossaryFindings(document, findings({ mode: "list", entries: [] }), NOW);
+  test("renders an empty line when there are no entries and no suggestions", () => {
+    const el = renderGlossaryFindings(document, findings({ entries: [], suggestions: [] }), NOW);
     expect(el.querySelector(".nimbus-findings__empty")).not.toBeNull();
   });
 });

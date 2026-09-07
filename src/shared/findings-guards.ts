@@ -272,7 +272,6 @@ function whyFindingsFrom(raw: Record<string, unknown>): WhyFindings | undefined 
   };
 }
 
-const GLOSSARY_MODES = ["list", "term", "miss"] as const;
 const GLOSSARY_MATCHED_VIA = ["exact", "synonym"] as const;
 const GLOSSARY_DEFINITION_SOURCES = ["llm", "snippet", "manual"] as const;
 
@@ -312,10 +311,9 @@ function isGlossaryEntry(v: unknown): v is GlossaryEntry {
 }
 
 export function glossaryFindingsFrom(raw: Record<string, unknown>): GlossaryFindings | undefined {
-  const mode = raw["mode"];
-  if (typeof mode !== "string" || !(GLOSSARY_MODES as readonly string[]).includes(mode)) {
-    return undefined;
-  }
+  // `mode` is deliberately NOT gated on — the renderer never reads it (it
+  // branches on `entries.length` instead), so it is not projected either. See
+  // `GlossaryFindings`'s own comment.
   const matchedVia = raw["matchedVia"];
   if (
     matchedVia !== null &&
@@ -334,7 +332,6 @@ export function glossaryFindingsFrom(raw: Record<string, unknown>): GlossaryFind
   }
   return {
     kind: "glossary",
-    mode: mode as GlossaryFindings["mode"],
     matchedVia: matchedVia as GlossaryMatchedVia,
     entries: raw["entries"] as readonly GlossaryEntry[],
     suggestions: raw["suggestions"],

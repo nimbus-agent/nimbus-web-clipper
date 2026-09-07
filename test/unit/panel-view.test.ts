@@ -877,7 +877,6 @@ describe("renderLaneBody", () => {
         brief: "prose",
         findings: {
           kind: "glossary",
-          mode: "term",
           entries: [],
           matchedVia: null,
           suggestions: ["peak"],
