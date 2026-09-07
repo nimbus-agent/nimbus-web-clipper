@@ -373,21 +373,38 @@ it is still gateway free text and gets the same `textContent` treatment that
 
 Exhaustive URL inventory across the seven browser lanes:
 
-| carries a URL | ids only — not linkable |
-| --- | --- |
-| `why.findings[].url`, `why.changeSubject.url`, `why.itemSubject.url` | `impact` — only `affectedItemId` |
-| `decisions.entries[].evidence[].url` | `catchup` — only `itemId` |
-| `glossary.entries[].topSources[].url` | `expert.ranked[].evidence[]` — only `itemId` |
+| carries a URL | carries a resolvable item id | carries neither |
+| --- | --- | --- |
+| `why.findings[].url`, `why.changeSubject.url`, `why.itemSubject.url` | `catchup.sections[].items[].itemId` | `impact` |
+| `decisions.entries[].evidence[].url` | `expert.ranked[].evidence[].itemId` | `ownership` |
+| `glossary.entries[].topSources[].url` | | |
 
-`impact`'s only URL is the query it echoes back, which is not a result.
+`impact`'s and `ownership`'s only URLs are the queries they echo back, which are
+not results.
+
+**The third column is a correction to an earlier draft of this table, and it
+matters.** That draft had two columns and put `impact` under "ids only", implying
+its ids were item ids awaiting a resolver. They are not. `impact`'s
+`affectedItemId` holds a **`graph_entity.id`**, not an `item.id`, in all five of
+its sub-lanes — every one selects `e.id FROM graph_entity` (`agents/impact.ts`
+`:218`, `:264`, `:308`, `:343`, `:378`, the first via `reverseDependsOn` in
+`_lib/graph-traversals.ts`). `startEntityId` is likewise an entity id, or the
+synthetic string `` `item:${id}` `` on the topic arm. `ownership` carries no item
+id at all: its `externalId` is a *person* id, and `displayPath` is a path.
+
+So the field name lies, and it lies in a published SDK type — `ImpactFinding.affectedItemId`.
+Renaming it is an SDK major and is not this phase's business, but a client that
+fed it to an item resolver would get empty answers for every row and no error to
+explain why. Recorded here so that does not get discovered at runtime.
 
 **There is no client-side way to turn an `itemId` into a URL.**
-`GET /v1/items/resolve` maps URL → item, not the reverse, and nothing else on the
-contract does either. Three lanes get links and three do not; the renderers for
-the second group show titles as text and say nothing about links they cannot
-make. A reverse item-id → URL read is a clean upstream candidate (§9) — this
-phase is shaped so those lanes gain links by adding a resolver later, with no
-renderer change beyond a link wrap.
+`GET /v1/items/resolve` maps URL → item, not the reverse. The upstream reverse
+read (§9) is therefore worth exactly two of these four lanes — `expert` and
+`catchup` — plus nothing for `impact` and `ownership`. That is a smaller prize
+than the earlier draft implied, and still the right one: those two are where the
+reader most often wants to follow a title. The renderers for all four show titles
+as text and say nothing about links they cannot make, so adding the resolver
+later is a link wrap in two files, not a redesign.
 
 ### 4.7 Security
 
@@ -510,11 +527,13 @@ So the two link-carrying lanes go next:
   item. Structuring it lands on more pages than the other five combined.
 - **`decisions`** — `entries[].evidence[].url`.
 
-C8.3 then takes the four link-less lanes together. That is the right shape for
-them: they are the lanes an upstream reverse `itemId → URL` read (§9) would light
+C8.3 then takes the four link-less lanes together. **Two** of them — `expert` and
+`catchup` — are the ones an upstream reverse `itemId → URL` read (§9) would light
 up, so if it lands first they ship with references the first time instead of
-needing a second pass — and if it does not, they ship as structured lists, which
-is still a gain over prose.
+needing a second pass. `impact` and `ownership` gain nothing from it, for the
+reason §4.6 records: `impact`'s ids are graph-entity ids wearing an item-id name,
+and `ownership` has no item ids at all. All four ship as structured lists either
+way, which is the gain over prose that justifies the slice on its own.
 
 **The cost of the re-cut is one extra local mirror in this slice.** `decisions`
 and `glossary` are both among the three brief types the SDK does not publish
