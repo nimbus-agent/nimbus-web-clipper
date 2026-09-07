@@ -30,6 +30,10 @@ import type {
   ImpactFinding,
   ImpactFindings,
   LaneFindings,
+  OwnershipCoverage,
+  OwnershipFindings,
+  OwnershipOwner,
+  OwnershipTargetView,
   SynthesisDiscardReason,
   SynthesisProvenance,
   WhyChangeSubject,
@@ -50,6 +54,10 @@ function isNullableString(v: unknown): v is string | null {
 
 function isNullableNumber(v: unknown): v is number | null {
   return v === null || typeof v === "number";
+}
+
+function isNullableBoolean(v: unknown): v is boolean | null {
+  return v === null || typeof v === "boolean";
 }
 
 const GAP_CATEGORIES = [
@@ -553,6 +561,95 @@ export function catchupFindingsFrom(raw: Record<string, unknown>): CatchupFindin
   };
 }
 
+const OWNERSHIP_TARGET_KINDS = ["source_file", "directory", "service"] as const;
+
+/**
+ * `externalId` is validated even though the renderer never displays it — same
+ * reasoning as `isImpactFinding`'s `affectedItemId` above: it is a field the
+ * wire sends and the projection keeps verbatim, so a malformed one is a
+ * malformed owner, not a row this client renders with a hole in it.
+ */
+function isOwnershipOwner(v: unknown): v is OwnershipOwner {
+  return (
+    isObject(v) &&
+    typeof v["externalId"] === "string" &&
+    typeof v["label"] === "string" &&
+    typeof v["share"] === "number" &&
+    typeof v["resolved"] === "boolean"
+  );
+}
+
+/**
+ * `ownerCount`, `ownersAboveFloor` and `truncated` are `number | null` /
+ * `boolean | null` on the wire, and `null` there means NOT RECORDED — never
+ * zero, never "not truncated" (the SDK's own doc comment on
+ * `OwnershipTargetView` says so). `isNullableNumber`/`isNullableBoolean`
+ * accept and preserve `null` rather than coercing it, so that distinction
+ * survives into the stored projection.
+ */
+function isOwnershipTargetView(v: unknown): v is OwnershipTargetView {
+  return (
+    isObject(v) &&
+    typeof v["kind"] === "string" &&
+    (OWNERSHIP_TARGET_KINDS as readonly string[]).includes(v["kind"]) &&
+    typeof v["displayPath"] === "string" &&
+    Array.isArray(v["owners"]) &&
+    v["owners"].every(isOwnershipOwner) &&
+    isNullableNumber(v["ownerCount"]) &&
+    isNullableNumber(v["ownersAboveFloor"]) &&
+    isNullableBoolean(v["truncated"])
+  );
+}
+
+/**
+ * Every one of the ten counters is required, unlike `decisionsFindingsFrom`'s
+ * `stats.truncatedSources` (which pulls one field out and leaves the rest
+ * unchecked): `OwnershipCoverage` is a single diagnostics object the gateway
+ * always sends whole, so a counter missing means a malformed brief, not a
+ * brief this client simply renders less of. Only `lastPassAt` is nullable —
+ * it is `null` before the first ownership pass has run, which is a real,
+ * reportable state ("no pass recorded"), not malformed input.
+ */
+function isOwnershipCoverage(v: unknown): v is OwnershipCoverage {
+  return (
+    isObject(v) &&
+    isNullableNumber(v["lastPassAt"]) &&
+    typeof v["lastDurationMs"] === "number" &&
+    typeof v["rootsTotal"] === "number" &&
+    typeof v["rootsCovered"] === "number" &&
+    typeof v["rootsWithRemote"] === "number" &&
+    typeof v["filesCovered"] === "number" &&
+    typeof v["filesExcluded"] === "number" &&
+    typeof v["servicesBound"] === "number" &&
+    typeof v["ownersEmitted"] === "number" &&
+    typeof v["entitiesReaped"] === "number"
+  );
+}
+
+/**
+ * `target` and `parentDirectory` both use `optionalSubject` (defined above
+ * for `why`'s three subjects): `null` on the wire, or the key absent, both
+ * normalise to `null` — an ordinary state ("summary mode, or a path that
+ * resolved to no graph entity" per `OwnershipBrief`'s own doc comment), never
+ * a rejection. Only a PRESENT-but-malformed value is rejected.
+ */
+export function ownershipFindingsFrom(raw: Record<string, unknown>): OwnershipFindings | undefined {
+  const target = optionalSubject(raw["target"], isOwnershipTargetView);
+  const parentDirectory = optionalSubject(raw["parentDirectory"], isOwnershipTargetView);
+  if (target === undefined || parentDirectory === undefined) {
+    return undefined;
+  }
+  if (!isOwnershipCoverage(raw["coverage"])) {
+    return undefined;
+  }
+  return {
+    kind: "ownership",
+    target,
+    parentDirectory,
+    coverage: raw["coverage"],
+  };
+}
+
 /**
  * Narrow a raw `findings` payload against the lane that asked for it.
  *
@@ -583,6 +680,9 @@ export function laneFindingsFrom(lane: AgentLane, raw: unknown): LaneFindings | 
   }
   if (lane === "catchup") {
     return catchupFindingsFrom(raw);
+  }
+  if (lane === "ownership") {
+    return ownershipFindingsFrom(raw);
   }
   return undefined;
 }

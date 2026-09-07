@@ -24,6 +24,9 @@ import type {
   GlossaryMatchedVia,
   GlossarySourceRef,
   ImpactFinding,
+  OwnershipCoverage,
+  OwnershipOwner,
+  OwnershipTargetView,
   SynthesisDiscardReason,
   SynthesisProvenance,
   WhyChangeSubject,
@@ -47,6 +50,9 @@ export type {
   GlossaryMatchedVia,
   GlossarySourceRef,
   ImpactFinding,
+  OwnershipCoverage,
+  OwnershipOwner,
+  OwnershipTargetView,
   SynthesisDiscardReason,
   SynthesisProvenance,
   WhyChangeSubject,
@@ -214,6 +220,43 @@ export type CatchupFindings = {
 };
 
 /**
+ * The `ownership` lane's payload, as a client projection of `OwnershipBrief`
+ * (§4.1). This is the last of C8.3's four link-less lanes, and the one that
+ * carries no item id at all: `OwnershipOwner.externalId` is a PERSON id and
+ * `OwnershipTargetView.displayPath` is a PATH, so there is no URL anywhere on
+ * this brief to begin with — unlike `expert`/`impact`/`catchup`, which have
+ * ids this client simply has no resolver for.
+ *
+ * `query` is not projected, same reasoning as `ExpertFindings`: the panel
+ * already knows what was asked. The top-level `service: { id } | null` is
+ * also dropped — it is redundant with `target`/`parentDirectory`'s own `kind`
+ * (a `"service"` target already IS the service ownership answer), and no
+ * render spec calls for a bare id line the reader cannot act on.
+ *
+ * `target` and `parentDirectory` are kept as `OwnershipTargetView | null`
+ * VERBATIM, not flattened — see `CatchupFindings`'s comment for why every
+ * nested object in these projections is copied through unchanged rather than
+ * rebuilt field-by-field; that is exactly the flattening that broke
+ * `decisionsFindingsFrom`'s idempotence.
+ *
+ * `coverage` is kept whole too, even though the renderer reads only
+ * `lastPassAt` from it. Unlike `DecisionsFindings.truncatedSources` — where
+ * the guard pulls one field out of `stats` and leaves the rest unchecked —
+ * `isOwnershipCoverage` (findings-guards.ts) validates every one of
+ * `OwnershipCoverage`'s ten counters, because a `coverage` object missing one
+ * is a malformed brief, not a brief this client renders less of. Since the
+ * guard validates the whole shape, keeping the whole shape here does not
+ * claim a guarantee nothing checks — the same test `ImpactFindings.affected`
+ * `.affectedItemId` passes despite not being rendered either.
+ */
+export type OwnershipFindings = {
+  readonly kind: "ownership";
+  readonly target: OwnershipTargetView | null;
+  readonly parentDirectory: OwnershipTargetView | null;
+  readonly coverage: OwnershipCoverage;
+};
+
+/**
  * The per-lane structured payload. ONE ARM PER SLICE: `why` in C8.1,
  * `glossary` and `decisions` in C8.2, the four link-less lanes in C8.3.
  *
@@ -226,4 +269,5 @@ export type LaneFindings =
   | DecisionsFindings
   | ExpertFindings
   | ImpactFindings
-  | CatchupFindings;
+  | CatchupFindings
+  | OwnershipFindings;

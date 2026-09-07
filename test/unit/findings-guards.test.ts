@@ -5,6 +5,7 @@ import type {
   ExpertFindings,
   GlossaryFindings,
   ImpactFindings,
+  OwnershipFindings,
   SynthesisProvenance,
   WhyFindings,
 } from "../../src/shared/findings.ts";
@@ -17,6 +18,7 @@ import {
   glossaryFindingsFrom,
   impactFindingsFrom,
   laneFindingsFrom,
+  ownershipFindingsFrom,
   synthesisFrom,
 } from "../../src/shared/findings-guards.ts";
 
@@ -730,6 +732,154 @@ describe("CatchupFindings pins the fields we read", () => {
   });
 });
 
+const validOwnershipOwner = {
+  externalId: "person:1",
+  label: "Ada Lovelace",
+  share: 0.6,
+  resolved: true,
+};
+
+const validOwnershipTarget = {
+  kind: "source_file",
+  displayPath: "src/index.ts",
+  owners: [validOwnershipOwner],
+  ownerCount: 3,
+  ownersAboveFloor: 1,
+  truncated: false,
+};
+
+const validOwnershipCoverage = {
+  lastPassAt: 1_700_000_000_000,
+  lastDurationMs: 4200,
+  rootsTotal: 3,
+  rootsCovered: 3,
+  rootsWithRemote: 2,
+  filesCovered: 120,
+  filesExcluded: 4,
+  servicesBound: 2,
+  ownersEmitted: 9,
+  entitiesReaped: 1,
+};
+
+const validOwnership = {
+  kind: "ownership",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { path: "src/index.ts", service: null, itemUrl: null },
+  target: validOwnershipTarget,
+  parentDirectory: null,
+  service: null,
+  coverage: validOwnershipCoverage,
+};
+
+describe("ownershipFindingsFrom", () => {
+  test("projects a valid brief, dropping the base fields, query and service", () => {
+    expect(ownershipFindingsFrom(validOwnership)).toEqual({
+      kind: "ownership",
+      target: validOwnershipTarget,
+      parentDirectory: null,
+      coverage: validOwnershipCoverage,
+    });
+  });
+
+  test("accepts target: null - an ordinary state, not malformed input", () => {
+    expect(ownershipFindingsFrom({ ...validOwnership, target: null })).toEqual({
+      kind: "ownership",
+      target: null,
+      parentDirectory: null,
+      coverage: validOwnershipCoverage,
+    });
+  });
+
+  test("accepts and keeps parentDirectory when present", () => {
+    const parent = { ...validOwnershipTarget, kind: "directory", displayPath: "src" };
+    expect(ownershipFindingsFrom({ ...validOwnership, parentDirectory: parent })).toEqual({
+      kind: "ownership",
+      target: validOwnershipTarget,
+      parentDirectory: parent,
+      coverage: validOwnershipCoverage,
+    });
+  });
+
+  test("accepts truncated: null and preserves it as null, never coercing to false", () => {
+    const target = { ...validOwnershipTarget, truncated: null };
+    const result = ownershipFindingsFrom({ ...validOwnership, target });
+    expect(result?.target?.truncated).toBeNull();
+  });
+
+  test("accepts ownerCount/ownersAboveFloor: null - not recorded, not zero", () => {
+    const target = { ...validOwnershipTarget, ownerCount: null, ownersAboveFloor: null };
+    const result = ownershipFindingsFrom({ ...validOwnership, target });
+    expect(result?.target?.ownerCount).toBeNull();
+    expect(result?.target?.ownersAboveFloor).toBeNull();
+  });
+
+  test("accepts empty owners - an ordinary state, not malformed input", () => {
+    const target = { ...validOwnershipTarget, owners: [] };
+    expect(ownershipFindingsFrom({ ...validOwnership, target })).toEqual({
+      kind: "ownership",
+      target,
+      parentDirectory: null,
+      coverage: validOwnershipCoverage,
+    });
+  });
+
+  test("rejects an owner missing resolved", () => {
+    const owner = { ...validOwnershipOwner } as Record<string, unknown>;
+    delete owner["resolved"];
+    const target = { ...validOwnershipTarget, owners: [owner] };
+    expect(ownershipFindingsFrom({ ...validOwnership, target })).toBeUndefined();
+  });
+
+  test("rejects malformed owner elements rather than rendering a partial list", () => {
+    // The SDK-style shallow guard would admit these; ours must not (§4.3).
+    const target = { ...validOwnershipTarget, owners: [42, null] };
+    expect(ownershipFindingsFrom({ ...validOwnership, target })).toBeUndefined();
+  });
+
+  test("rejects an unknown target kind", () => {
+    const target = { ...validOwnershipTarget, kind: "repository" };
+    expect(ownershipFindingsFrom({ ...validOwnership, target })).toBeUndefined();
+  });
+
+  test("rejects a coverage object missing a counter", () => {
+    const coverage = { ...validOwnershipCoverage } as Record<string, unknown>;
+    delete coverage["rootsCovered"];
+    expect(ownershipFindingsFrom({ ...validOwnership, coverage })).toBeUndefined();
+  });
+
+  test("rejects a missing coverage key entirely", () => {
+    const without = { ...validOwnership } as Record<string, unknown>;
+    delete without["coverage"];
+    expect(ownershipFindingsFrom(without)).toBeUndefined();
+  });
+
+  test("accepts coverage.lastPassAt: null - no pass has run yet", () => {
+    const coverage = { ...validOwnershipCoverage, lastPassAt: null };
+    expect(ownershipFindingsFrom({ ...validOwnership, coverage })?.coverage.lastPassAt).toBeNull();
+  });
+
+  test("rejects a present-but-malformed target rather than treating it as absent", () => {
+    const target = { ...validOwnershipTarget } as Record<string, unknown>;
+    delete target["displayPath"];
+    expect(ownershipFindingsFrom({ ...validOwnership, target })).toBeUndefined();
+  });
+});
+
+describe("OwnershipFindings pins the fields we read", () => {
+  test("carries exactly the four projected keys", () => {
+    const value: OwnershipFindings = {
+      kind: "ownership",
+      target: null,
+      parentDirectory: null,
+      coverage: validOwnershipCoverage,
+    };
+    expect(Object.keys(value).sort()).toEqual(["coverage", "kind", "parentDirectory", "target"]);
+  });
+});
+
 describe("laneFindingsFrom is idempotent over its own projection", () => {
   // `sanitiseState` (agent-run-store.ts) re-runs `laneFindingsFrom` over the
   // STORED PROJECTION on every read — not the wire object. A guard that
@@ -753,6 +903,7 @@ describe("laneFindingsFrom is idempotent over its own projection", () => {
     ["expert", validExpert],
     ["impact", validImpact],
     ["catchup", validCatchup],
+    ["ownership", validOwnership],
   ];
 
   test.each(IDEMPOTENCE_CASES)("%s round-trips through its own projection", (lane, wire) => {

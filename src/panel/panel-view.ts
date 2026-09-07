@@ -26,6 +26,7 @@ import { renderDecisionsFindings } from "./findings/decisions-view.ts";
 import { renderExpertFindings } from "./findings/expert-view.ts";
 import { renderGlossaryFindings } from "./findings/glossary-view.ts";
 import { renderImpactFindings } from "./findings/impact-view.ts";
+import { renderOwnershipFindings } from "./findings/ownership-view.ts";
 import { renderGaps, renderProvenance } from "./findings/shared-view.ts";
 import { renderWhyFindings } from "./findings/why-view.ts";
 import { groupHits, humaniseType } from "./related-groups.ts";
@@ -915,6 +916,8 @@ function renderFindings(doc: Document, findings: LaneFindings, nowMs: number): H
       return renderImpactFindings(doc, findings, nowMs);
     case "catchup":
       return renderCatchupFindings(doc, findings, nowMs);
+    case "ownership":
+      return renderOwnershipFindings(doc, findings, nowMs);
   }
 }
 
