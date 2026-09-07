@@ -8,6 +8,8 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-07
+
 ### Changed
 
 - **The three source-file lanes now actually run.** *What breaks if this
@@ -592,7 +594,8 @@ silently or showing an empty result.
   extension storage; never logged, never placed in the page or popup/options
   DOM, and never returned to the UI. The pairing code is likewise never logged.
 
-[Unreleased]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.2.0...v0.5.0
 [0.2.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/nimbus-agent/nimbus-web-clipper/releases/tag/v0.1.0
