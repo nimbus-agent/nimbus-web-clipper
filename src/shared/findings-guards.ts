@@ -99,30 +99,36 @@ const NOT_ATTEMPTED_REASONS = [
   "reserved_extraction_failed",
 ] as const;
 
-export function synthesisFrom(raw: unknown): SynthesisProvenance | undefined {
-  if (!isObject(raw)) {
-    return undefined;
-  }
-  if (raw["attempted"] === false) {
-    return typeof raw["reason"] === "string" &&
-      (NOT_ATTEMPTED_REASONS as readonly string[]).includes(raw["reason"])
-      ? { attempted: false, reason: raw["reason"] as (typeof NOT_ATTEMPTED_REASONS)[number] }
-      : undefined;
-  }
-  if (raw["attempted"] !== true) {
-    return undefined;
-  }
-  if (raw["used"] === true) {
-    // `remote` is the local/remote bit and is REQUIRED on this arm. A brief that
-    // says a model wrote it but will not say where is not one we render a
-    // provenance claim from.
-    return typeof raw["model"] === "string" && typeof raw["remote"] === "boolean"
-      ? { attempted: true, used: true, model: raw["model"], remote: raw["remote"] }
-      : undefined;
-  }
-  if (raw["used"] !== false) {
-    return undefined;
-  }
+/**
+ * The `{ attempted: false }` arm — synthesis was never attempted, and `reason`
+ * says why not. One of `NOT_ATTEMPTED_REASONS`, or the whole object is
+ * rejected rather than accepted with a reason the renderer cannot label.
+ */
+function notAttemptedSynthesis(raw: Record<string, unknown>): SynthesisProvenance | undefined {
+  return typeof raw["reason"] === "string" &&
+    (NOT_ATTEMPTED_REASONS as readonly string[]).includes(raw["reason"])
+    ? { attempted: false, reason: raw["reason"] as (typeof NOT_ATTEMPTED_REASONS)[number] }
+    : undefined;
+}
+
+/**
+ * The `{ attempted: true, used: true }` arm. `remote` is the local/remote bit
+ * and is REQUIRED on this arm. A brief that says a model wrote it but will not
+ * say where is not one we render a provenance claim from.
+ */
+function usedSynthesis(raw: Record<string, unknown>): SynthesisProvenance | undefined {
+  return typeof raw["model"] === "string" && typeof raw["remote"] === "boolean"
+    ? { attempted: true, used: true, model: raw["model"], remote: raw["remote"] }
+    : undefined;
+}
+
+/**
+ * The `{ attempted: true, used: false }` arm — synthesis ran but was
+ * discarded. `violations` is accepted only as an array of strings; absent
+ * optional keys (`violations`, `detail`) stay ABSENT via the spread-omit
+ * idiom below rather than becoming explicit `undefined` values.
+ */
+function discardedSynthesis(raw: Record<string, unknown>): SynthesisProvenance | undefined {
   if (
     typeof raw["reason"] !== "string" ||
     !(DISCARD_REASONS as readonly string[]).includes(raw["reason"])
@@ -146,6 +152,25 @@ export function synthesisFrom(raw: unknown): SynthesisProvenance | undefined {
     ...(violations === undefined ? {} : { violations: violations as readonly string[] }),
     ...(raw["detail"] === undefined ? {} : { detail: raw["detail"] as string }),
   };
+}
+
+export function synthesisFrom(raw: unknown): SynthesisProvenance | undefined {
+  if (!isObject(raw)) {
+    return undefined;
+  }
+  if (raw["attempted"] === false) {
+    return notAttemptedSynthesis(raw);
+  }
+  if (raw["attempted"] !== true) {
+    return undefined;
+  }
+  if (raw["used"] === true) {
+    return usedSynthesis(raw);
+  }
+  if (raw["used"] !== false) {
+    return undefined;
+  }
+  return discardedSynthesis(raw);
 }
 
 const WHY_LANES = [
