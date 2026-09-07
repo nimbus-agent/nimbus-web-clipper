@@ -4,9 +4,11 @@
 //
 // This is a service-scoped lane: `LANE_RULES.decisions` is
 // `{input: "page", surfaces: {home: "service"}}`, so it answers about a whole
-// connector from that product's dashboard. Its evidence rows are one of the
-// only two REMAINING places in the browser's seven lanes where findings carry
-// a real URL — `why` (C8.1) already carries three of its own.
+// connector from that product's dashboard. Its evidence rows are one of only
+// two lanes across the browser's seven — the other is `glossary` — whose
+// findings carry a real result URL; `why` (C8.1) already carries three of its
+// own, and the remaining four (`expert`, `impact`, `catchup`, `ownership`)
+// carry only ids or nothing (`docs/architecture.md`'s §4.6 link inventory).
 import type { DecisionEvidence, DecisionsEntry, DecisionsFindings } from "../../shared/findings.ts";
 import { formatAge } from "../../shared/freshness.ts";
 import { findingLink, renderEmptyLine } from "./shared-view.ts";

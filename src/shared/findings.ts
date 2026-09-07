@@ -6,10 +6,14 @@
 // module is where those shapes are named. See
 // docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md.
 //
-// Types come from @nimbus-dev/sdk where it publishes them, and are mirrored here
-// where it does not (§4.2). Every import from the SDK is `import type`: a value
-// import would put SDK code into the shipped bundle, which the "bundled, no
-// runtime deps" rule forbids.
+// Types come from @nimbus-dev/sdk (§4.2). Every import from the SDK is
+// `import type`: a value import would put SDK code into the shipped bundle,
+// which the "bundled, no runtime deps" rule forbids — see `docs/architecture.md`
+// for how `scripts/check-build.mjs` enforces that at build time. The one
+// hand-declared type below, `DecisionsEntry`, is not a mirror standing in for
+// something the SDK does not publish (it publishes a wider `DecisionsEntry`
+// of its own) — it is a deliberate narrowing of that wider shape; see its own
+// comment for why.
 import type {
   CatchupItem,
   CatchupSection,

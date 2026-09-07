@@ -1619,6 +1619,33 @@ paragraph, silently, exactly as every lane rendered before Phase C8. That
 fallback is what let `LaneFindings` ship one arm at a time across C8.1–C8.3
 without ever widening what a malformed payload could break.
 
+### The SDK seam is type-only, and it is enforced, not just conventional
+
+`@nimbus-dev/sdk` (bumped to 2.0.0 across C8.1–C8.3, as it started publishing
+more of the seven lanes' own types) is a **type-only devDependency** — unlike
+`@mozilla/readability`, which the "bundled, no runtime deps" rule (above)
+inlines as real running code into `capture.js`, the SDK contributes no code to
+any bundle at all. Every import from it, across `src/`, is `import type` —
+never a value import: a value import would pull SDK code into the shipped
+bundle, and this extension ships with no `node_modules` for it to come from at
+runtime instead. The SDK exists to give this client (and `nimbus-vscode`, and
+eventually every other consumer) one shared, versioned vocabulary for the
+shapes the gateway's agents answer with — a set of types to narrow against,
+not code to execute.
+
+This is not a convention resting on discipline; `scripts/check-build.mjs`
+enforces it as a build gate. It does not grep the built JS for the package
+name — `esbuild.mjs` builds with `bundle: true` and `format: "iife"`, which
+inlines a dependency's code without necessarily preserving its specifier as a
+string anywhere in the minified output, so a text search could miss a value
+import once esbuild renamed or minified past it. Instead `check-build.mjs`
+reads esbuild's own metafile (`metafile: true` in `esbuild.mjs`, written to
+each target's `dist/<target>/meta.json`) and asserts none of its `inputs`
+resolved to a path under `node_modules/@nimbus-dev` — that inspects what
+esbuild actually pulled into the bundle, not the output text. A value import
+anywhere in `src/` fails `bun run check-build` for both targets, not just
+lints a warning.
+
 ### The `sanitiseState` idempotence invariant
 
 `sanitiseState` (`agent-run-store.ts`) is what keeps a corrupted or

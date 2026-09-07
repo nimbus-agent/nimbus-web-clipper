@@ -167,11 +167,14 @@ export interface AgentRunWhyFindingsWire {
 /**
  * Wire shape of the `glossary` lane's structured brief, exactly as the
  * gateway's own glossary brief type sends it (`glossary-types.ts`, Nimbus
- * repo — one of the three briefs `@nimbus-dev/sdk` deliberately does not
- * publish, same as the client's `GlossaryFindings` mirror in
- * `src/shared/findings.ts`). `gaps` nests inside `findings` here, same as
- * `AgentRunWhyFindingsWire` above — `gapsOfBrief` (findings-guards.ts) reads
- * it off the raw findings object for every agent, not just `why`.
+ * repo). `@nimbus-dev/sdk` 2.0.0 publishes this brief and its entry types
+ * (`GlossaryEntry`, `GlossarySourceRef`) — `src/shared/findings.ts` imports
+ * them rather than hand-declaring a mirror — but this fixture still
+ * hand-declares its own wire-shape interface here, because it drives the mock
+ * gateway's raw HTTP response body, not the client's already-parsed type.
+ * `gaps` nests inside `findings` here, same as `AgentRunWhyFindingsWire`
+ * above — `gapsOfBrief` (findings-guards.ts) reads it off the raw findings
+ * object for every agent, not just `why`.
  */
 export interface AgentRunGlossaryFindingsWire {
   readonly kind: "glossary";
@@ -210,9 +213,12 @@ export interface AgentRunGlossaryFindingsWire {
 /**
  * Wire shape of the `decisions` lane's structured brief, exactly as the
  * gateway's own decisions brief type sends it (`decisions-types.ts`, Nimbus
- * repo — one of the three briefs `@nimbus-dev/sdk` deliberately does not
- * publish, same as the client's `DecisionsFindings` mirror in
- * `src/shared/findings.ts`). `stats` NESTS `truncatedSources` here, exactly as
+ * repo). `@nimbus-dev/sdk` 2.0.0 publishes this brief and its evidence type
+ * (`DecisionEvidence`) — `src/shared/findings.ts` imports it rather than
+ * hand-declaring a mirror — but this fixture still hand-declares its own
+ * wire-shape interface here, same reasoning as `AgentRunGlossaryFindingsWire`
+ * above: it drives the mock gateway's raw HTTP response body, not the
+ * client's already-parsed type. `stats` NESTS `truncatedSources` here, exactly as
  * `decisionsFindingsFrom` (findings-guards.ts) expects on the wire — the
  * client's own projection flattens it onto the top level instead, which is
  * the distinction that guard's idempotence test exists to pin.
@@ -253,7 +259,7 @@ export interface AgentRunDecisionsFindingsWire {
 /**
  * Wire shape of the `catchup` lane's structured brief, exactly as the
  * gateway's own catchup brief type sends it (`@nimbus-dev/sdk` — one of the
- * three lanes C8.3 imports rather than mirrors). `involvement` and each
+ * four lanes C8.3 imports rather than mirrors). `involvement` and each
  * `sections[]` entry are nested exactly as `catchupFindingsFrom`
  * (findings-guards.ts) expects on the wire, and — unlike
  * `AgentRunDecisionsFindingsWire`'s `stats.truncatedSources` — the client's

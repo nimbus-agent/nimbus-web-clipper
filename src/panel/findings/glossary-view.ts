@@ -4,9 +4,11 @@
 // This lane has the widest reach of any in the product: its `LANE_RULES` entry
 // is `{input: "term"}` with no surface restriction, so it renders on ANY page,
 // including one the recogniser rejects outright. Every other lane needs a
-// recognised, resolved item. It is also one of the only two REMAINING lanes
-// whose findings carry a real URL (`topSources[].url`) — `why` (C8.1) already
-// carries three of its own.
+// recognised, resolved item. It is also one of only two lanes across the
+// browser's seven — the other is `decisions` — whose findings carry a real
+// result URL (`topSources[].url`); `why` (C8.1) already carries three of its
+// own, and the remaining four (`expert`, `impact`, `catchup`, `ownership`)
+// carry only ids or nothing (`docs/architecture.md`'s §4.6 link inventory).
 import type { GlossaryEntry, GlossaryFindings, GlossaryMatchedVia } from "../../shared/findings.ts";
 import { formatAge } from "../../shared/freshness.ts";
 import { findingLink, renderEmptyLine } from "./shared-view.ts";
