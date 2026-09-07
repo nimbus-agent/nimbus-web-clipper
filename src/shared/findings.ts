@@ -200,4 +200,4 @@ export type DecisionsFindings = {
  * A lane whose arm does not exist yet behaves exactly like a guard rejection —
  * no findings, prose body, and its gaps and provenance still render.
  */
-export type LaneFindings = WhyFindings | GlossaryFindings;
+export type LaneFindings = WhyFindings | GlossaryFindings | DecisionsFindings;

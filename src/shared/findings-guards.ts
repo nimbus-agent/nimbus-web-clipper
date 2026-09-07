@@ -412,5 +412,8 @@ export function laneFindingsFrom(lane: AgentLane, raw: unknown): LaneFindings | 
   if (lane === "glossary") {
     return glossaryFindingsFrom(raw);
   }
+  if (lane === "decisions") {
+    return decisionsFindingsFrom(raw);
+  }
   return undefined;
 }

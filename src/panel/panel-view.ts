@@ -21,6 +21,7 @@ import type {
   ResolveMatchKind,
   ScopeGap,
 } from "../shared/types.ts";
+import { renderDecisionsFindings } from "./findings/decisions-view.ts";
 import { renderGlossaryFindings } from "./findings/glossary-view.ts";
 import { renderGaps, renderProvenance } from "./findings/shared-view.ts";
 import { renderWhyFindings } from "./findings/why-view.ts";
@@ -903,6 +904,8 @@ function renderFindings(doc: Document, findings: LaneFindings, nowMs: number): H
       return renderWhyFindings(doc, findings, nowMs);
     case "glossary":
       return renderGlossaryFindings(doc, findings, nowMs);
+    case "decisions":
+      return renderDecisionsFindings(doc, findings, nowMs);
   }
 }
 
