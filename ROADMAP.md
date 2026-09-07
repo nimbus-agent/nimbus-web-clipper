@@ -1309,46 +1309,63 @@ first. This phase reads both, one lane at a time.*
 > (§4.1–§4.5 for the entry path and the `why` renderer; §6 for the slicing
 > below).
 
-### C8.2 `expert`, `impact` and `ownership` gain their renderers · 🟡 · M
-> **What** Three more `LaneFindings` arms: ranked reviewers with their evidence
-> and the `personId`/`score` the markdown flattening drops, impacted items
-> grouped by category with hop counts, and per-target owner tables that say
-> *unavailable* rather than *complete* when a count was never recorded.
+### C8.2 `glossary` and `decisions` gain their renderers · 🟢 · M — ✅ shipped
+> **What** Two more `LaneFindings` arms — the two whose findings carry a real
+> URL. *Define in Nimbus* now renders the term, its definition and where it
+> came from, a meta line (mentions, service spread, ranking score, last seen),
+> any synonyms and near-misses, and its `topSources` — linked when the gateway
+> supplied a URL, plain text when it did not — and on an unknown term offers
+> the near matches the index does hold as *"Did you mean"* rather than an empty
+> answer. *What got decided* now lists the decisions themselves: statement, an
+> `ADR` badge where one exists, when it was decided, the rationale and
+> alternatives where recorded, and evidence rows — pull requests, commits,
+> migrations, ADRs — linked wherever a URL exists, with a count of how many
+> sources in the window were indexed with a truncated body.
+> **Why it wows** `glossary` is the widest-reach lane in the product — it
+> renders on any page, including one the recogniser rejects outright — and
+> now answers with the same structure the item lanes got in C8.1. `decisions`
+> is the first home-dashboard lane to gain one.
+> **Touches** `src/panel/findings/glossary-view.ts`, `decisions-view.ts`
+> (new), plus the matching arms on `LaneFindings` and their guards in
+> `src/shared/findings.ts` / `findings-guards.ts`, and `LaneFindings`'s widening
+> from a single-arm alias to a real union in `panel-view.ts`'s dispatch.
+> **Approach** Same entry path as C8.1 — no gateway-side or message-boundary
+> change, one more arm per lane in `laneFindingsFrom`'s dispatch table.
+> `glossary.entries[].topSources[].url` and `decisions.entries[].evidence[].url`
+> are the only two URL-carrying fields across all seven lanes' findings, so both
+> route through the shared link builder C8.1 already factored out
+> (`findingLink`, `shared-view.ts`).
+> **Done when** Both lanes render their typed answer against a real gateway
+> response, their links pass through `safeHttpUrl` exactly as `why`'s do, and a
+> malformed or absent payload on either falls back exactly as C8.1's fallback
+> does. **All met.**
+> **No gateway change and no re-pairing** — same as C8.1, this is a client
+> parser and a renderer reading what the gateway already sends.
+> Full design:
+> [`docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md`](./docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md)
+> (§6 for the slicing).
+
+### C8.3 `expert`, `impact`, `ownership` and `catchup` gain their renderers · 🟡 · M
+> **What** The last four `LaneFindings` arms — every one of them link-less:
+> ranked reviewers with their evidence and the `personId`/`score` the markdown
+> flattening drops, impacted items grouped by category with hop counts,
+> per-target owner tables that say *unavailable* rather than *complete* when a
+> count was never recorded, and `catchup`'s sections by service — including
+> `involvement`, which upstream's own markdown renderer never prints at all.
 > **Why it wows** `expert` and `impact` are two of the three original C2
 > lanes — the ones every recognised page can already reach — gaining the
-> detail their markdown paragraph has always thrown away.
+> detail their markdown paragraph has always thrown away. Closes out the
+> seven-lane set.
 > **Touches** `src/panel/findings/expert-view.ts`, `impact-view.ts`,
-> `ownership-view.ts` (new), plus the matching arms on `LaneFindings` and
-> their guards in `src/shared/findings.ts` / `findings-guards.ts`.
-> **Approach** Same entry path as C8.1 — no gateway-side or message-boundary
-> change, one more arm per lane in the dispatch table `laneFindingsFrom`
-> already has. `impact` and `expert`'s evidence carry only ids
-> (`affectedItemId`, an evidence row's `itemId`), not URLs, so neither gets a
-> link this slice (see the design's §4.6 on the reverse resolver that would
-> change that).
-> **Done when** All three lanes render their typed answer against a real
-> gateway response, and a malformed or absent payload on any of the three
-> falls back exactly as C8.1's fallback does.
-
-### C8.3 `catchup`, `decisions` and `glossary` gain their renderers · 🟡 · M
-> **What** The last three `LaneFindings` arms: `catchup`'s sections by service
-> — including `involvement`, which upstream's own markdown renderer never
-> prints at all — `decisions`' rationale/alternatives/evidence with an honesty
-> caveat on truncated sources, and `glossary`'s three modes (`term` / `miss` /
-> `list`), sorted by the same `score` it is ranked on rather than the
-> `docFreq` alone that today's paragraph shows.
-> **Why it wows** Closes out the seven-lane set. `catchup` and `decisions` are
-> home-dashboard lanes with the densest answers of the seven — exactly where a
-> flattened paragraph loses the most.
-> **Touches** `src/panel/findings/catchup-view.ts`, `decisions-view.ts`,
-> `glossary-view.ts` (new), plus their `LaneFindings` arms and guards.
-> **Approach** Identical shape to C8.2. `decisions.entries[].evidence[]` and
-> `glossary.entries[].topSources[]` do carry URLs, so those two get the
-> shared link builder C8.1 already factored out; `catchup` does not.
-> **Done when** All three lanes render their typed answer against a real
-> gateway response, `decisions` and `glossary` links pass through
-> `safeHttpUrl` exactly as `why`'s do, and a malformed or absent payload on
-> any of the three falls back exactly as C8.1's fallback does.
+> `ownership-view.ts`, `catchup-view.ts` (new), plus their `LaneFindings` arms
+> and guards.
+> **Approach** Identical shape to C8.2. All four lanes' evidence carries only
+> ids (`affectedItemId`, an evidence row's `itemId`, `catchup`'s per-item
+> references), never a URL, so none of the four gets a link this slice — see
+> the design's §4.6 on the reverse resolver that would change that.
+> **Done when** All four lanes render their typed answer against a real
+> gateway response, and a malformed or absent payload on any of the four falls
+> back exactly as C8.1's fallback does.
 
 ---
 

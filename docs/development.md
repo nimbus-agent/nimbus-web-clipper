@@ -732,6 +732,21 @@ more than one indexed item (the panel shows a chooser when it does).
    has stopped describing.
 10. **(human — Firefox; the harness loads the Chrome build).** Repeat 1, 2, 6
     and 8 in Firefox.
+11. **The `glossary` lane's structured findings (C8.2):** against a real
+    gateway (the mock gateway's fixed fixture is shaped for the `why` lane, so
+    it cannot exercise this one), repeat step 1 for a term with more than one
+    `topSources` row — one item with a URL, one without (an indexed item that
+    itself carries no URL, such as a local note, supplies the second). → the
+    lane shows the term, its definition, a meta line (mentions, service
+    spread, ranking score, last seen), any synonyms and near-misses, and its
+    sources: the linked one is a clickable `<a>`, the URL-less one is plain
+    text. Repeat step 4's unrecognised-page case with the same term — the
+    structured render is identical there too. **This is the property worth
+    checking: the glossary lane renders on any page, including one Nimbus
+    rejects outright, and no other lane in the product has it.** On a term
+    with no glossary entry, the lane offers whatever near matches the index
+    does hold as *"Did you mean"*; with neither an entry nor a suggestion, it
+    says nothing is defined for that term yet.
 
 ## Manual verification — Related lane (richer rows)
 

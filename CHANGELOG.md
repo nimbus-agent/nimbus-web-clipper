@@ -8,6 +8,20 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Added
+
+- **Two more lanes answer with structure instead of a paragraph.** *Define in
+  Nimbus* now shows the term, where its definition came from, how widely it is
+  used, and the indexed items it was drawn from — each one a link you can
+  follow when the gateway supplied a URL. On an unknown term it offers the near
+  matches your index does hold, rather than an empty answer. *What got decided*
+  now lists the decisions themselves, each with its rationale, the alternatives
+  that were considered, and the pull requests, commits and ADRs it was extracted
+  from; where a decision came from a source whose body was indexed truncated, it
+  says so. As in the first slice, a gateway that sends nothing new is unaffected
+  and no re-pairing is needed — this is the client reading more of what it was
+  already sent. The four remaining lanes still render their paragraph.
+
 ## [0.6.0] - 2026-09-07
 
 ### Changed
