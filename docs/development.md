@@ -440,7 +440,7 @@ building so the context menu is re-registered.
 **Steps 1–4 and 7 run on every PR** (`test/e2e/service-lanes.e2e.ts`), so this
 pass is no longer outstanding for them — the summary form folded into "Manual
 verification — Setup that works" below (item 8) is now redundant with the
-suite for the same four steps; it stays as a quick human sanity check, not as
+suite for those same five steps; it stays as a quick human sanity check, not as
 the thing that proves the slice works. Steps 5 and 6 still need a human pass —
 see their own notes below.
 
