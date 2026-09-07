@@ -20,7 +20,25 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   from, plus a count of how many sources in the window were indexed with a
   truncated body. As in the first slice, a gateway that sends nothing new is unaffected
   and no re-pairing is needed — this is the client reading more of what it was
-  already sent. The four remaining lanes still render their paragraph.
+  already sent.
+- **The last four lanes gain their structure too, closing out the seven-lane
+  set.** *Who should review it* now ranks reviewers with the evidence behind
+  each one, rather than naming a single person in prose. *What breaks if it
+  lands* groups the impacted items by category — service, pipeline, dashboard,
+  on-call rotation, downstream repo — each with the number of hops from the
+  change and the path summary that explains why it is reachable. *What
+  happened while I was away* lists the window's items by service, headed by a
+  line saying what filtered that window down to you — the services you own,
+  the repos you are active in, any incidents on your services, and your
+  collaborator count — a line the paragraph never printed at all. *Who owns
+  what* shows an owner table per target and, when a count was never recorded,
+  says so plainly rather than showing it as zero or leaving it blank. None of
+  the four renders a single link, unlike the three earlier lanes: every id on
+  these four briefs — a reviewer, an impacted item, a window entry, an owner —
+  names something the gateway gives this client no way to turn into a URL, so
+  every title on all four lanes shows as plain text. As with the earlier
+  slices, a gateway that sends nothing new is unaffected and no re-pairing is
+  needed.
 
 ## [0.6.0] - 2026-09-07
 

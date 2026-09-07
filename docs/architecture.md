@@ -967,29 +967,27 @@ exactly the shape each agent's own scope expects, no more.
   addition here.
   **`brief` is one of two forms of the answer on the same response, and it is
   the lossy one** (Phase C8): the gateway also sends `findings`, the typed
-  object `brief` was flattened from, and a run's `synthesis` alongside both.
-  `findings` narrows into `LaneState.done` as a typed `LaneFindings` — one arm
-  per agent, added lane by lane starting with `why` in C8.1 — and is rendered
-  by a per-lane module under `src/panel/findings/`, never by `panel-view.ts`
-  parsing `brief` itself. **Three of the seven lanes render it today** — `why`
-  (C8.1), and `glossary` and `decisions` (C8.2), the only two **remaining**
-  lanes whose findings carry a real URL — `why`'s own findings, changeSubject
-  and itemSubject already carry three (§4.6 of the design doc). The other
-  four (`expert`, `impact`, `ownership`,
-  `catchup`) have no arm yet and fall back to the `brief` paragraph by design,
-  not by omission — see the fallback described two sentences down, and C8.3 in
-  `ROADMAP.md` for the arm each is waiting on. The `textContent` rule above is
-  unchanged; it now applies **per field** rather than to one blob — a
+  object `brief` was flattened from, and a run's `synthesis` alongside both —
+  both forms ride the same response, always, whether or not this client has a
+  renderer for the lane that answered. `findings` narrows into `LaneState.done`
+  as a typed `LaneFindings` — one arm per agent — and is rendered by a per-lane
+  module under `src/panel/findings/`, never by `panel-view.ts` parsing `brief`
+  itself. **All seven lanes render it as of C8.3**: `why` (C8.1), `glossary`
+  and `decisions` (C8.2), then `expert`, `impact`, `ownership` and `catchup`
+  (C8.3) — see "The typed lane answer: projection, guard, renderer" below for
+  how an arm is structured, and "What can be linked, and what cannot" for which
+  of the seven carry a URL, a resolvable id, or neither. The `textContent` rule
+  above is unchanged; it now applies **per field** rather than to one blob — a
   `findings` string (`why`'s `title` and `detail`, `glossary`'s `definition`,
-  `decisions`' `statement` and `rationale` today, and any string field a later
-  `LaneFindings` arm adds) is exactly as attacker-adjacent as the paragraph it
-  used to be flattened into, and a URL inside `findings` goes through
-  `safeHttpUrl` before it is ever allowed to become an `href`, rendering as
-  plain text on rejection rather than being dropped. A lane whose arm this
-  build does not have yet, or whose `findings` payload fails its guard,
-  renders exactly the `brief` paragraph described above — the fallback this
-  bullet documents is also the mechanism that keeps a partially-shipped
-  `LaneFindings` union safe to ship one arm at a time.
+  `decisions`' `statement` and `rationale`, and every string field the other
+  four arms add) is exactly as attacker-adjacent as the paragraph it used to be
+  flattened into, and a URL inside `findings` goes through `safeHttpUrl` before
+  it is ever allowed to become an `href`, rendering as plain text on rejection
+  rather than being dropped. A lane whose `findings` payload fails its guard —
+  or, before C8.3, one whose arm this build did not have yet — renders exactly
+  the `brief` paragraph described above: the fallback is also the mechanism
+  that let `LaneFindings` ship one arm at a time across C8.1–C8.3 without ever
+  widening what a malformed payload could break.
 - **No `busy` `AgentError` member.** A 429 from the invoke route never
   reaches the panel as a failure. `invokeAgent` (`gateway-client.ts`) reports
   it as `{ ok: false, reason: "busy", retryAfterMs }`; `handlers.ts`'s
@@ -1558,6 +1556,163 @@ it guards against:**
   this connector" — rendered identically to `healthy` — rather than something that
   reads as broken. This is also what makes a pre-gate gateway invisible: nothing
   about its panel changes.
+
+### The typed lane answer: projection, guard, renderer (Phase C8)
+
+`GET /v1/agents/runs/{id}` has always sent two forms of an agent's answer on
+the same response, and a run's `synthesis` alongside both: `brief`, the
+flattened markdown paragraph `panel-view.ts` has rendered since C2, and
+`findings`, the typed object that paragraph was flattened from. Both arrive
+together regardless of whether this client can do anything with `findings` —
+there is no separate opt-in and no version negotiation, so an older build of
+this client and a newer one read the identical wire response and simply keep
+different amounts of it. C8.1–C8.3 is the client learning to read the second
+form, one lane's arm at a time; see the bullet on `brief` above ("The agent
+lanes") for how the two forms sit on `LaneState.done`.
+
+Three layers turn that raw `findings: unknown` into a rendered fragment, and
+each is deliberately narrower than the one before it:
+
+1. **Projection** (`src/shared/findings.ts`) — one `<Lane>Findings` type per
+   arm of the `LaneFindings` union, plus one `<lane>FindingsFrom(raw)` function
+   per arm in `src/shared/findings-guards.ts`. A projection is not the wire
+   type re-exported: it keeps only what this client persists and renders for
+   that lane (dropping a request echo like `query`, which every lane's own
+   answer already implies), and it copies a nested wire object through
+   **verbatim** rather than rebuilding it field-by-field — see the next
+   section for why that second rule exists.
+2. **Guard** (`src/shared/findings-guards.ts`) — the SDK ships its own guards
+   (`isWhyBrief` and friends), and they are dispatch-level only: `kind`,
+   `agentVersion`, that `gaps` is an array, two numbers, and one bare
+   `Array.isArray(b.findings)` — no element is ever validated, so `isWhyBrief`
+   asserts `WhyBrief` over `{ findings: [42, null] }`. Rendering from that
+   would be this codebase's most-repeated bug, "type narrow, runtime wide": a
+   guard that licenses the renderer to trust fields nobody checked. So this
+   client writes its own guard per lane, at element depth. **The rule a guard
+   follows is not "validate what the renderer reads" — it is validate exactly
+   what its projection declares**, to the depth the projection carries it, and
+   no further: `isImpactFinding` validates `affectedItemId`, `isOwnershipOwner`
+   validates `externalId`, and `isOwnershipCoverage` validates all ten of
+   `OwnershipCoverage`'s counters, and no renderer touches any of the three —
+   they are validated because the projection kept them, and a projection
+   asserting a field no guard checked is exactly the bug this layering exists
+   to rule out. The other half of that rule is what keeps the first half from
+   over-reaching: an over-strict guard rejects briefs this client could have
+   rendered, so a projection has no business declaring a field the lane has no
+   use for in the first place. The two halves fit together — the guard is only
+   ever as strict as the projection makes it, and the projection is kept
+   exactly as wide as the lane needs, no wider.
+3. **Renderer** (`src/panel/findings/<lane>-view.ts`) — a pure module taking a
+   typed `<Lane>Findings`, a `Document` and `nowMs`, returning a fragment.
+   `renderFindings` (`panel-view.ts`) is the one place all seven meet: a
+   `switch` on `findings.kind` with a `return` in every arm and **no
+   `default`** — exhaustiveness is enforced by the declared return type, so
+   adding an arm to `LaneFindings` without a case here is a compile error, not
+   a runtime fallthrough. It is deliberately not a `satisfies never` backstop
+   either: that pattern adds a line no test can ever execute (the branch is
+   unreachable by construction), and this repo's Sonar gate counts permanently
+   uncovered lines — see that switch's own comment in `panel-view.ts`.
+
+A payload that fails its guard, or belongs to a lane whose arm does not exist
+yet, is indistinguishable to `renderLaneBody`: both render the `brief`
+paragraph, silently, exactly as every lane rendered before Phase C8. That
+fallback is what let `LaneFindings` ship one arm at a time across C8.1–C8.3
+without ever widening what a malformed payload could break.
+
+### The `sanitiseState` idempotence invariant
+
+`sanitiseState` (`agent-run-store.ts`) is what keeps a corrupted or
+older-build `findings` payload in storage from evicting the whole run (see
+"Runs outlive the panel" above for why `readGuarded`'s evict-on-guard-failure
+rule would otherwise throw away a perfectly good `brief`): it re-parses a
+stored run's `gaps`, `synthesis` and `findings` through the same
+`<lane>FindingsFrom` guards described above and keeps only what survives.
+
+**The critical fact about `sanitiseState` is *when* it runs: on every read,
+not once on write.** `getRun` calls it through `toStoredRun` on every call,
+and `getRun` is not only the first-expand path — it is also what
+`handleAgentState` reads on the panel's ~1s open-panel repaint poll (see "The
+agent lanes" above). So a guard is not run once against the gateway's wire
+object and then trusted forever; it is run again, against **its own previous
+output**, on every single repaint of an open panel showing a `done` lane.
+
+That makes idempotence a correctness requirement, not a nicety:
+`laneFindingsFrom(lane, laneFindingsFrom(lane, wire))` must equal
+`laneFindingsFrom(lane, wire)` for every arm. A guard that can parse the wire
+shape but not the shape it itself projects will accept the finding on the
+first read (when `state.findings` is still the raw wire object, fresh off
+`terminalLaneState`) and reject it on the very next read (when
+`state.findings` is now the stored projection) — silently falling back to the
+`brief` paragraph with nothing logged and nothing failed. **The lane becomes
+unreachable in production the moment the panel repaints, while every unit
+test that only ever fed the guard wire-shaped input keeps passing.**
+
+This is not hypothetical: C8.2 shipped exactly this bug. `decisions`' wire
+object nests its truncated-source count as `stats.truncatedSources`, but the
+`DecisionsFindings` projection flattens it onto a sibling field,
+`truncatedSources`. The guard was written to read the wire's nested shape —
+correct on the first parse — but the projection it returned no longer had
+that shape, so parsing its own output back through the same guard failed.
+`why` and `glossary` happened to survive C8.2 only because their projections
+are already flat; nothing about the layering *guaranteed* that, which is why
+C8.3 added an explicit idempotence test per new arm rather than trusting the
+pattern to hold by inspection.
+
+The fix, and the rule every arm's guard now follows: **when a projection
+renames or nests a wire field differently than the wire sends it, the guard
+accepts both the wire shape and the flat projection shape on read.** The more
+durable version of the same fix, used by every arm added since — `expert`,
+`impact`, `ownership`, `catchup` in C8.3 — is simpler still: copy a nested
+wire object through the projection **verbatim**, never rebuilt field-by-field,
+so there is no renaming or flattening step left for a guard to disagree with
+itself about. `CatchupFindings.involvement` and `OwnershipFindings.target` /
+`.parentDirectory` are kept as their SDK-shaped objects unchanged for exactly
+this reason.
+
+### What can be linked, and what cannot (§4.6)
+
+Exhaustive inventory of every URL and every id across the seven lanes'
+findings, current as of C8.3:
+
+| carries a URL | carries a resolvable item id | carries neither |
+| --- | --- | --- |
+| `why.findings[].url`, `why.changeSubject.url`, `why.itemSubject.url` | `catchup.sections[].items[].itemId` | `impact` |
+| `decisions.entries[].evidence[].url` | `expert.ranked[].evidence[].itemId` | `ownership` |
+| `glossary.entries[].topSources[].url` | | |
+
+Three lanes (`why`, `decisions`, `glossary`) carry a real URL and render a
+clickable link, through the shared `findingLink` builder and `safeHttpUrl`,
+exactly like every other link this panel renders. Two more (`catchup`,
+`expert`) carry an id shaped like it could become a link with a reverse
+resolver this client does not have — `GET /v1/items/resolve` maps a URL to an
+item, not an item id back to a URL, so there is nothing to feed either id
+into today. The remaining two (`impact`, `ownership`) carry no id or URL that
+names a *result* at all; their only URLs are the queries they echo back.
+
+**`impact` is the trap in that table, and it is worth stating plainly: the
+field name lies, in a published SDK type.** `ImpactFinding.affectedItemId`
+reads like an `item.id` — the kind of id `GET /v1/items/resolve-file` or a
+future reverse resolver could turn into a link — but it is not one. It is a
+`graph_entity.id`: every one of `impact`'s five sub-lanes selects `e.id FROM
+graph_entity` on the gateway side, and `startEntityId` is the same kind of id
+(or a synthetic `item:${id}` string on the topic arm). Feeding either into an
+item resolver would not error — it would return empty for every row, because
+`graph_entity.id` and `item.id` are two different id spaces that happen to
+both be strings, and a resolver built for one accepts the other's shape
+without complaint. `impact`'s renderer shows `affectedTitle` as plain text for
+exactly this reason: not because no id is present, but because the id present
+is the wrong kind, and treating it as the right kind would look correct in
+review and fail silently in production. `ownership` carries no item id
+either, by construction rather than by trap: `OwnershipOwner.externalId` is a
+*person* id and `OwnershipTargetView.displayPath` is a path, so there was
+never a candidate field to confuse for one.
+
+None of the four lanes C8.3 added promises a link it cannot deliver: every
+title on `expert`, `impact`, `ownership` and `catchup` renders as text, and
+nothing in their copy implies a link is one gateway release away. Adding a
+reverse resolver later — which would benefit at most `expert` and `catchup`,
+the two lanes that hold a genuine (if currently unresolvable) item id — is a
+link wrap in two renderer files, not a redesign of any projection or guard.
 
 ## Research briefs
 

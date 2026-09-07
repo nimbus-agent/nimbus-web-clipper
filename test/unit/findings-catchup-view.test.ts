@@ -100,12 +100,12 @@ describe("renderCatchupFindings", () => {
     expect(note?.textContent).toContain("2");
   });
 
-  test("never mentions incidentServices - the render spec does not ask for it", () => {
+  test("renders an involvement summary line when incidentServices is non-empty", () => {
     const el = renderCatchupFindings(
       document,
       findings({
         involvement: {
-          ownedServices: ["billing-service"],
+          ownedServices: [],
           activeRepos: [],
           incidentServices: ["checkout-service"],
           collaboratorPersonIds: [],
@@ -113,7 +113,9 @@ describe("renderCatchupFindings", () => {
       }),
       NOW,
     );
-    expect(el.textContent).not.toContain("checkout-service");
+    const note = el.querySelector(".nimbus-findings__provenance");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("checkout-service");
   });
 
   test("renders one group per section, headed by serviceId", () => {

@@ -9,9 +9,19 @@
 // Rendering from that is the "type narrow, runtime wide" bug this codebase keeps
 // hitting: the guard licenses the renderer to trust fields nobody checked.
 //
-// So each guard validates exactly the fields the renderer reads, to the depth it
-// reads them - and no further. A field we do not render is not a field we gate
-// on, because an over-strict guard rejects briefs we could have rendered.
+// So each guard validates exactly what its projection declares - every field
+// the corresponding `<Lane>Findings` type carries, to the depth it carries it -
+// and no further. That is wider than what the renderer reads: `isImpactFinding`
+// validates `affectedItemId`, `isOwnershipOwner` validates `externalId`, and
+// `isOwnershipCoverage` validates all ten of `OwnershipCoverage`'s counters,
+// none of which any renderer touches, because the projection kept the field and
+// a projection asserting a field no guard checked is this codebase's
+// most-repeated bug ("type narrow, runtime wide"). The other half of the old
+// rule still holds, though: an over-strict guard rejects briefs we could have
+// rendered, so a projection has no business declaring a field the lane has no
+// use for in the first place. The two halves fit together - the guard is only
+// ever as strict as the projection makes it, and the projection is kept
+// exactly as wide as the lane needs, no wider.
 import type {
   CatchupFindings,
   CatchupItem,

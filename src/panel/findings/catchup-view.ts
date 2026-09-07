@@ -22,17 +22,20 @@ import { renderEmptyLine } from "./shared-view.ts";
  * ordinary state (nothing links this reader to the window yet), not an error,
  * so it renders nothing rather than an empty caveat.
  *
- * `incidentServices` is deliberately not part of this line: the render spec
- * calls for owned services, active repos and a collaborator count only.
+ * All four `involvement` arrays are surfaced here, `incidentServices`
+ * included: this line exists to answer "what filtered this window down to
+ * me", and `incidentServices` is one of the four filters that did — dropping
+ * it would make the line answer the question incompletely.
  */
 function renderInvolvement(
   doc: Document,
   involvement: CatchupFindings["involvement"],
 ): HTMLElement | null {
-  const { ownedServices, activeRepos, collaboratorPersonIds } = involvement;
+  const { ownedServices, activeRepos, incidentServices, collaboratorPersonIds } = involvement;
   if (
     ownedServices.length === 0 &&
     activeRepos.length === 0 &&
+    incidentServices.length === 0 &&
     collaboratorPersonIds.length === 0
   ) {
     return null;
@@ -43,6 +46,9 @@ function renderInvolvement(
   }
   if (activeRepos.length > 0) {
     parts.push(`active in ${activeRepos.join(", ")}`);
+  }
+  if (incidentServices.length > 0) {
+    parts.push(`incidents in ${incidentServices.join(", ")}`);
   }
   if (collaboratorPersonIds.length > 0) {
     const n = collaboratorPersonIds.length;

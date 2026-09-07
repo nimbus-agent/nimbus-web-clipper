@@ -250,6 +250,48 @@ export interface AgentRunDecisionsFindingsWire {
   };
 }
 
+/**
+ * Wire shape of the `catchup` lane's structured brief, exactly as the
+ * gateway's own catchup brief type sends it (`@nimbus-dev/sdk` — one of the
+ * three lanes C8.3 imports rather than mirrors). `involvement` and each
+ * `sections[]` entry are nested exactly as `catchupFindingsFrom`
+ * (findings-guards.ts) expects on the wire, and — unlike
+ * `AgentRunDecisionsFindingsWire`'s `stats.truncatedSources` — the client's
+ * own `CatchupFindings` projection keeps both nested objects VERBATIM rather
+ * than flattening either, which is exactly what keeps this shape and the
+ * projection's shape identical and the guard idempotent over its own output
+ * (see `docs/architecture.md`'s "The `sanitiseState` idempotence invariant").
+ */
+export interface AgentRunCatchupFindingsWire {
+  readonly kind: "catchup";
+  readonly agentVersion: number;
+  readonly generatedAt: number;
+  readonly latencyMs: number;
+  readonly gaps: readonly {
+    readonly category: string;
+    readonly detail: string;
+    readonly remediation?: string;
+  }[];
+  readonly selfPersonId: string | null;
+  readonly involvement: {
+    readonly ownedServices: readonly string[];
+    readonly activeRepos: readonly string[];
+    readonly incidentServices: readonly string[];
+    readonly collaboratorPersonIds: readonly string[];
+  };
+  readonly sections: readonly {
+    readonly serviceId: string;
+    readonly totalItemsInWindow: number;
+    readonly items: readonly {
+      readonly itemId: string;
+      readonly title: string;
+      readonly modifiedAt: number;
+      readonly relevanceScore: number;
+      readonly relevanceReasons: readonly string[];
+    }[];
+  }[];
+}
+
 /** Wire shape of `synthesis` — a sibling field of `findings`, never nested
  *  inside it (see `terminalLaneState`, service-worker.ts). */
 export interface AgentRunSynthesisWire {
@@ -279,7 +321,8 @@ export interface AgentRunDoneResponse {
   readonly findings?:
     | AgentRunWhyFindingsWire
     | AgentRunGlossaryFindingsWire
-    | AgentRunDecisionsFindingsWire;
+    | AgentRunDecisionsFindingsWire
+    | AgentRunCatchupFindingsWire;
   readonly synthesis?: AgentRunSynthesisWire;
 }
 
@@ -478,6 +521,72 @@ export const AGENT_RUN_DONE_DECISIONS: AgentRunDoneResponse = {
       },
     ],
     stats: { truncatedSources: 2 },
+  },
+  synthesis: {
+    attempted: true,
+    used: true,
+    model: "local-fixture",
+    remote: false,
+  },
+};
+
+/**
+ * `GET /v1/agents/runs/{id}` for a `catchup` invoke — a fourth done response,
+ * same reasoning as {@link AGENT_RUN_DONE_DECISIONS}: the mock answers every
+ * agent with {@link AGENT_RUN_DONE} by default, so a test that wants the
+ * `catchup` lane's STRUCTURED render opts in via `Scenario.agentRun`. Shaped to
+ * exercise the renderer's real branches: `involvement` carries all FOUR arrays
+ * non-empty — including `incidentServices`, which the render spec originally
+ * omitted and this fixture now pins as part of the involvement line — one
+ * section whose `items.length` equals `totalItemsInWindow` (no truncation
+ * count) and a second that is truncated (renders the "N of M" count), so both
+ * of `renderCatchupFindings`'s branches for that line are covered by one
+ * fixture.
+ */
+export const AGENT_RUN_DONE_CATCHUP: AgentRunDoneResponse = {
+  status: "done",
+  brief: "Three items moved across two services while you were away.",
+  findings: {
+    kind: "catchup",
+    agentVersion: 1,
+    generatedAt: 1_700_000_000_000,
+    latencyMs: 310,
+    gaps: [],
+    selfPersonId: "person:asaf",
+    involvement: {
+      ownedServices: ["billing-service"],
+      activeRepos: ["acme/web"],
+      incidentServices: ["checkout-service"],
+      collaboratorPersonIds: ["person:2", "person:3"],
+    },
+    sections: [
+      {
+        serviceId: "billing-service",
+        totalItemsInWindow: 1,
+        items: [
+          {
+            itemId: "github:acme/web#482",
+            title: "Cache the readability pass",
+            modifiedAt: 1_700_000_000_000 - ONE_DAY_MS,
+            relevanceScore: 0.9,
+            relevanceReasons: ["you own billing-service"],
+          },
+        ],
+      },
+      {
+        serviceId: "checkout-service",
+        totalItemsInWindow: 3,
+        items: [
+          {
+            itemId: "jira:PLAT-91",
+            title: "Clipper is slow on large articles",
+            modifiedAt: 1_700_000_000_000 - 2 * ONE_DAY_MS,
+            relevanceScore: 0.6,
+            relevanceReasons: ["active in checkout-service"],
+          },
+        ],
+      },
+    ],
   },
   synthesis: {
     attempted: true,

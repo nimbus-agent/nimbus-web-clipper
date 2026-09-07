@@ -437,10 +437,10 @@ building so the context menu is re-registered.
 
 ## Manual verification — Service lanes (C2.3)
 
-**Steps 1–4 and 7 run on every PR** (`test/e2e/service-lanes.e2e.ts`), so this
+**Steps 1–4, 7 and 8 run on every PR** (`test/e2e/service-lanes.e2e.ts`), so this
 pass is no longer outstanding for them — the summary form folded into "Manual
 verification — Setup that works" below (item 8) is now redundant with the
-suite for those same five steps; it stays as a quick human sanity check, not as
+suite for those same six steps; it stays as a quick human sanity check, not as
 the thing that proves the slice works. Steps 5 and 6 still need a human pass —
 see their own notes below.
 
@@ -486,6 +486,13 @@ mock's fixed brief cannot produce.
    recorded, an `ADR` badge where one exists, and its evidence rows linked
    wherever a URL exists — plus a count of how many sources in the window were
    indexed with a truncated body, never the flattened paragraph.
+8. <!-- e2e:service-lanes-8 --> **The `catchup` lane's structured findings
+   (C8.3):** on the dashboard, expand *What happened while I was away*. It
+   renders one group per service, each item's title, age and relevance
+   reasons, and — when the gateway's answer says anything filtered the window
+   to you — an involvement line naming all four of `ownedServices`,
+   `activeRepos`, `incidentServices` and `collaboratorPersonIds`, never the
+   flattened paragraph, and no result links anywhere in the lane.
 
 ## Manual verification — Item lanes and the version floor (C6)
 
