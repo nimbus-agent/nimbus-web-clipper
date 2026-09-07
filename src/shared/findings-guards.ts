@@ -165,7 +165,7 @@ function discardedSynthesis(raw: Record<string, unknown>): SynthesisProvenance |
     attempted: true,
     used: false,
     reason: raw["reason"] as SynthesisDiscardReason,
-    ...(violations === undefined ? {} : { violations: violations as readonly string[] }),
+    ...(violations === undefined ? {} : { violations: violations as string[] }),
     ...(raw["detail"] === undefined ? {} : { detail: raw["detail"] as string }),
   };
 }

@@ -13,10 +13,19 @@
 import type {
   CatchupItem,
   CatchupSection,
+  DecisionEvidence,
   Evidence,
+  EvidenceKind,
   ExpertFinding,
+  ExtractionSource,
   GapNote,
+  GlossaryDefinitionSource,
+  GlossaryEntry,
+  GlossaryMatchedVia,
+  GlossarySourceRef,
   ImpactFinding,
+  SynthesisDiscardReason,
+  SynthesisProvenance,
   WhyChangeSubject,
   WhyFinding,
   WhyItemSubject,
@@ -27,55 +36,25 @@ import type {
 export type {
   CatchupItem,
   CatchupSection,
+  DecisionEvidence,
   Evidence,
+  EvidenceKind,
   ExpertFinding,
+  ExtractionSource,
   GapNote,
+  GlossaryDefinitionSource,
+  GlossaryEntry,
+  GlossaryMatchedVia,
+  GlossarySourceRef,
   ImpactFinding,
+  SynthesisDiscardReason,
+  SynthesisProvenance,
   WhyChangeSubject,
   WhyFinding,
   WhyItemSubject,
   WhyLane,
   WhySubject,
 };
-
-/**
- * Why a synthesized rewrite was, or was not, used.
- *
- * MIRRORED, not imported: this is declared in the gateway's
- * `agents/_lib/synthesize.ts` and is exported nowhere in @nimbus-dev/sdk — the
- * SDK models brief SHAPES, and provenance is a property of the response that
- * carries one. Publishing it upstream is tracked in the design's §9; until then
- * this is the fourth local mirror, and the only one C8.1 cannot defer, because
- * provenance is a universal field (§4.1).
- *
- * `remote` exists ONLY on the `used: true` arm. That is the local/remote bit —
- * do not look for it elsewhere.
- */
-export type SynthesisDiscardReason =
-  | "timeout"
-  | "contract_violation"
-  | "egress_append_failed"
-  | "provider_error"
-  | "empty_result";
-
-export type SynthesisProvenance =
-  | {
-      readonly attempted: false;
-      readonly reason: "disabled" | "no_eligible_provider" | "reserved_extraction_failed";
-    }
-  | {
-      readonly attempted: true;
-      readonly used: true;
-      readonly model: string;
-      readonly remote: boolean;
-    }
-  | {
-      readonly attempted: true;
-      readonly used: false;
-      readonly reason: SynthesisDiscardReason;
-      readonly violations?: readonly string[];
-      readonly detail?: string;
-    };
 
 /**
  * The `why` lane's payload, as a CLIENT PROJECTION of `WhyBrief`.
@@ -97,48 +76,6 @@ export type WhyFindings = {
   readonly subject: WhySubject | null;
   readonly changeSubject: WhyChangeSubject | null;
   readonly itemSubject: WhyItemSubject | null;
-};
-
-/**
- * How a queried term was resolved; `null` when nothing matched.
- *
- * MIRRORED, not imported — `glossary` is one of the three briefs
- * `@nimbus-dev/sdk` deliberately does not publish (its `agent-names.ts` states
- * that lagging the gateway is the intended state). Retiring this mirror is
- * tracked in the design's §9. Source of truth:
- * `packages/gateway/src/agents/_lib/glossary-types.ts` in the Nimbus repo.
- */
-export type GlossaryMatchedVia = "exact" | "synonym" | null;
-
-/** Where a definition came from. `null` when the term has no definition yet. */
-export type GlossaryDefinitionSource = "llm" | "snippet" | "manual";
-
-export type GlossarySourceRef = {
-  readonly itemId: string;
-  readonly title: string;
-  /** The only URL in the glossary tree. Null when the indexed item carried none. */
-  readonly url: string | null;
-  readonly service: string;
-  readonly modifiedAt: number;
-};
-
-export type GlossaryEntry = {
-  readonly term: string;
-  readonly definition: string | null;
-  readonly definitionSource: GlossaryDefinitionSource | null;
-  readonly docFreq: number;
-  /**
-   * The value the list is ORDERED by. Rendered deliberately: upstream records
-   * that showing only `docFreq` while sorting on this made the visible number
-   * contradict the visible order.
-   */
-  readonly score: number;
-  readonly serviceSpread: number;
-  readonly firstSeenAt: number;
-  readonly lastSeenAt: number;
-  readonly topSources: readonly GlossarySourceRef[];
-  readonly synonyms: readonly string[];
-  readonly nearMisses: readonly string[];
 };
 
 /**
@@ -167,27 +104,13 @@ export type GlossaryFindings = {
 };
 
 /**
- * MIRRORED, not imported — `decisions` is the second of the three briefs
- * `@nimbus-dev/sdk` does not publish. Source of truth:
- * `packages/gateway/src/decisions/decision-types.ts` and
- * `agents/_lib/decisions-types.ts` in the Nimbus repo. Retiring this mirror is
- * tracked in the design's §9.
+ * The gateway's own `DecisionsEntry` (`@nimbus-dev/sdk`) also carries `explain`
+ * and `matchedVia`. This client type is a DELIBERATE NARROWING of that shape,
+ * not a stand-in mirror awaiting SDK publication — see `DecisionsFindings`'s
+ * comment below for why those two fields are dropped. Keep it hand-declared
+ * (rather than importing the SDK's wider type) so this stays true: nothing here
+ * claims a field `isDecisionsEntry` does not validate.
  */
-export type EvidenceKind = "source" | "pr" | "commit" | "migration" | "iac" | "adr";
-
-/** How the decision was extracted from its source. */
-export type ExtractionSource = "llm" | "snippet";
-
-export type DecisionEvidence = {
-  readonly kind: EvidenceKind;
-  readonly entityId: string | null;
-  readonly itemId: string | null;
-  readonly label: string;
-  /** The only URL in the decisions tree. */
-  readonly url: string | null;
-  readonly occurredAt: number | null;
-};
-
 export type DecisionsEntry = {
   readonly id: string;
   readonly statement: string;
