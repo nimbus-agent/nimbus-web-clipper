@@ -1332,7 +1332,9 @@ first. This phase reads both, one lane at a time.*
 > **Approach** Same entry path as C8.1 — no gateway-side or message-boundary
 > change, one more arm per lane in `laneFindingsFrom`'s dispatch table.
 > `glossary.entries[].topSources[].url` and `decisions.entries[].evidence[].url`
-> are the only two URL-carrying fields across all seven lanes' findings, so both
+> are the only two **remaining** URL-carrying fields across all seven lanes'
+> findings — `why.findings[].url`, `why.changeSubject.url` and
+> `why.itemSubject.url` already carry three — so both
 > route through the shared link builder C8.1 already factored out
 > (`findingLink`, `shared-view.ts`).
 > **Done when** Both lanes render their typed answer against a real gateway

@@ -972,8 +972,10 @@ exactly the shape each agent's own scope expects, no more.
   per agent, added lane by lane starting with `why` in C8.1 — and is rendered
   by a per-lane module under `src/panel/findings/`, never by `panel-view.ts`
   parsing `brief` itself. **Three of the seven lanes render it today** — `why`
-  (C8.1), and `glossary` and `decisions` (C8.2), the only two whose findings
-  carry a real URL. The other four (`expert`, `impact`, `ownership`,
+  (C8.1), and `glossary` and `decisions` (C8.2), the only two **remaining**
+  lanes whose findings carry a real URL — `why`'s own findings, changeSubject
+  and itemSubject already carry three (§4.6 of the design doc). The other
+  four (`expert`, `impact`, `ownership`,
   `catchup`) have no arm yet and fall back to the `brief` paragraph by design,
   not by omission — see the fallback described two sentences down, and C8.3 in
   `ROADMAP.md` for the arm each is waiting on. The `textContent` rule above is
