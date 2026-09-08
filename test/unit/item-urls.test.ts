@@ -174,8 +174,12 @@ describe("resolveItemUrls", () => {
       { ok: true, items: [{ id: "__proto__", url: "https://x/proto" }] },
     ]);
     const map = await resolveItemUrls({ ...DEPS_BASE, resolveItemIds }, ["__proto__"]);
+    // Read through a descriptor, not `map["__proto__"]`: that accessor is what
+    // Biome's `noProto` forbids, and it is the very hazard under test - an own
+    // property named `__proto__` is invisible to the accessor that would
+    // otherwise read it.
     expect(Object.hasOwn(map, "__proto__")).toBe(true);
-    expect(map["__proto__"]).toBe("https://x/proto");
+    expect(Object.getOwnPropertyDescriptor(map, "__proto__")?.value).toBe("https://x/proto");
   });
 
   it("ignores a row for an id it never asked for", async () => {
