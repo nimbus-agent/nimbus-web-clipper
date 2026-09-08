@@ -3,10 +3,11 @@
 //
 // The gateway sends `findings` — the full typed brief — alongside the flattened
 // `brief` markdown on every agent run, and has since the route shipped. This
-// module is where those shapes are named. See
-// docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md.
+// module is where those shapes are named. See `docs/architecture.md`, "The
+// typed lane answer: projection, guard, renderer" — the phase's design spec
+// was pruned once C8 shipped and lives on in git history.
 //
-// Types come from @nimbus-dev/sdk (§4.2). Every import from the SDK is
+// Types come from @nimbus-dev/sdk. Every import from the SDK is
 // `import type`: a value import would put SDK code into the shipped bundle,
 // which the "bundled, no runtime deps" rule forbids — see `docs/architecture.md`
 // for how `scripts/check-build.mjs` enforces that at build time. The one

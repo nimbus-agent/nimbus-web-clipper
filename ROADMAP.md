@@ -1304,10 +1304,12 @@ first. This phase reads both, one lane at a time.*
 > ridden every agent-run response since the route shipped
 > (`agents/_lib/emit-brief.ts`); this phase is a client parser and a
 > renderer, nothing else.
-> Full design:
-> [`docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md`](./docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md)
-> (§4.1–§4.5 for the entry path and the `why` renderer; §6 for the slicing
-> below).
+> Full design: the entry path, the projection/guard/renderer layering and the
+> `sanitiseState` idempotence invariant are in
+> [`docs/architecture.md`](./docs/architecture.md) under "The typed lane answer".
+> The phase's design spec was pruned once C8 shipped, per the convention in
+> `CLAUDE.md`; it is in this repo's git history if the slicing rationale is
+> ever wanted.
 
 ### C8.2 `glossary` and `decisions` gain their renderers · 🟢 · M — ✅ shipped
 > **What** Two more `LaneFindings` arms — the two whose findings carry a real
@@ -1343,9 +1345,9 @@ first. This phase reads both, one lane at a time.*
 > does. **All met.**
 > **No gateway change and no re-pairing** — same as C8.1, this is a client
 > parser and a renderer reading what the gateway already sends.
-> Full design:
-> [`docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md`](./docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md)
-> (§6 for the slicing).
+> Full design: see [`docs/architecture.md`](./docs/architecture.md) under "The
+> typed lane answer". The phase's design spec was pruned once C8 shipped and
+> lives on in git history.
 
 ### C8.3 `expert`, `impact`, `ownership` and `catchup` gain their renderers · 🟢 · M — ✅ shipped
 > **What** The last four `LaneFindings` arms — every one of them link-less:
@@ -1374,10 +1376,10 @@ first. This phase reads both, one lane at a time.*
 > question incompletely.
 > **No gateway change and no re-pairing** — same as C8.1/C8.2, this is a
 > client parser and a renderer reading what the gateway already sends.
-> Full design:
-> [`docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md`](./docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md)
-> (§4.6 for the corrected link inventory, including the `impact` entity-id
-> trap — now carried forward into `docs/architecture.md`).
+> Full design: the corrected link inventory, including the `impact` entity-id
+> trap, is in [`docs/architecture.md`](./docs/architecture.md) under "The typed
+> lane answer" — it was carried there before the phase's design spec was
+> pruned, which is why the trap survives the pruning.
 
 ---
 
