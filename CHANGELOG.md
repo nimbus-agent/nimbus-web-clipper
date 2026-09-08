@@ -8,6 +8,8 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-08
+
 ### Added
 
 - **`expert` and `catchup` gain the links the last release said were still
