@@ -165,6 +165,34 @@ describe("resolveItemUrls", () => {
     expect(calls).toHaveLength(0);
     expect(map).toEqual({});
   });
+
+  it("keeps an id of `__proto__`, which an object accumulator would swallow", async () => {
+    // Assigning `__proto__` onto an object literal hits the prototype setter
+    // and creates no own property, so this URL would vanish and that one title
+    // would never link. `item.id` is unconstrained TEXT upstream.
+    const { resolveItemIds } = fakeResolver([
+      { ok: true, items: [{ id: "__proto__", url: "https://x/proto" }] },
+    ]);
+    const map = await resolveItemUrls({ ...DEPS_BASE, resolveItemIds }, ["__proto__"]);
+    expect(Object.hasOwn(map, "__proto__")).toBe(true);
+    expect(map["__proto__"]).toBe("https://x/proto");
+  });
+
+  it("ignores a row for an id it never asked for", async () => {
+    // A gateway answering a question we did not ask must not get bytes into
+    // the run's shared budget, which is charged against `findings`.
+    const { resolveItemIds } = fakeResolver([
+      {
+        ok: true,
+        items: [
+          { id: "asked", url: "https://x/asked" },
+          { id: "never-asked", url: "https://x/unrequested" },
+        ],
+      },
+    ]);
+    const map = await resolveItemUrls({ ...DEPS_BASE, resolveItemIds }, ["asked"]);
+    expect(map).toEqual({ asked: "https://x/asked" });
+  });
 });
 
 describe("itemIdsOf", () => {

@@ -168,7 +168,12 @@ export async function resolveItemUrls(
   ids: readonly string[],
 ): Promise<ItemUrlMap> {
   const unique = Array.from(new Set(ids));
-  const map: Record<string, string> = {};
+  // A `Map`, not a plain object, and the difference is not stylistic: an
+  // `item.id` of exactly `"__proto__"` assigned onto an object literal hits
+  // the legacy prototype setter instead of creating an own property, so the
+  // URL is silently dropped and that one title never links. `item.id` is
+  // unconstrained `TEXT` upstream, so nothing rules the value out.
+  const map = new Map<string, string>();
   for (const chunk of chunkIds(unique)) {
     const result = await deps.resolveItemIds(deps.origin, deps.token, chunk);
     if (!result.ok) {
@@ -177,11 +182,19 @@ export async function resolveItemUrls(
       }
       continue;
     }
+    // Only ids we asked for. A row for anything else is a gateway that
+    // answered a question we did not ask, and storing it would put bytes we
+    // can never look up into the run's shared byte budget - which is charged
+    // against `findings`, so enough of them would drop the findings and leave
+    // the reader with the prose brief instead. Keeping the good rows beats
+    // rejecting the whole chunk: there is no channel to report the oddity on,
+    // and the remaining rows are still answers to real questions.
+    const requested = new Set(chunk);
     for (const item of result.items) {
-      if (item.url !== null) {
-        map[item.id] = item.url;
+      if (item.url !== null && requested.has(item.id)) {
+        map.set(item.id, item.url);
       }
     }
   }
-  return map;
+  return Object.fromEntries(map);
 }
