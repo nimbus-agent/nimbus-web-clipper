@@ -9,8 +9,10 @@ import {
   postClip,
   postRelated,
   probeHealth,
+  RESOLVE_IDS_MAX_BATCH,
   resolveFile,
   resolveItem,
+  resolveItemIds,
 } from "../../src/background/gateway-client.ts";
 import type { ClipPayload } from "../../src/shared/clip.ts";
 import type { RelatedQuery } from "../../src/shared/related.ts";
@@ -649,6 +651,156 @@ describe("resolveFile", () => {
       ok: false,
       reason: "insufficient_scope",
       scopeGap: { required: "resolve", granted: ["clip"] },
+    });
+  });
+});
+
+describe("resolveItemIds", () => {
+  const call = (status: number, body: unknown, ids: string[], seen?: string[]) =>
+    resolveItemIds("http://127.0.0.1:7474", "tok", ids, (async (url: string) => {
+      seen?.push(url);
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch);
+
+  it("exposes the route's own cap", () => {
+    expect(RESOLVE_IDS_MAX_BATCH).toBe(100);
+  });
+
+  it("sends one repeated id= per id, bearer-authed", async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    const doFetch = async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ items: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    await resolveItemIds("http://127.0.0.1:7474", "tok", ["a", "b"], doFetch);
+    const seenUrl = calls[0]?.url ?? "";
+    const query = new URL(seenUrl).searchParams;
+    expect(query.getAll("id")).toEqual(["a", "b"]);
+    expect((calls[0]?.init?.headers as Record<string, string> | undefined)?.["authorization"]).toBe(
+      "Bearer tok",
+    );
+    expect(calls[0]?.init?.method).toBe("GET");
+  });
+
+  it("parses a 200 with two rows", async () => {
+    expect(
+      await call(
+        200,
+        {
+          items: [
+            {
+              id: "i1",
+              service: "github",
+              type: "pr",
+              title: "T1",
+              url: "https://x/1",
+              modified_at: 1,
+            },
+            {
+              id: "i2",
+              service: "github",
+              type: "pr",
+              title: "T2",
+              url: "https://x/2",
+              modified_at: 2,
+            },
+          ],
+        },
+        ["i1", "i2"],
+      ),
+    ).toEqual({
+      ok: true,
+      items: [
+        { id: "i1", url: "https://x/1" },
+        { id: "i2", url: "https://x/2" },
+      ],
+    });
+  });
+
+  it("survives a null url as null, not dropped", async () => {
+    expect(
+      await call(
+        200,
+        { items: [{ id: "i1", service: "s", type: "t", title: "T", url: null, modified_at: 1 }] },
+        ["i1"],
+      ),
+    ).toEqual({
+      ok: true,
+      items: [{ id: "i1", url: null }],
+    });
+  });
+
+  it("an unindexed id is simply absent from items, not a null entry", async () => {
+    // Asked for two ids, only one comes back.
+    expect(
+      await call(
+        200,
+        {
+          items: [
+            { id: "i1", service: "s", type: "t", title: "T", url: "https://x/1", modified_at: 1 },
+          ],
+        },
+        ["i1", "i2"],
+      ),
+    ).toEqual({
+      ok: true,
+      items: [{ id: "i1", url: "https://x/1" }],
+    });
+  });
+
+  it("treats 404 resolve_disabled as the route-absent capability signal, not a throw", async () => {
+    expect(await call(404, { error: "resolve_disabled" }, ["i1"])).toEqual({
+      ok: false,
+      reason: "unsupported",
+    });
+  });
+
+  it("treats 403 as forbidden, distinct from a transient failure — permanent for this token", async () => {
+    expect(
+      await call(403, { error: "insufficient_scope", required: "resolve", granted: ["clip"] }, [
+        "i1",
+      ]),
+    ).toEqual({
+      ok: false,
+      reason: "forbidden",
+    });
+  });
+
+  it("treats 400 too_many_ids as a non-throwing failure", async () => {
+    expect(await call(400, { error: "too_many_ids" }, ["i1"])).toEqual({
+      ok: false,
+      reason: "failed",
+    });
+  });
+
+  it("yields no rows for a malformed body, rather than throwing", async () => {
+    expect(await call(200, { items: "not-an-array" }, ["i1"])).toEqual({
+      ok: false,
+      reason: "failed",
+    });
+    expect(await call(200, { items: [{ service: "s" }] }, ["i1"])).toEqual({
+      ok: false,
+      reason: "failed",
+    });
+    expect(await call(200, "not-an-object", ["i1"])).toEqual({
+      ok: false,
+      reason: "failed",
+    });
+  });
+
+  it("catches a network error", async () => {
+    const doFetch = async () => {
+      throw new Error("net");
+    };
+    expect(await resolveItemIds("http://127.0.0.1:7474", "tok", ["i1"], doFetch)).toEqual({
+      ok: false,
+      reason: "failed",
     });
   });
 });

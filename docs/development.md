@@ -621,6 +621,34 @@ principle. Step 5 therefore uses `github.com` itself.
    gateway carrying Nimbus#1447 and a repository you have actually cloned and
    indexed.
 
+## Manual verification — Item links (C9)
+
+**Step 1 runs on every PR** (`test/e2e/item-links.e2e.ts`), so this pass is
+not outstanding for the client half. What it cannot prove is a real gateway's
+`resolve-ids` answer — the mock returns exactly the fixture a scenario hands
+it, never a real index lookup.
+
+Prereq: paired, gateway running, a token scoped with `resolve` (the same scope
+`resolve` and `resolve-file` already use — no new pairing). `bun run
+mock-gateway` makes step 1 reproducible.
+
+1. <!-- e2e:item-links-1 --> On a dashboard, expand *What happened while I was
+   away* (or *Who should review it*, `expert`'s own lane). Once the run lands,
+   an item whose id `GET /v1/items/resolve-ids` resolves becomes a clickable
+   link a moment later — the resolve call is a second, unawaited write after
+   the brief itself, so the title starts as plain text and turns into a link
+   on the panel's next repaint, not immediately. An item whose id the gateway
+   does not resolve stays plain text permanently, not just before that
+   repaint.
+2. **(human — needs a real gateway.)** Pair against a gateway older than the
+   route (any build predating it) and confirm both lanes render exactly as
+   they did before this phase — titles as plain text, no error, no banner.
+   `GET /v1/items/resolve-ids`'s absence is the capability signal (a 404
+   `resolve_disabled`), the same pattern C7's `resolve-file` uses: withhold,
+   say nothing. This path is pinned at the unit level
+   (`item-urls.test.ts`, `gateway-client.test.ts`) but not by this e2e suite,
+   which only drives a mock that always serves the route.
+
 ## Manual verification — Setup that works (discovery, connection health, the trust panel)
 
 Prereq: a Nimbus gateway available to start/stop on demand. Step 1 needs a

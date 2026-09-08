@@ -1,5 +1,5 @@
 import type { CanonicalRejection } from "./canonical.ts";
-import type { GapNote, LaneFindings, SynthesisProvenance } from "./findings.ts";
+import type { GapNote, ItemUrlMap, LaneFindings, SynthesisProvenance } from "./findings.ts";
 
 /**
  * The page's own account of itself, as sent in `POST /v1/clips`'s `source`
@@ -592,6 +592,15 @@ export function scopeForLane(lane: AgentLane, kind: SurfaceKind): LaneScope | nu
  * a lane whose `LaneFindings` arm has not shipped yet. They must survive all
  * three, because a lane that fell back to prose can still say why it is empty
  * and whether a model wrote it.
+ *
+ * `itemUrls` is ALSO a sibling of `findings`, for the same shape of reason —
+ * see `ItemUrlMap`'s own comment (findings.ts) and
+ * docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md §3.
+ * Unlike `gaps`/`synthesis` it is not universal: it is populated only for
+ * `expert` and `catchup` (the two lanes `itemIdsOf`, item-urls.ts, resolves ids
+ * for), written once when the run lands, and — like `findings` — absent
+ * entirely on a run this client's gateway could not resolve, or one stored
+ * before this phase shipped.
  */
 export type LaneState =
   | { readonly kind: "collapsed" }
@@ -602,6 +611,7 @@ export type LaneState =
       readonly gaps?: readonly GapNote[];
       readonly findings?: LaneFindings;
       readonly synthesis?: SynthesisProvenance;
+      readonly itemUrls?: ItemUrlMap;
     }
   | {
       readonly kind: "failed";

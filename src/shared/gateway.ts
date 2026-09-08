@@ -32,6 +32,17 @@ export const GATEWAY_PATHS = {
    * withhold, say nothing.
    */
   resolveFile: "/v1/items/resolve-file",
+  /**
+   * `GET /v1/items/resolve-ids?id=…&id=…` — a bearer read under the `resolve`
+   * scope, the same one `resolve` and `resolve-file` already use. It maps item
+   * ids to the URLs the index holds for them — the reverse of `resolve`, which
+   * maps a URL to an item.
+   *
+   * Its PRESENCE is the capability signal, exactly as it is for `resolveFile`:
+   * a 404 `resolve_disabled` means a gateway older than the route, or one whose
+   * clips surface is unmounted. Withhold, say nothing — no version floor.
+   */
+  resolveIds: "/v1/items/resolve-ids",
   itemsFetch: "/v1/items/fetch",
   /**
    * Unauthenticated liveness — the ONLY route this client calls without a bearer

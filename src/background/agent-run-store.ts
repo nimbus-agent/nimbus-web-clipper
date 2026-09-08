@@ -10,8 +10,13 @@
 // `running`) would otherwise read the same snapshot and the second write would
 // silently clobber the first.
 import { storageSet } from "../browser/storage.ts";
-import type { LaneFindings } from "../shared/findings.ts";
-import { gapNotesFrom, laneFindingsFrom, synthesisFrom } from "../shared/findings-guards.ts";
+import type { ItemUrlMap, LaneFindings } from "../shared/findings.ts";
+import {
+  gapNotesFrom,
+  itemUrlMapFrom,
+  laneFindingsFrom,
+  synthesisFrom,
+} from "../shared/findings-guards.ts";
 import { isAgentError, isScopeGap } from "../shared/messages.ts";
 import { AGENT_LANES, type AgentLane, type LaneState } from "../shared/types.ts";
 import { createWriteChain, readGuarded } from "./keyed-store.ts";
@@ -206,12 +211,14 @@ function sanitiseState(state: LaneState, lane: AgentLane): LaneState {
   const synthesis = state.synthesis === undefined ? undefined : synthesisFrom(state.synthesis);
   const findings =
     state.findings === undefined ? undefined : laneFindingsFrom(lane, state.findings);
+  const itemUrls = state.itemUrls === undefined ? undefined : itemUrlMapFrom(state.itemUrls);
   return {
     kind: "done",
     brief: state.brief,
     ...(gaps === undefined ? {} : { gaps }),
     ...(findings === undefined ? {} : { findings }),
     ...(synthesis === undefined ? {} : { synthesis }),
+    ...(itemUrls === undefined ? {} : { itemUrls }),
   };
 }
 
@@ -240,7 +247,9 @@ export async function getRun(
 const exclusively = createWriteChain();
 
 /**
- * The most findings we will persist for one run, in UTF-8 BYTES.
+ * The most findings — PLUS the resolved `itemUrls` map, Task 3 (see
+ * docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md §5) — we
+ * will persist for one run, in UTF-8 BYTES.
  *
  * Bytes, not `String.length` — that counts UTF-16 code units, undercounts every
  * non-ASCII title, and would disagree with how every other cap in this repo is
@@ -252,21 +261,43 @@ const exclusively = createWriteChain();
  * run — the opposite of the passage store's refuse-never-evict rule, and
  * deliberately so: a passage was put there by hand and exists in exactly one
  * place, while findings are a cache of something the gateway will re-derive.
- * Refusing the write here would lose the brief too.
+ * Refusing the write here would lose the brief too. NOT raised for `itemUrls`:
+ * the spec is explicit that the map shares this budget rather than getting a
+ * larger one of its own.
  */
 export const MAX_FINDINGS_BYTES = 16 * 1024;
 
-function findingsBytes(findings: LaneFindings): number {
-  return new TextEncoder().encode(JSON.stringify(findings)).length;
+/** `findings` plus `itemUrls`, measured together — the map is counted in the
+ *  SAME budget `findings` alone used to be measured against, never a bound of
+ *  its own. `itemUrls` is `undefined` on every lane but `expert`/`catchup`
+ *  and on a run this client's gateway could not resolve, in which case it
+ *  contributes nothing. `findings` is ALSO accepted as `undefined` — a state
+ *  `putRun` already stripped `findings` from — and contributes nothing either:
+ *  callers must measure `itemUrls` against the cap even when there is no
+ *  `findings` left to measure alongside it, never skip the check because the
+ *  other half of the pair is already gone. */
+function findingsAndUrlsBytes(
+  findings: LaneFindings | undefined,
+  itemUrls: ItemUrlMap | undefined,
+): number {
+  const encoder = new TextEncoder();
+  const findingsBytes =
+    findings === undefined ? 0 : encoder.encode(JSON.stringify(findings)).length;
+  const urlsBytes = itemUrls === undefined ? 0 : encoder.encode(JSON.stringify(itemUrls)).length;
+  return findingsBytes + urlsBytes;
 }
 
 /**
- * Strip `findings` from a state, keeping everything else.
+ * Strip `findings` AND `itemUrls` from a state, keeping everything else.
  *
- * Rebuilt explicitly rather than by rest-destructuring off `findings`: biome's
- * `noUnusedVariables` is set to "error" here, and the discarded binding is
- * exactly the shape that rule exists to catch. Spelling the survivors out also
- * makes it obvious that `gaps` and `synthesis` are deliberately kept.
+ * `itemUrls` drops alongside `findings`, not independently: every id in the
+ * map keys an element INSIDE `findings` (an evidence row, a catchup item), so
+ * a map surviving without the findings it annotates would link nothing the
+ * reader can see. Rebuilt explicitly rather than by rest-destructuring off
+ * `findings`/`itemUrls`: biome's `noUnusedVariables` is set to "error" here,
+ * and the discarded bindings are exactly the shape that rule exists to catch.
+ * Spelling the survivors out also makes it obvious that `gaps` and
+ * `synthesis` are deliberately kept.
  */
 function withoutFindings(state: LaneState): LaneState {
   if (state.kind !== "done") {
@@ -290,7 +321,7 @@ export function putRun(run: StoredRun, nowMs: number): Promise<void> {
   const bounded =
     run.state.kind === "done" &&
     run.state.findings !== undefined &&
-    findingsBytes(run.state.findings) > MAX_FINDINGS_BYTES
+    findingsAndUrlsBytes(run.state.findings, run.state.itemUrls) > MAX_FINDINGS_BYTES
       ? { ...run, state: withoutFindings(run.state) }
       : run;
   return exclusively(async () => {
@@ -315,6 +346,71 @@ export function putRun(run: StoredRun, nowMs: number): Promise<void> {
       entries.shift();
     }
     await storageSet(STORE_KEY, Object.fromEntries(entries));
+  });
+}
+
+/**
+ * Attach a resolved `itemUrls` map to an already-terminal run — the read, the
+ * freshness check and the write all inside ONE `exclusively` critical
+ * section, unlike a caller doing its own `getRun` then `putRun`.
+ *
+ * That distinction is the whole point. A plain `getRun` followed later by a
+ * `putRun` reads OUTSIDE the single-writer lock, so a concurrent write for
+ * the same subject+lane (a Re-run's fresh terminal answer) can land in the
+ * gap between the two and be silently overwritten by the stale state the
+ * outside read captured — the write itself never fails, so nothing tells the
+ * reader their fresh answer just lost to a stale one. Doing the read and the
+ * write inside the SAME critical section closes that gap: every `putRun`
+ * goes through this module's one `exclusively` chain too, so a concurrent
+ * Re-run's write either finishes entirely before this one starts (and this
+ * one sees it — and bails on the `runId` mismatch below) or entirely after
+ * (and simply replaces whatever this one wrote) — never in between.
+ *
+ * Writes nothing when the run this resolve was for is no longer the one in
+ * the store: gone, expired, past a Re-run to a different `runId`, or no
+ * longer `done` (e.g. `running` again). Every one of those means there is
+ * nothing left to attach this map to, and attaching it anyway would either
+ * write to the wrong run or resurrect a stale one — exactly the failure this
+ * function exists to prevent.
+ */
+export function putItemUrls(
+  subject: RunSubject,
+  lane: AgentLane,
+  runId: string,
+  itemUrls: ItemUrlMap,
+  nowMs: number,
+): Promise<void> {
+  return exclusively(async () => {
+    const all = await readAll();
+    const key = makeKey(subject, lane);
+    const found = all[key];
+    if (
+      found === undefined ||
+      found.expiresAtMs <= nowMs ||
+      found.runId !== runId ||
+      found.state.kind !== "done"
+    ) {
+      return;
+    }
+    const merged: LaneState = { ...found.state, itemUrls };
+    // Mirrors `putRun`'s own bound: the map shares `findings`' byte budget
+    // rather than getting one of its own (design spec §5), so re-check it
+    // here too — attaching the map is the one write this function makes,
+    // and it must not sneak the combined size back over the cap. Checked
+    // UNCONDITIONALLY, not gated on `found.state.findings !== undefined`:
+    // `putRun` may already have stripped `findings` for being oversized on
+    // its own, and `itemUrls` alone can still exceed the cap in that case —
+    // `findingsAndUrlsBytes` treats a missing `findings` as zero bytes, so
+    // the map is measured on its own merit rather than skipped because its
+    // usual companion is already gone.
+    const bounded =
+      findingsAndUrlsBytes(found.state.findings, itemUrls) > MAX_FINDINGS_BYTES
+        ? withoutFindings(merged)
+        : merged;
+    await storageSet(STORE_KEY, {
+      ...all,
+      [key]: { ...found, state: bounded, writtenAtMs: nowMs },
+    });
   });
 }
 

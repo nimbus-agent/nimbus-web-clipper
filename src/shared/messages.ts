@@ -12,7 +12,12 @@ import type {
   EgressVerdict,
   LedgerOutcome,
 } from "./egress.ts";
-import { gapNotesFrom, laneFindingsFrom, synthesisFrom } from "./findings-guards.ts";
+import {
+  gapNotesFrom,
+  itemUrlMapFrom,
+  laneFindingsFrom,
+  synthesisFrom,
+} from "./findings-guards.ts";
 import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
@@ -1051,7 +1056,8 @@ function isLaneState(v: unknown, lane: AgentLane): v is LaneState {
     return (
       (v["gaps"] === undefined || gapNotesFrom(v["gaps"]) !== undefined) &&
       (v["synthesis"] === undefined || synthesisFrom(v["synthesis"]) !== undefined) &&
-      (v["findings"] === undefined || laneFindingsFrom(lane, v["findings"]) !== undefined)
+      (v["findings"] === undefined || laneFindingsFrom(lane, v["findings"]) !== undefined) &&
+      (v["itemUrls"] === undefined || itemUrlMapFrom(v["itemUrls"]) !== undefined)
     );
   }
   return (

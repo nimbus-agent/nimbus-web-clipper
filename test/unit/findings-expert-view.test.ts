@@ -92,6 +92,44 @@ describe("renderExpertFindings", () => {
     expect(empty?.textContent).toBe("No one in the index has worked on this.");
   });
 
+  // Task 4: the link wrap. `findingLink` is the only way a URL becomes an
+  // `<a>` — these four pin the map lookup, the no-map fallback, a missing id,
+  // and that `safeHttpUrl` is genuinely in the path rather than assumed.
+  test("with a map, an evidence title is a link carrying the mapped href", () => {
+    const el = renderExpertFindings(document, findings(), NOW, {
+      "github:acme/web#7": "https://github.com/acme/web/pull/7",
+    });
+    const link = el.querySelector<HTMLAnchorElement>(".nimbus-findings__item a");
+    expect(link).not.toBeNull();
+    expect(link?.href).toBe("https://github.com/acme/web/pull/7");
+    expect(link?.textContent).toBe("Adopt SQLite WAL");
+  });
+
+  test("with no map, the same fixture renders a span and no anchor", () => {
+    const el = renderExpertFindings(document, findings(), NOW);
+    expect(el.querySelector("a")).toBeNull();
+    const item = el.querySelector(".nimbus-findings__item");
+    expect(item?.querySelector("span")?.textContent).toBe("Adopt SQLite WAL");
+  });
+
+  test("an evidence id missing from the map renders a span, not a link", () => {
+    const el = renderExpertFindings(document, findings(), NOW, {
+      "some:other-item": "https://example.test/other",
+    });
+    expect(el.querySelector("a")).toBeNull();
+    const item = el.querySelector(".nimbus-findings__item");
+    expect(item?.querySelector("span")?.textContent).toBe("Adopt SQLite WAL");
+  });
+
+  test("a mapped value that is not a safe http URL renders a span — safeHttpUrl is genuinely in the path", () => {
+    const el = renderExpertFindings(document, findings(), NOW, {
+      "github:acme/web#7": "javascript:alert(1)",
+    });
+    expect(el.querySelector("a")).toBeNull();
+    const item = el.querySelector(".nimbus-findings__item");
+    expect(item?.querySelector("span")?.textContent).toBe("Adopt SQLite WAL");
+  });
+
   test("never parses a displayName or evidence title as markup", () => {
     const el = renderExpertFindings(
       document,

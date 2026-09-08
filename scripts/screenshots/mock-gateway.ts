@@ -189,6 +189,18 @@ export async function handleRequest(
     const keyed = scenario.resolveFile?.[target];
     return jsonResponse(keyed ?? scenario.resolveFileDefault ?? RESOLVE_FILE_FIXTURE);
   }
+  // `GET /v1/items/resolve-ids?id=…&id=…` — C9's reverse resolver: item id ->
+  // URL. Filtered to the ids actually requested, not returned wholesale, so a
+  // scenario fixture sized for one test cannot leak an id into a request that
+  // never asked for it — exactly the "absent id = not resolved" distinction
+  // the client itself relies on (spec §4). No separate auth/scope check, same
+  // as `resolve`/`resolve-file` above: it falls under the generic
+  // `scenario.status` override already checked before routing.
+  if (req.method === "GET" && url.pathname === GATEWAY_PATHS.resolveIds) {
+    const ids = new Set(url.searchParams.getAll("id"));
+    const items = (scenario.resolveIds ?? []).filter((row) => ids.has(row.id));
+    return jsonResponse({ items });
+  }
   // The four egress-ledger reads. GETs, checked before the POST-only gate below.
   // `egress` is matched before its three children because none of them is a
   // prefix of another — an exact match each, same as the real route table.

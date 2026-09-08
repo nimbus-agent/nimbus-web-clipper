@@ -1383,6 +1383,64 @@ first. This phase reads both, one lane at a time.*
 
 ---
 
+## Phase C9 — A title you can follow 🟢
+
+*Theme: `expert` and `catchup` have carried real item ids in their evidence
+since C8.3 shipped them link-less — link-less because the contract had no way
+to turn an id back into a URL. `GET /v1/items/resolve-ids` closes that gap —
+proposed and landed upstream as Nimbus#1464 and Nimbus#1465, and consumed here.*
+
+### C9.1 `expert` and `catchup`'s evidence titles become links · 🟢 · M — ✅ shipped
+> **What** The item ids `expert.ranked[].evidence[].itemId` and
+> `catchup.sections[].items[].itemId` already carried on the wire now resolve
+> to the URLs the index holds for them, and both lanes' titles render as
+> clickable links wherever one resolves — the same `findingLink` /
+> `safeHttpUrl` path `why`, `glossary` and `decisions` have used since C8.1.
+> `impact` and `ownership` gain nothing, on purpose: `impact`'s
+> `affectedItemId` is a `graph_entity.id` despite its name, and `ownership`
+> carries person ids and paths, so neither has an item id a resolver could
+> ever answer for.
+> **Why it wows** These were the last two of the seven lanes' findings
+> rendering an id as inert text next to titles the other five already link —
+> closes the phase C8 opened, on the two lanes that were always going to get
+> there once the gateway could answer.
+> **Touches** `src/background/gateway-client.ts` (`resolveItemIds`, the
+> single-request client method), `src/background/item-urls.ts` (new —
+> `itemIdsOf`, the two-bound chunking resolver `resolveItemUrls`),
+> `src/shared/findings.ts` (`ItemUrlMap`), `src/shared/findings-guards.ts`
+> (`itemUrlMapFrom`), `src/shared/types.ts` (`LaneState`'s `done` arm gains
+> `itemUrls?`), `src/background/agent-run-store.ts` (`putItemUrls` — a
+> store-owned read-verify-write inside the existing single-writer lock, not a
+> plain `getRun` then `putRun`; the byte bound now measures `findings` and
+> `itemUrls` together), `src/background/service-worker.ts`
+> (`resolveAndPersistItemUrls`, fired unawaited once a poll lands `done`),
+> `src/panel/findings/expert-view.ts` / `catchup-view.ts` (a fourth, optional
+> `itemUrls` parameter each).
+> **Approach** Resolution happens once, in the background worker, the moment
+> a run completes — never in the panel, which holds no token — and the
+> resulting map is cached with the run rather than re-fetched on repaint. The
+> route's two bounds (100 raw `?id=` params, and a query-string byte budget
+> this client alone can enforce, since `item.id` is unconstrained `TEXT`) are
+> both respected by the chunker; `"unsupported"` (404) and `"forbidden"`
+> (403) stop the chunker outright, as both are permanent for the token,
+> while a chunk-local `"failed"` does not. Every failure mode — an older
+> gateway, a missing scope, a network error, an oversized run — ends the same
+> way: no map, no links, no message. The route's **presence is the
+> capability signal**, exactly as `resolve-file`'s is (C7.1): no version
+> floor.
+> **Done when** A resolved id renders as a link through `safeHttpUrl`; an
+> unresolved id (absent from the response, or on a gateway that cannot
+> resolve at all) renders as plain text with no error; a run stored before
+> this shipped, with no `itemUrls` key, still renders. **All met**, pinned by
+> `test/e2e/item-links.e2e.ts` end to end and by `item-urls.test.ts` /
+> `agent-run-store.test.ts` / `service-worker.test.ts` at the unit level.
+> **No re-pairing** — `resolve-ids` sits under the existing `resolve` scope,
+> the same one `resolve` and `resolve-file` already use.
+> Full design:
+> [`docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md`](./docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md).
+
+---
+
 ## Phase 1 — Trust you can see 🟢
 
 *Theme: turn the invisible privacy guarantee into a visible, provable feature —

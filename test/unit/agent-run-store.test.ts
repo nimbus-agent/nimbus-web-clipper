@@ -6,6 +6,7 @@ import {
   listRunning,
   MAX_STORED_RUNS,
   MAX_STORED_TERM_RUNS,
+  putItemUrls,
   putRun,
 } from "../../src/background/agent-run-store.ts";
 import type { DecisionsFindings } from "../../src/shared/findings.ts";
@@ -462,6 +463,143 @@ describe("agent-run-store", () => {
       // would strip these findings right back out on this very read — the
       // existing tests in this block only covered *malformed* and *oversized*
       // findings, which is exactly why nothing caught that bug.
+      it("round-trips an itemUrls map alongside findings", async () => {
+        const findings: DecisionsFindings = {
+          kind: "decisions",
+          entries: [],
+          truncatedSources: 0,
+        };
+        await putRun(
+          {
+            subject: { kind: "item", id: "i-urls" },
+            lane: "expert",
+            runId: "r-urls",
+            state: {
+              kind: "done",
+              brief: "b",
+              findings: { kind: "expert", ranked: [] },
+              itemUrls: { "github:acme/web#1": "https://github.com/acme/web/pull/1" },
+            },
+            expiresAtMs: NOW + 60_000,
+          },
+          NOW,
+        );
+        const found = await getRun({ kind: "item", id: "i-urls" }, "expert", NOW);
+        expect(found?.state).toEqual({
+          kind: "done",
+          brief: "b",
+          findings: { kind: "expert", ranked: [] },
+          itemUrls: { "github:acme/web#1": "https://github.com/acme/web/pull/1" },
+        });
+        // Sanity — findings unrelated to itemUrls, used only above to keep this
+        // test self-contained about the DecisionsFindings import already present.
+        expect(findings.truncatedSources).toBe(0);
+      });
+
+      it("a run stored before this shipped (no itemUrls key at all) reads back with no map — same as a gateway that could not resolve", async () => {
+        chrome.storage.local.set({
+          agentRuns: {
+            [realKey("item", "i-old", "expert")]: {
+              subject: { kind: "item", id: "i-old" },
+              lane: "expert",
+              runId: "r-old",
+              state: {
+                kind: "done",
+                brief: "b",
+                findings: { kind: "expert", ranked: [] },
+                // no itemUrls key at all — the pre-this-phase shape.
+              },
+              expiresAtMs: NOW + 60_000,
+              writtenAtMs: NOW,
+            },
+          },
+        });
+        const found = await getRun({ kind: "item", id: "i-old" }, "expert", NOW);
+        expect(found?.state).toEqual({
+          kind: "done",
+          brief: "b",
+          findings: { kind: "expert", ranked: [] },
+        });
+        expect(found?.state.kind === "done" ? found.state.itemUrls : undefined).toBeUndefined();
+      });
+
+      it("a malformed stored itemUrls (non-string value) is dropped, findings and brief kept", async () => {
+        chrome.storage.local.set({
+          agentRuns: {
+            [realKey("item", "i-bad-urls", "expert")]: {
+              subject: { kind: "item", id: "i-bad-urls" },
+              lane: "expert",
+              runId: "r-bad",
+              state: {
+                kind: "done",
+                brief: "b",
+                findings: { kind: "expert", ranked: [] },
+                itemUrls: { "github:acme/web#1": 42 },
+              },
+              expiresAtMs: NOW + 60_000,
+              writtenAtMs: NOW,
+            },
+          },
+        });
+        const found = await getRun({ kind: "item", id: "i-bad-urls" }, "expert", NOW);
+        expect(found?.state).toEqual({
+          kind: "done",
+          brief: "b",
+          findings: { kind: "expert", ranked: [] },
+        });
+      });
+
+      it("findings plus an itemUrls map that together exceed the byte bound drop BOTH, brief kept — the existing over-budget behaviour, now counting the map too", async () => {
+        // Findings alone are small; the map alone pushes the combined total
+        // past MAX_FINDINGS_BYTES (16 KiB). If only `findings` were measured
+        // (the pre-Task-3 behaviour) this would be kept in full.
+        const evidence = Array.from({ length: 30 }, (_, i) => ({
+          itemId: `github:acme/web#${i}`,
+          type: "pr_authored" as const,
+          serviceId: "github",
+          title: "t",
+          modifiedAt: i,
+          weight: 0.1,
+        }));
+        const itemUrls: Record<string, string> = {};
+        for (const e of evidence) {
+          itemUrls[e.itemId] = `https://github.com/acme/web/pull/${e.itemId}${"x".repeat(700)}`;
+        }
+        await putRun(
+          {
+            subject: { kind: "item", id: "i-big-urls" },
+            lane: "expert",
+            runId: "r-big",
+            state: {
+              kind: "done",
+              brief: "b",
+              synthesis: { attempted: false, reason: "disabled" },
+              findings: {
+                kind: "expert",
+                ranked: [
+                  {
+                    personId: "person:1",
+                    displayName: "Ada",
+                    score: 0.9,
+                    confidence: "high",
+                    evidence,
+                  },
+                ],
+              },
+              itemUrls,
+            },
+            expiresAtMs: NOW + 60_000,
+          },
+          NOW,
+        );
+        const found = await getRun({ kind: "item", id: "i-big-urls" }, "expert", NOW);
+        expect(found?.state).toEqual({
+          kind: "done",
+          brief: "b",
+          synthesis: { attempted: false, reason: "disabled" },
+        });
+      });
+
       it("valid decisions findings survive a put -> get round trip", async () => {
         const findings: DecisionsFindings = {
           kind: "decisions",
@@ -522,6 +660,253 @@ describe("agent-run-store", () => {
         },
       });
       expect(await getRun({ kind: "item", id: "abc" }, "impact", NOW)).toBeNull();
+    });
+  });
+
+  // The race the review of this phase's task 3/4 work found: the caller used
+  // to `getRun` OUTSIDE the store's write chain, then `putRun` back in later
+  // — a plain read a concurrent write could land after, silently clobbered by
+  // the stale state that outside read captured. `putItemUrls` closes that by
+  // doing the read, the freshness check and the write all inside the SAME
+  // `exclusively` critical section `putRun` itself uses.
+  describe("putItemUrls", () => {
+    // Pins the fix for the bug the whole-branch review found: `putItemUrls`
+    // used to gate its byte check on `found.state.findings !== undefined`, so
+    // once `putRun` had ALREADY stripped `findings` for being oversized on its
+    // own, the gate short-circuited to false and the map was attached with NO
+    // size check at all. Reproduces the review's own repro — 400 `expert`
+    // evidence rows push `findings` alone over `MAX_FINDINGS_BYTES`, so
+    // `putRun` drops it — then attaches an `itemUrls` map that is, by itself,
+    // also over the cap. The map must not survive either.
+    it("an itemUrls map that alone exceeds the byte bound is not attached, even onto a run whose findings were already stripped", async () => {
+      const evidence = Array.from({ length: 400 }, (_, i) => ({
+        itemId: `github:acme/web#${i}`,
+        type: "pr_authored" as const,
+        serviceId: "github",
+        title: "t".repeat(80),
+        modifiedAt: i,
+        weight: 0.1,
+      }));
+      await putRun(
+        {
+          subject: { kind: "item", id: "i-stripped-then-urls" },
+          lane: "expert",
+          runId: "r1",
+          state: {
+            kind: "done",
+            brief: "b",
+            synthesis: { attempted: false, reason: "disabled" },
+            findings: {
+              kind: "expert",
+              ranked: [
+                {
+                  personId: "person:1",
+                  displayName: "Ada",
+                  score: 0.9,
+                  confidence: "high",
+                  evidence,
+                },
+              ],
+            },
+          },
+          expiresAtMs: NOW + 60_000,
+        },
+        NOW,
+      );
+      // Sanity: `putRun` already dropped `findings` on its own, before
+      // `itemUrls` ever enters the picture.
+      const beforeAttach = await getRun(
+        { kind: "item", id: "i-stripped-then-urls" },
+        "expert",
+        NOW,
+      );
+      expect(beforeAttach?.state).toEqual({
+        kind: "done",
+        brief: "b",
+        synthesis: { attempted: false, reason: "disabled" },
+      });
+
+      const bigItemUrls: Record<string, string> = {};
+      for (let i = 0; i < 30; i++) {
+        bigItemUrls[`github:acme/web#${i}`] =
+          `https://github.com/acme/web/pull/${i}${"x".repeat(700)}`;
+      }
+      await putItemUrls(
+        { kind: "item", id: "i-stripped-then-urls" },
+        "expert",
+        "r1",
+        bigItemUrls,
+        NOW,
+      );
+
+      const found = await getRun({ kind: "item", id: "i-stripped-then-urls" }, "expert", NOW);
+      expect(found?.state).toEqual({
+        kind: "done",
+        brief: "b",
+        synthesis: { attempted: false, reason: "disabled" },
+      });
+    });
+
+    it("merges the map onto the still-current run", async () => {
+      await putRun(
+        {
+          subject: { kind: "item", id: "i-put" },
+          lane: "expert",
+          runId: "r1",
+          state: { kind: "done", brief: "b", findings: { kind: "expert", ranked: [] } },
+          expiresAtMs: NOW + 60_000,
+        },
+        NOW,
+      );
+      await putItemUrls(
+        { kind: "item", id: "i-put" },
+        "expert",
+        "r1",
+        { "github:acme/web#1": "https://github.com/acme/web/pull/1" },
+        NOW,
+      );
+      const found = await getRun({ kind: "item", id: "i-put" }, "expert", NOW);
+      expect(found?.state).toEqual({
+        kind: "done",
+        brief: "b",
+        findings: { kind: "expert", ranked: [] },
+        itemUrls: { "github:acme/web#1": "https://github.com/acme/web/pull/1" },
+      });
+    });
+
+    it("writes nothing when the runId no longer matches — a Re-run already replaced it", async () => {
+      await putRun(
+        {
+          subject: { kind: "item", id: "i-mismatch" },
+          lane: "expert",
+          runId: "r-new",
+          state: { kind: "done", brief: "fresh", findings: { kind: "expert", ranked: [] } },
+          expiresAtMs: NOW + 60_000,
+        },
+        NOW,
+      );
+      await putItemUrls(
+        { kind: "item", id: "i-mismatch" },
+        "expert",
+        "r-stale",
+        { "github:acme/web#1": "https://github.com/acme/web/pull/1" },
+        NOW,
+      );
+      const found = await getRun({ kind: "item", id: "i-mismatch" }, "expert", NOW);
+      expect(found?.state).toEqual({
+        kind: "done",
+        brief: "fresh",
+        findings: { kind: "expert", ranked: [] },
+      });
+    });
+
+    it("writes nothing once the run has expired", async () => {
+      await putRun(
+        {
+          subject: { kind: "item", id: "i-exp" },
+          lane: "expert",
+          runId: "r1",
+          state: { kind: "done", brief: "b", findings: { kind: "expert", ranked: [] } },
+          expiresAtMs: NOW + 10,
+        },
+        NOW,
+      );
+      await putItemUrls(
+        { kind: "item", id: "i-exp" },
+        "expert",
+        "r1",
+        { x: "https://x.test" },
+        NOW + 11,
+      );
+      expect(await getRun({ kind: "item", id: "i-exp" }, "expert", NOW + 11)).toBeNull();
+    });
+
+    it("writes nothing once the run is running again, not done", async () => {
+      await putRun(
+        {
+          subject: { kind: "item", id: "i-run" },
+          lane: "expert",
+          runId: "r1",
+          state: { kind: "running", runId: "r1" },
+          expiresAtMs: NOW + 60_000,
+        },
+        NOW,
+      );
+      await putItemUrls(
+        { kind: "item", id: "i-run" },
+        "expert",
+        "r1",
+        { x: "https://x.test" },
+        NOW,
+      );
+      const found = await getRun({ kind: "item", id: "i-run" }, "expert", NOW);
+      expect(found?.state).toEqual({ kind: "running", runId: "r1" });
+    });
+
+    // The interleaving itself, constructed deliberately rather than hoped
+    // for: `exclusively`'s single-writer chain runs queued work in EXACTLY
+    // the order it was called, regardless of how many `await`s each does
+    // internally, so calling `putRun` (the Re-run) and THEN `putItemUrls`
+    // (the stale resolve) without awaiting between them — and only awaiting
+    // both afterward — deterministically reproduces "a concurrent Re-run
+    // landing between the read and the write" every run, not on lucky timing.
+    it("a concurrent Re-run's write landing before a stale itemUrls attempt is not clobbered", async () => {
+      await putRun(
+        {
+          subject: { kind: "item", id: "i-race" },
+          lane: "expert",
+          runId: "r1",
+          state: {
+            kind: "done",
+            brief: "first answer",
+            findings: { kind: "expert", ranked: [] },
+          },
+          expiresAtMs: NOW + 60_000,
+        },
+        NOW,
+      );
+
+      // Queued FIRST (not awaited yet): the Re-run's own fresh terminal
+      // write — same subject+lane, a NEW runId — exactly what task 6's
+      // Re-run produces while a slow resolve-ids call is still in flight.
+      const reRun = putRun(
+        {
+          subject: { kind: "item", id: "i-race" },
+          lane: "expert",
+          runId: "r2",
+          state: {
+            kind: "done",
+            brief: "second answer",
+            findings: { kind: "expert", ranked: [] },
+          },
+          expiresAtMs: NOW + 60_000,
+        },
+        NOW + 1,
+      );
+      // Queued SECOND: the stale resolve, still carrying the ORIGINAL run's
+      // id — exactly what `resolveAndPersistItemUrls` passes after a slow
+      // `/v1/items/resolve-ids` call outlives a Re-run of the same lane.
+      const staleAttach = putItemUrls(
+        { kind: "item", id: "i-race" },
+        "expert",
+        "r1",
+        { "github:acme/web#1": "https://github.com/acme/web/pull/1" },
+        NOW + 2,
+      );
+
+      await Promise.all([reRun, staleAttach]);
+
+      const found = await getRun({ kind: "item", id: "i-race" }, "expert", NOW + 2);
+      // The Re-run's fresh answer survives untouched: no itemUrls attached to
+      // it, and its own brief is intact — not clobbered by the stale write
+      // that (with the bug) would have overwritten it with `runId: "r1"`'s
+      // captured-before-the-race state.
+      expect(found?.runId).toBe("r2");
+      expect(found?.state).toEqual({
+        kind: "done",
+        brief: "second answer",
+        findings: { kind: "expert", ranked: [] },
+      });
     });
   });
 });

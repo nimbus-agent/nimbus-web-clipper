@@ -157,10 +157,11 @@ export type DecisionsFindings = {
  * The `expert` lane's payload, as a client projection of `ExpertBrief` (§4.1).
  *
  * `query` is not projected: the panel already knows what was asked (it asked
- * it), so echoing the topic back adds nothing the renderer needs. This is the
- * first of C8.3's four link-less lanes: `Evidence.itemId` is a genuine item
- * id, but this client has no id→URL resolver, so evidence titles render as
- * plain text, never as `findingLink`.
+ * it), so echoing the topic back adds nothing the renderer needs. `Evidence.itemId`
+ * is a genuine item id — one of two link-less C8.3 lanes (alongside `catchup`)
+ * this phase (2026-09-08-a-title-you-can-follow) gave a resolver: task 3
+ * resolves it against `/v1/items/resolve-ids` into an `ItemUrlMap`, and task 4's
+ * `renderExpertFindings` renders evidence titles through `findingLink` with it.
  */
 export type ExpertFindings = {
   readonly kind: "expert";
@@ -226,11 +227,12 @@ export type CatchupFindings = {
 
 /**
  * The `ownership` lane's payload, as a client projection of `OwnershipBrief`
- * (§4.1). This is the last of C8.3's four link-less lanes, and the one that
- * carries no item id at all: `OwnershipOwner.externalId` is a PERSON id and
- * `OwnershipTargetView.displayPath` is a PATH, so there is no URL anywhere on
- * this brief to begin with — unlike `expert`/`impact`/`catchup`, which have
- * ids this client simply has no resolver for.
+ * (§4.1). This lane carries no item id at all: `OwnershipOwner.externalId` is
+ * a PERSON id and `OwnershipTargetView.displayPath` is a PATH, so there is no
+ * URL anywhere on this brief to begin with — unlike `expert`/`catchup`, which
+ * DO have a resolver (2026-09-08-a-title-you-can-follow, task 3), or `impact`,
+ * whose `affectedItemId` merely looks like an item id and is not one (see
+ * `ImpactFindings`'s own comment).
  *
  * `query` is not projected, same reasoning as `ExpertFindings`: the panel
  * already knows what was asked. The top-level `service: { id } | null` is
@@ -263,7 +265,11 @@ export type OwnershipFindings = {
 
 /**
  * The per-lane structured payload. ONE ARM PER SLICE: `why` in C8.1,
- * `glossary` and `decisions` in C8.2, the four link-less lanes in C8.3.
+ * `glossary` and `decisions` in C8.2, the four lanes C8.3 shipped link-less
+ * on purpose (`expert`, `impact`, `catchup`, `ownership`) — two of which,
+ * `expert` and `catchup`, gained an item-id resolver and clickable evidence
+ * in 2026-09-08-a-title-you-can-follow; `impact` and `ownership` stay
+ * link-less, having no item id to resolve (see their own comments above).
  *
  * A lane whose arm does not exist yet behaves exactly like a guard rejection —
  * no findings, prose body, and its gaps and provenance still render.
@@ -276,3 +282,16 @@ export type LaneFindings =
   | ImpactFindings
   | CatchupFindings
   | OwnershipFindings;
+
+/**
+ * `itemId -> the URL the index holds for it`. Absent id = not resolved (either
+ * the id was never asked for, or the gateway had nothing to say about it).
+ *
+ * Deliberately a SIBLING map, not a `url` field merged onto `ExpertFinding` /
+ * `CatchupItem`: a URL is a client-side enrichment of the answer, not part of
+ * what the agent said, so folding it into `LaneFindings` would make the element
+ * guards in `findings-guards.ts` grow a branch each and re-prove
+ * `sanitiseState`'s idempotence for no reason — see
+ * docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md §3.
+ */
+export type ItemUrlMap = Readonly<Record<string, string>>;

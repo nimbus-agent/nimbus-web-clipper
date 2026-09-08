@@ -1699,22 +1699,60 @@ this reason.
 ### What can be linked, and what cannot (§4.6)
 
 Exhaustive inventory of every URL and every id across the seven lanes'
-findings, current as of C8.3:
+findings, current as of 2026-09-08-a-title-you-can-follow:
 
-| carries a URL | carries a resolvable item id | carries neither |
+| carries a URL | carries a resolvable item id, resolved | carries neither |
 | --- | --- | --- |
 | `why.findings[].url`, `why.changeSubject.url`, `why.itemSubject.url` | `catchup.sections[].items[].itemId` | `impact` |
 | `decisions.entries[].evidence[].url` | `expert.ranked[].evidence[].itemId` | `ownership` |
 | `glossary.entries[].topSources[].url` | | |
 
-Three lanes (`why`, `decisions`, `glossary`) carry a real URL and render a
-clickable link, through the shared `findingLink` builder and `safeHttpUrl`,
-exactly like every other link this panel renders. Two more (`catchup`,
-`expert`) carry an id shaped like it could become a link with a reverse
-resolver this client does not have — `GET /v1/items/resolve` maps a URL to an
-item, not an item id back to a URL, so there is nothing to feed either id
-into today. The remaining two (`impact`, `ownership`) carry no id or URL that
-names a *result* at all; their only URLs are the queries they echo back.
+Five lanes now render a clickable link through the shared `findingLink`
+builder and `safeHttpUrl`. **Three** (`why`, `decisions`, `glossary`) always
+did — they carry a real URL straight off the wire. **Two more** (`catchup`,
+`expert`) carry an item id rather than a URL, and C8.3 shipped them
+link-less because this client had no reverse resolver: `GET /v1/items/resolve`
+maps a URL *to* an item, not an item id back to a URL. 2026-09-08's phase
+added exactly that missing direction — `GET /v1/items/resolve-ids`, a route
+distinct from (and lighter than) `/v1/items/resolve` — and wired it end to
+end: `resolveAndPersistItemUrls` (`service-worker.ts`) fires once a
+poll lands `done` on either lane, `resolveItemUrls` (`item-urls.ts`) chunks
+the ids against both of the route's bounds and tolerates a chunk — or every
+chunk — failing, and the resulting `ItemUrlMap` is persisted as `itemUrls`,
+a sibling of `findings` on the stored `done` state (same byte budget, see
+"Findings, bounded" above). `renderExpertFindings` and `renderCatchupFindings`
+take that map as a fourth, optional argument and pass each id's looked-up URL
+straight into `findingLink` — a map miss (unresolved id, or no map at all on
+an older/un-scoped gateway) needs no branch of its own, because `findingLink`
+already renders plain text when its URL argument is absent or unsafe. The
+other five renderers keep their original signatures; only the two lanes that
+gained a map take one.
+
+**Resolved once, cached with the run — and no version floor.** Resolution
+happens exactly once, in the background worker, the moment a poll lands a
+`done` state with `findings`; the panel never triggers it and holds no token
+to call `resolve-ids` itself even if it wanted to. The resulting map is
+written through `putItemUrls` (`agent-run-store.ts`), which does its own
+read-verify-write inside the store's single-writer lock rather than a plain
+`getRun` followed by `putRun` — the race that fix closed. A link the reader
+follows an hour later is therefore the URL the index held when the agent
+answered, not a fresh lookup on every panel open: **it is cached with the run,
+never re-fetched on repaint.** Size is bounded the same way `findings` already
+is — `findingsAndUrlsBytes` measures `findings` and `itemUrls` TOGETHER against
+the same `MAX_FINDINGS_BYTES` (16 KiB) `putRun` enforces, and over budget both
+are dropped together, never `itemUrls` alone surviving without the elements it
+annotates. And `GATEWAY_PATHS.resolveIds`'s **presence is the capability
+signal**, exactly as `resolveFile`'s is: a 404 `resolve_disabled` means a
+gateway older than the route (or one whose clips surface is unmounted), and
+`resolveItemUrls` treats it as permanent for that token rather than retrying —
+the run keeps its brief, the two lanes render exactly as C8.3 shipped them,
+plain text, silently. There is no `RESOLVE_IDS_ARM_FLOOR`, by the same
+reasoning `resolveFile` needed none: this route ships strictly after the data
+it resolves exists to be resolved, so its own presence proves the capability
+rather than a version number having to.
+
+The remaining two (`impact`, `ownership`) carry no id or URL that names a
+*result* at all; their only URLs are the queries they echo back.
 
 **`impact` is the trap in that table, and it is worth stating plainly: the
 field name lies, in a published SDK type.** `ImpactFinding.affectedItemId`
@@ -1734,12 +1772,14 @@ either, by construction rather than by trap: `OwnershipOwner.externalId` is a
 *person* id and `OwnershipTargetView.displayPath` is a path, so there was
 never a candidate field to confuse for one.
 
-None of the four lanes C8.3 added promises a link it cannot deliver: every
-title on `expert`, `impact`, `ownership` and `catchup` renders as text, and
-nothing in their copy implies a link is one gateway release away. Adding a
-reverse resolver later — which would benefit at most `expert` and `catchup`,
-the two lanes that hold a genuine (if currently unresolvable) item id — is a
-link wrap in two renderer files, not a redesign of any projection or guard.
+None of the four lanes C8.3 added ever promised a link it could not deliver:
+every title rendered as text at the time, and nothing in their copy implied a
+link was one gateway release away. That is exactly what let the eventual
+reverse resolver land as a wrap rather than a redesign — C8.3 deliberately
+left `expert` and `catchup`'s renderers accepting the shapes they'd need
+later. `impact` and `ownership` remain link-less on purpose and permanently:
+neither carries an item id a resolver could ever answer for (see
+`item-urls.ts`'s own comment on the trap in `ImpactFinding.affectedItemId`).
 
 ## Research briefs
 

@@ -513,6 +513,110 @@ export async function resolveFile(
   return { ok: false, reason: "server_error" };
 }
 
+/** The route's own cap: more than 100 raw `?id=` params gets `400 too_many_ids`,
+ *  counted before de-duplicating. Exported so the chunker (`resolveItemUrls`)
+ *  can split against the same number rather than a copied literal. */
+export const RESOLVE_IDS_MAX_BATCH = 100;
+
+/** One row this client keeps from a resolve-ids hit. The wire also carries
+ *  `service`, `type`, `title` and `modified_at`; this client asks the route for
+ *  a link, nothing more, and ignores the rest rather than asserting a shape it
+ *  does not consume. */
+export interface ResolvedIdRow {
+  readonly id: string;
+  readonly url: string | null;
+}
+
+function parseResolvedIdRow(v: unknown): ResolvedIdRow | null {
+  if (
+    !isObject(v) ||
+    typeof v["id"] !== "string" ||
+    !(v["url"] === null || typeof v["url"] === "string")
+  ) {
+    return null;
+  }
+  return { id: v["id"], url: v["url"] };
+}
+
+/** `null` for anything that is not a well-formed `{ items: [...] }` — an
+ *  unrecognised body must never render as a confident "nothing resolved". */
+function parseResolveIdsBody(data: unknown): readonly ResolvedIdRow[] | null {
+  if (!isObject(data) || !Array.isArray(data["items"])) {
+    return null;
+  }
+  const rows: ResolvedIdRow[] = [];
+  for (const raw of data["items"]) {
+    const row = parseResolvedIdRow(raw);
+    if (row === null) {
+      return null;
+    }
+    rows.push(row);
+  }
+  return rows;
+}
+
+/**
+ * `GET /v1/items/resolve-ids?id=…&id=…` — a bearer read under the `resolve`
+ * scope, the same one `resolve` and `resolve-file` already use.
+ *
+ * This function issues ONE request for the ids it is given — chunking against
+ * `RESOLVE_IDS_MAX_BATCH` and the client's own query-string byte budget is
+ * `resolveItemUrls`'s job, not this one's.
+ *
+ * Every failure is silent, never surfaced as an error: a 404 `resolve_disabled`
+ * (a gateway older than the route, or one whose clips surface is unmounted), a
+ * 403 (a token paired before scopes existed), a 400 `too_many_ids`/`missing_id`,
+ * a network error, a timeout, or a malformed body all resolve to `{ ok: false }`
+ * rather than throwing — a lane rendering titles as plain text is the NORMAL
+ * state for an older gateway, not a degraded one.
+ *
+ * The `reason` distinguishes THREE things, each for the chunker's benefit —
+ * nothing above this file renders any of them as text:
+ * - `"unsupported"` (404, exactly) — the route does not exist on this gateway
+ *   at all. Permanent for this token; trying the remaining chunks is pointless.
+ * - `"forbidden"` (403, exactly) — the token lacks the `resolve` scope. Also
+ *   permanent for this token (the owner clears it with `nimbus clip scopes`,
+ *   without re-pairing), so it will fail identically on every chunk.
+ * - `"failed"` — everything else: a 400, a network error, a timeout, a
+ *   malformed body. Chunk-local and worth retrying on the next chunk.
+ */
+export async function resolveItemIds(
+  origin: string,
+  token: string,
+  ids: readonly string[],
+  doFetch: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly items: readonly ResolvedIdRow[] }
+  | { readonly ok: false; readonly reason: "unsupported" | "forbidden" | "failed" }
+> {
+  const query = new URLSearchParams();
+  for (const id of ids) {
+    query.append("id", id);
+  }
+  let res: Response;
+  try {
+    res = await getJsonAt(
+      doFetch,
+      `${endpointUrl(origin, "resolveIds")}?${query.toString()}`,
+      { authorization: `Bearer ${token}` },
+      RESOLVE_TIMEOUT_MS,
+    );
+  } catch {
+    return { ok: false, reason: "failed" };
+  }
+  if (res.status === 200) {
+    const rows = parseResolveIdsBody(await readJson(res));
+    return rows === null ? { ok: false, reason: "failed" } : { ok: true, items: rows };
+  }
+  if (res.status === 404) {
+    return { ok: false, reason: "unsupported" };
+  }
+  if (res.status === 403) {
+    return { ok: false, reason: "forbidden" };
+  }
+  return { ok: false, reason: "failed" };
+}
+
 /** The 403 body's scope detail. Absent or malformed => omit it; the panel then
  *  falls back to generic guidance rather than inventing a command. */
 /**

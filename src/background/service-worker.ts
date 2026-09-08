@@ -24,6 +24,7 @@ import {
   type TabNavigation,
   tabUrl,
 } from "../browser/tabs.ts";
+import type { ItemUrlMap, LaneFindings } from "../shared/findings.ts";
 import { gapsOfBrief, laneFindingsFrom, synthesisFrom } from "../shared/findings-guards.ts";
 import {
   isAgentRunRequest,
@@ -58,6 +59,7 @@ import {
   type StoredRun,
   getRun as storeGetRun,
   listRunning as storeListRunning,
+  putItemUrls as storePutItemUrls,
   putRun as storePutRun,
 } from "./agent-run-store.ts";
 import { fetchAgentRoster } from "./agents-capability.ts";
@@ -103,6 +105,7 @@ import {
   probeHealth,
   resolveFile,
   resolveItem,
+  resolveItemIds,
 } from "./gateway-client.ts";
 import {
   handleAgentRun,
@@ -121,6 +124,7 @@ import {
   handleResolve,
   handleUnpair,
 } from "./handlers.ts";
+import { itemIdsOf, resolveItemUrls } from "./item-urls.ts";
 import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
 import { collectPassage, type PassageCollectDeps } from "./passage-collect.ts";
@@ -229,6 +233,11 @@ const clipDeps = { getConnection, postClip: postClipPaced, updateQueue, nowMs: (
 // postClip with the side effects handleClip itself stays free of.
 const agentStoreDeps = {
   getRun: (subject: RunSubject, lane: AgentLane) => storeGetRun(subject, lane, Date.now()),
+  // The read, the freshness check and the write all happen inside the
+  // store's own single-writer lock — see `putItemUrls`'s doc comment for why
+  // that (and not a `getRun` here followed by a `putRun`) is the point.
+  putItemUrls: (subject: RunSubject, lane: AgentLane, runId: string, itemUrls: ItemUrlMap) =>
+    storePutItemUrls(subject, lane, runId, itemUrls, Date.now()),
 };
 
 // Bound here for the same reason `readConnectorHealth` is: `fetchAgentRoster` takes a
@@ -442,12 +451,61 @@ async function tickAgentPoll(
     return;
   }
   activeAgentPolls.delete(run.runId);
-  await agentRunDeps.putRun({
-    subject: run.subject,
-    lane: run.lane,
-    runId: run.runId,
-    state: terminalLaneState(result, conn.label, run.lane),
-  });
+  const state = terminalLaneState(result, conn.label, run.lane);
+  await agentRunDeps.putRun({ subject: run.subject, lane: run.lane, runId: run.runId, state });
+  // Fire-and-forget, deliberately NOT awaited: the reader is waiting on the
+  // brief just stored above, not on a set of links, and a slow or hanging
+  // `resolve-ids` call must never delay that answer landing — see this
+  // phase's design spec §2 and the report this task's brief calls for. `why`,
+  // `glossary`, `decisions`, `impact` and `ownership` all short-circuit inside
+  // `resolveAndPersistItemUrls` via `itemIdsOf` returning `[]`, so this costs
+  // nothing on any lane but `expert`/`catchup`.
+  if (state.kind === "done" && state.findings !== undefined) {
+    void resolveAndPersistItemUrls(run, state.findings, conn.origin, conn.token, generation).catch(
+      () => undefined,
+    );
+  }
+}
+
+/**
+ * The second half of a completed `expert`/`catchup` run: resolve its item ids
+ * against `/v1/items/resolve-ids` and persist the map alongside the run — a
+ * SECOND store write, after the terminal one `tickAgentPoll` already made
+ * (design spec §2, §5). Never awaited by the caller; see that call site's own
+ * comment for why.
+ *
+ * Every failure here — nothing to resolve, an older/un-scoped gateway, a
+ * network error — ends in "write nothing", exactly as `resolveItemUrls`
+ * itself promises: a lane rendering titles as plain text is this phase's
+ * NORMAL state, not a degraded one.
+ *
+ * `pairingChangedSince` is re-checked before AND after the network call,
+ * mirroring every other await in `tickAgentPoll` — a pairing change while
+ * this is in flight must write nothing, or it would repopulate the store a
+ * `clearRuns()` on unpair already emptied (see that counter's own doc
+ * comment). Attaching the map itself goes through `putItemUrls`, which does
+ * its own read-verify-write ATOMICALLY inside the store's single-writer lock
+ * — not a `getRun` here followed by a `putRun` — because a Re-run (task 6)
+ * can start a fresh invocation for the same subject+lane while this is in
+ * flight, and a plain read out here would leave a gap a Re-run's write could
+ * land in and be silently clobbered by. See `putItemUrls`'s own doc comment.
+ */
+async function resolveAndPersistItemUrls(
+  run: StoredRun,
+  findings: LaneFindings,
+  origin: string,
+  token: string,
+  generation: number,
+): Promise<void> {
+  const ids = itemIdsOf(findings);
+  if (ids.length === 0 || pairingChangedSince(generation)) {
+    return;
+  }
+  const itemUrls = await resolveItemUrls({ origin, token, resolveItemIds }, ids);
+  if (Object.keys(itemUrls).length === 0 || pairingChangedSince(generation)) {
+    return;
+  }
+  await agentRunDeps.putItemUrls(run.subject, run.lane, run.runId, itemUrls);
 }
 
 /** Schedule the NEXT poll attempt after `delayMs`. Real `setTimeout`, not

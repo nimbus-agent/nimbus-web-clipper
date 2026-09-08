@@ -1367,6 +1367,111 @@ describe("agent run polling — survives eviction", () => {
     });
   });
 
+  // Task 3: a completed `expert`/`catchup` run resolves its evidence ids
+  // against `/v1/items/resolve-ids` and persists the resulting map alongside
+  // findings — WITHOUT the poll result's own store write waiting on it (see
+  // this phase's design spec §2 and §5, and this file's own report for the
+  // ordering trade-off).
+  test("a done expert-lane poll result resolves its evidence ids and persists itemUrls", async () => {
+    await loadPairedAtNow();
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        subject: { kind: "item", id: "gh-1" },
+        lane: "expert",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 60_000,
+      },
+      NOW,
+    );
+    const resolveIdsCalls: string[] = [];
+    stubFetch((url) => {
+      if (url.includes("/v1/agents/runs/")) {
+        return jsonRes(200, {
+          status: "done",
+          brief: "answered",
+          findings: {
+            kind: "expert",
+            gaps: [],
+            ranked: [
+              {
+                personId: "person:1",
+                displayName: "Ada",
+                score: 0.9,
+                confidence: "high",
+                evidence: [
+                  {
+                    itemId: "github:acme/web#1",
+                    type: "pr_authored",
+                    serviceId: "github",
+                    title: "t1",
+                    modifiedAt: 1,
+                    weight: 0.5,
+                  },
+                ],
+              },
+            ],
+          },
+        });
+      }
+      resolveIdsCalls.push(url);
+      return jsonRes(200, {
+        items: [{ id: "github:acme/web#1", url: "https://github.com/acme/web/pull/1" }],
+      });
+    });
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    expect(resolveIdsCalls.some((u) => u.includes("/v1/items/resolve-ids"))).toBe(true);
+    const found = await getRun({ kind: "item", id: "gh-1" }, "expert", NOW);
+    expect(found?.state).toMatchObject({
+      kind: "done",
+      brief: "answered",
+      itemUrls: { "github:acme/web#1": "https://github.com/acme/web/pull/1" },
+    });
+  });
+
+  test("a done why-lane poll result never calls resolve-ids — why is not one of the two linkable lanes", async () => {
+    await loadPairedAtNow();
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        subject: { kind: "item", id: "gh-1" },
+        lane: "why",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 60_000,
+      },
+      NOW,
+    );
+    const resolveIdsCalls: string[] = [];
+    stubFetch((url) => {
+      if (url.includes("/v1/items/resolve-ids")) {
+        resolveIdsCalls.push(url);
+        return jsonRes(200, { items: [] });
+      }
+      return jsonRes(200, {
+        status: "done",
+        brief: "answered",
+        findings: {
+          kind: "why",
+          gaps: [],
+          findings: [],
+          subject: null,
+          changeSubject: null,
+          itemSubject: null,
+        },
+      });
+    });
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    expect(resolveIdsCalls).toEqual([]);
+    const found = await getRun({ kind: "item", id: "gh-1" }, "why", NOW);
+    expect(found?.state.kind === "done" ? "itemUrls" in found.state : undefined).toBe(false);
+  });
+
   test("a stale poll result is terminal and does not auto-re-invoke", async () => {
     await loadPairedAtNow();
     await seedRunningRun();
