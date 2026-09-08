@@ -4,7 +4,7 @@
 // attacker-influenceable, so plain-text rendering is the XSS backstop.
 import { offersCapture } from "../shared/capture-offer.ts";
 import { type ConnectorHealth, gatePolicy } from "../shared/connector-health.ts";
-import type { LaneFindings } from "../shared/findings.ts";
+import type { ItemUrlMap, LaneFindings } from "../shared/findings.ts";
 import { formatAge } from "../shared/freshness.ts";
 import { buildFetchPreview, type ClipPreview, type FetchPreview } from "../shared/preview.ts";
 import { renderPreview } from "../shared/preview-view.ts";
@@ -901,8 +901,21 @@ export function renderCapturePreview(
  * enforced by the declared return type, so adding an arm to `LaneFindings`
  * without a case here is a compile error. Deliberately not a `satisfies never`
  * backstop — Sonar counts that line as permanently uncovered.
+ *
+ * `itemUrls` is threaded through to `expert` and `catchup` ONLY — the two
+ * lanes `itemIdsOf` (item-urls.ts) resolves ids for, and the only two whose
+ * renderer accepts the map. The other five keep their existing 3-argument
+ * signature unchanged: `why`, `glossary` and `decisions` already carry a URL
+ * on the wire, and `impact`/`ownership` have no item id to link at all (see
+ * item-urls.ts's own comment) — so there is nothing for a map to add there,
+ * and no reason to widen five signatures that gain no new behaviour.
  */
-function renderFindings(doc: Document, findings: LaneFindings, nowMs: number): HTMLElement {
+function renderFindings(
+  doc: Document,
+  findings: LaneFindings,
+  nowMs: number,
+  itemUrls: ItemUrlMap | undefined,
+): HTMLElement {
   switch (findings.kind) {
     case "why":
       return renderWhyFindings(doc, findings, nowMs);
@@ -911,11 +924,11 @@ function renderFindings(doc: Document, findings: LaneFindings, nowMs: number): H
     case "decisions":
       return renderDecisionsFindings(doc, findings, nowMs);
     case "expert":
-      return renderExpertFindings(doc, findings, nowMs);
+      return renderExpertFindings(doc, findings, nowMs, itemUrls);
     case "impact":
       return renderImpactFindings(doc, findings, nowMs);
     case "catchup":
-      return renderCatchupFindings(doc, findings, nowMs);
+      return renderCatchupFindings(doc, findings, nowMs, itemUrls);
     case "ownership":
       return renderOwnershipFindings(doc, findings, nowMs);
   }
@@ -938,7 +951,7 @@ function renderDoneLaneBody(
   // byte bound, or a lane whose `LaneFindings` arm has not shipped. That
   // fallback is the existing code path, unchanged, and nothing announces it.
   if (state.findings !== undefined) {
-    box.append(renderFindings(doc, state.findings, nowMs));
+    box.append(renderFindings(doc, state.findings, nowMs, state.itemUrls));
   } else {
     const pre = doc.createElement("pre");
     pre.className = "nimbus-related__brief";

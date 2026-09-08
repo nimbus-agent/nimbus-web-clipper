@@ -10,12 +10,14 @@
 // reader cannot tell a quiet window from a truncated one, and those call for
 // opposite reactions.
 //
-// This lane renders NO result links: `CatchupItem.itemId` IS a genuine
-// `item.id`, unlike `impact`'s `affectedItemId`, but this client still has no
-// id→URL resolver, so `title` is always plain text.
-import type { CatchupFindings, CatchupSection } from "../../shared/findings.ts";
+// `CatchupItem.itemId` IS a genuine `item.id`, unlike `impact`'s
+// `affectedItemId`, resolved (task 3) against `/v1/items/resolve-ids` and
+// handed to this renderer as `itemUrls` — a map lookup that misses (an
+// unresolved id, or no map at all on an older/un-scoped gateway) needs no
+// branch of its own: `findingLink` already falls back to plain text.
+import type { CatchupFindings, CatchupSection, ItemUrlMap } from "../../shared/findings.ts";
 import { formatAge } from "../../shared/freshness.ts";
-import { renderEmptyLine } from "./shared-view.ts";
+import { findingLink, renderEmptyLine } from "./shared-view.ts";
 
 /**
  * The involvement summary line, or `null` when every array is empty — an
@@ -64,12 +66,12 @@ function renderItem(
   doc: Document,
   item: CatchupSection["items"][number],
   nowMs: number,
+  itemUrls: ItemUrlMap | undefined,
 ): HTMLElement {
   const row = doc.createElement("div");
   row.className = "nimbus-findings__item";
 
-  const title = doc.createElement("span");
-  title.textContent = item.title;
+  const title = findingLink(doc, item.title, itemUrls?.[item.itemId]);
   row.append(title);
 
   const when = doc.createElement("span");
@@ -87,7 +89,12 @@ function renderItem(
   return row;
 }
 
-function renderSection(doc: Document, section: CatchupSection, nowMs: number): HTMLElement {
+function renderSection(
+  doc: Document,
+  section: CatchupSection,
+  nowMs: number,
+  itemUrls: ItemUrlMap | undefined,
+): HTMLElement {
   const group = doc.createElement("div");
   group.className = "nimbus-findings__group";
 
@@ -102,7 +109,7 @@ function renderSection(doc: Document, section: CatchupSection, nowMs: number): H
   group.append(title);
 
   for (const item of section.items) {
-    group.append(renderItem(doc, item, nowMs));
+    group.append(renderItem(doc, item, nowMs, itemUrls));
   }
   return group;
 }
@@ -111,6 +118,7 @@ export function renderCatchupFindings(
   doc: Document,
   findings: CatchupFindings,
   nowMs: number,
+  itemUrls?: ItemUrlMap,
 ): HTMLElement {
   const box = doc.createElement("div");
   box.className = "nimbus-findings";
@@ -130,7 +138,7 @@ export function renderCatchupFindings(
   }
 
   for (const section of findings.sections) {
-    box.append(renderSection(doc, section, nowMs));
+    box.append(renderSection(doc, section, nowMs, itemUrls));
   }
   return box;
 }

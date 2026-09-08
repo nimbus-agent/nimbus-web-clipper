@@ -12,18 +12,25 @@
 // display. `personId` also stays unrendered — it is an opaque id with nothing
 // for a reader to act on.
 //
-// This lane renders NO result links: `Evidence.itemId` is a genuine `item.id`,
-// but this client has no id→URL resolver, so both `displayName` and evidence
-// `title` are always plain text.
-import type { Evidence, ExpertFinding, ExpertFindings } from "../../shared/findings.ts";
+// `Evidence.itemId` is a genuine `item.id`, resolved (task 3) against
+// `/v1/items/resolve-ids` and handed to this renderer as `itemUrls` — a map
+// lookup that misses (an unresolved id, or no map at all on an older/
+// un-scoped gateway) needs no branch of its own: `findingLink` already falls
+// back to plain text. `displayName` stays unrendered as a link — a person has
+// no item id to resolve.
+import type { Evidence, ExpertFinding, ExpertFindings, ItemUrlMap } from "../../shared/findings.ts";
 import { formatAge } from "../../shared/freshness.ts";
-import { renderEmptyLine } from "./shared-view.ts";
+import { findingLink, renderEmptyLine } from "./shared-view.ts";
 
-function renderEvidenceRow(doc: Document, ev: Evidence, nowMs: number): HTMLElement {
+function renderEvidenceRow(
+  doc: Document,
+  ev: Evidence,
+  nowMs: number,
+  itemUrls: ItemUrlMap | undefined,
+): HTMLElement {
   const row = doc.createElement("div");
   row.className = "nimbus-findings__item";
-  const title = doc.createElement("span");
-  title.textContent = ev.title;
+  const title = findingLink(doc, ev.title, itemUrls?.[ev.itemId]);
   const type = doc.createElement("span");
   type.className = "nimbus-findings__badge";
   type.textContent = ev.type;
@@ -34,7 +41,12 @@ function renderEvidenceRow(doc: Document, ev: Evidence, nowMs: number): HTMLElem
   return row;
 }
 
-function renderPerson(doc: Document, entry: ExpertFinding, nowMs: number): HTMLElement {
+function renderPerson(
+  doc: Document,
+  entry: ExpertFinding,
+  nowMs: number,
+  itemUrls: ItemUrlMap | undefined,
+): HTMLElement {
   const box = doc.createElement("div");
   box.className = "nimbus-findings__group";
 
@@ -54,7 +66,7 @@ function renderPerson(doc: Document, entry: ExpertFinding, nowMs: number): HTMLE
   box.append(head);
 
   for (const ev of entry.evidence) {
-    box.append(renderEvidenceRow(doc, ev, nowMs));
+    box.append(renderEvidenceRow(doc, ev, nowMs, itemUrls));
   }
   return box;
 }
@@ -63,6 +75,7 @@ export function renderExpertFindings(
   doc: Document,
   findings: ExpertFindings,
   nowMs: number,
+  itemUrls?: ItemUrlMap,
 ): HTMLElement {
   const box = doc.createElement("div");
   box.className = "nimbus-findings";
@@ -75,7 +88,7 @@ export function renderExpertFindings(
   }
 
   for (const entry of findings.ranked) {
-    box.append(renderPerson(doc, entry, nowMs));
+    box.append(renderPerson(doc, entry, nowMs, itemUrls));
   }
   return box;
 }

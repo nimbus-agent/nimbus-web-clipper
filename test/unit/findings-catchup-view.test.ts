@@ -172,9 +172,40 @@ describe("renderCatchupFindings", () => {
     expect(detail?.textContent).toBe("you own billing-service");
   });
 
-  test("renders no links anywhere - this lane is link-less", () => {
+  test("renders no links when no map is given", () => {
     const el = renderCatchupFindings(document, findings(), NOW);
     expect(el.querySelector("a")).toBeNull();
+  });
+
+  // Task 4: the link wrap. `findingLink` is the only way a URL becomes an
+  // `<a>` — these four pin the map lookup, the no-map fallback, a missing id,
+  // and that `safeHttpUrl` is genuinely in the path rather than assumed.
+  test("with a map, an item title is a link carrying the mapped href", () => {
+    const el = renderCatchupFindings(document, findings(), NOW, {
+      "github:acme/web#9": "https://github.com/acme/web/pull/9",
+    });
+    const link = el.querySelector<HTMLAnchorElement>(".nimbus-findings__item a");
+    expect(link).not.toBeNull();
+    expect(link?.href).toBe("https://github.com/acme/web/pull/9");
+    expect(link?.textContent).toBe("Cut the release branch");
+  });
+
+  test("an item id missing from the map renders a span, not a link", () => {
+    const el = renderCatchupFindings(document, findings(), NOW, {
+      "some:other-item": "https://example.test/other",
+    });
+    expect(el.querySelector("a")).toBeNull();
+    const row = el.querySelector(".nimbus-findings__item");
+    expect(row?.querySelector("span")?.textContent).toBe("Cut the release branch");
+  });
+
+  test("a mapped value that is not a safe http URL renders a span — safeHttpUrl is genuinely in the path", () => {
+    const el = renderCatchupFindings(document, findings(), NOW, {
+      "github:acme/web#9": "javascript:alert(1)",
+    });
+    expect(el.querySelector("a")).toBeNull();
+    const row = el.querySelector(".nimbus-findings__item");
+    expect(row?.querySelector("span")?.textContent).toBe("Cut the release branch");
   });
 
   test("renders the empty-state line when sections is empty, never a blank box", () => {
