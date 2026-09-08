@@ -1078,7 +1078,7 @@ describe("isLaneState guards the done arm's structured fields", () => {
     expect(isAgentStateResponse({ kind: "agent-state", lane: "why", state: base })).toBe(true);
   });
 
-  test("accepts well-formed gaps, findings and synthesis", () => {
+  test("accepts well-formed gaps, findings, synthesis and itemUrls", () => {
     const state = {
       ...base,
       gaps: [{ category: "empty_index", detail: "d" }],
@@ -1090,6 +1090,7 @@ describe("isLaneState guards the done arm's structured fields", () => {
         itemSubject: null,
       },
       synthesis: { attempted: true, used: true, model: "m", remote: false },
+      itemUrls: { "github:acme/web#1": "https://github.com/acme/web/pull/1" },
     };
     expect(isAgentStateResponse({ kind: "agent-state", lane: "why", state })).toBe(true);
   });
@@ -1101,6 +1102,12 @@ describe("isLaneState guards the done arm's structured fields", () => {
       { ...base, gaps: [null] },
       { ...base, findings: { kind: "why", findings: [42] } },
       { ...base, synthesis: { attempted: true, used: true, model: "m" } },
+      // A fourth optional field on the done arm — `itemUrls` — must be
+      // checked exactly like the other three, not trusted through. A stored
+      // or hand-edited map with a non-string value is the shape a guard is
+      // for; `safeHttpUrl` gating every render is a second layer, not a
+      // reason to skip this one.
+      { ...base, itemUrls: { "github:acme/web#1": 42 } },
     ]) {
       expect(isAgentStateResponse({ kind: "agent-state", lane: "why", state: bad })).toBe(false);
     }
