@@ -17,6 +17,7 @@ import {
   gapsOfBrief,
   glossaryFindingsFrom,
   impactFindingsFrom,
+  itemUrlMapFrom,
   laneFindingsFrom,
   ownershipFindingsFrom,
   synthesisFrom,
@@ -114,6 +115,49 @@ describe("gapNotesFrom validates a gaps ARRAY", () => {
     expect(gapNotesFrom(undefined)).toBeUndefined();
     expect(gapNotesFrom({ gaps: [] })).toBeUndefined();
     expect(gapNotesFrom("nope")).toBeUndefined();
+  });
+});
+
+describe("itemUrlMapFrom validates a stored itemUrls map", () => {
+  test("accepts a well-formed map", () => {
+    const raw = { "github:acme/web#1": "https://github.com/acme/web/pull/1" };
+    expect(itemUrlMapFrom(raw)).toEqual(raw);
+  });
+
+  test("accepts an empty map", () => {
+    expect(itemUrlMapFrom({})).toEqual({});
+  });
+
+  test("rejects a map with a non-string value", () => {
+    expect(itemUrlMapFrom({ "github:acme/web#1": 42 })).toBeUndefined();
+  });
+
+  // `isObject` is `typeof v === "object" && v !== null`, which is also true of
+  // an array — so `["a", "b"]` used to pass `Object.values(...).every(isString)`
+  // and get cast straight through as an `ItemUrlMap`. Rejected explicitly now,
+  // rather than relying on a downstream string-key lookup missing by luck.
+  test("rejects an array, even one whose every element is a string", () => {
+    expect(itemUrlMapFrom(["a", "b"])).toBeUndefined();
+    expect(itemUrlMapFrom([])).toBeUndefined();
+  });
+
+  test("returns undefined for anything that is not an object", () => {
+    expect(itemUrlMapFrom(null)).toBeUndefined();
+    expect(itemUrlMapFrom(undefined)).toBeUndefined();
+    expect(itemUrlMapFrom("nope")).toBeUndefined();
+    expect(itemUrlMapFrom(42)).toBeUndefined();
+  });
+
+  // The map goes through this same guard on every `getRun` (`sanitiseState`
+  // in agent-run-store.ts), exactly like `findings` — so parsing its own
+  // output must yield an equal map, not a shrinking or reshaping one.
+  test("is idempotent: parsing its own output yields an equal map", () => {
+    const raw = {
+      "github:acme/web#1": "https://github.com/acme/web/pull/1",
+      "github:acme/web#2": "https://github.com/acme/web/pull/2",
+    };
+    const once = itemUrlMapFrom(raw);
+    expect(itemUrlMapFrom(once)).toEqual(once);
   });
 });
 

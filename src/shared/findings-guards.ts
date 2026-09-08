@@ -131,12 +131,28 @@ export function gapsOfBrief(brief: unknown): readonly GapNote[] | undefined {
  * All-or-nothing, like `gapNotesFrom`: one malformed entry (a hand-edited
  * value, a partial write) drops the whole map rather than rendering some
  * links and silently dropping others.
+ *
+ * `isObject` accepts an array too (`typeof [] === "object"`), so a stored
+ * `["a", "b"]` would otherwise pass `Object.values(...).every(isString)` and
+ * get cast straight through as an `ItemUrlMap` — harmless in effect (a
+ * numeric-string key looks up nothing a real item id would ever produce, so
+ * every title just renders as plain text), but it is exactly this codebase's
+ * recurring "type narrow, runtime wide" shape: the caller's object passed
+ * through rather than rebuilt. Rejected explicitly, and the map is REBUILT
+ * from validated entries rather than cast from `raw` — so the return value is
+ * always a plain object this module made, never the input handed back.
+ * Idempotent: re-running this over its own output must yield an equal map,
+ * because `sanitiseState` (agent-run-store.ts) puts a stored map through this
+ * same guard on every read, exactly like `findings`.
  */
 export function itemUrlMapFrom(raw: unknown): ItemUrlMap | undefined {
-  if (!isObject(raw)) {
+  if (!isObject(raw) || Array.isArray(raw)) {
     return undefined;
   }
-  return Object.values(raw).every((v) => typeof v === "string") ? (raw as ItemUrlMap) : undefined;
+  const entries = Object.entries(raw);
+  return entries.every(([, v]) => typeof v === "string")
+    ? (Object.fromEntries(entries) as ItemUrlMap)
+    : undefined;
 }
 
 const DISCARD_REASONS = [
