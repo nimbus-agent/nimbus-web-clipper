@@ -761,14 +761,14 @@ describe("resolveItemIds", () => {
     });
   });
 
-  it("treats 403 as a non-throwing failure", async () => {
+  it("treats 403 as forbidden, distinct from a transient failure — permanent for this token", async () => {
     expect(
       await call(403, { error: "insufficient_scope", required: "resolve", granted: ["clip"] }, [
         "i1",
       ]),
     ).toEqual({
       ok: false,
-      reason: "failed",
+      reason: "forbidden",
     });
   });
 

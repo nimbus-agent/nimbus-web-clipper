@@ -570,11 +570,15 @@ function parseResolveIdsBody(data: unknown): readonly ResolvedIdRow[] | null {
  * rather than throwing — a lane rendering titles as plain text is the NORMAL
  * state for an older gateway, not a degraded one.
  *
- * The `reason` distinguishes exactly one thing, and only for the chunker's
- * benefit: `"unsupported"` (404) is the capability signal — the route does not
- * exist on this gateway at all, so trying the remaining chunks is pointless.
- * `"failed"` covers every other cause, which is chunk-local and worth retrying
- * on the next chunk. Nothing above this file renders either value as text.
+ * The `reason` distinguishes THREE things, each for the chunker's benefit —
+ * nothing above this file renders any of them as text:
+ * - `"unsupported"` (404, exactly) — the route does not exist on this gateway
+ *   at all. Permanent for this token; trying the remaining chunks is pointless.
+ * - `"forbidden"` (403, exactly) — the token lacks the `resolve` scope. Also
+ *   permanent for this token (the owner clears it with `nimbus clip scopes`,
+ *   without re-pairing), so it will fail identically on every chunk.
+ * - `"failed"` — everything else: a 400, a network error, a timeout, a
+ *   malformed body. Chunk-local and worth retrying on the next chunk.
  */
 export async function resolveItemIds(
   origin: string,
@@ -583,7 +587,7 @@ export async function resolveItemIds(
   doFetch: FetchLike = fetch,
 ): Promise<
   | { readonly ok: true; readonly items: readonly ResolvedIdRow[] }
-  | { readonly ok: false; readonly reason: "unsupported" | "failed" }
+  | { readonly ok: false; readonly reason: "unsupported" | "forbidden" | "failed" }
 > {
   const query = new URLSearchParams();
   for (const id of ids) {
@@ -606,6 +610,9 @@ export async function resolveItemIds(
   }
   if (res.status === 404) {
     return { ok: false, reason: "unsupported" };
+  }
+  if (res.status === 403) {
+    return { ok: false, reason: "forbidden" };
   }
   return { ok: false, reason: "failed" };
 }

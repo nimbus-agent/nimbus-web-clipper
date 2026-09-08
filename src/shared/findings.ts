@@ -275,3 +275,16 @@ export type LaneFindings =
   | ImpactFindings
   | CatchupFindings
   | OwnershipFindings;
+
+/**
+ * `itemId -> the URL the index holds for it`. Absent id = not resolved (either
+ * the id was never asked for, or the gateway had nothing to say about it).
+ *
+ * Deliberately a SIBLING map, not a `url` field merged onto `ExpertFinding` /
+ * `CatchupItem`: a URL is a client-side enrichment of the answer, not part of
+ * what the agent said, so folding it into `LaneFindings` would make the element
+ * guards in `findings-guards.ts` grow a branch each and re-prove
+ * `sanitiseState`'s idempotence for no reason — see
+ * docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md §3.
+ */
+export type ItemUrlMap = Readonly<Record<string, string>>;
