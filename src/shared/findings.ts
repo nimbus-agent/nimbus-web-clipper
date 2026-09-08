@@ -6,12 +6,33 @@
 // module is where those shapes are named. See
 // docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md.
 //
-// Types come from @nimbus-dev/sdk where it publishes them, and are mirrored here
-// where it does not (§4.2). Every import from the SDK is `import type`: a value
-// import would put SDK code into the shipped bundle, which the "bundled, no
-// runtime deps" rule forbids.
+// Types come from @nimbus-dev/sdk (§4.2). Every import from the SDK is
+// `import type`: a value import would put SDK code into the shipped bundle,
+// which the "bundled, no runtime deps" rule forbids — see `docs/architecture.md`
+// for how `scripts/check-build.mjs` enforces that at build time. The one
+// hand-declared type below, `DecisionsEntry`, is not a mirror standing in for
+// something the SDK does not publish (it publishes a wider `DecisionsEntry`
+// of its own) — it is a deliberate narrowing of that wider shape; see its own
+// comment for why.
 import type {
+  CatchupItem,
+  CatchupSection,
+  DecisionEvidence,
+  Evidence,
+  EvidenceKind,
+  ExpertFinding,
+  ExtractionSource,
   GapNote,
+  GlossaryDefinitionSource,
+  GlossaryEntry,
+  GlossaryMatchedVia,
+  GlossarySourceRef,
+  ImpactFinding,
+  OwnershipCoverage,
+  OwnershipOwner,
+  OwnershipTargetView,
+  SynthesisDiscardReason,
+  SynthesisProvenance,
   WhyChangeSubject,
   WhyFinding,
   WhyItemSubject,
@@ -19,46 +40,31 @@ import type {
   WhySubject,
 } from "@nimbus-dev/sdk";
 
-export type { GapNote, WhyChangeSubject, WhyFinding, WhyItemSubject, WhyLane, WhySubject };
-
-/**
- * Why a synthesized rewrite was, or was not, used.
- *
- * MIRRORED, not imported: this is declared in the gateway's
- * `agents/_lib/synthesize.ts` and is exported nowhere in @nimbus-dev/sdk — the
- * SDK models brief SHAPES, and provenance is a property of the response that
- * carries one. Publishing it upstream is tracked in the design's §9; until then
- * this is the fourth local mirror, and the only one C8.1 cannot defer, because
- * provenance is a universal field (§4.1).
- *
- * `remote` exists ONLY on the `used: true` arm. That is the local/remote bit —
- * do not look for it elsewhere.
- */
-export type SynthesisDiscardReason =
-  | "timeout"
-  | "contract_violation"
-  | "egress_append_failed"
-  | "provider_error"
-  | "empty_result";
-
-export type SynthesisProvenance =
-  | {
-      readonly attempted: false;
-      readonly reason: "disabled" | "no_eligible_provider" | "reserved_extraction_failed";
-    }
-  | {
-      readonly attempted: true;
-      readonly used: true;
-      readonly model: string;
-      readonly remote: boolean;
-    }
-  | {
-      readonly attempted: true;
-      readonly used: false;
-      readonly reason: SynthesisDiscardReason;
-      readonly violations?: readonly string[];
-      readonly detail?: string;
-    };
+export type {
+  CatchupItem,
+  CatchupSection,
+  DecisionEvidence,
+  Evidence,
+  EvidenceKind,
+  ExpertFinding,
+  ExtractionSource,
+  GapNote,
+  GlossaryDefinitionSource,
+  GlossaryEntry,
+  GlossaryMatchedVia,
+  GlossarySourceRef,
+  ImpactFinding,
+  OwnershipCoverage,
+  OwnershipOwner,
+  OwnershipTargetView,
+  SynthesisDiscardReason,
+  SynthesisProvenance,
+  WhyChangeSubject,
+  WhyFinding,
+  WhyItemSubject,
+  WhyLane,
+  WhySubject,
+};
 
 /**
  * The `why` lane's payload, as a CLIENT PROJECTION of `WhyBrief`.
@@ -80,48 +86,6 @@ export type WhyFindings = {
   readonly subject: WhySubject | null;
   readonly changeSubject: WhyChangeSubject | null;
   readonly itemSubject: WhyItemSubject | null;
-};
-
-/**
- * How a queried term was resolved; `null` when nothing matched.
- *
- * MIRRORED, not imported — `glossary` is one of the three briefs
- * `@nimbus-dev/sdk` deliberately does not publish (its `agent-names.ts` states
- * that lagging the gateway is the intended state). Retiring this mirror is
- * tracked in the design's §9. Source of truth:
- * `packages/gateway/src/agents/_lib/glossary-types.ts` in the Nimbus repo.
- */
-export type GlossaryMatchedVia = "exact" | "synonym" | null;
-
-/** Where a definition came from. `null` when the term has no definition yet. */
-export type GlossaryDefinitionSource = "llm" | "snippet" | "manual";
-
-export type GlossarySourceRef = {
-  readonly itemId: string;
-  readonly title: string;
-  /** The only URL in the glossary tree. Null when the indexed item carried none. */
-  readonly url: string | null;
-  readonly service: string;
-  readonly modifiedAt: number;
-};
-
-export type GlossaryEntry = {
-  readonly term: string;
-  readonly definition: string | null;
-  readonly definitionSource: GlossaryDefinitionSource | null;
-  readonly docFreq: number;
-  /**
-   * The value the list is ORDERED by. Rendered deliberately: upstream records
-   * that showing only `docFreq` while sorting on this made the visible number
-   * contradict the visible order.
-   */
-  readonly score: number;
-  readonly serviceSpread: number;
-  readonly firstSeenAt: number;
-  readonly lastSeenAt: number;
-  readonly topSources: readonly GlossarySourceRef[];
-  readonly synonyms: readonly string[];
-  readonly nearMisses: readonly string[];
 };
 
 /**
@@ -150,27 +114,13 @@ export type GlossaryFindings = {
 };
 
 /**
- * MIRRORED, not imported — `decisions` is the second of the three briefs
- * `@nimbus-dev/sdk` does not publish. Source of truth:
- * `packages/gateway/src/decisions/decision-types.ts` and
- * `agents/_lib/decisions-types.ts` in the Nimbus repo. Retiring this mirror is
- * tracked in the design's §9.
+ * The gateway's own `DecisionsEntry` (`@nimbus-dev/sdk`) also carries `explain`
+ * and `matchedVia`. This client type is a DELIBERATE NARROWING of that shape,
+ * not a stand-in mirror awaiting SDK publication — see `DecisionsFindings`'s
+ * comment below for why those two fields are dropped. Keep it hand-declared
+ * (rather than importing the SDK's wider type) so this stays true: nothing here
+ * claims a field `isDecisionsEntry` does not validate.
  */
-export type EvidenceKind = "source" | "pr" | "commit" | "migration" | "iac" | "adr";
-
-/** How the decision was extracted from its source. */
-export type ExtractionSource = "llm" | "snippet";
-
-export type DecisionEvidence = {
-  readonly kind: EvidenceKind;
-  readonly entityId: string | null;
-  readonly itemId: string | null;
-  readonly label: string;
-  /** The only URL in the decisions tree. */
-  readonly url: string | null;
-  readonly occurredAt: number | null;
-};
-
 export type DecisionsEntry = {
   readonly id: string;
   readonly statement: string;
@@ -203,10 +153,125 @@ export type DecisionsFindings = {
 };
 
 /**
+ * The `expert` lane's payload, as a client projection of `ExpertBrief` (§4.1).
+ *
+ * `query` is not projected: the panel already knows what was asked (it asked
+ * it), so echoing the topic back adds nothing the renderer needs. This is the
+ * first of C8.3's four link-less lanes: `Evidence.itemId` is a genuine item
+ * id, but this client has no id→URL resolver, so evidence titles render as
+ * plain text, never as `findingLink`.
+ */
+export type ExpertFindings = {
+  readonly kind: "expert";
+  readonly ranked: readonly ExpertFinding[];
+};
+
+/**
+ * The `impact` lane's payload, as a client projection of `ImpactBrief` (§4.1).
+ *
+ * `query` is not projected, same reasoning as `ExpertFindings`: the panel
+ * already knows what was asked.
+ *
+ * **`ImpactFinding.affectedItemId` is not an item id.** It is a
+ * `graph_entity.id` — every one of the gateway's five impact sub-lanes selects
+ * `e.id FROM graph_entity` (`agents/impact.ts:218,264,308,343,378`). So is
+ * `startEntityId`, or the synthetic `` `item:${id}` `` string on the topic arm.
+ * Spec §4.6 records this. Neither field is rendered as an item reference, given
+ * a resolver, or shown to the reader at all — `affectedTitle` is what a reader
+ * can use, and this projection keeps `affectedItemId` only because the guard
+ * validates the field the wire sends, not because anything downstream reads it.
+ *
+ * `startEntityId` stays `string | null` rather than being dropped: `null` means
+ * the change's own start point did not resolve in the graph, which is a
+ * reportable fact distinct from "nothing downstream is indexed" — collapsing
+ * the two would make a real gap look like a clean, empty result.
+ */
+export type ImpactFindings = {
+  readonly kind: "impact";
+  readonly startEntityId: string | null;
+  readonly affected: readonly ImpactFinding[];
+};
+
+/**
+ * The `catchup` lane's payload, as a client projection of `CatchupBrief`
+ * (§4.1). `query` is not projected, same reasoning as `ExpertFindings`: the
+ * panel already knows what was asked (it asked for everything `sinceMs`).
+ *
+ * `selfPersonId` and `involvement` ARE kept, unlike `query` — they are not an
+ * echo of the request, they are the whole basis on which the window was
+ * filtered down to *this reader*, and the flattened markdown never prints
+ * `involvement` at all. `involvement` is kept as the wire's own nested object,
+ * verbatim, rather than flattened into sibling fields on this type: flattening
+ * is exactly what made `decisionsFindingsFrom` fail its own idempotence check
+ * (see that guard's comment), so every nested object in this projection is
+ * copied through unchanged instead.
+ *
+ * `sections` keeps `CatchupSection`/`CatchupItem` as the SDK types them,
+ * including `totalItemsInWindow` alongside `items` — the truncation fact a
+ * reader needs to tell a quiet window from a truncated one, which the prose
+ * also never prints.
+ */
+export type CatchupFindings = {
+  readonly kind: "catchup";
+  readonly selfPersonId: string | null;
+  readonly involvement: {
+    readonly ownedServices: readonly string[];
+    readonly activeRepos: readonly string[];
+    readonly incidentServices: readonly string[];
+    readonly collaboratorPersonIds: readonly string[];
+  };
+  readonly sections: readonly CatchupSection[];
+};
+
+/**
+ * The `ownership` lane's payload, as a client projection of `OwnershipBrief`
+ * (§4.1). This is the last of C8.3's four link-less lanes, and the one that
+ * carries no item id at all: `OwnershipOwner.externalId` is a PERSON id and
+ * `OwnershipTargetView.displayPath` is a PATH, so there is no URL anywhere on
+ * this brief to begin with — unlike `expert`/`impact`/`catchup`, which have
+ * ids this client simply has no resolver for.
+ *
+ * `query` is not projected, same reasoning as `ExpertFindings`: the panel
+ * already knows what was asked. The top-level `service: { id } | null` is
+ * also dropped — it is redundant with `target`/`parentDirectory`'s own `kind`
+ * (a `"service"` target already IS the service ownership answer), and no
+ * render spec calls for a bare id line the reader cannot act on.
+ *
+ * `target` and `parentDirectory` are kept as `OwnershipTargetView | null`
+ * VERBATIM, not flattened — see `CatchupFindings`'s comment for why every
+ * nested object in these projections is copied through unchanged rather than
+ * rebuilt field-by-field; that is exactly the flattening that broke
+ * `decisionsFindingsFrom`'s idempotence.
+ *
+ * `coverage` is kept whole too, even though the renderer reads only
+ * `lastPassAt` from it. Unlike `DecisionsFindings.truncatedSources` — where
+ * the guard pulls one field out of `stats` and leaves the rest unchecked —
+ * `isOwnershipCoverage` (findings-guards.ts) validates every one of
+ * `OwnershipCoverage`'s ten counters, because a `coverage` object missing one
+ * is a malformed brief, not a brief this client renders less of. Since the
+ * guard validates the whole shape, keeping the whole shape here does not
+ * claim a guarantee nothing checks — the same test `ImpactFindings.affected`
+ * `.affectedItemId` passes despite not being rendered either.
+ */
+export type OwnershipFindings = {
+  readonly kind: "ownership";
+  readonly target: OwnershipTargetView | null;
+  readonly parentDirectory: OwnershipTargetView | null;
+  readonly coverage: OwnershipCoverage;
+};
+
+/**
  * The per-lane structured payload. ONE ARM PER SLICE: `why` in C8.1,
  * `glossary` and `decisions` in C8.2, the four link-less lanes in C8.3.
  *
  * A lane whose arm does not exist yet behaves exactly like a guard rejection —
  * no findings, prose body, and its gaps and provenance still render.
  */
-export type LaneFindings = WhyFindings | GlossaryFindings | DecisionsFindings;
+export type LaneFindings =
+  | WhyFindings
+  | GlossaryFindings
+  | DecisionsFindings
+  | ExpertFindings
+  | ImpactFindings
+  | CatchupFindings
+  | OwnershipFindings;

@@ -5,7 +5,10 @@
  * surface and the scope; a service lane runs to a brief and is never empty;
  * closing and reopening the panel replays the stored brief without a second
  * invoke; and a resolved pull request shows the three ITEM lanes with none of
- * the three service lanes.
+ * the three service lanes. Also steps 7 and 8 (ids service-lanes-7,
+ * service-lanes-8): the `decisions` and `catchup` lanes each render their
+ * structured findings (C8.2 / C8.3), not the flattened paragraph, against an
+ * opted-in fixture shaped for that lane.
  *
  * Step 5 (no ambient cue on the dashboard) is NOT covered here, and that is a
  * finding, not a shortcut: the ambient cue is decided by a 600ms in-worker
@@ -37,6 +40,7 @@ import { expect, test } from "@playwright/test";
 import { launchExtension } from "../../scripts/e2e/launch.ts";
 import {
   AGENT_RUN_DONE,
+  AGENT_RUN_DONE_CATCHUP,
   AGENT_RUN_DONE_DECISIONS,
   type Scenario,
 } from "../../scripts/screenshots/gateway-fixtures.ts";
@@ -50,6 +54,7 @@ export const COVERS = [
   "service-lanes-3",
   "service-lanes-4",
   "service-lanes-7",
+  "service-lanes-8",
 ] as const;
 
 test("a dashboard's service lanes name the scope, run to a brief, and replay from cache on reopen", async () => {
@@ -240,6 +245,72 @@ test("a dashboard's decisions lane renders its structured findings, not prose", 
     await expect(findings.locator(".nimbus-findings__provenance")).toHaveText(
       "2 sources in this window were indexed with truncated bodies.",
     );
+  } finally {
+    await h.close();
+  }
+});
+
+test("a dashboard's catchup lane renders its structured findings, not prose", async () => {
+  // service-lanes-8: `catchup` is service-scoped ({input: "page", surfaces:
+  // {home: "service"}}), same harness as service-lanes-1..4 and the
+  // `decisions` structured-findings test above. This opts into
+  // AGENT_RUN_DONE_CATCHUP instead of the default AGENT_RUN_DONE (`why`-shaped,
+  // so a `catchup` invoke against it fails `laneFindingsFrom`'s `kind` check
+  // and falls back to prose). Also the regression test for C8.3's own fix: the
+  // shipped `renderInvolvement` omitted `incidentServices` from the line
+  // entirely, even though it is one of the four facts that filtered the window
+  // down to this reader — the fixture below carries all four non-empty, and
+  // this test asserts all four render.
+  const scenario: Scenario = { agentRun: AGENT_RUN_DONE_CATCHUP };
+  const h = await launchExtension({ scenario });
+  try {
+    await h.sw.evaluate(async (origin) => {
+      await chrome.storage.local.set({
+        origins: [{ origin: `${origin}/sample`, product: "github" }],
+      });
+    }, h.origin);
+
+    const url = `${h.origin}/sample`;
+    const page = await h.context.newPage();
+    await page.goto(url);
+    await page.bringToFront();
+    await togglePanel(h.sw, url);
+
+    const catchupLane = page.locator('[data-lane="catchup"]');
+    await expect(catchupLane.locator("summary")).toHaveText("What happened while I was away");
+    await catchupLane.locator("summary").click();
+
+    // The structured render, not the prose fallback.
+    await expect(catchupLane.locator("pre.nimbus-related__brief")).toHaveCount(0);
+    const findings = catchupLane.locator(".nimbus-findings");
+    await expect(findings).toHaveCount(1);
+
+    // The involvement line: all four filters render, `incidentServices`
+    // included — the fact the shipped fix restores.
+    const involvement = findings.locator(".nimbus-findings__provenance");
+    await expect(involvement).toContainText("billing-service");
+    await expect(involvement).toContainText("acme/web");
+    await expect(involvement).toContainText("checkout-service");
+    await expect(involvement).toContainText("2 collaborators");
+
+    // Two sections, one per service, headed by their serviceId.
+    const groups = findings.locator(".nimbus-findings__group");
+    await expect(groups).toHaveCount(2);
+    await expect(groups.first()).toContainText("billing-service");
+    // The truncated section shows its "N of M" count; the untruncated one
+    // (billing-service, 1 of 1) does not.
+    await expect(groups.nth(1)).toContainText("checkout-service — 1 of 3");
+    await expect(groups.first()).not.toContainText("of 1");
+
+    // An item's title, age and relevance reason — plain text, no link: this
+    // lane is link-less (`catchupFindingsFrom`'s `itemId` has no resolver).
+    await expect(findings.locator(".nimbus-findings__item").first()).toContainText(
+      "Cache the readability pass",
+    );
+    await expect(findings.locator(".nimbus-findings__item-detail").first()).toHaveText(
+      "you own billing-service",
+    );
+    await expect(findings.locator("a")).toHaveCount(0);
   } finally {
     await h.close();
   }

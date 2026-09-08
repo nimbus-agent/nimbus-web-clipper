@@ -1,16 +1,24 @@
 import { describe, expect, test } from "vitest";
 import type {
+  CatchupFindings,
   DecisionsFindings,
+  ExpertFindings,
   GlossaryFindings,
+  ImpactFindings,
+  OwnershipFindings,
   SynthesisProvenance,
   WhyFindings,
 } from "../../src/shared/findings.ts";
 import {
+  catchupFindingsFrom,
   decisionsFindingsFrom,
+  expertFindingsFrom,
   gapNotesFrom,
   gapsOfBrief,
   glossaryFindingsFrom,
+  impactFindingsFrom,
   laneFindingsFrom,
+  ownershipFindingsFrom,
   synthesisFrom,
 } from "../../src/shared/findings-guards.ts";
 
@@ -208,11 +216,6 @@ describe("laneFindingsFrom", () => {
 
   test("rejects when findings.kind disagrees with the lane asked about", () => {
     expect(laneFindingsFrom("why", { ...validWhy, kind: "expert" })).toBeUndefined();
-  });
-
-  test("returns undefined for a lane with no arm yet", () => {
-    expect(laneFindingsFrom("expert", validWhy)).toBeUndefined();
-    expect(laneFindingsFrom("glossary", validWhy)).toBeUndefined();
   });
 
   // `WhyChangeSubject.url` is non-nullable, unlike `WhyItemSubject.url`
@@ -457,6 +460,421 @@ describe("DecisionsFindings pins the fields we read", () => {
   });
 });
 
+const validEvidenceItem = {
+  itemId: "github:acme/web#7",
+  type: "pr_authored",
+  serviceId: "github",
+  title: "Adopt SQLite WAL",
+  modifiedAt: 1_700_000_000_000,
+  weight: 0.6,
+};
+
+const validExpert = {
+  kind: "expert",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { topicOrFile: "src/index.ts", itemUrl: null },
+  ranked: [
+    {
+      personId: "person:1",
+      displayName: "Ada Lovelace",
+      evidence: [validEvidenceItem],
+      score: 0.91,
+      confidence: "high",
+    },
+  ],
+};
+
+describe("expertFindingsFrom", () => {
+  test("projects a valid brief, dropping the base fields", () => {
+    expect(expertFindingsFrom(validExpert)).toEqual({
+      kind: "expert",
+      ranked: validExpert.ranked,
+    });
+  });
+
+  test("rejects a ranked element missing displayName", () => {
+    const finding = { ...validExpert.ranked[0] };
+    const withoutDisplayName = { ...finding } as Record<string, unknown>;
+    delete withoutDisplayName["displayName"];
+    expect(expertFindingsFrom({ ...validExpert, ranked: [withoutDisplayName] })).toBeUndefined();
+  });
+
+  test("rejects an unknown confidence", () => {
+    const finding = { ...validExpert.ranked[0], confidence: "certain" };
+    expect(expertFindingsFrom({ ...validExpert, ranked: [finding] })).toBeUndefined();
+  });
+
+  test("rejects an unknown evidence type", () => {
+    const ev = { ...validEvidenceItem, type: "carrier_pigeon" };
+    const finding = { ...validExpert.ranked[0], evidence: [ev] };
+    expect(expertFindingsFrom({ ...validExpert, ranked: [finding] })).toBeUndefined();
+  });
+
+  test("rejects malformed evidence elements rather than rendering a partial list", () => {
+    // The SDK-style shallow guard would admit these; ours must not (§4.3).
+    const finding = { ...validExpert.ranked[0], evidence: [42, null] };
+    expect(expertFindingsFrom({ ...validExpert, ranked: [finding] })).toBeUndefined();
+  });
+
+  test("rejects malformed ranked elements rather than rendering a partial list", () => {
+    expect(expertFindingsFrom({ ...validExpert, ranked: [42, null] })).toBeUndefined();
+  });
+});
+
+describe("ExpertFindings pins the fields we read", () => {
+  test("carries exactly the two projected keys", () => {
+    const value: ExpertFindings = { kind: "expert", ranked: [] };
+    expect(Object.keys(value).sort()).toEqual(["kind", "ranked"]);
+  });
+});
+
+const validImpactFinding = {
+  // `affectedItemId` is a `graph_entity.id`, not an item id - see findings.ts.
+  // It is still accepted here (the field exists on the wire), just never
+  // projected or rendered.
+  category: "service",
+  affectedItemId: "entity:456",
+  affectedTitle: "billing-service",
+  serviceId: "billing",
+  hops: 1,
+  pathSummary: "billing-service depends directly on payments-api",
+};
+
+const validImpact = {
+  kind: "impact",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { fileOrPrUrl: "https://github.com/acme/web/pull/42" },
+  startEntityId: "entity:123",
+  affected: [validImpactFinding],
+};
+
+describe("impactFindingsFrom", () => {
+  test("projects a valid brief, dropping the base fields and query", () => {
+    expect(impactFindingsFrom(validImpact)).toEqual({
+      kind: "impact",
+      startEntityId: "entity:123",
+      affected: validImpact.affected,
+    });
+  });
+
+  test("accepts a null startEntityId - the start not resolving is a real state", () => {
+    expect(impactFindingsFrom({ ...validImpact, startEntityId: null })).toEqual({
+      kind: "impact",
+      startEntityId: null,
+      affected: validImpact.affected,
+    });
+  });
+
+  test("rejects a missing startEntityId key", () => {
+    const without = { ...validImpact } as Record<string, unknown>;
+    delete without["startEntityId"];
+    expect(impactFindingsFrom(without)).toBeUndefined();
+  });
+
+  test("rejects an unknown category", () => {
+    const finding = { ...validImpactFinding, category: "database" };
+    expect(impactFindingsFrom({ ...validImpact, affected: [finding] })).toBeUndefined();
+  });
+
+  test("rejects a non-numeric hops", () => {
+    const finding = { ...validImpactFinding, hops: "1" };
+    expect(impactFindingsFrom({ ...validImpact, affected: [finding] })).toBeUndefined();
+  });
+
+  test("rejects an element missing affectedTitle", () => {
+    const finding = { ...validImpactFinding } as Record<string, unknown>;
+    delete finding["affectedTitle"];
+    expect(impactFindingsFrom({ ...validImpact, affected: [finding] })).toBeUndefined();
+  });
+
+  test("rejects malformed elements rather than rendering a partial list", () => {
+    // The SDK-style shallow guard would admit these; ours must not (§4.3).
+    expect(impactFindingsFrom({ ...validImpact, affected: [null] })).toBeUndefined();
+    expect(impactFindingsFrom({ ...validImpact, affected: [42, null] })).toBeUndefined();
+  });
+});
+
+describe("ImpactFindings pins the fields we read", () => {
+  test("carries exactly the three projected keys", () => {
+    const value: ImpactFindings = { kind: "impact", startEntityId: null, affected: [] };
+    expect(Object.keys(value).sort()).toEqual(["affected", "kind", "startEntityId"]);
+  });
+});
+
+const validCatchupItem = {
+  itemId: "github:acme/web#9",
+  title: "Cut the release branch",
+  modifiedAt: 1_700_000_000_000,
+  relevanceScore: 0.7,
+  relevanceReasons: ["you own billing-service"],
+};
+
+const validCatchupSection = {
+  serviceId: "billing-service",
+  totalItemsInWindow: 1,
+  items: [validCatchupItem],
+};
+
+const validCatchup = {
+  kind: "catchup",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { sinceMs: 1_600_000_000_000 },
+  selfPersonId: "person:1",
+  involvement: {
+    ownedServices: ["billing-service"],
+    activeRepos: ["acme/web"],
+    incidentServices: [],
+    collaboratorPersonIds: ["person:2"],
+  },
+  sections: [validCatchupSection],
+};
+
+describe("catchupFindingsFrom", () => {
+  test("projects a valid brief, dropping the base fields and query", () => {
+    expect(catchupFindingsFrom(validCatchup)).toEqual({
+      kind: "catchup",
+      selfPersonId: "person:1",
+      involvement: validCatchup.involvement,
+      sections: validCatchup.sections,
+    });
+  });
+
+  test("accepts a null selfPersonId - an ordinary state, not malformed input", () => {
+    expect(catchupFindingsFrom({ ...validCatchup, selfPersonId: null })).toEqual({
+      kind: "catchup",
+      selfPersonId: null,
+      involvement: validCatchup.involvement,
+      sections: validCatchup.sections,
+    });
+  });
+
+  test("accepts empty involvement arrays - an ordinary state, not malformed input", () => {
+    const emptyInvolvement = {
+      ownedServices: [],
+      activeRepos: [],
+      incidentServices: [],
+      collaboratorPersonIds: [],
+    };
+    expect(catchupFindingsFrom({ ...validCatchup, involvement: emptyInvolvement })).toEqual({
+      kind: "catchup",
+      selfPersonId: "person:1",
+      involvement: emptyInvolvement,
+      sections: validCatchup.sections,
+    });
+  });
+
+  test("accepts empty sections - a quiet window, not malformed input", () => {
+    expect(catchupFindingsFrom({ ...validCatchup, sections: [] })).toEqual({
+      kind: "catchup",
+      selfPersonId: "person:1",
+      involvement: validCatchup.involvement,
+      sections: [],
+    });
+  });
+
+  test("rejects a section whose items is not an array", () => {
+    const section = { ...validCatchupSection, items: "nope" };
+    expect(catchupFindingsFrom({ ...validCatchup, sections: [section] })).toBeUndefined();
+  });
+
+  test("rejects malformed items rather than rendering a partial list", () => {
+    // The SDK-style shallow guard would admit these; ours must not (§4.3).
+    const section = { ...validCatchupSection, items: [42, null] };
+    expect(catchupFindingsFrom({ ...validCatchup, sections: [section] })).toBeUndefined();
+  });
+
+  test("rejects a non-string-array relevanceReasons", () => {
+    const item = { ...validCatchupItem, relevanceReasons: [1, 2] };
+    const section = { ...validCatchupSection, items: [item] };
+    expect(catchupFindingsFrom({ ...validCatchup, sections: [section] })).toBeUndefined();
+  });
+
+  test("rejects a missing involvement key", () => {
+    const without = { ...validCatchup } as Record<string, unknown>;
+    delete without["involvement"];
+    expect(catchupFindingsFrom(without)).toBeUndefined();
+  });
+
+  test("rejects an involvement field that is not a string array", () => {
+    const involvement = { ...validCatchup.involvement, ownedServices: [1, 2] };
+    expect(catchupFindingsFrom({ ...validCatchup, involvement })).toBeUndefined();
+  });
+});
+
+describe("CatchupFindings pins the fields we read", () => {
+  test("carries exactly the four projected keys", () => {
+    const value: CatchupFindings = {
+      kind: "catchup",
+      selfPersonId: null,
+      involvement: {
+        ownedServices: [],
+        activeRepos: [],
+        incidentServices: [],
+        collaboratorPersonIds: [],
+      },
+      sections: [],
+    };
+    expect(Object.keys(value).sort()).toEqual(["involvement", "kind", "sections", "selfPersonId"]);
+  });
+});
+
+const validOwnershipOwner = {
+  externalId: "person:1",
+  label: "Ada Lovelace",
+  share: 0.6,
+  resolved: true,
+};
+
+const validOwnershipTarget = {
+  kind: "source_file",
+  displayPath: "src/index.ts",
+  owners: [validOwnershipOwner],
+  ownerCount: 3,
+  ownersAboveFloor: 1,
+  truncated: false,
+};
+
+const validOwnershipCoverage = {
+  lastPassAt: 1_700_000_000_000,
+  lastDurationMs: 4200,
+  rootsTotal: 3,
+  rootsCovered: 3,
+  rootsWithRemote: 2,
+  filesCovered: 120,
+  filesExcluded: 4,
+  servicesBound: 2,
+  ownersEmitted: 9,
+  entitiesReaped: 1,
+};
+
+const validOwnership = {
+  kind: "ownership",
+  agentVersion: 1,
+  generatedAt: 1,
+  latencyMs: 1,
+  gaps: [],
+  query: { path: "src/index.ts", service: null, itemUrl: null },
+  target: validOwnershipTarget,
+  parentDirectory: null,
+  service: null,
+  coverage: validOwnershipCoverage,
+};
+
+describe("ownershipFindingsFrom", () => {
+  test("projects a valid brief, dropping the base fields, query and service", () => {
+    expect(ownershipFindingsFrom(validOwnership)).toEqual({
+      kind: "ownership",
+      target: validOwnershipTarget,
+      parentDirectory: null,
+      coverage: validOwnershipCoverage,
+    });
+  });
+
+  test("accepts target: null - an ordinary state, not malformed input", () => {
+    expect(ownershipFindingsFrom({ ...validOwnership, target: null })).toEqual({
+      kind: "ownership",
+      target: null,
+      parentDirectory: null,
+      coverage: validOwnershipCoverage,
+    });
+  });
+
+  test("accepts and keeps parentDirectory when present", () => {
+    const parent = { ...validOwnershipTarget, kind: "directory", displayPath: "src" };
+    expect(ownershipFindingsFrom({ ...validOwnership, parentDirectory: parent })).toEqual({
+      kind: "ownership",
+      target: validOwnershipTarget,
+      parentDirectory: parent,
+      coverage: validOwnershipCoverage,
+    });
+  });
+
+  test("accepts truncated: null and preserves it as null, never coercing to false", () => {
+    const target = { ...validOwnershipTarget, truncated: null };
+    const result = ownershipFindingsFrom({ ...validOwnership, target });
+    expect(result?.target?.truncated).toBeNull();
+  });
+
+  test("accepts ownerCount/ownersAboveFloor: null - not recorded, not zero", () => {
+    const target = { ...validOwnershipTarget, ownerCount: null, ownersAboveFloor: null };
+    const result = ownershipFindingsFrom({ ...validOwnership, target });
+    expect(result?.target?.ownerCount).toBeNull();
+    expect(result?.target?.ownersAboveFloor).toBeNull();
+  });
+
+  test("accepts empty owners - an ordinary state, not malformed input", () => {
+    const target = { ...validOwnershipTarget, owners: [] };
+    expect(ownershipFindingsFrom({ ...validOwnership, target })).toEqual({
+      kind: "ownership",
+      target,
+      parentDirectory: null,
+      coverage: validOwnershipCoverage,
+    });
+  });
+
+  test("rejects an owner missing resolved", () => {
+    const owner = { ...validOwnershipOwner } as Record<string, unknown>;
+    delete owner["resolved"];
+    const target = { ...validOwnershipTarget, owners: [owner] };
+    expect(ownershipFindingsFrom({ ...validOwnership, target })).toBeUndefined();
+  });
+
+  test("rejects malformed owner elements rather than rendering a partial list", () => {
+    // The SDK-style shallow guard would admit these; ours must not (§4.3).
+    const target = { ...validOwnershipTarget, owners: [42, null] };
+    expect(ownershipFindingsFrom({ ...validOwnership, target })).toBeUndefined();
+  });
+
+  test("rejects an unknown target kind", () => {
+    const target = { ...validOwnershipTarget, kind: "repository" };
+    expect(ownershipFindingsFrom({ ...validOwnership, target })).toBeUndefined();
+  });
+
+  test("rejects a coverage object missing a counter", () => {
+    const coverage = { ...validOwnershipCoverage } as Record<string, unknown>;
+    delete coverage["rootsCovered"];
+    expect(ownershipFindingsFrom({ ...validOwnership, coverage })).toBeUndefined();
+  });
+
+  test("rejects a missing coverage key entirely", () => {
+    const without = { ...validOwnership } as Record<string, unknown>;
+    delete without["coverage"];
+    expect(ownershipFindingsFrom(without)).toBeUndefined();
+  });
+
+  test("accepts coverage.lastPassAt: null - no pass has run yet", () => {
+    const coverage = { ...validOwnershipCoverage, lastPassAt: null };
+    expect(ownershipFindingsFrom({ ...validOwnership, coverage })?.coverage.lastPassAt).toBeNull();
+  });
+
+  test("rejects a present-but-malformed target rather than treating it as absent", () => {
+    const target = { ...validOwnershipTarget } as Record<string, unknown>;
+    delete target["displayPath"];
+    expect(ownershipFindingsFrom({ ...validOwnership, target })).toBeUndefined();
+  });
+});
+
+describe("OwnershipFindings pins the fields we read", () => {
+  test("carries exactly the four projected keys", () => {
+    const value: OwnershipFindings = {
+      kind: "ownership",
+      target: null,
+      parentDirectory: null,
+      coverage: validOwnershipCoverage,
+    };
+    expect(Object.keys(value).sort()).toEqual(["coverage", "kind", "parentDirectory", "target"]);
+  });
+});
+
 describe("laneFindingsFrom is idempotent over its own projection", () => {
   // `sanitiseState` (agent-run-store.ts) re-runs `laneFindingsFrom` over the
   // STORED PROJECTION on every read — not the wire object. A guard that
@@ -477,6 +895,10 @@ describe("laneFindingsFrom is idempotent over its own projection", () => {
     ["why", validWhy],
     ["glossary", validGlossary],
     ["decisions", validDecisions],
+    ["expert", validExpert],
+    ["impact", validImpact],
+    ["catchup", validCatchup],
+    ["ownership", validOwnership],
   ];
 
   test.each(IDEMPOTENCE_CASES)("%s round-trips through its own projection", (lane, wire) => {

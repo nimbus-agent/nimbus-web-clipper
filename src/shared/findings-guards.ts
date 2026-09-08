@@ -9,19 +9,41 @@
 // Rendering from that is the "type narrow, runtime wide" bug this codebase keeps
 // hitting: the guard licenses the renderer to trust fields nobody checked.
 //
-// So each guard validates exactly the fields the renderer reads, to the depth it
-// reads them - and no further. A field we do not render is not a field we gate
-// on, because an over-strict guard rejects briefs we could have rendered.
+// So each guard validates exactly what its projection declares - every field
+// the corresponding `<Lane>Findings` type carries, to the depth it carries it -
+// and no further. That is wider than what the renderer reads: `isImpactFinding`
+// validates `affectedItemId`, `isOwnershipOwner` validates `externalId`, and
+// `isOwnershipCoverage` validates all ten of `OwnershipCoverage`'s counters,
+// none of which any renderer touches, because the projection kept the field and
+// a projection asserting a field no guard checked is this codebase's
+// most-repeated bug ("type narrow, runtime wide"). The other half of the old
+// rule still holds, though: an over-strict guard rejects briefs we could have
+// rendered, so a projection has no business declaring a field the lane has no
+// use for in the first place. The two halves fit together - the guard is only
+// ever as strict as the projection makes it, and the projection is kept
+// exactly as wide as the lane needs, no wider.
 import type {
+  CatchupFindings,
+  CatchupItem,
+  CatchupSection,
   DecisionEvidence,
   DecisionsEntry,
   DecisionsFindings,
+  Evidence,
+  ExpertFinding,
+  ExpertFindings,
   GapNote,
   GlossaryEntry,
   GlossaryFindings,
   GlossaryMatchedVia,
   GlossarySourceRef,
+  ImpactFinding,
+  ImpactFindings,
   LaneFindings,
+  OwnershipCoverage,
+  OwnershipFindings,
+  OwnershipOwner,
+  OwnershipTargetView,
   SynthesisDiscardReason,
   SynthesisProvenance,
   WhyChangeSubject,
@@ -42,6 +64,10 @@ function isNullableString(v: unknown): v is string | null {
 
 function isNullableNumber(v: unknown): v is number | null {
   return v === null || typeof v === "number";
+}
+
+function isNullableBoolean(v: unknown): v is boolean | null {
+  return v === null || typeof v === "boolean";
 }
 
 const GAP_CATEGORIES = [
@@ -157,7 +183,7 @@ function discardedSynthesis(raw: Record<string, unknown>): SynthesisProvenance |
     attempted: true,
     used: false,
     reason: raw["reason"] as SynthesisDiscardReason,
-    ...(violations === undefined ? {} : { violations: violations as readonly string[] }),
+    ...(violations === undefined ? {} : { violations: violations as string[] }),
     ...(raw["detail"] === undefined ? {} : { detail: raw["detail"] as string }),
   };
 }
@@ -400,27 +426,279 @@ export function decisionsFindingsFrom(raw: Record<string, unknown>): DecisionsFi
   };
 }
 
+const EVIDENCE_TYPES = [
+  "pr_authored",
+  "pr_reviewed",
+  "issue_opened",
+  "issue_resolved",
+  "incident_resolved",
+  "commit_authored",
+  "chat_mention",
+  "chat_post",
+] as const;
+
+const CONFIDENCE_LEVELS = ["high", "medium", "low"] as const;
+
+function isEvidence(v: unknown): v is Evidence {
+  return (
+    isObject(v) &&
+    typeof v["itemId"] === "string" &&
+    typeof v["type"] === "string" &&
+    (EVIDENCE_TYPES as readonly string[]).includes(v["type"]) &&
+    typeof v["serviceId"] === "string" &&
+    typeof v["title"] === "string" &&
+    typeof v["modifiedAt"] === "number" &&
+    typeof v["weight"] === "number"
+  );
+}
+
+function isExpertFinding(v: unknown): v is ExpertFinding {
+  return (
+    isObject(v) &&
+    typeof v["personId"] === "string" &&
+    typeof v["displayName"] === "string" &&
+    Array.isArray(v["evidence"]) &&
+    v["evidence"].every(isEvidence) &&
+    typeof v["score"] === "number" &&
+    typeof v["confidence"] === "string" &&
+    (CONFIDENCE_LEVELS as readonly string[]).includes(v["confidence"])
+  );
+}
+
+export function expertFindingsFrom(raw: Record<string, unknown>): ExpertFindings | undefined {
+  if (!Array.isArray(raw["ranked"]) || !raw["ranked"].every(isExpertFinding)) {
+    return undefined;
+  }
+  return {
+    kind: "expert",
+    ranked: raw["ranked"] as readonly ExpertFinding[],
+  };
+}
+
+const IMPACT_CATEGORIES = [
+  "service",
+  "pipeline",
+  "dashboard",
+  "oncall_rotation",
+  "downstream_repo",
+] as const;
+
+/**
+ * `affectedItemId` is validated because it is a field the wire sends and the
+ * projection keeps (see `ImpactFindings`'s comment on why) — not because the
+ * renderer reads it. It is a `graph_entity.id`, not an item id.
+ */
+function isImpactFinding(v: unknown): v is ImpactFinding {
+  return (
+    isObject(v) &&
+    typeof v["category"] === "string" &&
+    (IMPACT_CATEGORIES as readonly string[]).includes(v["category"]) &&
+    typeof v["affectedItemId"] === "string" &&
+    typeof v["affectedTitle"] === "string" &&
+    typeof v["serviceId"] === "string" &&
+    typeof v["hops"] === "number" &&
+    typeof v["pathSummary"] === "string"
+  );
+}
+
+export function impactFindingsFrom(raw: Record<string, unknown>): ImpactFindings | undefined {
+  if (!isNullableString(raw["startEntityId"])) {
+    return undefined;
+  }
+  if (!Array.isArray(raw["affected"]) || !raw["affected"].every(isImpactFinding)) {
+    return undefined;
+  }
+  return {
+    kind: "impact",
+    startEntityId: raw["startEntityId"],
+    affected: raw["affected"] as readonly ImpactFinding[],
+  };
+}
+
+function isCatchupItem(v: unknown): v is CatchupItem {
+  return (
+    isObject(v) &&
+    typeof v["itemId"] === "string" &&
+    typeof v["title"] === "string" &&
+    typeof v["modifiedAt"] === "number" &&
+    typeof v["relevanceScore"] === "number" &&
+    isStringArray(v["relevanceReasons"])
+  );
+}
+
+function isCatchupSection(v: unknown): v is CatchupSection {
+  return (
+    isObject(v) &&
+    typeof v["serviceId"] === "string" &&
+    typeof v["totalItemsInWindow"] === "number" &&
+    Array.isArray(v["items"]) &&
+    v["items"].every(isCatchupItem)
+  );
+}
+
+function isCatchupInvolvement(v: unknown): v is CatchupFindings["involvement"] {
+  return (
+    isObject(v) &&
+    isStringArray(v["ownedServices"]) &&
+    isStringArray(v["activeRepos"]) &&
+    isStringArray(v["incidentServices"]) &&
+    isStringArray(v["collaboratorPersonIds"])
+  );
+}
+
+/**
+ * `selfPersonId` and `involvement` are kept — see `CatchupFindings`'s own
+ * comment for why, unlike `query`, which is dropped like every other lane's
+ * echo of its own request. `involvement` is copied through as the ONE object
+ * `isCatchupInvolvement` validated, never rebuilt field-by-field: rebuilding it
+ * is exactly the flattening that broke `decisionsFindingsFrom`'s idempotence.
+ */
+export function catchupFindingsFrom(raw: Record<string, unknown>): CatchupFindings | undefined {
+  if (!isNullableString(raw["selfPersonId"])) {
+    return undefined;
+  }
+  if (!isCatchupInvolvement(raw["involvement"])) {
+    return undefined;
+  }
+  if (!Array.isArray(raw["sections"]) || !raw["sections"].every(isCatchupSection)) {
+    return undefined;
+  }
+  return {
+    kind: "catchup",
+    selfPersonId: raw["selfPersonId"],
+    involvement: raw["involvement"],
+    sections: raw["sections"] as readonly CatchupSection[],
+  };
+}
+
+const OWNERSHIP_TARGET_KINDS = ["source_file", "directory", "service"] as const;
+
+/**
+ * `externalId` is validated even though the renderer never displays it — same
+ * reasoning as `isImpactFinding`'s `affectedItemId` above: it is a field the
+ * wire sends and the projection keeps verbatim, so a malformed one is a
+ * malformed owner, not a row this client renders with a hole in it.
+ */
+function isOwnershipOwner(v: unknown): v is OwnershipOwner {
+  return (
+    isObject(v) &&
+    typeof v["externalId"] === "string" &&
+    typeof v["label"] === "string" &&
+    typeof v["share"] === "number" &&
+    typeof v["resolved"] === "boolean"
+  );
+}
+
+/**
+ * `ownerCount`, `ownersAboveFloor` and `truncated` are `number | null` /
+ * `boolean | null` on the wire, and `null` there means NOT RECORDED — never
+ * zero, never "not truncated" (the SDK's own doc comment on
+ * `OwnershipTargetView` says so). `isNullableNumber`/`isNullableBoolean`
+ * accept and preserve `null` rather than coercing it, so that distinction
+ * survives into the stored projection.
+ */
+function isOwnershipTargetView(v: unknown): v is OwnershipTargetView {
+  return (
+    isObject(v) &&
+    typeof v["kind"] === "string" &&
+    (OWNERSHIP_TARGET_KINDS as readonly string[]).includes(v["kind"]) &&
+    typeof v["displayPath"] === "string" &&
+    Array.isArray(v["owners"]) &&
+    v["owners"].every(isOwnershipOwner) &&
+    isNullableNumber(v["ownerCount"]) &&
+    isNullableNumber(v["ownersAboveFloor"]) &&
+    isNullableBoolean(v["truncated"])
+  );
+}
+
+/**
+ * Every one of the ten counters is required, unlike `decisionsFindingsFrom`'s
+ * `stats.truncatedSources` (which pulls one field out and leaves the rest
+ * unchecked): `OwnershipCoverage` is a single diagnostics object the gateway
+ * always sends whole, so a counter missing means a malformed brief, not a
+ * brief this client simply renders less of. Only `lastPassAt` is nullable —
+ * it is `null` before the first ownership pass has run, which is a real,
+ * reportable state ("no pass recorded"), not malformed input.
+ */
+function isOwnershipCoverage(v: unknown): v is OwnershipCoverage {
+  return (
+    isObject(v) &&
+    isNullableNumber(v["lastPassAt"]) &&
+    typeof v["lastDurationMs"] === "number" &&
+    typeof v["rootsTotal"] === "number" &&
+    typeof v["rootsCovered"] === "number" &&
+    typeof v["rootsWithRemote"] === "number" &&
+    typeof v["filesCovered"] === "number" &&
+    typeof v["filesExcluded"] === "number" &&
+    typeof v["servicesBound"] === "number" &&
+    typeof v["ownersEmitted"] === "number" &&
+    typeof v["entitiesReaped"] === "number"
+  );
+}
+
+/**
+ * `target` and `parentDirectory` both use `optionalSubject` (defined above
+ * for `why`'s three subjects): `null` on the wire, or the key absent, both
+ * normalise to `null` — an ordinary state ("summary mode, or a path that
+ * resolved to no graph entity" per `OwnershipBrief`'s own doc comment), never
+ * a rejection. Only a PRESENT-but-malformed value is rejected.
+ */
+export function ownershipFindingsFrom(raw: Record<string, unknown>): OwnershipFindings | undefined {
+  const target = optionalSubject(raw["target"], isOwnershipTargetView);
+  const parentDirectory = optionalSubject(raw["parentDirectory"], isOwnershipTargetView);
+  if (target === undefined || parentDirectory === undefined) {
+    return undefined;
+  }
+  if (!isOwnershipCoverage(raw["coverage"])) {
+    return undefined;
+  }
+  return {
+    kind: "ownership",
+    target,
+    parentDirectory,
+    coverage: raw["coverage"],
+  };
+}
+
+/**
+ * One parser per lane, keyed by `AgentLane`.
+ *
+ * A `Record<AgentLane, ...>` rather than a switch, and that is the exhaustiveness
+ * net: adding a lane to `AGENT_LANES` (types.ts) without adding it here fails to
+ * compile, because the key set must be total. It carries no unreachable arm, so
+ * it costs no permanently-uncovered line - the reason `renderFindings`
+ * (panel-view.ts) has no `default` and no `satisfies never` either.
+ *
+ * A switch was tried first and does NOT work here. `renderFindings` gets
+ * exhaustiveness free because its return type has no `undefined` arm; this
+ * function's does, for the guard rejection below, so a missing case just falls
+ * through. Routing through a `let result: LaneFindings | undefined` does not
+ * rescue it - the variable is legally unassigned, definite-assignment analysis
+ * never runs, and deleting the `ownership` arm was verified to compile clean.
+ * A lane silently returning `undefined` drops it to the prose brief with nothing
+ * said, which is precisely the failure this net exists to make impossible.
+ */
+const LANE_PARSERS: Record<AgentLane, (raw: Record<string, unknown>) => LaneFindings | undefined> =
+  {
+    why: whyFindingsFrom,
+    glossary: glossaryFindingsFrom,
+    decisions: decisionsFindingsFrom,
+    expert: expertFindingsFrom,
+    impact: impactFindingsFrom,
+    catchup: catchupFindingsFrom,
+    ownership: ownershipFindingsFrom,
+  };
+
 /**
  * Narrow a raw `findings` payload against the lane that asked for it.
  *
- * `undefined` for a lane with no arm yet (six of seven in C8.1), for a payload
- * whose `kind` disagrees with the lane, and for anything malformed. Every one of
- * those means the same thing to the caller: render the prose brief.
+ * `undefined` for a payload whose `kind` disagrees with the lane, and for
+ * anything malformed once its own lane's guard runs over it. Either one means
+ * the same thing to the caller: render the prose brief.
  */
 export function laneFindingsFrom(lane: AgentLane, raw: unknown): LaneFindings | undefined {
   if (!isObject(raw) || raw["kind"] !== lane) {
     return undefined;
   }
-  // One arm per slice. A lane not listed is not an error, it is a lane whose
-  // structure this build does not model yet.
-  if (lane === "why") {
-    return whyFindingsFrom(raw);
-  }
-  if (lane === "glossary") {
-    return glossaryFindingsFrom(raw);
-  }
-  if (lane === "decisions") {
-    return decisionsFindingsFrom(raw);
-  }
-  return undefined;
+  return LANE_PARSERS[lane](raw);
 }

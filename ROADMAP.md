@@ -1245,7 +1245,7 @@ the editor structurally cannot.*
 
 ---
 
-## Phase C8 — The answer has structure 🟢/🟡
+## Phase C8 — The answer has structure 🟢
 
 *Theme: the gateway has always sent two forms of an agent's answer on the same
 response — the flattened markdown paragraph the panel renders, and the typed
@@ -1347,7 +1347,7 @@ first. This phase reads both, one lane at a time.*
 > [`docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md`](./docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md)
 > (§6 for the slicing).
 
-### C8.3 `expert`, `impact`, `ownership` and `catchup` gain their renderers · 🟡 · M
+### C8.3 `expert`, `impact`, `ownership` and `catchup` gain their renderers · 🟢 · M — ✅ shipped
 > **What** The last four `LaneFindings` arms — every one of them link-less:
 > ranked reviewers with their evidence and the `personId`/`score` the markdown
 > flattening drops, impacted items grouped by category with hop counts,
@@ -1367,7 +1367,17 @@ first. This phase reads both, one lane at a time.*
 > the design's §4.6 on the reverse resolver that would change that.
 > **Done when** All four lanes render their typed answer against a real
 > gateway response, and a malformed or absent payload on any of the four falls
-> back exactly as C8.1's fallback does.
+> back exactly as C8.1's fallback does. **All met.** `catchup`'s involvement
+> line ended up carrying all four of its filters, not the three the design
+> called for — `incidentServices` is one of the four facts that filtered the
+> window down to the reader, and omitting it left the line answering its own
+> question incompletely.
+> **No gateway change and no re-pairing** — same as C8.1/C8.2, this is a
+> client parser and a renderer reading what the gateway already sends.
+> Full design:
+> [`docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md`](./docs/superpowers/specs/2026-09-06-the-answer-has-structure-design.md)
+> (§4.6 for the corrected link inventory, including the `impact` entity-id
+> trap — now carried forward into `docs/architecture.md`).
 
 ---
 

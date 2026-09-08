@@ -21,8 +21,12 @@ import type {
   ResolveMatchKind,
   ScopeGap,
 } from "../shared/types.ts";
+import { renderCatchupFindings } from "./findings/catchup-view.ts";
 import { renderDecisionsFindings } from "./findings/decisions-view.ts";
+import { renderExpertFindings } from "./findings/expert-view.ts";
 import { renderGlossaryFindings } from "./findings/glossary-view.ts";
+import { renderImpactFindings } from "./findings/impact-view.ts";
+import { renderOwnershipFindings } from "./findings/ownership-view.ts";
 import { renderGaps, renderProvenance } from "./findings/shared-view.ts";
 import { renderWhyFindings } from "./findings/why-view.ts";
 import { groupHits, humaniseType } from "./related-groups.ts";
@@ -906,6 +910,14 @@ function renderFindings(doc: Document, findings: LaneFindings, nowMs: number): H
       return renderGlossaryFindings(doc, findings, nowMs);
     case "decisions":
       return renderDecisionsFindings(doc, findings, nowMs);
+    case "expert":
+      return renderExpertFindings(doc, findings, nowMs);
+    case "impact":
+      return renderImpactFindings(doc, findings, nowMs);
+    case "catchup":
+      return renderCatchupFindings(doc, findings, nowMs);
+    case "ownership":
+      return renderOwnershipFindings(doc, findings, nowMs);
   }
 }
 
