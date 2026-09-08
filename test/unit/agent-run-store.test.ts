@@ -670,6 +670,83 @@ describe("agent-run-store", () => {
   // doing the read, the freshness check and the write all inside the SAME
   // `exclusively` critical section `putRun` itself uses.
   describe("putItemUrls", () => {
+    // Pins the fix for the bug the whole-branch review found: `putItemUrls`
+    // used to gate its byte check on `found.state.findings !== undefined`, so
+    // once `putRun` had ALREADY stripped `findings` for being oversized on its
+    // own, the gate short-circuited to false and the map was attached with NO
+    // size check at all. Reproduces the review's own repro — 400 `expert`
+    // evidence rows push `findings` alone over `MAX_FINDINGS_BYTES`, so
+    // `putRun` drops it — then attaches an `itemUrls` map that is, by itself,
+    // also over the cap. The map must not survive either.
+    it("an itemUrls map that alone exceeds the byte bound is not attached, even onto a run whose findings were already stripped", async () => {
+      const evidence = Array.from({ length: 400 }, (_, i) => ({
+        itemId: `github:acme/web#${i}`,
+        type: "pr_authored" as const,
+        serviceId: "github",
+        title: "t".repeat(80),
+        modifiedAt: i,
+        weight: 0.1,
+      }));
+      await putRun(
+        {
+          subject: { kind: "item", id: "i-stripped-then-urls" },
+          lane: "expert",
+          runId: "r1",
+          state: {
+            kind: "done",
+            brief: "b",
+            synthesis: { attempted: false, reason: "disabled" },
+            findings: {
+              kind: "expert",
+              ranked: [
+                {
+                  personId: "person:1",
+                  displayName: "Ada",
+                  score: 0.9,
+                  confidence: "high",
+                  evidence,
+                },
+              ],
+            },
+          },
+          expiresAtMs: NOW + 60_000,
+        },
+        NOW,
+      );
+      // Sanity: `putRun` already dropped `findings` on its own, before
+      // `itemUrls` ever enters the picture.
+      const beforeAttach = await getRun(
+        { kind: "item", id: "i-stripped-then-urls" },
+        "expert",
+        NOW,
+      );
+      expect(beforeAttach?.state).toEqual({
+        kind: "done",
+        brief: "b",
+        synthesis: { attempted: false, reason: "disabled" },
+      });
+
+      const bigItemUrls: Record<string, string> = {};
+      for (let i = 0; i < 30; i++) {
+        bigItemUrls[`github:acme/web#${i}`] =
+          `https://github.com/acme/web/pull/${i}${"x".repeat(700)}`;
+      }
+      await putItemUrls(
+        { kind: "item", id: "i-stripped-then-urls" },
+        "expert",
+        "r1",
+        bigItemUrls,
+        NOW,
+      );
+
+      const found = await getRun({ kind: "item", id: "i-stripped-then-urls" }, "expert", NOW);
+      expect(found?.state).toEqual({
+        kind: "done",
+        brief: "b",
+        synthesis: { attempted: false, reason: "disabled" },
+      });
+    });
+
     it("merges the map onto the still-current run", async () => {
       await putRun(
         {

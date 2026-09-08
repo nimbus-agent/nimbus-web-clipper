@@ -271,10 +271,18 @@ export const MAX_FINDINGS_BYTES = 16 * 1024;
  *  SAME budget `findings` alone used to be measured against, never a bound of
  *  its own. `itemUrls` is `undefined` on every lane but `expert`/`catchup`
  *  and on a run this client's gateway could not resolve, in which case it
- *  contributes nothing. */
-function findingsAndUrlsBytes(findings: LaneFindings, itemUrls: ItemUrlMap | undefined): number {
+ *  contributes nothing. `findings` is ALSO accepted as `undefined` — a state
+ *  `putRun` already stripped `findings` from — and contributes nothing either:
+ *  callers must measure `itemUrls` against the cap even when there is no
+ *  `findings` left to measure alongside it, never skip the check because the
+ *  other half of the pair is already gone. */
+function findingsAndUrlsBytes(
+  findings: LaneFindings | undefined,
+  itemUrls: ItemUrlMap | undefined,
+): number {
   const encoder = new TextEncoder();
-  const findingsBytes = encoder.encode(JSON.stringify(findings)).length;
+  const findingsBytes =
+    findings === undefined ? 0 : encoder.encode(JSON.stringify(findings)).length;
   const urlsBytes = itemUrls === undefined ? 0 : encoder.encode(JSON.stringify(itemUrls)).length;
   return findingsBytes + urlsBytes;
 }
@@ -388,9 +396,14 @@ export function putItemUrls(
     // Mirrors `putRun`'s own bound: the map shares `findings`' byte budget
     // rather than getting one of its own (design spec §5), so re-check it
     // here too — attaching the map is the one write this function makes,
-    // and it must not sneak the combined size back over the cap.
+    // and it must not sneak the combined size back over the cap. Checked
+    // UNCONDITIONALLY, not gated on `found.state.findings !== undefined`:
+    // `putRun` may already have stripped `findings` for being oversized on
+    // its own, and `itemUrls` alone can still exceed the cap in that case —
+    // `findingsAndUrlsBytes` treats a missing `findings` as zero bytes, so
+    // the map is measured on its own merit rather than skipped because its
+    // usual companion is already gone.
     const bounded =
-      found.state.findings !== undefined &&
       findingsAndUrlsBytes(found.state.findings, itemUrls) > MAX_FINDINGS_BYTES
         ? withoutFindings(merged)
         : merged;
