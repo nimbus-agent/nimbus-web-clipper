@@ -1728,6 +1728,29 @@ already renders plain text when its URL argument is absent or unsafe. The
 other five renderers keep their original signatures; only the two lanes that
 gained a map take one.
 
+**Resolved once, cached with the run — and no version floor.** Resolution
+happens exactly once, in the background worker, the moment a poll lands a
+`done` state with `findings`; the panel never triggers it and holds no token
+to call `resolve-ids` itself even if it wanted to. The resulting map is
+written through `putItemUrls` (`agent-run-store.ts`), which does its own
+read-verify-write inside the store's single-writer lock rather than a plain
+`getRun` followed by `putRun` — the race that fix closed. A link the reader
+follows an hour later is therefore the URL the index held when the agent
+answered, not a fresh lookup on every panel open: **it is cached with the run,
+never re-fetched on repaint.** Size is bounded the same way `findings` already
+is — `findingsAndUrlsBytes` measures `findings` and `itemUrls` TOGETHER against
+the same `MAX_FINDINGS_BYTES` (16 KiB) `putRun` enforces, and over budget both
+are dropped together, never `itemUrls` alone surviving without the elements it
+annotates. And `GATEWAY_PATHS.resolveIds`'s **presence is the capability
+signal**, exactly as `resolveFile`'s is: a 404 `resolve_disabled` means a
+gateway older than the route (or one whose clips surface is unmounted), and
+`resolveItemUrls` treats it as permanent for that token rather than retrying —
+the run keeps its brief, the two lanes render exactly as C8.3 shipped them,
+plain text, silently. There is no `RESOLVE_IDS_ARM_FLOOR`, by the same
+reasoning `resolveFile` needed none: this route ships strictly after the data
+it resolves exists to be resolved, so its own presence proves the capability
+rather than a version number having to.
+
 The remaining two (`impact`, `ownership`) carry no id or URL that names a
 *result* at all; their only URLs are the queries they echo back.
 

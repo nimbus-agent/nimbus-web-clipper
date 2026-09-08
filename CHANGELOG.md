@@ -8,6 +8,23 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Added
+
+- **`expert` and `catchup` gain the links the last release said were still
+  ahead.** *Who should review it* and *What happened while I was away* now
+  show each evidence title as a clickable link wherever `GET
+  /v1/items/resolve-ids` — the read the 0.7.0 notes named as available but not
+  yet spent — resolves its item id to a URL the index holds. Adopting it
+  needed no new pairing: the route sits under the same `resolve` scope
+  `resolve` and `resolve-file` already use. *What breaks if it lands* and
+  *Who owns what* still render every title as plain text, and permanently so
+  — `impact`'s ids are graph-entity ids despite the field's name, and
+  `ownership` names people and paths, so neither ever had an item id a
+  resolver could answer for. As with every earlier read this client has
+  adopted, an older gateway is not an error: one without the route simply
+  keeps showing plain titles on both lanes, silently, with no re-pairing
+  needed.
+
 ## [0.7.0] - 2026-09-08
 
 ### Added

@@ -602,6 +602,42 @@ export const AGENT_RUN_DONE_CATCHUP: AgentRunDoneResponse = {
   },
 };
 
+/**
+ * `GET /v1/items/resolve-ids` row — the wire shape `resolveItemIds`
+ * (gateway-client.ts) parses. That client reads `id` and `url` only and
+ * ignores the rest, but this fixture carries every field the real route
+ * sends (`service`, `type`, `title`, `modified_at`) so it stays a faithful
+ * stand-in rather than a client-shaped mock.
+ */
+export interface ResolveIdsRowWire {
+  readonly id: string;
+  readonly service: string;
+  readonly type: string;
+  readonly title: string;
+  readonly url: string | null;
+  readonly modified_at: number;
+}
+
+/**
+ * Resolves ONLY the `github:acme/web#482` id — the billing-service item
+ * {@link AGENT_RUN_DONE_CATCHUP} carries. The checkout-service item's id
+ * (`jira:PLAT-91`) is deliberately ABSENT, not present with a `null` url: an
+ * unindexed id and an indexed item with no url are different facts upstream
+ * and both mean "no link" here (design spec §4), and this fixture proves both
+ * read correctly off the SAME response — one item becomes a link, its sibling
+ * stays plain text — rather than each needing its own scenario.
+ */
+export const RESOLVE_IDS_CATCHUP_HIT: readonly ResolveIdsRowWire[] = [
+  {
+    id: "github:acme/web#482",
+    service: "github",
+    type: "pull_request",
+    title: "Cache the readability pass",
+    url: "https://github.com/acme/web/pull/482",
+    modified_at: 1_700_000_000_000 - ONE_DAY_MS,
+  },
+];
+
 export const RELATED: RelatedResponse = {
   items: [
     {
@@ -836,6 +872,16 @@ export interface Scenario {
   readonly resolveFile?: Readonly<Record<string, unknown>>;
   /** Answer for any coordinate absent from `resolveFile`. Defaults to RESOLVE_FILE_FIXTURE. */
   readonly resolveFileDefault?: unknown;
+  /**
+   * Rows `GET /v1/items/resolve-ids` answers with, filtered by the mock to
+   * only the ids the request actually asked for — mirroring the real route,
+   * where an id absent from the response is an id that was never resolved,
+   * not evidence about ids nobody asked about. Defaults to `[]`: an ordinary
+   * 200 with nothing resolved, genuinely different from an older gateway
+   * (use `scenario.status` with a 404 on `GATEWAY_PATHS.resolveIds` for that
+   * — the capability-signal path, pinned at the unit level already).
+   */
+  readonly resolveIds?: readonly ResolveIdsRowWire[];
   readonly related?: unknown;
   readonly ingest?: unknown;
   readonly itemsFetch?: unknown;
