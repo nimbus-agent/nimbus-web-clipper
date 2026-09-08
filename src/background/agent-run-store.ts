@@ -342,6 +342,66 @@ export function putRun(run: StoredRun, nowMs: number): Promise<void> {
 }
 
 /**
+ * Attach a resolved `itemUrls` map to an already-terminal run — the read, the
+ * freshness check and the write all inside ONE `exclusively` critical
+ * section, unlike a caller doing its own `getRun` then `putRun`.
+ *
+ * That distinction is the whole point. A plain `getRun` followed later by a
+ * `putRun` reads OUTSIDE the single-writer lock, so a concurrent write for
+ * the same subject+lane (a Re-run's fresh terminal answer) can land in the
+ * gap between the two and be silently overwritten by the stale state the
+ * outside read captured — the write itself never fails, so nothing tells the
+ * reader their fresh answer just lost to a stale one. Doing the read and the
+ * write inside the SAME critical section closes that gap: every `putRun`
+ * goes through this module's one `exclusively` chain too, so a concurrent
+ * Re-run's write either finishes entirely before this one starts (and this
+ * one sees it — and bails on the `runId` mismatch below) or entirely after
+ * (and simply replaces whatever this one wrote) — never in between.
+ *
+ * Writes nothing when the run this resolve was for is no longer the one in
+ * the store: gone, expired, past a Re-run to a different `runId`, or no
+ * longer `done` (e.g. `running` again). Every one of those means there is
+ * nothing left to attach this map to, and attaching it anyway would either
+ * write to the wrong run or resurrect a stale one — exactly the failure this
+ * function exists to prevent.
+ */
+export function putItemUrls(
+  subject: RunSubject,
+  lane: AgentLane,
+  runId: string,
+  itemUrls: ItemUrlMap,
+  nowMs: number,
+): Promise<void> {
+  return exclusively(async () => {
+    const all = await readAll();
+    const key = makeKey(subject, lane);
+    const found = all[key];
+    if (
+      found === undefined ||
+      found.expiresAtMs <= nowMs ||
+      found.runId !== runId ||
+      found.state.kind !== "done"
+    ) {
+      return;
+    }
+    const merged: LaneState = { ...found.state, itemUrls };
+    // Mirrors `putRun`'s own bound: the map shares `findings`' byte budget
+    // rather than getting one of its own (design spec §5), so re-check it
+    // here too — attaching the map is the one write this function makes,
+    // and it must not sneak the combined size back over the cap.
+    const bounded =
+      found.state.findings !== undefined &&
+      findingsAndUrlsBytes(found.state.findings, itemUrls) > MAX_FINDINGS_BYTES
+        ? withoutFindings(merged)
+        : merged;
+    await storageSet(STORE_KEY, {
+      ...all,
+      [key]: { ...found, state: bounded, writtenAtMs: nowMs },
+    });
+  });
+}
+
+/**
  * Drop every cached run. Called on unpair: a cached brief is an answer from ONE
  * gateway, and the next pairing may be a different one. A service subject makes
  * this sharp — `{kind:"service", service:"github"}` is identical on every
