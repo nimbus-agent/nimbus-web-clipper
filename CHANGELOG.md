@@ -33,12 +33,15 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   collaborator count — a line the paragraph never printed at all. *Who owns
   what* shows an owner table per target and, when a count was never recorded,
   says so plainly rather than showing it as zero or leaving it blank. None of
-  the four renders a single link, unlike the three earlier lanes: every id on
-  these four briefs — a reviewer, an impacted item, a window entry, an owner —
-  names something the gateway gives this client no way to turn into a URL, so
-  every title on all four lanes shows as plain text. As with the earlier
-  slices, a gateway that sends nothing new is unaffected and no re-pairing is
-  needed.
+  the four renders a link, unlike the three earlier lanes, so every title on
+  all four shows as plain text. For two of them that is permanent: *what
+  breaks if it lands* identifies things by graph-entity id rather than by
+  indexed item, and *who owns what* names people and paths, so neither has an
+  item to link to at all. For the other two it is temporary — the reviewer
+  evidence and the window entries do carry real item ids, and a recent gateway
+  release added the read that turns those into URLs; this client has not
+  adopted it yet. As with the earlier slices, a gateway that sends nothing new
+  is unaffected and no re-pairing is needed.
 
 ## [0.6.0] - 2026-09-07
 
