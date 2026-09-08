@@ -1385,7 +1385,8 @@ first. This phase reads both, one lane at a time.*
 
 *Theme: `expert` and `catchup` have carried real item ids in their evidence
 since C8.3 shipped them link-less — link-less because the contract had no way
-to turn an id back into a URL. `GET /v1/items/resolve-ids` closes that gap.*
+to turn an id back into a URL. `GET /v1/items/resolve-ids` closes that gap —
+proposed and landed upstream as Nimbus#1464 and Nimbus#1465, and consumed here.*
 
 ### C9.1 `expert` and `catchup`'s evidence titles become links · 🟢 · M — ✅ shipped
 > **What** The item ids `expert.ranked[].evidence[].itemId` and
