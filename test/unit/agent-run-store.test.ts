@@ -462,6 +462,143 @@ describe("agent-run-store", () => {
       // would strip these findings right back out on this very read — the
       // existing tests in this block only covered *malformed* and *oversized*
       // findings, which is exactly why nothing caught that bug.
+      it("round-trips an itemUrls map alongside findings", async () => {
+        const findings: DecisionsFindings = {
+          kind: "decisions",
+          entries: [],
+          truncatedSources: 0,
+        };
+        await putRun(
+          {
+            subject: { kind: "item", id: "i-urls" },
+            lane: "expert",
+            runId: "r-urls",
+            state: {
+              kind: "done",
+              brief: "b",
+              findings: { kind: "expert", ranked: [] },
+              itemUrls: { "github:acme/web#1": "https://github.com/acme/web/pull/1" },
+            },
+            expiresAtMs: NOW + 60_000,
+          },
+          NOW,
+        );
+        const found = await getRun({ kind: "item", id: "i-urls" }, "expert", NOW);
+        expect(found?.state).toEqual({
+          kind: "done",
+          brief: "b",
+          findings: { kind: "expert", ranked: [] },
+          itemUrls: { "github:acme/web#1": "https://github.com/acme/web/pull/1" },
+        });
+        // Sanity — findings unrelated to itemUrls, used only above to keep this
+        // test self-contained about the DecisionsFindings import already present.
+        expect(findings.truncatedSources).toBe(0);
+      });
+
+      it("a run stored before this shipped (no itemUrls key at all) reads back with no map — same as a gateway that could not resolve", async () => {
+        chrome.storage.local.set({
+          agentRuns: {
+            [realKey("item", "i-old", "expert")]: {
+              subject: { kind: "item", id: "i-old" },
+              lane: "expert",
+              runId: "r-old",
+              state: {
+                kind: "done",
+                brief: "b",
+                findings: { kind: "expert", ranked: [] },
+                // no itemUrls key at all — the pre-this-phase shape.
+              },
+              expiresAtMs: NOW + 60_000,
+              writtenAtMs: NOW,
+            },
+          },
+        });
+        const found = await getRun({ kind: "item", id: "i-old" }, "expert", NOW);
+        expect(found?.state).toEqual({
+          kind: "done",
+          brief: "b",
+          findings: { kind: "expert", ranked: [] },
+        });
+        expect(found?.state.kind === "done" ? found.state.itemUrls : undefined).toBeUndefined();
+      });
+
+      it("a malformed stored itemUrls (non-string value) is dropped, findings and brief kept", async () => {
+        chrome.storage.local.set({
+          agentRuns: {
+            [realKey("item", "i-bad-urls", "expert")]: {
+              subject: { kind: "item", id: "i-bad-urls" },
+              lane: "expert",
+              runId: "r-bad",
+              state: {
+                kind: "done",
+                brief: "b",
+                findings: { kind: "expert", ranked: [] },
+                itemUrls: { "github:acme/web#1": 42 },
+              },
+              expiresAtMs: NOW + 60_000,
+              writtenAtMs: NOW,
+            },
+          },
+        });
+        const found = await getRun({ kind: "item", id: "i-bad-urls" }, "expert", NOW);
+        expect(found?.state).toEqual({
+          kind: "done",
+          brief: "b",
+          findings: { kind: "expert", ranked: [] },
+        });
+      });
+
+      it("findings plus an itemUrls map that together exceed the byte bound drop BOTH, brief kept — the existing over-budget behaviour, now counting the map too", async () => {
+        // Findings alone are small; the map alone pushes the combined total
+        // past MAX_FINDINGS_BYTES (16 KiB). If only `findings` were measured
+        // (the pre-Task-3 behaviour) this would be kept in full.
+        const evidence = Array.from({ length: 30 }, (_, i) => ({
+          itemId: `github:acme/web#${i}`,
+          type: "pr_authored" as const,
+          serviceId: "github",
+          title: "t",
+          modifiedAt: i,
+          weight: 0.1,
+        }));
+        const itemUrls: Record<string, string> = {};
+        for (const e of evidence) {
+          itemUrls[e.itemId] = `https://github.com/acme/web/pull/${e.itemId}${"x".repeat(700)}`;
+        }
+        await putRun(
+          {
+            subject: { kind: "item", id: "i-big-urls" },
+            lane: "expert",
+            runId: "r-big",
+            state: {
+              kind: "done",
+              brief: "b",
+              synthesis: { attempted: false, reason: "disabled" },
+              findings: {
+                kind: "expert",
+                ranked: [
+                  {
+                    personId: "person:1",
+                    displayName: "Ada",
+                    score: 0.9,
+                    confidence: "high",
+                    evidence,
+                  },
+                ],
+              },
+              itemUrls,
+            },
+            expiresAtMs: NOW + 60_000,
+          },
+          NOW,
+        );
+        const found = await getRun({ kind: "item", id: "i-big-urls" }, "expert", NOW);
+        expect(found?.state).toEqual({
+          kind: "done",
+          brief: "b",
+          synthesis: { attempted: false, reason: "disabled" },
+        });
+      });
+
       it("valid decisions findings survive a put -> get round trip", async () => {
         const findings: DecisionsFindings = {
           kind: "decisions",

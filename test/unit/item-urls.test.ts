@@ -3,10 +3,21 @@ import { describe, expect, it } from "vitest";
 import { RESOLVE_IDS_MAX_BATCH, type ResolvedIdRow } from "../../src/background/gateway-client.ts";
 import {
   chunkIds,
+  itemIdsOf,
   QUERY_BYTES_BUDGET,
   type ResolveItemIdsFn,
   resolveItemUrls,
 } from "../../src/background/item-urls.ts";
+import type {
+  CatchupFindings,
+  DecisionsFindings,
+  ExpertFindings,
+  GlossaryFindings,
+  ImpactFindings,
+  LaneFindings,
+  OwnershipFindings,
+  WhyFindings,
+} from "../../src/shared/findings.ts";
 
 type Call = { readonly ids: readonly string[] };
 type Reply =
@@ -153,5 +164,184 @@ describe("resolveItemUrls", () => {
     const map = await resolveItemUrls({ ...DEPS_BASE, resolveItemIds }, []);
     expect(calls).toHaveLength(0);
     expect(map).toEqual({});
+  });
+});
+
+describe("itemIdsOf", () => {
+  it("collects every evidence itemId across every ranked person, for expert", () => {
+    const findings: ExpertFindings = {
+      kind: "expert",
+      ranked: [
+        {
+          personId: "person:1",
+          displayName: "Ada",
+          score: 0.9,
+          confidence: "high",
+          evidence: [
+            {
+              itemId: "github:acme/web#1",
+              type: "pr_authored",
+              serviceId: "github",
+              title: "t1",
+              modifiedAt: 1,
+              weight: 0.5,
+            },
+            {
+              itemId: "github:acme/web#2",
+              type: "pr_reviewed",
+              serviceId: "github",
+              title: "t2",
+              modifiedAt: 2,
+              weight: 0.3,
+            },
+          ],
+        },
+        {
+          personId: "person:2",
+          displayName: "Grace",
+          score: 0.4,
+          confidence: "low",
+          evidence: [
+            {
+              itemId: "github:acme/web#3",
+              type: "commit_authored",
+              serviceId: "github",
+              title: "t3",
+              modifiedAt: 3,
+              weight: 0.1,
+            },
+          ],
+        },
+      ],
+    };
+    expect(itemIdsOf(findings)).toEqual([
+      "github:acme/web#1",
+      "github:acme/web#2",
+      "github:acme/web#3",
+    ]);
+  });
+
+  it("collects every item's itemId across every section, for catchup", () => {
+    const findings: CatchupFindings = {
+      kind: "catchup",
+      selfPersonId: null,
+      involvement: {
+        ownedServices: [],
+        activeRepos: [],
+        incidentServices: [],
+        collaboratorPersonIds: [],
+      },
+      sections: [
+        {
+          serviceId: "github",
+          totalItemsInWindow: 2,
+          items: [
+            {
+              itemId: "github:acme/web#9",
+              title: "t9",
+              modifiedAt: 1,
+              relevanceScore: 0.5,
+              relevanceReasons: [],
+            },
+            {
+              itemId: "github:acme/web#10",
+              title: "t10",
+              modifiedAt: 2,
+              relevanceScore: 0.6,
+              relevanceReasons: [],
+            },
+          ],
+        },
+        {
+          serviceId: "jira",
+          totalItemsInWindow: 1,
+          items: [
+            {
+              itemId: "jira:PROJ-1",
+              title: "t-jira",
+              modifiedAt: 3,
+              relevanceScore: 0.2,
+              relevanceReasons: [],
+            },
+          ],
+        },
+      ],
+    };
+    expect(itemIdsOf(findings)).toEqual(["github:acme/web#9", "github:acme/web#10", "jira:PROJ-1"]);
+  });
+
+  it("returns [] for why, glossary, decisions, impact and ownership", () => {
+    const why: WhyFindings = {
+      kind: "why",
+      findings: [],
+      subject: null,
+      changeSubject: null,
+      itemSubject: null,
+    };
+    const glossary: GlossaryFindings = {
+      kind: "glossary",
+      entries: [],
+      matchedVia: null,
+      suggestions: [],
+    };
+    const decisions: DecisionsFindings = { kind: "decisions", entries: [], truncatedSources: 0 };
+    // `affectedItemId` LOOKS like an item id but is a `graph_entity.id`
+    // (findings.ts's own comment on `ImpactFindings`) — asking to resolve it
+    // would issue requests the gateway resolves nothing for.
+    const impact: ImpactFindings = {
+      kind: "impact",
+      startEntityId: "entity:1",
+      affected: [
+        {
+          category: "service",
+          affectedItemId: "entity:456",
+          affectedTitle: "billing-service",
+          serviceId: "billing",
+          hops: 1,
+          pathSummary: "p",
+        },
+      ],
+    };
+    const ownership: OwnershipFindings = {
+      kind: "ownership",
+      target: null,
+      parentDirectory: null,
+      coverage: {
+        lastPassAt: null,
+        lastDurationMs: 1,
+        rootsTotal: 1,
+        rootsCovered: 1,
+        rootsWithRemote: 1,
+        filesCovered: 1,
+        filesExcluded: 0,
+        servicesBound: 1,
+        ownersEmitted: 1,
+        entitiesReaped: 0,
+      },
+    };
+    const cases: readonly LaneFindings[] = [why, glossary, decisions, impact, ownership];
+    for (const findings of cases) {
+      expect(itemIdsOf(findings)).toEqual([]);
+    }
+  });
+
+  it("returns [] for an expert lane with no evidence at all", () => {
+    const findings: ExpertFindings = { kind: "expert", ranked: [] };
+    expect(itemIdsOf(findings)).toEqual([]);
+  });
+
+  it("returns [] for a catchup lane with no sections at all", () => {
+    const findings: CatchupFindings = {
+      kind: "catchup",
+      selfPersonId: null,
+      involvement: {
+        ownedServices: [],
+        activeRepos: [],
+        incidentServices: [],
+        collaboratorPersonIds: [],
+      },
+      sections: [],
+    };
+    expect(itemIdsOf(findings)).toEqual([]);
   });
 });

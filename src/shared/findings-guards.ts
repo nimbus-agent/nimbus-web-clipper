@@ -39,6 +39,7 @@ import type {
   GlossarySourceRef,
   ImpactFinding,
   ImpactFindings,
+  ItemUrlMap,
   LaneFindings,
   OwnershipCoverage,
   OwnershipFindings,
@@ -117,6 +118,25 @@ export function gapNotesFrom(raw: unknown): readonly GapNote[] | undefined {
  */
 export function gapsOfBrief(brief: unknown): readonly GapNote[] | undefined {
   return isObject(brief) ? gapNotesFrom(brief["gaps"]) : undefined;
+}
+
+/**
+ * Validate a stored `itemUrls` map — a plain object whose every value is a
+ * string. This is a client-side field with no wire counterpart (Task 3's own
+ * resolution over `/v1/items/resolve-ids`, never anything the gateway sends
+ * as part of a brief), so unlike every other guard in this module it has
+ * nothing upstream to mirror; storage is still external input, though, so it
+ * still needs one.
+ *
+ * All-or-nothing, like `gapNotesFrom`: one malformed entry (a hand-edited
+ * value, a partial write) drops the whole map rather than rendering some
+ * links and silently dropping others.
+ */
+export function itemUrlMapFrom(raw: unknown): ItemUrlMap | undefined {
+  if (!isObject(raw)) {
+    return undefined;
+  }
+  return Object.values(raw).every((v) => typeof v === "string") ? (raw as ItemUrlMap) : undefined;
 }
 
 const DISCARD_REASONS = [

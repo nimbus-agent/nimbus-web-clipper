@@ -10,8 +10,13 @@
 // `running`) would otherwise read the same snapshot and the second write would
 // silently clobber the first.
 import { storageSet } from "../browser/storage.ts";
-import type { LaneFindings } from "../shared/findings.ts";
-import { gapNotesFrom, laneFindingsFrom, synthesisFrom } from "../shared/findings-guards.ts";
+import type { ItemUrlMap, LaneFindings } from "../shared/findings.ts";
+import {
+  gapNotesFrom,
+  itemUrlMapFrom,
+  laneFindingsFrom,
+  synthesisFrom,
+} from "../shared/findings-guards.ts";
 import { isAgentError, isScopeGap } from "../shared/messages.ts";
 import { AGENT_LANES, type AgentLane, type LaneState } from "../shared/types.ts";
 import { createWriteChain, readGuarded } from "./keyed-store.ts";
@@ -206,12 +211,14 @@ function sanitiseState(state: LaneState, lane: AgentLane): LaneState {
   const synthesis = state.synthesis === undefined ? undefined : synthesisFrom(state.synthesis);
   const findings =
     state.findings === undefined ? undefined : laneFindingsFrom(lane, state.findings);
+  const itemUrls = state.itemUrls === undefined ? undefined : itemUrlMapFrom(state.itemUrls);
   return {
     kind: "done",
     brief: state.brief,
     ...(gaps === undefined ? {} : { gaps }),
     ...(findings === undefined ? {} : { findings }),
     ...(synthesis === undefined ? {} : { synthesis }),
+    ...(itemUrls === undefined ? {} : { itemUrls }),
   };
 }
 
@@ -240,7 +247,9 @@ export async function getRun(
 const exclusively = createWriteChain();
 
 /**
- * The most findings we will persist for one run, in UTF-8 BYTES.
+ * The most findings — PLUS the resolved `itemUrls` map, Task 3 (see
+ * docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md §5) — we
+ * will persist for one run, in UTF-8 BYTES.
  *
  * Bytes, not `String.length` — that counts UTF-16 code units, undercounts every
  * non-ASCII title, and would disagree with how every other cap in this repo is
@@ -252,21 +261,35 @@ const exclusively = createWriteChain();
  * run — the opposite of the passage store's refuse-never-evict rule, and
  * deliberately so: a passage was put there by hand and exists in exactly one
  * place, while findings are a cache of something the gateway will re-derive.
- * Refusing the write here would lose the brief too.
+ * Refusing the write here would lose the brief too. NOT raised for `itemUrls`:
+ * the spec is explicit that the map shares this budget rather than getting a
+ * larger one of its own.
  */
 export const MAX_FINDINGS_BYTES = 16 * 1024;
 
-function findingsBytes(findings: LaneFindings): number {
-  return new TextEncoder().encode(JSON.stringify(findings)).length;
+/** `findings` plus `itemUrls`, measured together — the map is counted in the
+ *  SAME budget `findings` alone used to be measured against, never a bound of
+ *  its own. `itemUrls` is `undefined` on every lane but `expert`/`catchup`
+ *  and on a run this client's gateway could not resolve, in which case it
+ *  contributes nothing. */
+function findingsAndUrlsBytes(findings: LaneFindings, itemUrls: ItemUrlMap | undefined): number {
+  const encoder = new TextEncoder();
+  const findingsBytes = encoder.encode(JSON.stringify(findings)).length;
+  const urlsBytes = itemUrls === undefined ? 0 : encoder.encode(JSON.stringify(itemUrls)).length;
+  return findingsBytes + urlsBytes;
 }
 
 /**
- * Strip `findings` from a state, keeping everything else.
+ * Strip `findings` AND `itemUrls` from a state, keeping everything else.
  *
- * Rebuilt explicitly rather than by rest-destructuring off `findings`: biome's
- * `noUnusedVariables` is set to "error" here, and the discarded binding is
- * exactly the shape that rule exists to catch. Spelling the survivors out also
- * makes it obvious that `gaps` and `synthesis` are deliberately kept.
+ * `itemUrls` drops alongside `findings`, not independently: every id in the
+ * map keys an element INSIDE `findings` (an evidence row, a catchup item), so
+ * a map surviving without the findings it annotates would link nothing the
+ * reader can see. Rebuilt explicitly rather than by rest-destructuring off
+ * `findings`/`itemUrls`: biome's `noUnusedVariables` is set to "error" here,
+ * and the discarded bindings are exactly the shape that rule exists to catch.
+ * Spelling the survivors out also makes it obvious that `gaps` and
+ * `synthesis` are deliberately kept.
  */
 function withoutFindings(state: LaneState): LaneState {
   if (state.kind !== "done") {
@@ -290,7 +313,7 @@ export function putRun(run: StoredRun, nowMs: number): Promise<void> {
   const bounded =
     run.state.kind === "done" &&
     run.state.findings !== undefined &&
-    findingsBytes(run.state.findings) > MAX_FINDINGS_BYTES
+    findingsAndUrlsBytes(run.state.findings, run.state.itemUrls) > MAX_FINDINGS_BYTES
       ? { ...run, state: withoutFindings(run.state) }
       : run;
   return exclusively(async () => {

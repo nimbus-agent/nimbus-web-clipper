@@ -24,6 +24,7 @@ import {
   type TabNavigation,
   tabUrl,
 } from "../browser/tabs.ts";
+import type { LaneFindings } from "../shared/findings.ts";
 import { gapsOfBrief, laneFindingsFrom, synthesisFrom } from "../shared/findings-guards.ts";
 import {
   isAgentRunRequest,
@@ -103,6 +104,7 @@ import {
   probeHealth,
   resolveFile,
   resolveItem,
+  resolveItemIds,
 } from "./gateway-client.ts";
 import {
   handleAgentRun,
@@ -121,6 +123,7 @@ import {
   handleResolve,
   handleUnpair,
 } from "./handlers.ts";
+import { itemIdsOf, resolveItemUrls } from "./item-urls.ts";
 import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
 import { collectPassage, type PassageCollectDeps } from "./passage-collect.ts";
@@ -442,11 +445,69 @@ async function tickAgentPoll(
     return;
   }
   activeAgentPolls.delete(run.runId);
+  const state = terminalLaneState(result, conn.label, run.lane);
+  await agentRunDeps.putRun({ subject: run.subject, lane: run.lane, runId: run.runId, state });
+  // Fire-and-forget, deliberately NOT awaited: the reader is waiting on the
+  // brief just stored above, not on a set of links, and a slow or hanging
+  // `resolve-ids` call must never delay that answer landing — see this
+  // phase's design spec §2 and the report this task's brief calls for. `why`,
+  // `glossary`, `decisions`, `impact` and `ownership` all short-circuit inside
+  // `resolveAndPersistItemUrls` via `itemIdsOf` returning `[]`, so this costs
+  // nothing on any lane but `expert`/`catchup`.
+  if (state.kind === "done" && state.findings !== undefined) {
+    void resolveAndPersistItemUrls(run, state.findings, conn.origin, conn.token, generation).catch(
+      () => undefined,
+    );
+  }
+}
+
+/**
+ * The second half of a completed `expert`/`catchup` run: resolve its item ids
+ * against `/v1/items/resolve-ids` and persist the map alongside the run — a
+ * SECOND store write, after the terminal one `tickAgentPoll` already made
+ * (design spec §2, §5). Never awaited by the caller; see that call site's own
+ * comment for why.
+ *
+ * Every failure here — nothing to resolve, an older/un-scoped gateway, a
+ * network error — ends in "write nothing", exactly as `resolveItemUrls`
+ * itself promises: a lane rendering titles as plain text is this phase's
+ * NORMAL state, not a degraded one.
+ *
+ * `pairingChangedSince` is re-checked before AND after the network call,
+ * mirroring every other await in `tickAgentPoll` — a pairing change while
+ * this is in flight must write nothing, or it would repopulate the store a
+ * `clearRuns()` on unpair already emptied (see that counter's own doc
+ * comment). The run is also RE-READ from the store rather than trusting the
+ * `state` captured before the resolve call: a Re-run (task 6) can start a
+ * fresh invocation for the same subject+lane while this is in flight, and
+ * writing the stale captured state back would clobber it. If the re-read
+ * finds no `done` entry for this exact `runId` any more, there is nothing
+ * left to attach a map to.
+ */
+async function resolveAndPersistItemUrls(
+  run: StoredRun,
+  findings: LaneFindings,
+  origin: string,
+  token: string,
+  generation: number,
+): Promise<void> {
+  const ids = itemIdsOf(findings);
+  if (ids.length === 0 || pairingChangedSince(generation)) {
+    return;
+  }
+  const itemUrls = await resolveItemUrls({ origin, token, resolveItemIds }, ids);
+  if (Object.keys(itemUrls).length === 0 || pairingChangedSince(generation)) {
+    return;
+  }
+  const current = await agentStoreDeps.getRun(run.subject, run.lane);
+  if (current === null || current.runId !== run.runId || current.state.kind !== "done") {
+    return;
+  }
   await agentRunDeps.putRun({
     subject: run.subject,
     lane: run.lane,
     runId: run.runId,
-    state: terminalLaneState(result, conn.label, run.lane),
+    state: { ...current.state, itemUrls },
   });
 }
 

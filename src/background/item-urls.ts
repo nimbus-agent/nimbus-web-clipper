@@ -4,8 +4,45 @@
 // chunk — or every chunk — failing. Runs in the background service worker, when
 // an agent run lands, never in the panel (which holds no token). See
 // docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md §4.
-import type { ItemUrlMap } from "../shared/findings.ts";
+import type { ItemUrlMap, LaneFindings } from "../shared/findings.ts";
 import { RESOLVE_IDS_MAX_BATCH, type ResolvedIdRow } from "./gateway-client.ts";
+
+/**
+ * The item ids worth resolving out of one lane's findings — `expert`'s
+ * evidence and `catchup`'s items, and `[]` for the other five lanes.
+ *
+ * **This is not an oversight to fill in later.** `why`, `glossary` and
+ * `decisions` already carry a `url` on the wire (`WhyFinding.url`,
+ * `GlossarySourceRef.url`, `DecisionEvidence.url`), so there is nothing here
+ * for a resolver to add. `impact` and `ownership` are the two that look like
+ * they qualify and do not:
+ *
+ * - **The trap**: `ImpactFinding.affectedItemId` READS like an item id — the
+ *   name says so — but it is a `graph_entity.id` (every one of the gateway's
+ *   five impact sub-lanes selects `e.id FROM graph_entity`; see
+ *   `ImpactFindings`'s own comment in `findings.ts`). Passing it to
+ *   `resolve-ids`, which resolves `item.id`s, would issue a request the
+ *   gateway is guaranteed to answer with nothing — silently, since resolution
+ *   failure never surfaces as an error (spec §4.2). Its `affectedTitle` is
+ *   already the reader-facing text; there is no id to link.
+ * - `ownership` carries no item id at all: `OwnershipOwner.externalId` is a
+ *   PERSON id, and `OwnershipTargetView.displayPath` is a file-system path.
+ *   Neither is anything `/v1/items/resolve-ids` could ever answer for.
+ */
+export function itemIdsOf(findings: LaneFindings): readonly string[] {
+  switch (findings.kind) {
+    case "expert":
+      return findings.ranked.flatMap((person) => person.evidence.map((e) => e.itemId));
+    case "catchup":
+      return findings.sections.flatMap((section) => section.items.map((item) => item.itemId));
+    case "why":
+    case "glossary":
+    case "decisions":
+    case "impact":
+    case "ownership":
+      return [];
+  }
+}
 
 /** The shape of `resolveItemIds` (gateway-client.ts), injected rather than
  *  imported as a value — this module never touches `fetch` or a token directly,
