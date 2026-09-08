@@ -8,6 +8,8 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-08
+
 ### Added
 
 - **Two more lanes answer with structure instead of a paragraph.** *Define in
