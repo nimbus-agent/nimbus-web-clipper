@@ -8,6 +8,7 @@ import { isCapturedCopy } from "../shared/capture-offer.ts";
 import { gatePolicy } from "../shared/connector-health.ts";
 import {
   type ClipResponse,
+  type ExtensionRequest,
   isAgentStateResponse,
   isCaptureResponse,
   isFetchResponse,
@@ -34,6 +35,7 @@ import {
   type SurfaceKind,
 } from "../shared/types.ts";
 import { DEPLOY_CSS } from "./deploy/deploy-css.ts";
+import { deployBelongsOnSurface, mountDeploySection, type Send } from "./deploy/deploy-section.ts";
 import { FINDINGS_CSS } from "./findings/findings-css.ts";
 import {
   type LaneContext,
@@ -615,6 +617,15 @@ function queuedClipMessage(reason: string): string {
 }
 
 /**
+ * The deploy section's `Send`: `sendMessage` already carries the full
+ * `ExtensionRequest` union, and every message this module builds for it
+ * (`deploy-preflight`, `service-bind`) is a member of that union — the cast is
+ * narrowing a caller-owned literal back to the type `sendMessage` always
+ * wanted, not an escape hatch for unrelated data.
+ */
+const sendToWorker: Send = (msg) => sendMessage(msg as ExtensionRequest);
+
+/**
  * The item the shown header names: `resolved`'s item, `chosen`'s candidate, or
  * nothing at all on a miss, an error, or an unpicked ambiguous answer.
  */
@@ -651,6 +662,11 @@ function createPanel(body: HTMLElement): {
   applySelection: (text: string, intent: PanelSelection["intent"] | null) => void;
 } {
   let header: HeaderState = { kind: "loading" };
+  /** The deploy-readiness section's own host, created once per panel mount and
+   *  re-appended (never re-created) on every repaint — `mountDeploySection`
+   *  keys its idempotency off this element's identity, so a fresh one each
+   *  paint would re-ask on every tick. See `deploy-section.ts`. */
+  const deployHost = document.createElement("div");
   /**
    * The page this panel describes, captured ONCE at mount.
    *
@@ -1522,6 +1538,24 @@ function createPanel(body: HTMLElement): {
       ),
     );
     attachLaneToggles();
+    if (
+      pinnedRecognition?.ok === true &&
+      pinnedRecognition.scope !== undefined &&
+      deployBelongsOnSurface(pinnedRecognition.kind)
+    ) {
+      const itemId = shownItemId(shown);
+      body.append(deployHost);
+      mountDeploySection(
+        deployHost,
+        {
+          product: pinnedRecognition.product,
+          scope: pinnedRecognition.scope,
+          kind: pinnedRecognition.kind,
+          ...(itemId === undefined ? {} : { itemId }),
+        },
+        sendToWorker,
+      );
+    }
   }
 
   async function loadHeader(): Promise<void> {
