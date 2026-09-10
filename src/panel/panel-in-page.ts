@@ -665,7 +665,9 @@ function createPanel(body: HTMLElement): {
   /** The deploy-readiness section's own host, created once per panel mount and
    *  re-appended (never re-created) on every repaint — `mountDeploySection`
    *  keys its idempotency off this element's identity, so a fresh one each
-   *  paint would re-ask on every tick. See `deploy-section.ts`. */
+   *  paint would re-ask on every tick. Bare here on purpose: the section
+   *  classes and fills it (`.nimbus-deploy-section`, deploy-section.ts), so its
+   *  title and insets live beside its own CSS rather than here. */
   const deployHost = document.createElement("div");
   /**
    * The page this panel describes, captured ONCE at mount.
@@ -1550,7 +1552,6 @@ function createPanel(body: HTMLElement): {
         {
           product: pinnedRecognition.product,
           scope: pinnedRecognition.scope,
-          kind: pinnedRecognition.kind,
           ...(itemId === undefined ? {} : { itemId }),
         },
         sendToWorker,

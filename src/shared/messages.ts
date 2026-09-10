@@ -1182,6 +1182,13 @@ export type DeployPreflightResponse =
   | {
       readonly kind: "deploy-preflight";
       readonly ok: true;
+      /**
+       * The bound id the verdict was computed for. Unread by S1's section — the
+       * envelope already carries `service` — and deliberately kept: S2's DORA
+       * page is linked from here as `dora.html?service=<id>` (design spec §5.4),
+       * and that link needs the id the BINDING resolved to, not the one the
+       * page happened to guess. Pre-wiring, not dead code.
+       */
       readonly serviceId: string;
       readonly preflight: DeployPreflightResult;
     }

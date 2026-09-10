@@ -98,6 +98,12 @@ export async function handleDeployPreflight(
  * A binding is never saved unverified. An unreachable gateway refuses rather
  * than storing something that may be wrong — the user can retry, and a stored
  * wrong id produces a permanently confusing section.
+ *
+ * What is persisted is RECONSTRUCTED from the four fields, never `req.binding`
+ * itself. `isServiceBinding` is a shape check and accepts extra properties, so
+ * storing the request's object would let a page-supplied message write arbitrary
+ * keys into `chrome.storage.local` — a quota shared with the clip queue and the
+ * connection record. The guard bounds what it reads; this bounds what we keep.
  */
 export async function handleServiceBind(
   req: ServiceBindRequest,
@@ -107,19 +113,23 @@ export async function handleServiceBind(
   if (origin === null) {
     return { kind: "service-bind", ok: false, reason: "unreachable" };
   }
-  const probe = await fetchPreflight(
-    origin,
-    req.binding.serviceId,
-    req.binding.defaultBranch ?? "HEAD",
-    deps.doFetch,
-  );
+  const { product, scope, serviceId, defaultBranch } = req.binding;
+  const probe = await fetchPreflight(origin, serviceId, defaultBranch ?? "HEAD", deps.doFetch);
   if (!probe.ok) {
     return { kind: "service-bind", ok: false, reason: probe.reason };
   }
   if (isUnknownService(probe.value)) {
     return { kind: "service-bind", ok: false, reason: "unknown_service" };
   }
-  await deps.putBinding(req.binding);
+  await deps.putBinding({
+    product,
+    scope,
+    serviceId,
+    // `exactOptionalPropertyTypes` is on: an explicit `defaultBranch: undefined`
+    // is not the same type as an absent key, and only the absent one round-trips
+    // through JSON storage as the guard expects.
+    ...(defaultBranch === undefined ? {} : { defaultBranch }),
+  });
   return { kind: "service-bind", ok: true };
 }
 

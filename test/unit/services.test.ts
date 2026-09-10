@@ -6,6 +6,7 @@ import {
   findBinding,
   guessServiceId,
   isServiceBinding,
+  MAX_SCOPE_LEN,
   removeBinding,
   upsertBinding,
 } from "../../src/shared/services.ts";
@@ -35,6 +36,17 @@ describe("isServiceBinding", () => {
   });
   test("rejects an empty scope", () => {
     expect(isServiceBinding({ product: "github", scope: "", serviceId: "b" })).toBe(false);
+  });
+  // `chrome.storage.local` is one quota shared with the clip queue and the
+  // connection record. `scope` is the one field a page-supplied message carries
+  // into it, so it is bounded here even though the gateway never sees it.
+  test("rejects a scope past MAX_SCOPE_LEN", () => {
+    expect(
+      isServiceBinding({ product: "github", scope: "x".repeat(MAX_SCOPE_LEN + 1), serviceId: "b" }),
+    ).toBe(false);
+    expect(
+      isServiceBinding({ product: "github", scope: "x".repeat(MAX_SCOPE_LEN), serviceId: "b" }),
+    ).toBe(true);
   });
   test("rejects a serviceId past the route's 64-char bound", () => {
     expect(isServiceBinding({ product: "github", scope: "a", serviceId: "x".repeat(65) })).toBe(

@@ -662,9 +662,10 @@ or want to bind. Both routes this section calls (`preflight/deploy`,
 re-pairing, no `nimbus clip scopes`.
 
 1. <!-- e2e:deploy-bind --> On a pull request or a build page whose repo has no
-   service binding yet, the deploy-readiness section (below Related, on `pr`
-   and `build` surfaces only — not on a dashboard, an issue, a doc or a source
-   file) renders an editable input seeded with a guess — the repo's last path
+   service binding yet, the deploy-readiness section — headed **Deploy
+   readiness**, below Related and below every agent lane, on `pr` and `build`
+   surfaces only, never on a dashboard, an issue, a doc or a source file —
+   renders an editable input seeded with a guess — the repo's last path
    segment — never a silent auto-bind. Typing a Nimbus service id and
    submitting saves the binding **only if the gateway recognises it**: an id
    that comes back `unknown_service` on every check is refused, with the input

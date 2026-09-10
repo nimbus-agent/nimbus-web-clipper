@@ -11,16 +11,18 @@
 import type { DeployPreflightResult } from "../shared/deploy.ts";
 import { parseDeployPreflight } from "../shared/deploy.ts";
 import { endpointUrl } from "../shared/gateway.ts";
+import { MAX_BRANCH_LEN, MAX_SERVICE_ID_LEN } from "../shared/services.ts";
 import { isObject, readJson } from "./http-json.ts";
 
 /** Reads over a local index; short enough that a wedged gateway does not hang
  *  the section behind it. */
 const DEPLOY_TIMEOUT_MS = 10_000;
 
-/** The gateway's own bounds (preflight-rpc.ts), enforced BEFORE sending so a
- *  request that cannot succeed is never round-tripped. */
-const MAX_SERVICE_LEN = 64;
-const MAX_TARGET_REF_LEN = 255;
+/** The gateway's bounds are enforced BEFORE sending, so a request that cannot
+ *  succeed is never round-tripped — but the numbers themselves come from
+ *  `src/shared/services.ts`, which is the one place they are written down. The
+ *  guard that reads a stored binding and the client that sends one must agree
+ *  by construction, not by two files happening to say 64. */
 const DEFAULT_MAX_FINDINGS = 10;
 
 export type DeployError = "unreachable" | "server_error" | "malformed";
@@ -55,10 +57,10 @@ export async function fetchPreflight(
   doFetch: FetchLike,
   maxFindings: number = DEFAULT_MAX_FINDINGS,
 ): Promise<DeployResult<DeployPreflightResult>> {
-  if (service.length < 1 || service.length > MAX_SERVICE_LEN) {
+  if (service.length < 1 || service.length > MAX_SERVICE_ID_LEN) {
     return { ok: false, reason: "malformed" };
   }
-  if (targetRef.length < 1 || targetRef.length > MAX_TARGET_REF_LEN) {
+  if (targetRef.length < 1 || targetRef.length > MAX_BRANCH_LEN) {
     return { ok: false, reason: "malformed" };
   }
   const qs = new URLSearchParams({

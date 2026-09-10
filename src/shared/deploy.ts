@@ -12,8 +12,13 @@
 export type PreflightVerdict = "ok" | "warn";
 
 /**
- * Single-sourced as an array so the parser reads THIS rather than declaring its
- * own literal list — the drift class `RESOLVE_MATCH_KINDS` exists to prevent.
+ * The gap strings THIS VERSION knows, single-sourced as an array so the parser
+ * reads this rather than declaring its own literal list — the drift class
+ * `RESOLVE_MATCH_KINDS` exists to prevent.
+ *
+ * It is an open set upstream: the union has already been split once (F24, which
+ * separated `unknown_service` from `no_repos`). See `UNRECOGNISED_GAP` for what
+ * happens the day a seventh member arrives.
  */
 export const PREFLIGHT_GAPS = [
   "unknown_service",
@@ -23,7 +28,24 @@ export const PREFLIGHT_GAPS = [
   "pagerduty_urgency_without_priority",
 ] as const;
 
-export type PreflightGap = (typeof PREFLIGHT_GAPS)[number] | null;
+/**
+ * NEVER on the wire — a client-only member meaning "the gateway named a reason
+ * this version of the extension does not know".
+ *
+ * The alternative was rejecting the whole envelope on an unknown gap string,
+ * which is what an additive upstream release would then do to the two checks
+ * that answered perfectly well: the user would lose the entire verdict because
+ * one check cited a newer reason. This degrades exactly one check instead,
+ * which is the graceful-degradation pattern the rest of this client uses.
+ *
+ * It stays DISTINCT from `null`: "could not evaluate, reason unknown here" is
+ * not "no gap", and §4.4's rule turns on that difference. It is also distinct
+ * from a gap of the wrong TYPE — a number, an object — which is a shape
+ * violation rather than a newer vocabulary, and still rejects the check.
+ */
+export const UNRECOGNISED_GAP = "unrecognised_gap";
+
+export type PreflightGap = (typeof PREFLIGHT_GAPS)[number] | typeof UNRECOGNISED_GAP | null;
 
 export interface IncidentFinding {
   readonly id: string;
@@ -97,11 +119,15 @@ function count(v: unknown): v is number {
   return typeof v === "number" && Number.isInteger(v) && v >= 0;
 }
 
+/**
+ * `undefined` means "not a gap at all" and rejects the check. A STRING this
+ * version does not know is a different thing — an additive upstream release,
+ * not a malformed body — and becomes `UNRECOGNISED_GAP` on that one check.
+ */
 function parseGap(v: unknown): PreflightGap | undefined {
   if (v === null) return null;
-  return str(v) && (PREFLIGHT_GAPS as readonly string[]).includes(v)
-    ? (v as PreflightGap)
-    : undefined;
+  if (!str(v)) return undefined;
+  return (PREFLIGHT_GAPS as readonly string[]).includes(v) ? (v as PreflightGap) : UNRECOGNISED_GAP;
 }
 
 function parseIncident(v: unknown): IncidentFinding | null {

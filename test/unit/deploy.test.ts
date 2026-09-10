@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { isUnknownService, parseDeployPreflight } from "../../src/shared/deploy.ts";
+import {
+  isUnknownService,
+  parseDeployPreflight,
+  UNRECOGNISED_GAP,
+} from "../../src/shared/deploy.ts";
 
 const check = (over: Record<string, unknown> = {}) => ({
   count: 0,
@@ -78,18 +82,63 @@ describe("parseDeployPreflight", () => {
     }
   });
 
-  test("rejects a gap outside the union rather than coercing it", () => {
-    expect(
-      parseDeployPreflight(
-        envelope({
-          checks: {
-            active_p1_incidents: check({ gap: "invented_gap" }),
-            failing_ci_runs: check(),
-            merge_conflicts: check(),
-          },
-        }),
-      ),
-    ).toBeNull();
+  // The day the gateway adds a seventh gap member, the user must not lose the
+  // whole verdict — including the two checks that answered perfectly well.
+  test("an unknown gap string degrades ONE check and keeps the envelope", () => {
+    const r = parseDeployPreflight(
+      envelope({
+        verdict: "warn",
+        checks: {
+          active_p1_incidents: check({ gap: "gap_from_the_future" }),
+          failing_ci_runs: check({ count: 2 }),
+          merge_conflicts: check({ gap: "no_repos" }),
+        },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r?.checks.active_p1_incidents.gap).toBe(UNRECOGNISED_GAP);
+    // Distinct from "no gap": the other two checks are untouched, and neither
+    // of them is reported as unevaluated.
+    expect(r?.checks.failing_ci_runs.gap).toBeNull();
+    expect(r?.checks.failing_ci_runs.count).toBe(2);
+    expect(r?.checks.merge_conflicts.gap).toBe("no_repos");
+  });
+
+  // A gap of the wrong TYPE is a shape violation, not a newer vocabulary, and
+  // still rejects — the distinction `parseGap` exists to hold.
+  test("rejects a non-string gap rather than calling it unrecognised", () => {
+    for (const gap of [7, {}, [], true]) {
+      expect(
+        parseDeployPreflight(
+          envelope({
+            checks: {
+              active_p1_incidents: check({ gap }),
+              failing_ci_runs: check(),
+              merge_conflicts: check(),
+            },
+          }),
+        ),
+        `gap ${JSON.stringify(gap)}`,
+      ).toBeNull();
+    }
+  });
+
+  // `unrecognised_gap` is OURS. A gateway that sent that literal string would
+  // be sending a value that is not on the contract — it parses to the same
+  // client-only member, which is the honest reading either way.
+  test("an all-unknown-gap envelope is not mistaken for unknown_service", () => {
+    const r = parseDeployPreflight(
+      envelope({
+        verdict: "warn",
+        checks: {
+          active_p1_incidents: check({ gap: "gap_from_the_future" }),
+          failing_ci_runs: check({ gap: "gap_from_the_future" }),
+          merge_conflicts: check({ gap: "gap_from_the_future" }),
+        },
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r !== null && isUnknownService(r)).toBe(false);
   });
 
   test("rejects a verdict outside the union — there is no third value", () => {

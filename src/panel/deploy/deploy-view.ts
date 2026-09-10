@@ -3,7 +3,13 @@
 // fetch, no DOM outside the fragment it returns — so it is unit-testable in
 // jsdom, like every other view in this folder.
 import type { DeployPreflightResult, PreflightGap } from "../../shared/deploy.ts";
+import { MAX_SERVICE_ID_LEN } from "../../shared/services.ts";
 import { findingLink } from "../findings/shared-view.ts";
+
+/** "Deploy readiness" in the UI, `deploy-preflight` in code, never bare
+ *  "preflight" — the design spec's §2 naming rule, and the string
+ *  `development.md` and the Options page both tell the user to look for. */
+export const DEPLOY_SECTION_TITLE = "Deploy readiness";
 
 /**
  * A sentence per gap, as a Record rather than a switch.
@@ -21,6 +27,11 @@ export const GAP_NOTE: Record<Exclude<PreflightGap, null>, string> = {
   unknown_mergeable_state: "The forge has not reported a mergeable state for these pull requests.",
   pagerduty_urgency_without_priority:
     "PagerDuty reported urgency but no priority, so severity could not be judged.",
+  // Not a wire value: the gateway named a reason newer than this extension.
+  // It still has to say SOMETHING, because the alternative — silence under a
+  // count of zero — is exactly the "all clear" §4.4 forbids.
+  unrecognised_gap:
+    "Nimbus gave a reason this version of the extension doesn't know, so this check could not be read here. Updating the extension should explain it.",
 };
 
 const CHECK_LABEL = {
@@ -95,11 +106,19 @@ function renderCheck(
     }
     box.append(list);
   }
-  // A count larger than the findings shown is the max_findings cap, not a bug.
-  if (check.count > check.findings.length && check.findings.length > 0) {
+  // A count larger than the findings shown is usually the max_findings cap,
+  // not a bug — but a count with NOTHING under it is the §4.4 failure mode in
+  // miniature: "Failing CI runs: 1" and an empty space reads as a number the
+  // user can act on, when in fact every finding was malformed and dropped (or
+  // the gateway sent none). It gets its own sentence rather than the cap's,
+  // which would claim we are showing 0 of 1 on purpose.
+  if (check.count > check.findings.length) {
     const more = doc.createElement("p");
     more.className = "nimbus-deploy__more";
-    more.textContent = `Showing ${check.findings.length} of ${check.count}.`;
+    more.textContent =
+      check.findings.length === 0
+        ? `Nimbus counted ${check.count} but sent no details to show.`
+        : `Showing ${check.findings.length} of ${check.count}.`;
     box.append(more);
   }
   return box;
@@ -120,6 +139,29 @@ export function renderDeployBody(doc: Document, r: DeployPreflightResult): HTMLE
   return root;
 }
 
+/**
+ * The section's frame: the heading every other panel section has, and the body
+ * element the controller repaints on each state change.
+ *
+ * The title lives OUTSIDE that body on purpose — the controller replaces the
+ * body's children four times over the section's life (loading, verdict, bind
+ * form, refusal) and the section's name should not blink out of existence
+ * during any of them. `.nimbus-deploy__title` carries the lane title's inset
+ * and weight (deploy-css.ts), so the section lines up with the lanes above it
+ * rather than reading as a bolt-on beneath them.
+ */
+export function renderSectionFrame(doc: Document): {
+  readonly title: HTMLElement;
+  readonly body: HTMLElement;
+} {
+  const title = doc.createElement("p");
+  title.className = "nimbus-deploy__title";
+  title.textContent = DEPLOY_SECTION_TITLE;
+  const body = doc.createElement("div");
+  body.className = "nimbus-deploy__body";
+  return { title, body };
+}
+
 /** The unbound state: an editable seed, never a silent guess. */
 export function renderBindForm(doc: Document, guess: string): HTMLElement {
   const form = doc.createElement("form");
@@ -130,7 +172,9 @@ export function renderBindForm(doc: Document, guess: string): HTMLElement {
   const input = doc.createElement("input");
   input.type = "text";
   input.value = guess;
-  input.maxLength = 64;
+  // The route's own bound, from the one file that writes it down — not a third
+  // spelling of 64 (see `MAX_SERVICE_ID_LEN`'s siblings in deploy-client.ts).
+  input.maxLength = MAX_SERVICE_ID_LEN;
   input.name = "serviceId";
   label.append(input);
 

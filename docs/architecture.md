@@ -1936,6 +1936,19 @@ deleting an arm and watching the build go red, and it leaves no permanently
 unreachable line for the coverage gate to count against the change — a
 `switch` with a backstop compiles just as safely but pays that cost.
 
+**A gap this version does not know degrades one check, never the envelope.**
+The gap union is open upstream — it has already been split once (F24) — so
+`parseGap` maps any *string* outside `PREFLIGHT_GAPS` to `UNRECOGNISED_GAP`
+(`src/shared/deploy.ts`), a client-only member that is never on the wire and is
+kept distinct from `null`. Rejecting the whole envelope instead, which is what
+a strict parse does, would take the entire verdict dark the day the gateway
+adds a seventh reason — including the two checks that answered perfectly well.
+A gap of the wrong *type* is a different thing: that is a shape violation, not
+a newer vocabulary, and still rejects the check. `GAP_NOTE` carries a sentence
+for the unrecognised member like any other, because a gapped check that says
+nothing renders as a bare label under a zero — the "all clear" this whole rule
+exists to prevent.
+
 ## Research briefs
 
 One question across several tabs you have open, answered by the gateway reading

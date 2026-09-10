@@ -48,6 +48,11 @@ test("an unbound repo shows a seeded bind form, and binding reveals the verdict 
     const url = await gotoRecognisedPage(page, h.origin, PR_PATH);
     await togglePanel(h.sw, url);
 
+    // The section is a SIBLING of the shell, so nothing above it names it: it
+    // carries its own heading, and that heading is the string Options and
+    // development.md both send the user looking for.
+    await expect(page.locator(".nimbus-deploy__title")).toHaveText("Deploy readiness");
+
     // deploy-bind: the unbound state renders the bind form, its input seeded
     // with the guess — the scope's last segment ("acme/web" -> "web") — not
     // left blank and not a silent auto-bind.

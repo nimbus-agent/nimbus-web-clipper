@@ -12,7 +12,7 @@ import {
   type ServiceBindResponse,
 } from "../../shared/messages.ts";
 import type { Product, SurfaceKind } from "../../shared/types.ts";
-import { renderBindForm, renderDeployBody } from "./deploy-view.ts";
+import { renderBindForm, renderDeployBody, renderSectionFrame } from "./deploy-view.ts";
 
 /** The only surfaces a deploy binding can be keyed by. `home` carries no scope
  *  at all (see the recognition doc comment on `Recognition.scope`); `file` has
@@ -23,10 +23,12 @@ export function deployBelongsOnSurface(kind: SurfaceKind): boolean {
   return DEPLOY_SURFACES.includes(kind);
 }
 
+/** No `kind`: the surface decision is `deployBelongsOnSurface`'s, made at the
+ *  call site BEFORE this mounts, and a copy carried in here would be a second
+ *  place for it to be decided — read by nothing. */
 export type DeployCtx = {
   readonly product: Product;
   readonly scope: string;
-  readonly kind: SurfaceKind;
   readonly itemId?: string;
 };
 
@@ -76,6 +78,10 @@ function statusParagraph(doc: Document, className: string, text: string): HTMLEl
  * because panel.js re-evaluates in a fresh scope per injection (see
  * `createPanel`'s own doc comment on the same tradeoff) — a host-scoped key
  * needs no reset step for that same reason.
+ *
+ * The host is also where the section's frame is built: the title is painted
+ * ONCE here and every state below repaints `body` instead of the host, so the
+ * heading survives all four transitions.
  */
 export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send): void {
   const key = ctxKey(ctx);
@@ -86,6 +92,11 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
   marked[KEY] = key;
 
   const doc = host.ownerDocument ?? document;
+  // Panel-in-page.ts creates this element bare; the section owns its own
+  // presentation, so it claims the class rather than making its caller know it.
+  host.className = "nimbus-deploy-section";
+  const { title, body } = renderSectionFrame(doc);
+  host.replaceChildren(title, body);
 
   /**
    * Has a NEWER `mountDeploySection` call claimed this host since this one
@@ -104,11 +115,11 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
   }
 
   function renderMalformed(): void {
-    host.replaceChildren(statusParagraph(doc, "nimbus-deploy__gap", MALFORMED_NOTE));
+    body.replaceChildren(statusParagraph(doc, "nimbus-deploy__gap", MALFORMED_NOTE));
   }
 
   function renderRefusal(reason: Exclude<DeployRefusal, "unbound">): void {
-    host.replaceChildren(
+    body.replaceChildren(
       statusParagraph(doc, "nimbus-deploy__gap", PREFLIGHT_REFUSAL_NOTE[reason]),
     );
   }
@@ -128,7 +139,7 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
         }
       });
     });
-    host.replaceChildren(
+    body.replaceChildren(
       ...(note === undefined ? [] : [statusParagraph(doc, "nimbus-deploy__gap", note)]),
       form,
     );
@@ -151,7 +162,7 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
       return;
     }
     if (res.ok) {
-      host.replaceChildren(renderDeployBody(doc, res.preflight));
+      body.replaceChildren(renderDeployBody(doc, res.preflight));
       return;
     }
     if (res.reason === "unbound") {
@@ -189,7 +200,7 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
     renderBindFormState(serviceId, BIND_REFUSAL_NOTE[res.reason](serviceId));
   }
 
-  host.replaceChildren(statusParagraph(doc, "nimbus-deploy__status", "Checking deploy readiness…"));
+  body.replaceChildren(statusParagraph(doc, "nimbus-deploy__status", "Checking deploy readiness…"));
   ask().catch(() => {
     if (isCurrent()) {
       renderMalformed();

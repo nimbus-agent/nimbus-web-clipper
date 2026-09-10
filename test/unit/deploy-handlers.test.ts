@@ -161,6 +161,45 @@ describe("handleServiceBind", () => {
     expect(putBinding).toHaveBeenCalledWith(bindReq.binding);
   });
 
+  // `isServiceBinding` is a shape CHECK — it accepts extra properties — so a
+  // handler that stored `req.binding` would let a content script write whatever
+  // it liked into a storage quota shared with the clip queue. What is persisted
+  // is rebuilt from the four fields the type declares.
+  test("persists a reconstructed binding, never the request's own object", async () => {
+    const putBinding = vi.fn(async (_entry: ServiceBinding) => undefined);
+    const hostile = {
+      kind: "service-bind",
+      binding: {
+        product: "github",
+        scope: "acme/web",
+        serviceId: "web",
+        defaultBranch: "main",
+        junk: "x".repeat(1024),
+        nested: { more: "junk" },
+      },
+    } as unknown as Parameters<typeof handleServiceBind>[0];
+    const r = await handleServiceBind(hostile, deps({ putBinding }));
+    expect(r).toEqual({ kind: "service-bind", ok: true });
+    const stored = putBinding.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(stored).toEqual({
+      product: "github",
+      scope: "acme/web",
+      serviceId: "web",
+      defaultBranch: "main",
+    });
+    expect(Object.keys(stored)).not.toContain("junk");
+    expect(Object.keys(stored)).not.toContain("nested");
+  });
+
+  // exactOptionalPropertyTypes: an ABSENT defaultBranch must stay absent, not
+  // become an explicit `undefined` the guard would then have to tolerate.
+  test("omits defaultBranch entirely when the request carried none", async () => {
+    const putBinding = vi.fn(async (_entry: ServiceBinding) => undefined);
+    await handleServiceBind(bindReq, deps({ putBinding }));
+    const stored = putBinding.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
+    expect(Object.keys(stored).sort()).toEqual(["product", "scope", "serviceId"]);
+  });
+
   test("refuses — and does NOT save — an id the gateway has never heard of", async () => {
     const putBinding = vi.fn(async () => undefined);
     const r = await handleServiceBind(

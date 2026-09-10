@@ -489,10 +489,11 @@ function setBindingsStatus(text: string): void {
 }
 
 /**
- * Read-only here: the worker is the sole writer of bindings (`service-store.ts`
- * holds the write-chain lock deploy-handlers.ts relies on), so this page never
- * touches storage for them directly — it reads and mutates entirely by message,
- * same as the deploy lane in the panel does.
+ * Read-only here: the worker is the sole writer of bindings
+ * (`service-binding-store.ts` holds the write-chain lock deploy-handlers.ts
+ * relies on), so this page never touches storage for them directly — it reads
+ * and mutates entirely by message, same as the deploy-readiness section in the
+ * panel does.
  *
  * `ok: false` is a FAILED READ, never "no bindings" — rendering it as an empty
  * table would tell a user whose storage read failed that they have nothing

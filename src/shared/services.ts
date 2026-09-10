@@ -12,6 +12,21 @@ import type { Product } from "./types.ts";
 export const MAX_SERVICE_ID_LEN = 64;
 /** The gateway's own bound on `target_ref` (preflight-rpc.ts: MAX_TARGET_REF_LEN). */
 export const MAX_BRANCH_LEN = 255;
+/**
+ * Our own bound on `scope` — the gateway has none, because `scope` never
+ * crosses the wire (§3.1). It still has to be bounded HERE: this is the one
+ * field a page-supplied message can carry into `chrome.storage.local`, which is
+ * a quota shared with the clip queue and the connection record, so an unbounded
+ * value is a way for a hostile page to evict either.
+ *
+ * 255 is the ceiling of the coordinate shapes this key is made of, not a round
+ * number: GitHub's `owner/repo` cannot exceed 140 (39 + 1 + 100), GitLab bounds
+ * its full nested-group path at 255, and a Jenkins job path is a path of job
+ * names on the same order. A scope is a repo coordinate or a job path — never
+ * free text — so anything longer is not a scope that could ever match a
+ * recognised page.
+ */
+export const MAX_SCOPE_LEN = 255;
 
 export interface ServiceBinding {
   readonly product: Product;
@@ -30,7 +45,15 @@ export interface ServiceBinding {
  *
  * `serviceId` is bounded HERE rather than at the input, so a binding restored
  * from storage is checked by the same rule as one typed today — a value that
- * cannot be sent must never be readable back as if it could.
+ * cannot be sent must never be readable back as if it could. `scope` is bounded
+ * for the storage-quota reason on `MAX_SCOPE_LEN`, and `defaultBranch` by the
+ * route's own limit.
+ *
+ * This is a CHECK, not a normaliser: it accepts extra properties, because a
+ * `Record<string, unknown>` narrows on the keys it tests and nothing more. A
+ * caller that persists external input must therefore reconstruct the object
+ * from the fields it wants (see `handleServiceBind`) rather than storing what
+ * it was handed.
  */
 export function isServiceBinding(v: unknown): v is ServiceBinding {
   if (typeof v !== "object" || v === null) {
@@ -44,6 +67,7 @@ export function isServiceBinding(v: unknown): v is ServiceBinding {
     isProduct(rec["product"]) &&
     typeof scope === "string" &&
     scope !== "" &&
+    scope.length <= MAX_SCOPE_LEN &&
     typeof serviceId === "string" &&
     serviceId.length >= 1 &&
     serviceId.length <= MAX_SERVICE_ID_LEN &&

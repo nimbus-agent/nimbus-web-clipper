@@ -18,7 +18,7 @@ const okEnvelope = {
   },
 };
 
-const ctx = { product: "github", scope: "acme/web", kind: "pr", itemId: "i1" } as const;
+const ctx = { product: "github", scope: "acme/web", itemId: "i1" } as const;
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("deployBelongsOnSurface", () => {
