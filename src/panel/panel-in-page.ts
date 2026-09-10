@@ -33,6 +33,7 @@ import {
   type ResolveCandidate,
   type SurfaceKind,
 } from "../shared/types.ts";
+import { DEPLOY_CSS } from "./deploy/deploy-css.ts";
 import { FINDINGS_CSS } from "./findings/findings-css.ts";
 import {
   type LaneContext,
@@ -404,6 +405,7 @@ const STYLES = `
 .nimbus-related__fetch-send { background: var(--nimbus-accent); color: #fff; }
 .nimbus-related__fetch-cancel { background: var(--nimbus-border); color: var(--nimbus-fg); }
 ${FINDINGS_CSS}
+${DEPLOY_CSS}
 `;
 
 interface NimbusHost extends HTMLElement {
