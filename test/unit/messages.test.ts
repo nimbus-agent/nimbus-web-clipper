@@ -12,6 +12,8 @@ import {
   isConnectionResponse,
   isConnectionStatusRequest,
   isCueOpenRequest,
+  isDeployPreflightRequest,
+  isDeployPreflightResponse,
   isFetchResponse,
   isPairRequest,
   isPassageClearRequest,
@@ -27,6 +29,10 @@ import {
   isRelatedResponse,
   isResolveRequest,
   isResolveResponse,
+  isServiceBindingsListResponse,
+  isServiceBindRequest,
+  isServiceBindResponse,
+  isServiceUnbindRequest,
   isUnpairRequest,
 } from "../../src/shared/messages.ts";
 import { AGENT_LANES } from "../../src/shared/types.ts";
@@ -1111,5 +1117,109 @@ describe("isLaneState guards the done arm's structured fields", () => {
     ]) {
       expect(isAgentStateResponse({ kind: "agent-state", lane: "why", state: bad })).toBe(false);
     }
+  });
+});
+
+describe("C10 deploy messages", () => {
+  test("a well-formed preflight request is accepted", () => {
+    expect(
+      isDeployPreflightRequest({ kind: "deploy-preflight", product: "github", scope: "acme/web" }),
+    ).toBe(true);
+  });
+  test("an optional itemId is accepted, a non-string one is not", () => {
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        scope: "acme/web",
+        itemId: "i1",
+      }),
+    ).toBe(true);
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        scope: "acme/web",
+        itemId: 7,
+      }),
+    ).toBe(false);
+  });
+  test("an optional targetRef is accepted, a non-string one is not", () => {
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        scope: "acme/web",
+        targetRef: "main",
+      }),
+    ).toBe(true);
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        scope: "acme/web",
+        targetRef: 7,
+      }),
+    ).toBe(false);
+  });
+  test("an unknown product is rejected at the boundary", () => {
+    expect(
+      isDeployPreflightRequest({ kind: "deploy-preflight", product: "nope", scope: "a" }),
+    ).toBe(false);
+  });
+  test("a bind request must carry a valid binding", () => {
+    expect(
+      isServiceBindRequest({
+        kind: "service-bind",
+        binding: { product: "github", scope: "acme/web", serviceId: "web" },
+      }),
+    ).toBe(true);
+    expect(isServiceBindRequest({ kind: "service-bind", binding: { product: "github" } })).toBe(
+      false,
+    );
+  });
+  test("an unbind request carries product and scope", () => {
+    expect(
+      isServiceUnbindRequest({ kind: "service-unbind", product: "github", scope: "acme/web" }),
+    ).toBe(true);
+  });
+  test("a refusal response names a reason from the closed set", () => {
+    expect(
+      isDeployPreflightResponse({ kind: "deploy-preflight", ok: false, reason: "unbound" }),
+    ).toBe(true);
+    expect(
+      isDeployPreflightResponse({ kind: "deploy-preflight", ok: false, reason: "invented" }),
+    ).toBe(false);
+  });
+  test("an unbound refusal may carry the slug guess for the input seed", () => {
+    expect(
+      isDeployPreflightResponse({
+        kind: "deploy-preflight",
+        ok: false,
+        reason: "unbound",
+        guessServiceId: "web",
+      }),
+    ).toBe(true);
+  });
+  test("a bind response reports unknown_service", () => {
+    expect(
+      isServiceBindResponse({ kind: "service-bind", ok: false, reason: "unknown_service" }),
+    ).toBe(true);
+  });
+  test("a bindings-list response filters corrupt rows", () => {
+    expect(
+      isServiceBindingsListResponse({
+        kind: "service-bindings-list",
+        ok: true,
+        bindings: [{ product: "github", scope: "a", serviceId: "b" }],
+      }),
+    ).toBe(true);
+    expect(
+      isServiceBindingsListResponse({
+        kind: "service-bindings-list",
+        ok: true,
+        bindings: [{ product: "nope" }],
+      }),
+    ).toBe(false);
   });
 });

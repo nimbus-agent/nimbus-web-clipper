@@ -5,6 +5,7 @@
 import { isCanonicalRejection } from "./canonical.ts";
 import { isSourceShape } from "./clip.ts";
 import { CONNECTOR_STATES, type ConnectorHealth } from "./connector-health.ts";
+import { type DeployPreflightResult, parseDeployPreflight } from "./deploy.ts";
 import type {
   EgressError,
   EgressPartition,
@@ -18,10 +19,12 @@ import {
   laneFindingsFrom,
   synthesisFrom,
 } from "./findings-guards.ts";
+import { isProduct } from "./origins.ts";
 import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
 import { safeHttpUrl } from "./safe-url.ts";
+import { isServiceBinding, type ServiceBinding } from "./services.ts";
 import { isNormalisedTerm } from "./term.ts";
 import {
   AGENT_ERRORS,
@@ -36,6 +39,7 @@ import {
   type FileResolution,
   type LaneState,
   type PairError,
+  type Product,
   RESOLVE_MATCH_KINDS,
   type Recognition,
   type RelatedError,
@@ -431,7 +435,11 @@ export type ExtensionRequest =
   | PassageClearRequest
   | EgressWindowRequest
   | EgressVerifyRequest
-  | EgressProveRequest;
+  | EgressProveRequest
+  | DeployPreflightRequest
+  | ServiceBindingsListRequest
+  | ServiceBindRequest
+  | ServiceUnbindRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -1145,4 +1153,164 @@ export function isConnectionResponse(v: unknown): v is ConnectionResponse {
     );
   }
   return false;
+}
+
+/** The reasons the worker can refuse a deploy-readiness request. Closed, and
+ *  single-sourced so the guard reads this rather than a second literal list. */
+export const DEPLOY_REFUSALS = ["unbound", "unreachable", "server_error", "malformed"] as const;
+export type DeployRefusal = (typeof DEPLOY_REFUSALS)[number];
+
+export interface DeployPreflightRequest {
+  readonly kind: "deploy-preflight";
+  readonly product: Product;
+  /** The recogniser's repo-level scope. Untrusted — it arrives from a content
+   *  script — so it is guarded here like every other page-supplied value. */
+  readonly scope: string;
+  /**
+   * The item the panel has ALREADY resolved this page to (`shownItemId`), when
+   * it has one. This is where §4.3's first rung gets its input: the worker has
+   * no way to resolve the page itself at this point, so a request without this
+   * silently skips straight to the binding's `defaultBranch`.
+   *
+   * Untrusted, like `scope` — it arrives from a content script.
+   */
+  readonly itemId?: string;
+  readonly targetRef?: string;
+}
+
+export type DeployPreflightResponse =
+  | {
+      readonly kind: "deploy-preflight";
+      readonly ok: true;
+      readonly serviceId: string;
+      readonly preflight: DeployPreflightResult;
+    }
+  | {
+      readonly kind: "deploy-preflight";
+      readonly ok: false;
+      readonly reason: DeployRefusal;
+      /** Only on `unbound`: the seed for the bind input, so the panel does not
+       *  need its own copy of the guess rule. */
+      readonly guessServiceId?: string;
+    };
+
+export interface ServiceBindingsListRequest {
+  readonly kind: "service-bindings-list";
+}
+
+export interface ServiceBindingsListResponse {
+  readonly kind: "service-bindings-list";
+  readonly ok: true;
+  readonly bindings: readonly ServiceBinding[];
+}
+
+export interface ServiceBindRequest {
+  readonly kind: "service-bind";
+  readonly binding: ServiceBinding;
+}
+
+export interface ServiceUnbindRequest {
+  readonly kind: "service-unbind";
+  readonly product: Product;
+  readonly scope: string;
+}
+
+export type ServiceBindResponse =
+  | { readonly kind: "service-bind"; readonly ok: true }
+  | {
+      readonly kind: "service-bind";
+      readonly ok: false;
+      readonly reason: "unknown_service" | "unreachable" | "server_error" | "malformed";
+    };
+
+export function isDeployPreflightRequest(v: unknown): v is DeployPreflightRequest {
+  if (!isObject(v) || v["kind"] !== "deploy-preflight") {
+    return false;
+  }
+  const ref = v["targetRef"];
+  const itemId = v["itemId"];
+  return (
+    isProduct(v["product"]) &&
+    typeof v["scope"] === "string" &&
+    v["scope"] !== "" &&
+    (ref === undefined || typeof ref === "string") &&
+    (itemId === undefined || typeof itemId === "string")
+  );
+}
+
+export function isServiceBindingsListRequest(v: unknown): v is ServiceBindingsListRequest {
+  return isObject(v) && v["kind"] === "service-bindings-list";
+}
+
+export function isServiceBindRequest(v: unknown): v is ServiceBindRequest {
+  return isObject(v) && v["kind"] === "service-bind" && isServiceBinding(v["binding"]);
+}
+
+export function isServiceUnbindRequest(v: unknown): v is ServiceUnbindRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "service-unbind" &&
+    isProduct(v["product"]) &&
+    typeof v["scope"] === "string" &&
+    v["scope"] !== ""
+  );
+}
+
+export function isDeployPreflightResponse(v: unknown): v is DeployPreflightResponse {
+  if (!isObject(v) || v["kind"] !== "deploy-preflight") {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return typeof v["serviceId"] === "string" && parseDeployPreflight(v["preflight"]) !== null;
+  }
+  if (v["ok"] !== false || typeof v["reason"] !== "string") {
+    return false;
+  }
+  const guess = v["guessServiceId"];
+  return (
+    (DEPLOY_REFUSALS as readonly string[]).includes(v["reason"]) &&
+    (guess === undefined || typeof guess === "string")
+  );
+}
+
+export function isServiceBindingsListResponse(v: unknown): v is ServiceBindingsListResponse {
+  if (!isObject(v) || v["kind"] !== "service-bindings-list" || v["ok"] !== true) {
+    return false;
+  }
+  const list = v["bindings"];
+  return Array.isArray(list) && list.every(isServiceBinding);
+}
+
+// REQUIRED, and easy to miss: `sendMessage` in src/browser/runtime.ts takes
+// `ExtensionRequest`, so a kind absent from this union is a compile error at
+// every call site rather than a runtime surprise.
+//
+// Add the four REQUESTS to `ExtensionRequest`. Do NOT add the responses to
+// `ExtensionResponse` — that union has no reader anywhere in `src/` (it is
+// declared and never referenced), and the brief and egress surfaces both added
+// their requests without adding their responses. Follow that, rather than
+// growing a dead union.
+//
+//   export type ExtensionRequest =
+//     | …existing…
+//     | DeployPreflightRequest
+//     | ServiceBindingsListRequest
+//     | ServiceBindRequest
+//     | ServiceUnbindRequest;
+
+export function isServiceBindResponse(v: unknown): v is ServiceBindResponse {
+  if (!isObject(v) || v["kind"] !== "service-bind") {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return true;
+  }
+  const reason = v["reason"];
+  return (
+    v["ok"] === false &&
+    (reason === "unknown_service" ||
+      reason === "unreachable" ||
+      reason === "server_error" ||
+      reason === "malformed")
+  );
 }
