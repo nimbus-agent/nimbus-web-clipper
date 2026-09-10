@@ -1198,11 +1198,13 @@ export interface ServiceBindingsListRequest {
   readonly kind: "service-bindings-list";
 }
 
-export interface ServiceBindingsListResponse {
-  readonly kind: "service-bindings-list";
-  readonly ok: true;
-  readonly bindings: readonly ServiceBinding[];
-}
+export type ServiceBindingsListResponse =
+  | {
+      readonly kind: "service-bindings-list";
+      readonly ok: true;
+      readonly bindings: readonly ServiceBinding[];
+    }
+  | { readonly kind: "service-bindings-list"; readonly ok: false };
 
 export interface ServiceBindRequest {
   readonly kind: "service-bind";
@@ -1274,11 +1276,14 @@ export function isDeployPreflightResponse(v: unknown): v is DeployPreflightRespo
 }
 
 export function isServiceBindingsListResponse(v: unknown): v is ServiceBindingsListResponse {
-  if (!isObject(v) || v["kind"] !== "service-bindings-list" || v["ok"] !== true) {
+  if (!isObject(v) || v["kind"] !== "service-bindings-list") {
     return false;
   }
-  const list = v["bindings"];
-  return Array.isArray(list) && list.every(isServiceBinding);
+  if (v["ok"] === true) {
+    const list = v["bindings"];
+    return Array.isArray(list) && list.every(isServiceBinding);
+  }
+  return v["ok"] === false;
 }
 
 export function isServiceBindResponse(v: unknown): v is ServiceBindResponse {

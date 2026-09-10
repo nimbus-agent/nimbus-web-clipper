@@ -2280,7 +2280,14 @@ describe("C10 routing", () => {
   test("a malformed deploy-preflight is refused, not routed", async () => {
     await load();
     const res = await harness.emitMessage({ kind: "deploy-preflight", product: "nope", scope: "" });
-    expect(res).not.toMatchObject({ ok: true });
+    expect(res).toBeUndefined();
+  });
+
+  test("service-bindings-list: a storage read failure → ok:false, not a fabricated empty list", async () => {
+    await load();
+    harness.storageGet.mockRejectedValueOnce(new Error("boom"));
+    const res = await harness.emitMessage({ kind: "service-bindings-list" });
+    expect(res).toEqual({ kind: "service-bindings-list", ok: false });
   });
 
   test("routes service-bind", async () => {

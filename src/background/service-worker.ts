@@ -1377,7 +1377,7 @@ function routeDeploy(message: unknown, respond: Respond): Routed {
     handleServiceBindingsList(deployDeps)
       .then(respond)
       .catch(() => {
-        respond({ kind: "service-bindings-list", ok: true, bindings: [] });
+        respond({ kind: "service-bindings-list", ok: false });
       });
     return true;
   }

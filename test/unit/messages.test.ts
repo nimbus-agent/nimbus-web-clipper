@@ -1222,4 +1222,14 @@ describe("C10 deploy messages", () => {
       }),
     ).toBe(false);
   });
+  test("a bindings-list response accepts an honest ok:false, but not one carrying a corrupt binding", () => {
+    expect(isServiceBindingsListResponse({ kind: "service-bindings-list", ok: false })).toBe(true);
+    expect(
+      isServiceBindingsListResponse({
+        kind: "service-bindings-list",
+        ok: true,
+        bindings: [{ product: "nope" }],
+      }),
+    ).toBe(false);
+  });
 });
