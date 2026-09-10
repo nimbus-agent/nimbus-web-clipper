@@ -1281,23 +1281,6 @@ export function isServiceBindingsListResponse(v: unknown): v is ServiceBindingsL
   return Array.isArray(list) && list.every(isServiceBinding);
 }
 
-// REQUIRED, and easy to miss: `sendMessage` in src/browser/runtime.ts takes
-// `ExtensionRequest`, so a kind absent from this union is a compile error at
-// every call site rather than a runtime surprise.
-//
-// Add the four REQUESTS to `ExtensionRequest`. Do NOT add the responses to
-// `ExtensionResponse` — that union has no reader anywhere in `src/` (it is
-// declared and never referenced), and the brief and egress surfaces both added
-// their requests without adding their responses. Follow that, rather than
-// growing a dead union.
-//
-//   export type ExtensionRequest =
-//     | …existing…
-//     | DeployPreflightRequest
-//     | ServiceBindingsListRequest
-//     | ServiceBindRequest
-//     | ServiceUnbindRequest;
-
 export function isServiceBindResponse(v: unknown): v is ServiceBindResponse {
   if (!isObject(v) || v["kind"] !== "service-bind") {
     return false;
