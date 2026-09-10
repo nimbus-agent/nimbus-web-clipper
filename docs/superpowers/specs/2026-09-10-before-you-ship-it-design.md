@@ -55,28 +55,69 @@ The gateway holds the reverse map internally (`buildServiceIdentityResolver` in
 `knownServices` list — but only for the I13 write dispatcher. **No GET route
 exposes either.** §7 proposes one; this section is what ships without it.
 
-### 3.1 The shape
+### 3.1 The binding scope — what a binding is keyed by
+
+A binding answers "this **repo-level scope** maps to that Nimbus service". The
+client has no such coordinate today, and `Recognition` cannot be made to yield
+one by string-splitting:
+
+- `ref` is documented as *"Human header text"* / *"Short identity for the
+  header"* and on a `pr` it is per-PR (`"acme/web #482"`), so it identifies the
+  wrong thing at the wrong granularity.
+- `forgeFile` carries `{ repo, refAndPath }` but **only** on `kind === "file"`.
+- Splitting `ref` per product is exactly the drift `forgeFile`'s own comment
+  says the registry exists to prevent: "the three forges spell the same
+  coordinate differently and deriving it twice is the drift".
+
+So the registry supplies it, the same way it supplies `forgeFile`:
+`ProductRule.match` gains an optional `scope` on `Match`, carried through to
+`Recognition`. Each product spells its own.
+
+**It is not always a forge repo, and the type must not pretend otherwise.**
+GitHub, GitLab and Bitbucket yield `owner/repo`. **Jenkins yields a job path** —
+a job hierarchy, not a repository, and one that need not resemble the
+`repos = ["github:owner/repo"]` URNs in the gateway's config at all. That is
+fine: the scope's only job is to be a stable key the user binds *once*. It is
+never sent to the gateway and never parsed by it. The service id is what
+crosses the wire.
 
 ```ts
 // src/shared/services.ts — pure: the type, its guard, the slug→id guess
 export interface ServiceBinding {
-  readonly product: Product;        // which forge
-  readonly repo: string;            // the repo coordinate the recogniser holds
+  readonly product: Product;        // which forge or CI product
+  readonly scope: string;           // registry-supplied repo-level key
   readonly serviceId: string;       // the Nimbus [metrics.dora.<id>] id
-  readonly defaultBranch?: string;  // target_ref fallback on `home`
+  readonly defaultBranch?: string;  // target_ref fallback (§4.3)
 }
 ```
 
-Keyed by `${product}:${repo}`. Persisted by
-`src/background/service-binding-store.ts`, modelled on `origin-store.ts`: no
-secret, filtered through its guard on read (stored data is external input, never
-cast), and readable from Options because `chrome.storage.local` is shared across
-extension contexts. It joins the `*-store.ts` set **without** `keyed-store.ts`,
-for the reason that file's header already gives.
+Keyed by `${product}:${scope}`. A product whose rule supplies no `scope` offers
+no deploy readiness — the section simply does not appear, the same way `doc`
+carries no lane at all.
 
-`serviceId` is validated against the route's own bound — 1..64 characters — at
-the guard, not at the input, so a binding restored from storage is checked by
-the same rule as one typed today.
+### 3.1.1 Storage, and the writer that has to be single
+
+Persisted by `src/background/service-binding-store.ts`: no secret, filtered
+through its guard on read (stored data is external input, never cast), values
+bounded at the guard by the route's own 1..64 limit on `serviceId`.
+
+**Unlike `origin-store.ts`, this store has two would-be writers** — the panel's
+inline bind and the Options management table — and that changes the design.
+`origin-store.ts` is safe because `setOrigins` has exactly one caller
+(`options.ts:314`, `getOrigins() → transform → setOrigins()`); a second writer
+would make that read-modify-write a lost-update race.
+
+`createWriteChain()` from `keyed-store.ts` **does not fix this on its own**. It
+is an in-memory lock scoped to one JS context; the Options page and the service
+worker are different contexts, so a chain held in the worker would serialize the
+worker against itself while Options overwrote it regardless — a race that looks
+fixed and is not.
+
+The fix is upstream of the lock: **the service worker is the only writer.**
+Options mutates bindings by messaging the worker (§6.2) rather than writing
+`chrome.storage` directly, and the worker serializes its own writes with
+`createWriteChain()`. Reads stay direct from either context — `chrome.storage`
+is shared, and a stale read costs nothing here.
 
 ### 3.2 Validation with no new route
 
@@ -96,14 +137,15 @@ reports the gap.
 ### 3.3 The gesture
 
 Bind **inline, in the panel**, where you noticed it was missing. The
-deploy-readiness section on an unbound repo shows an input pre-filled with a
-guess — the last path segment of the repo slug, so `acme/payments-api` seeds
-`payments-api` — and validates on submit.
+deploy-readiness section on an unbound scope shows an input pre-filled with a
+guess — the last path segment of the scope, so `acme/payments-api` seeds
+`payments-api` — and validates on submit. The guess is a convenience only; a
+Jenkins job path will often seed nonsense, and the user retypes it.
 
 Options gains a read-and-manage table of existing bindings, the same shape
 configured origins already have: see what is bound, correct a typo, drop a
 binding when a service is renamed upstream. Binding is a panel gesture;
-*managing* bindings is an Options one.
+*managing* bindings is an Options one. Both go through the worker (§3.1.1).
 
 ## 4. Deploy readiness is a section, not a lane
 
@@ -141,16 +183,32 @@ phase — this design only declines to make it worse.
 
 ### 4.2 Surfaces
 
-`pr`, `build`, `home`. Not `issue`, `doc`, `incident` or `file`: a deploy
-verdict is about a service at a ref, and those four surfaces supply neither.
+**`pr` and `build`.** Not `home`, `issue`, `doc`, `incident` or `file` — and the
+reasons differ, which an earlier draft of this section got wrong by giving them
+all the same one.
+
+- **`home` is excluded because it has no scope at all.** `homeMatch`
+  (`src/shared/recognise/rule.ts`) returns `ref: ""` by construction, constant
+  per product, and its own comment says "nothing resolves a dashboard". It is
+  the product root, not a repo landing page. There is nothing to key a binding
+  by, so there is no service to ask about. "Pick one of my services" is a real
+  question, and §5's page is where it already gets a picker.
+- **`file` is excluded on judgment, not for want of coordinates.** It has both:
+  `forgeFile` carries `{ repo, refAndPath }`. Reading a source file is simply
+  not a pre-deploy gesture, and a deploy verdict on it would be noise on the
+  surface C7 built for a different question. This one could be revisited on
+  evidence; the others could not.
+- `issue`, `doc` and `incident` supply no repo-level scope.
 
 ### 4.3 `target_ref`
 
 Required (1..255 chars) and matched **exactly** against `metadata.branch` in
 `selectFailingCiRuns` — a branch name, never a SHA or a tag. Resolved in order:
 
-1. The resolved item's `metadata.branch`, via `GET /v1/items/{id}`.
-2. The binding's `defaultBranch`.
+1. The resolved item's `metadata.branch`, via `GET /v1/items/{id}` — the
+   normal path on both `pr` and `build`.
+2. The binding's `defaultBranch`, when the page resolves to no item, or to one
+   carrying no branch.
 3. Neither — the CI check goes dark and the section says which one and why.
 
 `GET /v1/items/resolve` cannot supply this: it answers
@@ -185,6 +243,55 @@ Titles render as links through `safeHttpUrl`, the same path C8.1 established and
 C9 finished. This is the first surface to arrive with links already in hand
 rather than earning them a phase later.
 
+### 4.6 The wire, verified
+
+Transcribed from `packages/gateway/src/preflight/preflight.ts`. `src/shared/deploy.ts`
+declares these and nothing beyond them; every field is guarded, never cast.
+
+```ts
+export type PreflightVerdict = "ok" | "warn";   // two values. NOT "pass"/"clear".
+
+export type PreflightGap =
+  | null
+  | "unknown_service"
+  | "no_pagerduty_mapping"
+  | "no_repos"
+  | "unknown_mergeable_state"
+  | "pagerduty_urgency_without_priority";
+
+export interface PreflightCheck<F> {
+  readonly count: number;
+  readonly findings: readonly F[];
+  readonly gap: PreflightGap;
+}
+
+export interface DeployPreflightResult {
+  readonly service: string;
+  readonly target_ref: string;
+  readonly computed_at: string;          // ISO 8601
+  readonly verdict: PreflightVerdict;
+  readonly checks: {                     // a keyed dictionary, not a list
+    readonly active_p1_incidents: PreflightCheck<IncidentFinding>;
+    readonly failing_ci_runs: PreflightCheck<CiFinding>;
+    readonly merge_conflicts: PreflightCheck<PrFinding>;
+  };
+}
+```
+
+Findings: `IncidentFinding { id, title, status: "triggered"|"acknowledged",
+severity, opened_at_ms, pagerduty_service_id, url }`; `CiFinding { id, title,
+conclusion: "failure"|"cancelled"|"timed_out", modified_at_ms, branch, head_sha,
+url }`; `PrFinding { id, title, number, mergeable_state, modified_at_ms, url }`.
+`url` is `string | null` on all three.
+
+Request bounds, enforced client-side before sending so a rejected request is
+never round-tripped: `service` 1..64, `target_ref` 1..255, `max_findings` an
+integer 1..50 defaulting to 10.
+
+There is **no** `no_ref`, `missing_target_ref`, `no_ci_connector` or
+`service_unconfigured`. A missing ref is not a gap member — it manifests as
+`failing_ci_runs` matching nothing, which §4.3 and §4.4 handle.
+
 ## 5. The DORA page
 
 `src/dora/` — `dora.ts` → `dora.js`, plus `dora.html`/`dora.css` and a pure
@@ -214,7 +321,38 @@ pattern C7's file lanes and C9's links both followed.
 
 ### 5.2 Honesty rules
 
-`DoraMetricValue` is `{ value, unit, sample, gap }` and every field is rendered:
+```ts
+export type DoraGap =
+  | null
+  | "unknown_service"
+  | "no_pagerduty_mapping"
+  | "no_repos"
+  | "no_deployment_data"
+  | "low_sample"
+  | "approximate_lead_time"
+  | "mixed_source";
+
+export interface DoraMetricValue {
+  readonly value: number | null;
+  readonly unit: string;
+  readonly sample: number;
+  readonly gap: DoraGap;
+}
+
+export interface DoraMetricsResult {
+  readonly service: string;
+  readonly since_ms: number;
+  readonly computed_at: string;
+  readonly metrics: {
+    readonly deployment_frequency: DoraMetricValue;
+    readonly lead_time_for_changes: DoraMetricValue;
+    readonly change_failure_rate: DoraMetricValue;
+    readonly mttr: DoraMetricValue;
+  };
+}
+```
+
+Every field is rendered:
 
 - A `null` value is a **gap**, never a zero.
 - `sample` is always shown. `low_sample` fires below three.
@@ -223,6 +361,32 @@ pattern C7's file lanes and C9's links both followed.
 
 A metrics page that hides its own uncertainty is the failure mode here, and
 these four numbers carry theirs on the wire. They get shown.
+
+### 5.3 Three reads, independently fallible
+
+The three windows are **three separate GETs**, issued concurrently through
+`Promise.allSettled` — never `Promise.all`, which would let the slowest or
+least-available window discard two good answers.
+
+Each column renders its own outcome. A window that fails shows a failed column
+beside the two that answered, naming the window that could not be read; it does
+not blank the page, and it is never drawn as a zero or an empty metric. The page
+is in an error state only when all three fail.
+
+`since` is sent as the route's relative form (`7d` / `30d` / `90d`), which is
+what it parses, rather than a client-computed epoch — one less thing to be
+wrong about the boundary.
+
+### 5.4 Getting there
+
+`dora.html` is reached the way `ledger.html` and `brief.html` already are:
+`chrome.tabs.create({ url: chrome.runtime.getURL("dora.html") })`, from a link
+in Options beside the existing Activity and Briefs links.
+
+It also accepts `?service=<id>`, and the deploy-readiness section links to it
+that way when a scope is bound — so the metrics for the service you are looking
+at are one click from the verdict about it. An absent or unknown `service`
+parameter opens the picker rather than erroring.
 
 ## 6. The clients
 
@@ -237,10 +401,42 @@ agent lanes': unreachable, malformed, or an answer. This is worth stating
 explicitly because every other client in `src/background/` has the scope path,
 and its absence here is a property of the route, not an oversight.
 
-`GATEWAY_PATHS` in `src/shared/gateway.ts` gains `preflightDeploy`,
-`metricsDora` and `itemById` — the single list, as always.
+`GATEWAY_PATHS` in `src/shared/gateway.ts` gains three entries — the single
+list, as always:
 
-### 6.1 Gap vocabulary as a `Record`, not a switch
+```ts
+preflightDeploy: "/v1/preflight/deploy",
+metricsDora: "/v1/metrics/dora",
+/** BASE, not a complete path: callers append `/${encodeURIComponent(id)}`. */
+items: "/v1/items",
+```
+
+`items` is a base, following the `agents` / `agentRuns` precedent already
+documented in that file: a static map cannot express a path parameter, and a
+second map is what the resolve slice existed to delete.
+
+### 6.1 The message envelope
+
+The panel is a content script, Options and `dora.html` are extension pages;
+none holds a token and none calls the gateway. Everything crosses
+`chrome.runtime` through `src/shared/messages.ts`, `kind`-discriminated and
+guarded there like every existing message — external data is `unknown` until a
+guard narrows it, never `any`.
+
+Four requests, and their replies:
+
+- `deploy-preflight` — `{ product, scope, targetRef? }` → the envelope, or a
+  refusal naming `unbound` / `unreachable` / `server_error`, carrying the slug
+  guess when unbound so the panel can seed its input.
+- `service-bindings-list` — the bindings, for the Options table and the DORA
+  page's picker.
+- `service-bind` and `service-unbind` — the **only** mutation path (§3.1.1),
+  used by both the panel and Options. `service-bind` answers `unknown_service`
+  when §3.2's validating call refuses the id.
+- `dora-metrics` — `{ serviceId, since }` → one window's envelope. The page
+  sends three (§5.3).
+
+### 6.2 Gap vocabulary as a `Record`, not a switch
 
 Both gap unions render through `Record<PreflightGap, string>` and
 `Record<DoraGap, string>` — **not** a switch with a `satisfies never` backstop.
@@ -275,13 +471,18 @@ configured upstream still needs one.
 
 ## 8. Slices
 
-- **S1 — the binding and the section.** `src/shared/services.ts`,
-  `service-binding-store.ts`, `deploy-client.ts`, `src/shared/deploy.ts`,
+- **S1 — the binding and the section.** The registry `scope` field and its
+  per-product spellings (§3.1), `src/shared/services.ts`,
+  `service-binding-store.ts` with the worker as sole writer,
+  `src/shared/deploy.ts`, `deploy-client.ts`, the `messages.ts` envelope,
   `src/panel/deploy/`, the Options bindings table, `GATEWAY_PATHS`. The
   decision-shaped half, and the half whose new concept has to prove itself.
-- **S2 — the DORA page.** `src/dora/`, `src/shared/dora.ts`, the build-entry
-  wiring, reusing S1's bindings for the service picker.
+- **S2 — the DORA page.** `src/shared/dora.ts`, `src/dora/`, the build-entry
+  wiring, the Options and panel links, reusing S1's bindings for the picker.
 - **Upstream** runs alongside from day one.
+
+The `scope` field is S1's first task, not a side effect of it: nothing else in
+S1 has a key to work with until the registry supplies one.
 
 ## 9. Testing, and the gates that will fire
 
@@ -320,6 +521,11 @@ never left here to die with it:
   re-discovered painfully.
 - §4's section-not-a-lane decision and the two rejected alternatives.
 - §4.4's `warn` rule, and §5.1's nested-windows reasoning.
+- §3.1's binding scope — in particular that it is **not** a forge repo on
+  Jenkins, and why `ref` can never be it.
+- §3.1.1's single-writer rule. A future editor "simplifying" Options to write
+  storage directly, as `origin-store.ts` does, reintroduces the lost update
+  silently.
 
 ROADMAP gains Phase C10; `CHANGELOG.md`'s `[Unreleased]` records the
 user-facing half as each slice lands.
