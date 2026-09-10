@@ -1038,3 +1038,45 @@ describe("a file page carries its forge coordinate into the Recognition", () => 
     expect(r.forgeFile).toEqual({ repo, refAndPath });
   });
 });
+
+describe("scope — the repo-level binding key (C10)", () => {
+  const origins = [
+    { origin: "https://github.com", product: "github" },
+    { origin: "https://gitlab.com", product: "gitlab" },
+    { origin: "https://bitbucket.org", product: "bitbucket" },
+    { origin: "https://app.circleci.com", product: "circleci" },
+    { origin: "https://ci.corp.example", product: "jenkins" },
+  ] as const;
+
+  const scopeOf = (url: string): string | undefined => {
+    const r = recognise(url, origins);
+    return r.ok ? r.scope : undefined;
+  };
+
+  test("github pr carries owner/repo", () => {
+    expect(scopeOf("https://github.com/acme/web/pull/482")).toBe("acme/web");
+  });
+  test("gitlab mr carries the nested project path", () => {
+    expect(scopeOf("https://gitlab.com/acme/team/web/-/merge_requests/7")).toBe("acme/team/web");
+  });
+  test("bitbucket cloud pr carries workspace/repo", () => {
+    expect(scopeOf("https://bitbucket.org/acme/web/pull-requests/12")).toBe("acme/web");
+  });
+  test("bitbucket server pr carries KEY/slug", () => {
+    expect(scopeOf("https://bitbucket.org/projects/ACME/repos/web/pull-requests/12")).toBe(
+      "ACME/web",
+    );
+  });
+  test("circleci build carries org/repo", () => {
+    expect(scopeOf("https://app.circleci.com/pipelines/github/acme/web/99")).toBe("acme/web");
+  });
+  test("jenkins build carries the JOB PATH, which is not a forge repo", () => {
+    expect(scopeOf("https://ci.corp.example/job/platform/job/web/41")).toBe("platform/web");
+  });
+  test("a home surface carries no scope at all", () => {
+    expect(scopeOf("https://github.com/")).toBeUndefined();
+  });
+  test("a file surface carries no scope — it is not a deploy surface", () => {
+    expect(scopeOf("https://github.com/acme/web/blob/main/src/a.ts")).toBeUndefined();
+  });
+});

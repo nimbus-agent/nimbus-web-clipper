@@ -42,6 +42,7 @@ function match(s: readonly string[]): Match | null {
     ref: `${project} !${num}`,
     path,
     matchedPath: path,
+    scope: project,
   };
 }
 

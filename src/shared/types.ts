@@ -235,6 +235,8 @@ export type Recognition =
        * this client must never make. The gateway holds the file list and splits there.
        */
       readonly forgeFile?: { readonly repo: string; readonly refAndPath: string };
+      /** The repo-level service-binding key (C10), on `pr`/`build` only — see `Match.scope`. */
+      readonly scope?: string;
     }
   | { readonly ok: false; readonly reason: "unknown-host" | "unrecognised-path" };
 

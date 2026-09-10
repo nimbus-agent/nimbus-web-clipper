@@ -481,6 +481,7 @@ describe("handleRecognise", () => {
         label: "GitHub PR",
         ref: "acme/web #482",
         resolveUrl: "https://github.com/acme/web/pull/482",
+        scope: "acme/web",
       },
     });
   });

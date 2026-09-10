@@ -775,7 +775,8 @@ function isRecognition(v: unknown): v is Recognition {
       typeof v["label"] === "string" &&
       typeof v["ref"] === "string" &&
       typeof v["resolveUrl"] === "string" &&
-      isForgeFile(v["forgeFile"])
+      isForgeFile(v["forgeFile"]) &&
+      (v["scope"] === undefined || typeof v["scope"] === "string")
     );
   }
   return v["ok"] === false && typeof v["reason"] === "string";

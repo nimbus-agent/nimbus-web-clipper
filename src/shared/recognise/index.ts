@@ -176,6 +176,7 @@ export function recognise(url: string, origins: readonly ConfiguredOrigin[]): Re
     ref: match.ref,
     resolveUrl,
     ...(match.forgeFile === undefined ? {} : { forgeFile: match.forgeFile }),
+    ...(match.scope === undefined ? {} : { scope: match.scope }),
   };
 }
 
