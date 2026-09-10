@@ -22,4 +22,5 @@ export const DEPLOY_CSS = `
   }
   .nimbus-deploy__more { margin: 4px 0 0; font-size: 11px; opacity: 0.7; }
   .nimbus-deploy__bind { display: flex; gap: 8px; align-items: flex-end; }
+  .nimbus-deploy__status { margin: 0 0 8px; font-size: 12px; color: var(--nimbus-muted); }
 `;

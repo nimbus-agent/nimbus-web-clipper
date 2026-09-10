@@ -37,20 +37,22 @@ export type Send = (msg: unknown) => Promise<unknown>;
  *  about, one union over. */
 type BindRefusal = Extract<ServiceBindResponse, { readonly ok: false }>["reason"];
 
+/** Shared by both refusal maps below rather than hand-typed in each — the same
+ *  guard failure reads the same way whether it came from asking or binding. */
+const MALFORMED_NOTE = "Nimbus sent back something this panel couldn't parse.";
+
 const BIND_REFUSAL_NOTE: Record<BindRefusal, (serviceId: string) => string> = {
   unknown_service: (id) => `Nimbus has no [metrics.dora.${id}] block configured for that id.`,
-  unreachable: () => "Couldn't reach Nimbus to bind that service.",
+  unreachable: () => "Nimbus could not be reached to bind that service.",
   server_error: () => "Nimbus hit an error binding that service — try again.",
-  malformed: () => "Nimbus sent back something this panel couldn't parse.",
+  malformed: () => MALFORMED_NOTE,
 };
 
 const PREFLIGHT_REFUSAL_NOTE: Record<Exclude<DeployRefusal, "unbound">, string> = {
   unreachable: "Nimbus could not reach the deploy checks for this service.",
   server_error: "Nimbus hit an error checking deploy readiness.",
-  malformed: "Nimbus sent back something this panel couldn't parse.",
+  malformed: MALFORMED_NOTE,
 };
-
-const MALFORMED_NOTE = "Nimbus sent back something this panel couldn't parse.";
 
 const KEY = Symbol.for("nimbus.deploy.key");
 
@@ -85,6 +87,22 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
 
   const doc = host.ownerDocument ?? document;
 
+  /**
+   * Has a NEWER `mountDeploySection` call claimed this host since this one
+   * started? Checked after every `await` that could resolve late — the same
+   * `generation`-counter idiom `panel-in-page.ts` uses throughout (see e.g.
+   * `loadHeader`'s own `gen !== generation` guard), keyed off the host instead
+   * of a module-level counter because the key already lives there for
+   * idempotency and a second counter would just be a second place to drift.
+   * A slow response that failed this check must render NOTHING: painting a
+   * stale verdict, or worse a stale bind form whose closure still points at
+   * the OLD product/scope, over a newer page's content would be silently
+   * wrong, not merely late.
+   */
+  function isCurrent(): boolean {
+    return marked[KEY] === key;
+  }
+
   function renderMalformed(): void {
     host.replaceChildren(statusParagraph(doc, "nimbus-deploy__gap", MALFORMED_NOTE));
   }
@@ -104,7 +122,11 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
       if (serviceId === "") {
         return;
       }
-      submitBind(serviceId).catch(renderMalformed);
+      submitBind(serviceId).catch(() => {
+        if (isCurrent()) {
+          renderMalformed();
+        }
+      });
     });
     host.replaceChildren(
       ...(note === undefined ? [] : [statusParagraph(doc, "nimbus-deploy__gap", note)]),
@@ -119,6 +141,11 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
       scope: ctx.scope,
       ...(ctx.itemId === undefined ? {} : { itemId: ctx.itemId }),
     });
+    if (!isCurrent()) {
+      // A newer mount has already repainted this host — this answer is about
+      // a page nobody is looking at anymore.
+      return;
+    }
     if (!isDeployPreflightResponse(res)) {
       renderMalformed();
       return;
@@ -139,6 +166,15 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
       kind: "service-bind",
       binding: { product: ctx.product, scope: ctx.scope, serviceId },
     });
+    if (!isCurrent()) {
+      // The page navigated while this bind was in flight. The request already
+      // went out for the product/scope that was current when the user clicked
+      // Bind — that part is correct — but rendering its answer here, over
+      // whatever the NEW mount has since painted, is exactly the stale-form
+      // bug this guard exists to prevent: a bind form built from this closure
+      // still targets the OLD product/scope were the user to submit it again.
+      return;
+    }
     if (!isServiceBindResponse(res)) {
       renderMalformed();
       return;
@@ -154,5 +190,9 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
   }
 
   host.replaceChildren(statusParagraph(doc, "nimbus-deploy__status", "Checking deploy readiness…"));
-  ask().catch(renderMalformed);
+  ask().catch(() => {
+    if (isCurrent()) {
+      renderMalformed();
+    }
+  });
 }

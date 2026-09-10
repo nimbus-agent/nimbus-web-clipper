@@ -175,6 +175,47 @@ describe("mountDeploySection", () => {
     expect(send).toHaveBeenCalledTimes(2);
   });
 
+  test("a slow response for a superseded ctx does not overwrite the newer mount", async () => {
+    const host = document.createElement("div");
+    let resolveStale: ((value: unknown) => void) | undefined;
+    const send = vi.fn((msg: unknown): Promise<unknown> => {
+      const scope =
+        typeof msg === "object" && msg !== null && "scope" in msg
+          ? (msg as { scope: unknown }).scope
+          : undefined;
+      // The FIRST ctx's request never resolves on its own — it only resolves
+      // once this test explicitly triggers it below, deliberately after the
+      // second mount has already repainted.
+      if (scope === "acme/web") {
+        return new Promise((resolve) => {
+          resolveStale = resolve;
+        });
+      }
+      return Promise.resolve({
+        kind: "deploy-preflight",
+        ok: true,
+        serviceId: "other",
+        preflight: { ...okEnvelope, service: "other" },
+      });
+    });
+    mountDeploySection(host, ctx, send);
+    await flush();
+    mountDeploySection(host, { ...ctx, scope: "acme/other" }, send);
+    await flush();
+    expect(host.textContent).toMatch(/Clear to deploy other/);
+    // The stale first request now resolves, late, for a page nobody is
+    // looking at anymore.
+    resolveStale?.({
+      kind: "deploy-preflight",
+      ok: true,
+      serviceId: "web",
+      preflight: okEnvelope,
+    });
+    await flush();
+    expect(host.textContent).toMatch(/Clear to deploy other/);
+    expect(host.textContent).not.toMatch(/Clear to deploy web/);
+  });
+
   test("a repaint does not clobber half-typed input in the bind form", async () => {
     const host = document.createElement("div");
     const send = vi.fn(async () => ({
