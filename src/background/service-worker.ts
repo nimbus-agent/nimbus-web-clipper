@@ -34,6 +34,7 @@ import {
   isClipRequest,
   isConnectionStatusRequest,
   isCueOpenRequest,
+  isDeployPreflightRequest,
   isDiscoverRequest,
   isEgressProveRequest,
   isEgressVerifyRequest,
@@ -48,6 +49,9 @@ import {
   isRecogniseRequest,
   isRelatedRequest,
   isResolveRequest,
+  isServiceBindingsListRequest,
+  isServiceBindRequest,
+  isServiceUnbindRequest,
   isUnpairRequest,
 } from "../shared/messages.ts";
 import { removeGroup, removePassage } from "../shared/passage.ts";
@@ -86,6 +90,13 @@ import {
   setConnection,
 } from "./connection-store.ts";
 import { readConnectorHealth as storeReadConnectorHealth } from "./connector-health-store.ts";
+import {
+  type DeployDeps,
+  handleDeployPreflight,
+  handleServiceBind,
+  handleServiceBindingsList,
+  handleServiceUnbind,
+} from "./deploy-handlers.ts";
 import { listEgress, proveEgressWindow, verifyEgress } from "./egress-client.ts";
 import {
   type EgressDeps,
@@ -133,6 +144,7 @@ import { isPreviewEnabled } from "./preview-pref.ts";
 import { type FlushDeps, flushQueue } from "./queue-flush.ts";
 import { type QuickClipDeps, quickClip } from "./quick-clip.ts";
 import { clearPause, getPauseUntil, setPauseUntil } from "./rate-limit-pause.ts";
+import { dropBinding, getBindings, putBinding } from "./service-binding-store.ts";
 import { singleFlight } from "./single-flight.ts";
 
 const FLUSH_ALARM = "flush-clip-queue";
@@ -713,6 +725,16 @@ const egressDeps: EgressDeps = {
   listEgress,
   verifyEgress,
   proveEgressWindow,
+};
+
+// The deploy-readiness routes (C10) are unauthenticated reads over the paired
+// origin alone — no token, unlike every other client bound in this file.
+const deployDeps: DeployDeps = {
+  getOrigin: async () => (await getConnection())?.origin ?? null,
+  getBindings,
+  putBinding,
+  dropBinding,
+  doFetch: fetch,
 };
 
 /**
@@ -1317,6 +1339,51 @@ function routeQueueAndConnection(message: unknown, respond: Respond): Routed {
   return null;
 }
 
+/**
+ * The four deploy-readiness kinds (C10). A dedicated slice, not folded into one
+ * of the four above: each arm here is guard-narrowed before the handler ever
+ * sees the payload — `handleServiceBind` reads `req.binding.defaultBranch`
+ * unguarded, trusting that `isServiceBindRequest` has already rejected a
+ * malformed one.
+ */
+function routeDeploy(message: unknown, respond: Respond): Routed {
+  if (isDeployPreflightRequest(message)) {
+    // The item id rides on `msg`, put there by the panel, which has already
+    // resolved the page. Absent is normal, not an error.
+    handleDeployPreflight(message, deployDeps)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "deploy-preflight", ok: false, reason: "server_error" });
+      });
+    return true;
+  }
+  if (isServiceBindRequest(message)) {
+    handleServiceBind(message, deployDeps)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "service-bind", ok: false, reason: "server_error" });
+      });
+    return true;
+  }
+  if (isServiceUnbindRequest(message)) {
+    handleServiceUnbind(message, deployDeps)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "service-bind", ok: false, reason: "server_error" });
+      });
+    return true;
+  }
+  if (isServiceBindingsListRequest(message)) {
+    handleServiceBindingsList(deployDeps)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "service-bindings-list", ok: true, bindings: [] });
+      });
+    return true;
+  }
+  return null;
+}
+
 function routeSubRouters(message: unknown, respond: Respond, sender: SenderInfo): Routed {
   // ONE branch for six kinds — the fan-out lives in `routeBriefMessage` so this
   // router stays under S3776's cap. Placed before the narrower guards below only
@@ -1375,6 +1442,7 @@ addMessageListener((message, rawRespond, sender) => {
     routeCapturePair(message, respond, sender) ??
     routeIndexReads(message, respond) ??
     routeQueueAndConnection(message, respond) ??
+    routeDeploy(message, respond) ??
     routeSubRouters(message, respond, sender) ??
     false
   );
