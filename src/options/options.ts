@@ -11,6 +11,8 @@ import {
   type EgressWindowResponse,
   isConnectionResponse,
   isEgressWindowSuccess,
+  isServiceBindingsListResponse,
+  isServiceBindResponse,
   type PairResponse,
 } from "../shared/messages.ts";
 import {
@@ -22,7 +24,9 @@ import {
 } from "../shared/origins.ts";
 import { BUILT_IN_SURFACES } from "../shared/recognise/index.ts";
 import { RULE_BY_PRODUCT, SELF_HOSTABLE_PRODUCTS } from "../shared/recognise/registry.ts";
+import type { ServiceBinding } from "../shared/services.ts";
 import type { ConfiguredOrigin } from "../shared/types.ts";
+import { renderBindingsError, renderBindingsTable } from "./bindings-view.ts";
 import { renderBriefLog } from "./brief-log-view.ts";
 import { renderLedgerSummary } from "./ledger-summary-view.ts";
 import { applyStages, healthLine, stagesFrom } from "./setup-view.ts";
@@ -477,6 +481,65 @@ async function onSurfaceClick(event: Event): Promise<void> {
   await refreshSurfaces();
 }
 
+function setBindingsStatus(text: string): void {
+  const el = document.getElementById("bindings-status");
+  if (el !== null) {
+    el.textContent = text;
+  }
+}
+
+/**
+ * Read-only here: the worker is the sole writer of bindings (`service-store.ts`
+ * holds the write-chain lock deploy-handlers.ts relies on), so this page never
+ * touches storage for them directly — it reads and mutates entirely by message,
+ * same as the deploy lane in the panel does.
+ *
+ * `ok: false` is a FAILED READ, never "no bindings" — rendering it as an empty
+ * table would tell a user whose storage read failed that they have nothing
+ * bound, and invite a rebind that reintroduces the very lost-update the
+ * worker's write-chain lock exists to prevent. It gets its own renderer so it
+ * can never be confused with `renderBindingsTable([], ...)`.
+ */
+async function refreshBindings(): Promise<void> {
+  const host = document.getElementById("bindings-list");
+  if (host === null) {
+    return;
+  }
+  let res: unknown;
+  try {
+    res = await sendMessage({ kind: "service-bindings-list" });
+  } catch {
+    host.replaceChildren(renderBindingsError());
+    return;
+  }
+  if (!isServiceBindingsListResponse(res) || !res.ok) {
+    host.replaceChildren(renderBindingsError());
+    return;
+  }
+  host.replaceChildren(
+    renderBindingsTable(res.bindings, (binding) => {
+      void onUnbind(binding);
+    }),
+  );
+}
+
+async function onUnbind(binding: ServiceBinding): Promise<void> {
+  setBindingsStatus("");
+  try {
+    const res = await sendMessage({
+      kind: "service-unbind",
+      product: binding.product,
+      scope: binding.scope,
+    });
+    if (!isServiceBindResponse(res) || !res.ok) {
+      setBindingsStatus("Couldn't remove that binding — please try again.");
+    }
+  } catch {
+    setBindingsStatus("Couldn't reach the extension — please try again.");
+  }
+  await refreshBindings();
+}
+
 /**
  * Paint the disclosure log from the worker's copy.
  *
@@ -614,6 +677,7 @@ document.addEventListener("DOMContentLoaded", () => {
   void refreshConnection();
   void refreshLedgerSummary();
   void refreshSurfaces();
+  void refreshBindings();
   document.getElementById("trust-ledger-open")?.addEventListener("click", () => {
     void chrome.tabs.create({ url: chrome.runtime.getURL("ledger.html") }).catch(() => undefined);
   });

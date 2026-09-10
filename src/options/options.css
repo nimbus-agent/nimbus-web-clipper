@@ -52,3 +52,8 @@ code { font-family: ui-monospace, monospace; padding: 1px 4px; border-radius: 4p
 .brief-log__what { margin: 2px 0; font-size: 13px; }
 .brief-log__saved { margin: 2px 0; font-size: 12px; opacity: 0.75; }
 .brief-log__clear { margin-top: 12px; padding: 6px 12px; cursor: pointer; }
+.bindings__table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+.bindings__table th { text-align: left; font-weight: 600; opacity: 0.7; font-size: 12px; padding: 4px 8px 4px 0; }
+.bindings__table td { padding: 6px 8px 6px 0; border-top: 1px solid rgba(127, 127, 127, 0.24); }
+.bindings__table td button { margin-top: 0; }
+.bindings__scope { font-family: ui-monospace, monospace; }
