@@ -857,6 +857,116 @@ export const EGRESS_PROVE = {
   rowsTruncated: false,
 } as const;
 
+/**
+ * `GET /v1/preflight/deploy` (C10). The wire shape here is `DeployPreflightResult`
+ * (src/shared/deploy.ts) itself, not a re-spelling of it: that file's own header
+ * notes the type IS the wire shape, transcribed verbatim from the gateway —
+ * unlike `RelatedHitWire` and friends above, which stand in for a client
+ * projection that renames fields at the HTTP boundary. Hand-declared here rather
+ * than imported anyway, same reasoning as `AgentRunDoneResponse`: this file
+ * drives the mock's raw HTTP body and ships with no dependency on `src/`.
+ *
+ * A clean verdict: every check evaluated, nothing to look at.
+ */
+export const PREFLIGHT_OK = {
+  service: "web-app",
+  target_ref: "main",
+  computed_at: "2026-09-10T09:30:00.000Z",
+  verdict: "ok",
+  checks: {
+    active_p1_incidents: { count: 0, findings: [], gap: null },
+    failing_ci_runs: { count: 0, findings: [], gap: null },
+    merge_conflicts: { count: 0, findings: [], gap: null },
+  },
+} as const;
+
+/**
+ * A `warn` verdict carrying one real problem: a failing CI run with a `url`, so
+ * the section's link-rendering path (design spec §4.5) has something to click.
+ * The other two checks report clean (`count: 0`, `gap: null`) — this fixture is
+ * "some checks clean, one carrying a finding", deliberately distinct from
+ * {@link PREFLIGHT_UNKNOWN_SERVICE} below, which is `count: 0` **with a gap
+ * everywhere** — the "could not evaluate" case §4.4 exists to keep the section
+ * from rendering as "all clear".
+ */
+export const PREFLIGHT_WARN_CI = {
+  service: "web-app",
+  target_ref: "main",
+  computed_at: "2026-09-10T09:30:00.000Z",
+  verdict: "warn",
+  checks: {
+    active_p1_incidents: { count: 0, findings: [], gap: null },
+    failing_ci_runs: {
+      count: 1,
+      findings: [
+        {
+          id: "ci-1",
+          title: "build",
+          conclusion: "failure",
+          modified_at_ms: 1_700_000_000_000,
+          branch: "main",
+          head_sha: "deadbeef",
+          url: "https://github.com/acme/web/actions/runs/1",
+        },
+      ],
+      gap: null,
+    },
+    merge_conflicts: { count: 0, findings: [], gap: null },
+  },
+} as const;
+
+/**
+ * The `unconfiguredEnvelope` shape upstream sends for a service id it has never
+ * heard of (`preflight-rpc.ts`): `verdict: "warn"`, `count: 0` on every check,
+ * `gap: "unknown_service"` on all three — what `isUnknownService`
+ * (src/shared/deploy.ts) detects, and what the bind flow's validate-by-asking
+ * (design spec §3.2) refuses to save.
+ */
+export const PREFLIGHT_UNKNOWN_SERVICE = {
+  service: "unknown",
+  target_ref: "HEAD",
+  computed_at: "2026-09-10T09:30:00.000Z",
+  verdict: "warn",
+  checks: {
+    active_p1_incidents: { count: 0, findings: [], gap: "unknown_service" },
+    failing_ci_runs: { count: 0, findings: [], gap: "unknown_service" },
+    merge_conflicts: { count: 0, findings: [], gap: "unknown_service" },
+  },
+} as const;
+
+/**
+ * `GET /v1/metrics/dora` (C10). Unused by this slice — S2's DORA page is the
+ * first reader — but the route belongs beside its `preflight/deploy` sibling
+ * rather than 404ing until S2 exists to need it. A plain envelope, no gaps: it
+ * only has to be a well-formed answer, not a realistic one.
+ */
+export const DORA_METRICS_FIXTURE = {
+  service: "web-app",
+  since_ms: 1_700_000_000_000 - ONE_WEEK_MS,
+  computed_at: "2026-09-10T09:30:00.000Z",
+  metrics: {
+    deployment_frequency: { value: 3, unit: "per_week", sample: 3, gap: null },
+    lead_time_for_changes: { value: 4.5, unit: "hours", sample: 3, gap: null },
+    change_failure_rate: { value: 0.1, unit: "ratio", sample: 3, gap: null },
+    mttr: { value: 2, unit: "hours", sample: 3, gap: null },
+  },
+} as const;
+
+/**
+ * `GET /v1/items/{id}` (C10) — the full row `fetchItemBranch`
+ * (src/background/deploy-client.ts) reads `metadata.branch` off of, for §4.3's
+ * ref ladder's first rung. Carries only what that reader needs; the real route
+ * answers the whole row including `body`, which that function's own doc comment
+ * forbids letting cross into a page — a fixture carrying a `body` field would
+ * invite a future reader to reach for it.
+ */
+export const ITEM_WITH_BRANCH = {
+  data: {
+    id: "github:acme/web#482",
+    metadata: { branch: "main" },
+  },
+} as const;
+
 export interface Scenario {
   /** Keyed by the exact `url` query param `GET /v1/items/resolve` receives. */
   readonly resolve?: Readonly<Record<string, unknown>>;
@@ -890,6 +1000,21 @@ export interface Scenario {
   readonly egressHead?: unknown;
   readonly egressVerify?: unknown;
   readonly egressProve?: unknown;
+  /**
+   * Keyed by the exact `service` query param `GET /v1/preflight/deploy`
+   * receives — the same keyed-by-exact-request shape as `resolve` above. A
+   * `service=unknown` request is hardcoded to {@link PREFLIGHT_UNKNOWN_SERVICE}
+   * regardless of this map, mirroring the real gateway's `unconfiguredEnvelope`
+   * for any id it does not know; key a DIFFERENT service to unknown-service
+   * behaviour by putting {@link PREFLIGHT_UNKNOWN_SERVICE} in this map instead.
+   */
+  readonly preflight?: Readonly<Record<string, unknown>>;
+  /** Answer for any service absent from `preflight`. Defaults to PREFLIGHT_OK. */
+  readonly preflightDefault?: unknown;
+  /** `GET /v1/metrics/dora` (C10). Defaults to DORA_METRICS_FIXTURE. */
+  readonly doraMetrics?: unknown;
+  /** `GET /v1/items/{id}` (C10). Defaults to ITEM_WITH_BRANCH. */
+  readonly item?: unknown;
   /** Path → HTTP status, applied before the body is chosen. */
   readonly status?: Readonly<Record<string, number>>;
   /**

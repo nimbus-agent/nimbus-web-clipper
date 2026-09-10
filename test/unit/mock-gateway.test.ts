@@ -1,7 +1,12 @@
 import { describe, expect, it, test } from "vitest";
 import {
   CLIP_INGEST,
+  DORA_METRICS_FIXTURE,
+  ITEM_WITH_BRANCH,
   PAIR_CONFIRM,
+  PREFLIGHT_OK,
+  PREFLIGHT_UNKNOWN_SERVICE,
+  PREFLIGHT_WARN_CI,
   RELATED,
   RESOLVE_FILE_FIXTURE,
   RESOLVE_FILE_MISS_NOT_INDEXED,
@@ -250,6 +255,64 @@ describe("brief run routes — method-checked per action", () => {
     const first = await createRun(runs);
     const second = await createRun(runs);
     expect(first).not.toBe(second);
+  });
+});
+
+describe("deploy readiness routes (C10)", () => {
+  it("serves GET /v1/preflight/deploy with the default clean verdict", async () => {
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/preflight/deploy?service=web-app&target_ref=main"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(PREFLIGHT_OK);
+  });
+
+  it("keys the answer off the exact service param, same as resolve", async () => {
+    const scenario: Scenario = { preflight: { "web-ci": PREFLIGHT_WARN_CI } };
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/preflight/deploy?service=web-ci&target_ref=main"),
+      scenario,
+    );
+    expect(await res.json()).toEqual(PREFLIGHT_WARN_CI);
+
+    // A service absent from the scenario's map falls back to the default —
+    // same fallback shape resolve/resolveDefault and resolveFile/resolveFileDefault use.
+    const other = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/preflight/deploy?service=other&target_ref=main"),
+      scenario,
+    );
+    expect(await other.json()).toEqual(PREFLIGHT_OK);
+  });
+
+  it("service=unknown always answers the all-unknown_service envelope, regardless of scenario", async () => {
+    const scenario: Scenario = { preflight: { unknown: PREFLIGHT_OK } };
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/preflight/deploy?service=unknown&target_ref=HEAD"),
+      scenario,
+    );
+    expect(await res.json()).toEqual(PREFLIGHT_UNKNOWN_SERVICE);
+  });
+
+  it("serves GET /v1/metrics/dora with a plain envelope", async () => {
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/metrics/dora?service=web-app"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(DORA_METRICS_FIXTURE);
+  });
+
+  it("serves GET /v1/items/{id} with the default branch fixture, and a scenario can override it", async () => {
+    const res = await handleRequest(
+      new Request("http://127.0.0.1:8765/v1/items/github:acme/web%23482"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(ITEM_WITH_BRANCH);
+
+    const overridden = { data: { id: "x", metadata: { branch: "release" } } };
+    const res2 = await handleRequest(new Request("http://127.0.0.1:8765/v1/items/x"), {
+      item: overridden,
+    });
+    expect(await res2.json()).toEqual(overridden);
   });
 });
 

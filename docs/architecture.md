@@ -1781,6 +1781,161 @@ later. `impact` and `ownership` remain link-less on purpose and permanently:
 neither carries an item id a resolver could ever answer for (see
 `item-urls.ts`'s own comment on the trap in `ImpactFinding.affectedItemId`).
 
+## Deploy readiness (Phase C10)
+
+`GET /v1/preflight/deploy` returns a deploy verdict over three checks — active
+P1 incidents, failing CI runs, open merge conflicts. It is contracted, shipped,
+and sits on the gateway's public read-only table (`dispatchReadOnlyDataGet`),
+the same table `GET /v1/connectors` already answers from: no bearer, no scope,
+no re-pairing. One thing blocked reading it before C10, and it was the whole
+of the phase's novelty — the client did not know which Nimbus **service** the
+page in front of it belongs to. This section is the durable record of that
+gap and how it closed; the design spec that worked it out
+(`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`) is pruned
+once both of its slices ship.
+
+### `deploy.preflight` is not `agents.preflight`
+
+The names collide and one of them is a trap. `agents.preflight` is a member of
+`EXTERNAL_EXCLUDED_AGENT_METHODS` upstream (`packages/gateway/src/ipc/agents-rpc.ts`)
+— deliberately absent from every external surface, because a caller that could
+invoke it could queue consent prompts on the owner's machine. It will never
+appear in the `GET /v1/agents` roster C6's connector-health gate reads.
+
+`GET /v1/preflight/deploy` is a different thing entirely: a side-effect-free
+read over the local index. Since C6, the panel offers only the lanes the
+roster publishes (`src/background/agents-capability.ts`) — and this section
+never asks that gate anything. A lane registered as `preflight` would be
+withheld on every gateway forever while looking correct in review, which is
+why §4 below never made this a lane at all. Naming rule, enforced by
+convention rather than a type: `deploy-preflight` in code (the message `kind`,
+`deploy-client.ts`, `deploy-handlers.ts`), "Deploy readiness" in the UI, never
+bare `preflight`.
+
+### The service binding, and the map the client keeps despite the gateway holding one too
+
+A Nimbus **service** is a `[metrics.dora.<id>]` block in the gateway's own
+config, carrying `repos = [...]` as provider URNs. It is not `PRODUCT_SERVICE_ID`
+(`src/shared/recognise/registry.ts`), which maps a product to its *connector*
+id (`"github"`, `"jenkins"`) — a different axis, and not what `/v1/preflight/deploy`
+or `/v1/metrics/dora` take as `service`.
+
+The gateway already holds the reverse map — repo to service — internally
+(`buildServiceIdentityResolver`, `packages/gateway/src/metrics/service-identity.ts`),
+but exposes no `GET` route over it; only the I13 write dispatcher can see it.
+**That is why the client keeps its own copy despite the duplication looking
+avoidable**: there is nothing to read it from. `src/shared/services.ts` declares
+`ServiceBinding { product, scope, serviceId, defaultBranch? }`, keyed by
+`` `${product}:${scope}` ``, persisted by `src/background/service-binding-store.ts`.
+A `GET /v1/services` route is proposed upstream (design spec §7) that would
+turn this from the only path into an override; until it lands, this binding is
+not wasted work regardless, because a service whose repos are not configured
+upstream still needs one.
+
+Validation needs no new route either: the client cannot list services, and it
+does not have to. An unknown service id does not error — `unconfiguredEnvelope`
+upstream (`packages/gateway/src/ipc/preflight-rpc.ts`) returns a normal envelope
+with `verdict: "warn"` and `gap: "unknown_service"` on all three checks. So
+binding **validates by asking**: `handleServiceBind` (`deploy-handlers.ts`)
+fires one preflight call with the typed id and refuses to save it only when
+every check reports `unknown_service` (`isUnknownService`, `src/shared/deploy.ts`)
+— a service that exists with no repos bound is a different, more fixable
+problem (upstream separated the two gaps deliberately), and the client saves
+that binding and shows the gap rather than refusing it.
+
+### The binding scope is not a forge repo — and `Recognition.ref` could never have been it
+
+A binding is keyed by a **repo-level scope**, and the client had no such
+coordinate before C10, nor could one be derived from `Recognition` by
+string-splitting an existing field:
+
+- `ref` is documented as *"Human header text"* — on a `pr` it is per-PR
+  (`"acme/web #482"`), identifying the wrong thing at the wrong granularity to
+  serve as a stable per-repo key.
+- `forgeFile` carries `{ repo, refAndPath }` but only on `kind === "file"`.
+
+**It is not always a forge repo, and `Match.scope`'s type does not pretend
+otherwise.** GitHub, GitLab and Bitbucket yield `owner/repo`. Jenkins yields a
+**job path** — a job hierarchy, not a repository, and one that need not
+resemble the `repos = ["github:owner/repo"]` URNs in the gateway's config at
+all. That is fine: the scope's only job is to be a stable key the user binds
+*once*. It is never sent to the gateway and never parsed by it — only the
+`serviceId` crosses the wire. So the registry itself supplies `scope` on
+`Match`, carried through to `Recognition`, the same way it already supplies
+`forgeFile` — each product spells its own, once, rather than every caller
+deriving the same coordinate its own way and drifting.
+
+### The single-writer rule the binding store has and `origin-store.ts` does not need
+
+`origin-store.ts` gets away with a bare read-modify-write because `setOrigins`
+has exactly one caller (`options.ts`). The binding store has **two** would-be
+writers — the panel's inline bind and the Options management table — and a
+bare cycle between them is a lost update.
+
+`createWriteChain()` (`keyed-store.ts`) does **not** fix this on its own: it is
+an in-memory lock scoped to one JS context. A chain held in the service worker
+would serialise the worker against itself while the Options page, a different
+context entirely, overwrote the same key regardless — a race that looks fixed
+in the worker's own code and is not. The fix is upstream of the lock: **the
+service worker is the only writer.** Options mutates bindings by messaging the
+worker (`service-bind` / `service-unbind`, routed in `service-worker.ts`)
+rather than writing `chrome.storage` directly, and the worker serialises its
+own writes with `createWriteChain()` inside `service-binding-store.ts`. Reads
+stay direct from either context — `chrome.storage` is shared, and a stale read
+costs nothing here. A future edit that "simplifies" Options to write storage
+directly, mirroring `origin-store.ts`'s shape, silently reintroduces the lost
+update; `service-binding-store.ts`'s own header comment says so at the point
+of the temptation.
+
+### Deploy readiness is a section, not a lane
+
+It renders like a lane, through the same lane views' `findingLink` /
+`safeHttpUrl` path, and is not one. Two alternatives were rejected:
+
+- **An eighth member of `AGENT_LANES`.** Maximum reuse, but it needs an
+  exemption from the C6 roster gate (see above), a fabricated `runId` for a
+  store built entirely around poll cycles, and it collides by name with an
+  agent upstream refuses to expose. Carving an exception into the invariant C6
+  exists to enforce, to admit the one reader that is not an agent, is how that
+  invariant stops meaning anything.
+- **A new "direct lane" kind in `LaneState`.** Honest, and one interaction
+  model. But it perturbs `AGENT_LANES`, `LANE_RULES`, `AGENT_ERRORS`,
+  `agent-run-store.ts` and `agents-capability.ts` at once, each carrying its
+  own exhaustiveness invariant, to serve a single synchronous non-agent read.
+
+**Chosen:** its own panel section — `src/panel/deploy/deploy-section.ts` (the
+in-page controller, mounted from `panel-in-page.ts` via one `mountDeploySection`
+call per repaint, idempotent for an unchanged `(product, scope, itemId)` so
+the ~20 repaints a panel session can go through neither re-ask the gateway nor
+wipe a half-typed bind input) and a pure `deploy-view.ts` — rendering through
+the lanes' existing views without joining `AGENT_LANES`. Nothing in the agent-lane machinery moves, no
+exemption is needed, and the roster gate is never consulted because this was
+never an agent. The cost, paid deliberately: expand/collapse and loading
+affordances are implemented once more in `deploy-section.ts` rather than
+inherited, rather than weakening a live invariant to avoid it. It surfaces on
+`pr` and `build` only (`DEPLOY_SURFACES`), because only those carry a
+repo-level `scope` a binding can be keyed by — a dashboard's `home` resolves
+to `ref: ""` by construction and has nothing to key a binding by, `file` has
+the coordinates but a pre-deploy verdict on a single source file is judged
+noise rather than a missing feature.
+
+### The `warn` rule: a zero count with a gap is not "all clear"
+
+`PreflightVerdict` has two values, `"ok" | "warn"` — there is no third. `warn`
+is returned both for "found problems" and for "could not evaluate", because it
+is the only value that fails closed in every consumer old and new; the reason
+travels in each check's `gap` instead. So **`count: 0` with `gap:
+"unknown_service"` (or any other gap) on a check means "could not evaluate" —
+never "all clear", and never "0 problems found".** `verdictLine`
+(`src/panel/deploy/deploy-view.ts`) renders the gap sentence, never the bare
+count, whenever a check carries one: an all-gapped, zero-count response reads
+as *"Could not evaluate `<service>` — see below,"* never a checkmark. Every
+`PreflightGap` member renders through `GAP_NOTE`, a `Record` rather than a
+switch with a `satisfies never` backstop: a `Record` is provably exhaustive by
+deleting an arm and watching the build go red, and it leaves no permanently
+unreachable line for the coverage gate to count against the change — a
+`switch` with a backstop compiles just as safely but pays that cost.
+
 ## Research briefs
 
 One question across several tabs you have open, answered by the gateway reading
