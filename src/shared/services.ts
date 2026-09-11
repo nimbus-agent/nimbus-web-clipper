@@ -104,9 +104,24 @@ export function isServiceBinding(v: unknown): v is ServiceBinding {
  * `ServiceBinding.origin`'s doc comment for why the origin has to be part of
  * the identity: two self-hosted instances of one product are a supported
  * configuration, and without the origin their bindings would collide.
+ *
+ * STRUCTURAL encoding (`JSON.stringify` of the tuple), not a `:`-delimited
+ * template string — a delimiter join is ambiguous the moment either field can
+ * contain the delimiter, and both can: a Jenkins `scope` is a job path
+ * (`names.join("/")` over URL path segments) that may legally contain `:`, and
+ * a configured `origin`'s path prefix may too (`new URL("https://ci.corp/a:jenkins")`
+ * parses fine, with pathname `/a:jenkins`). Neither `isServiceBinding` nor
+ * `parseConfiguredOrigin` rejects a `:` in these fields, so with a delimiter
+ * join, `(origin: "https://ci.corp/a", product: "jenkins", scope: "jenkins:x")`
+ * and `(origin: "https://ci.corp/a:jenkins", product: "jenkins", scope: "x")`
+ * produce the identical string `"https://ci.corp/a:jenkins:x"` — two distinct
+ * bindings colliding onto one key, letting `upsertBinding` silently discard
+ * the wrong binding and `removeBinding` delete both. Do NOT "simplify" this
+ * back to a template string; the tuple must stay array-shaped so
+ * `JSON.stringify` escapes each element independently.
  */
 export function bindingKey(origin: string, product: Product, scope: string): string {
-  return `${origin}:${product}:${scope}`;
+  return JSON.stringify([origin, product, scope]);
 }
 
 export function findBinding(

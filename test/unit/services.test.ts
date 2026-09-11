@@ -163,8 +163,34 @@ describe("guessServiceId", () => {
 });
 
 describe("the binding list", () => {
-  test("bindingKey joins origin, product and scope", () => {
-    expect(bindingKey(ORIGIN, "github", "acme/web")).toBe(`${ORIGIN}:github:acme/web`);
+  test("bindingKey encodes origin, product and scope structurally", () => {
+    expect(bindingKey(ORIGIN, "github", "acme/web")).toBe(
+      JSON.stringify([ORIGIN, "github", "acme/web"]),
+    );
+  });
+
+  // The collision a delimiter join (`${origin}:${product}:${scope}`) would
+  // produce: neither `isServiceBinding` nor `parseConfiguredOrigin` rejects a
+  // `:` in `origin` or `scope`, a Jenkins scope is a job path that may
+  // legally contain one, and a self-hosted origin's path prefix may too. This
+  // pair's old `:`-joined form was identical
+  // (`"https://ci.corp/a:jenkins:x"` either way); the structural encoding
+  // must keep them apart. This test fails if `bindingKey` ever reverts to a
+  // template-string join.
+  test("bindingKey does not collide when origin/scope contain the old delimiter", () => {
+    const a = bindingKey("https://ci.corp/a", "jenkins", "jenkins:x");
+    const b = bindingKey("https://ci.corp/a:jenkins", "jenkins", "x");
+    expect(a).not.toBe(b);
+
+    const list = [
+      { product: "jenkins", origin: "https://ci.corp/a", scope: "jenkins:x", serviceId: "svc-a" },
+      { product: "jenkins", origin: "https://ci.corp/a:jenkins", scope: "x", serviceId: "svc-b" },
+    ] as const;
+    expect(findBinding(list, "https://ci.corp/a", "jenkins", "jenkins:x")?.serviceId).toBe("svc-a");
+    expect(findBinding(list, "https://ci.corp/a:jenkins", "jenkins", "x")?.serviceId).toBe("svc-b");
+    const afterRemove = removeBinding(list, "https://ci.corp/a", "jenkins", "jenkins:x");
+    expect(afterRemove).toHaveLength(1);
+    expect(afterRemove[0]?.serviceId).toBe("svc-b");
   });
   test("findBinding matches on origin AND product AND scope", () => {
     const list = [b("acme/web", "web")];
