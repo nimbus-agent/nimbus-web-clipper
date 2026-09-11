@@ -1790,15 +1790,9 @@ the same table `GET /v1/connectors` already answers from: no bearer, no scope,
 no re-pairing. One thing blocked reading it before C10, and it was the whole
 of the phase's novelty — the client did not know which Nimbus **service** the
 page in front of it belongs to. This section is the durable record of that
-gap and how it closed. The design spec that worked it out was pruned once
-slice 1 (the service binding and the panel section) shipped, per the
-convention in `CLAUDE.md`, and lives on in git history
-(`2026-09-10-before-you-ship-it-design.md`). Slice 2 (the DORA metrics page)
-has not shipped yet, so the one piece of its design that does not belong to
-any not-yet-written client code — the nested-windows constraint on the route
-itself — is recorded below rather than left to die with the spec; the rest of
-slice 2's design (the wire types, the message envelope, the page) is
-reachable only from that same git history until the slice is built.
+gap and how it closed; the design spec that worked it out
+(`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`) is pruned
+once both of its slices ship.
 
 ### `deploy.preflight` is not `agents.preflight`
 

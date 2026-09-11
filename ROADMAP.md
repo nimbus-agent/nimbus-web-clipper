@@ -1493,12 +1493,8 @@ to; that gap is what this phase closes.*
 > pinned by `test/e2e/deploy-readiness.e2e.ts` end to end and by
 > `services.test.ts` / `service-binding-store.test.ts` / `deploy-client.test.ts`
 > / `deploy-view.test.ts` / `deploy-section.test.ts` at the unit level.
-> Full design: the service-binding concept, the `deploy.preflight` versus
-> `agents.preflight` naming trap, the section-not-a-lane decision and the
-> single-writer rule are in [`docs/architecture.md`](./docs/architecture.md)
-> under "Deploy readiness (Phase C10)". The phase's design spec was pruned
-> once this slice shipped, per the convention in `CLAUDE.md`; it lives on in
-> git history.
+> Full design:
+> [`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`](./docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md).
 
 ### C10.2 The DORA metrics page · 🟢 · M
 > **What** A `dora.html` page renders the four DORA metrics — deployment
@@ -1516,15 +1512,9 @@ to; that gap is what this phase closes.*
 > **Done when** Three independently-fallible reads (`Promise.allSettled`, never
 > `Promise.all`) each render their own column or their own failure; a `null`
 > metric value renders as a gap, never a zero.
-> Full design: the nested-windows constraint on `GET /v1/metrics/dora` — why
-> 7d/30d/90d cannot be stitched into a line — is in
-> [`docs/architecture.md`](./docs/architecture.md) under "Deploy readiness
-> (Phase C10)". The rest of this slice's design (the wire types, the message
-> envelope, the page itself) lived only in the phase's design spec; that spec
-> was pruned alongside C10.1's, ahead of this slice shipping, per the
-> convention in `CLAUDE.md`. It is in git history
-> (`2026-09-10-before-you-ship-it-design.md`, §5) for whoever picks this
-> slice up.
+> Full design:
+> [`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`](./docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md)
+> (§5).
 
 ## Phase 1 — Trust you can see 🟢
 
