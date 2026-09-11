@@ -1436,8 +1436,12 @@ proposed and landed upstream as Nimbus#1464 and Nimbus#1465, and consumed here.*
 > `agent-run-store.test.ts` / `service-worker.test.ts` at the unit level.
 > **No re-pairing** — `resolve-ids` sits under the existing `resolve` scope,
 > the same one `resolve` and `resolve-file` already use.
-> Full design:
-> [`docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md`](./docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md).
+> Full design: the resolution flow, the two chunking bounds and the
+> capability-signal reasoning are in
+> [`docs/architecture.md`](./docs/architecture.md) under "What can be linked,
+> and what cannot". The phase's design spec was pruned once C9 shipped, per
+> the convention in `CLAUDE.md`; it is in this repo's git history if the
+> full route contract is ever wanted.
 
 ---
 

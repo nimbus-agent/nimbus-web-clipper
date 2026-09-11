@@ -613,8 +613,9 @@ export function scopeForLane(lane: AgentLane, kind: SurfaceKind): LaneScope | nu
  * and whether a model wrote it.
  *
  * `itemUrls` is ALSO a sibling of `findings`, for the same shape of reason —
- * see `ItemUrlMap`'s own comment (findings.ts) and
- * docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md §3.
+ * see `ItemUrlMap`'s own comment (findings.ts) and `docs/architecture.md`,
+ * "What can be linked, and what cannot". The phase's design spec was pruned
+ * once C9 shipped and lives on in git history.
  * Unlike `gaps`/`synthesis` it is not universal: it is populated only for
  * `expert` and `catchup` (the two lanes `itemIdsOf`, item-urls.ts, resolves ids
  * for), written once when the run lands, and — like `findings` — absent

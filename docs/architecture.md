@@ -1959,6 +1959,22 @@ for the unrecognised member like any other, because a gapped check that says
 nothing renders as a bare label under a zero — the "all clear" this whole rule
 exists to prevent.
 
+### The DORA route's windows are nested, not a trend
+
+`GET /v1/metrics/dora` takes `since` and **no `until`**, so every window it
+answers ends at *now*: 7d, 30d and 90d are three **nested** windows sharing an
+end point, not three consecutive periods — a disjoint series is not
+expressible on the contract as it stands. Stitching three such windows into a
+line would draw a slope between three readings of the same metric at
+different resolutions, which any reader takes as change over time; it is not
+that. Whichever surface renders these three windows has to show them side by
+side, each column labelled as a window ending now — still directional, and
+still honest, without implying a trend the contract cannot back. `until` is
+proposed upstream precisely to make a real series expressible; until it
+lands, this constraint is a property of the route, not of any one client, and
+binds every future consumer of it, including the DORA page slice 2 has not
+built yet.
+
 ## Research briefs
 
 One question across several tabs you have open, answered by the gateway reading
