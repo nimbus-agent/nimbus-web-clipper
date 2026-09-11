@@ -1543,6 +1543,12 @@ function createPanel(body: HTMLElement): {
     if (
       pinnedRecognition?.ok === true &&
       pinnedRecognition.scope !== undefined &&
+      // `origin` is set unconditionally by `recognise()` alongside `scope` —
+      // see `Recognition.origin`'s doc comment — so this check never actually
+      // fails once the `scope` one above passed. It stays here anyway because
+      // TS narrows only the property it was asked about: without this,
+      // `pinnedRecognition.origin` below is still `string | undefined`.
+      pinnedRecognition.origin !== undefined &&
       deployBelongsOnSurface(pinnedRecognition.kind)
     ) {
       const itemId = shownItemId(shown);
@@ -1551,6 +1557,7 @@ function createPanel(body: HTMLElement): {
         deployHost,
         {
           product: pinnedRecognition.product,
+          origin: pinnedRecognition.origin,
           scope: pinnedRecognition.scope,
           ...(itemId === undefined ? {} : { itemId }),
         },

@@ -530,6 +530,7 @@ async function onUnbind(binding: ServiceBinding): Promise<void> {
     const res = await sendMessage({
       kind: "service-unbind",
       product: binding.product,
+      origin: binding.origin,
       scope: binding.scope,
     });
     if (!isServiceBindResponse(res) || !res.ok) {

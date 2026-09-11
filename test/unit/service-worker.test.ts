@@ -2266,6 +2266,7 @@ describe("C10 routing", () => {
     const res = await harness.emitMessage({
       kind: "deploy-preflight",
       product: "github",
+      origin: "https://github.com",
       scope: "acme/web",
     });
     expect(res).toMatchObject({ kind: "deploy-preflight" });
@@ -2294,7 +2295,12 @@ describe("C10 routing", () => {
     await load();
     const res = await harness.emitMessage({
       kind: "service-bind",
-      binding: { product: "github", scope: "acme/web", serviceId: "svc-1" },
+      binding: {
+        product: "github",
+        origin: "https://github.com",
+        scope: "acme/web",
+        serviceId: "svc-1",
+      },
     });
     expect(res).toMatchObject({ kind: "service-bind" });
   });
@@ -2304,6 +2310,7 @@ describe("C10 routing", () => {
     const res = await harness.emitMessage({
       kind: "service-unbind",
       product: "github",
+      origin: "https://github.com",
       scope: "acme/web",
     });
     expect(res).toEqual({ kind: "service-bind", ok: true });

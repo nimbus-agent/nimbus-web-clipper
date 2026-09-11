@@ -18,7 +18,12 @@ const okEnvelope = {
   },
 };
 
-const ctx = { product: "github", scope: "acme/web", itemId: "i1" } as const;
+const ctx = {
+  product: "github",
+  origin: "https://github.com",
+  scope: "acme/web",
+  itemId: "i1",
+} as const;
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe("deployBelongsOnSurface", () => {
@@ -87,7 +92,12 @@ describe("mountDeploySection", () => {
     await flush();
     expect(send).toHaveBeenNthCalledWith(2, {
       kind: "service-bind",
-      binding: { product: "github", scope: "acme/web", serviceId: "web" },
+      binding: {
+        product: "github",
+        origin: "https://github.com",
+        scope: "acme/web",
+        serviceId: "web",
+      },
     });
     expect(host.textContent).toMatch(/Clear to deploy web/);
   });
@@ -136,6 +146,7 @@ describe("mountDeploySection", () => {
     expect(send).toHaveBeenCalledWith({
       kind: "deploy-preflight",
       product: "github",
+      origin: "https://github.com",
       scope: "acme/web",
       itemId: "i1",
     });
@@ -239,5 +250,39 @@ describe("mountDeploySection", () => {
     mountDeploySection(host, ctx, send);
     await flush();
     expect(host.textContent).not.toMatch(/Clear to deploy/);
+  });
+
+  // A rejected `send` means the message channel closed before an answer
+  // arrived — most often the MV3 service worker restarting mid-call — so
+  // nothing was ever parsed. Rendering the malformed note would point the user
+  // at the wrong cause; the `unreachable` refusal already exists for this.
+  test("a rejected ask() reports unreachable, not malformed", async () => {
+    const host = document.createElement("div");
+    const send = vi.fn(async () => {
+      throw new Error("message channel closed");
+    });
+    mountDeploySection(host, ctx, send);
+    await flush();
+    expect(host.textContent).toMatch(/could not reach/i);
+    expect(host.textContent).not.toMatch(/couldn't parse/i);
+  });
+
+  test("a rejected bind submit reports unreachable, not malformed", async () => {
+    const host = document.createElement("div");
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({
+        kind: "deploy-preflight",
+        ok: false,
+        reason: "unbound",
+        guessServiceId: "web",
+      })
+      .mockRejectedValueOnce(new Error("message channel closed"));
+    mountDeploySection(host, ctx, send);
+    await flush();
+    host.querySelector("form")?.dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(host.textContent).toMatch(/could not reach/i);
+    expect(host.textContent).not.toMatch(/couldn't parse/i);
   });
 });

@@ -28,6 +28,11 @@ export function deployBelongsOnSurface(kind: SurfaceKind): boolean {
  *  place for it to be decided — read by nothing. */
 export type DeployCtx = {
   readonly product: Product;
+  /** The matched `Recognition.origin` — part of the binding identity alongside
+   *  `product`/`scope` (see `ServiceBinding.origin`). Required here, unlike on
+   *  `Recognition`, because this ctx exists only once a page has recognised, at
+   *  which point the origin is always known. */
+  readonly origin: string;
   readonly scope: string;
   readonly itemId?: string;
 };
@@ -59,7 +64,7 @@ const PREFLIGHT_REFUSAL_NOTE: Record<Exclude<DeployRefusal, "unbound">, string> 
 const KEY = Symbol.for("nimbus.deploy.key");
 
 function ctxKey(ctx: DeployCtx): string {
-  return `${ctx.product}:${ctx.scope}:${ctx.itemId ?? ""}`;
+  return `${ctx.origin}:${ctx.product}:${ctx.scope}:${ctx.itemId ?? ""}`;
 }
 
 function statusParagraph(doc: Document, className: string, text: string): HTMLElement {
@@ -107,7 +112,7 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
    * idempotency and a second counter would just be a second place to drift.
    * A slow response that failed this check must render NOTHING: painting a
    * stale verdict, or worse a stale bind form whose closure still points at
-   * the OLD product/scope, over a newer page's content would be silently
+   * the OLD product/origin/scope, over a newer page's content would be silently
    * wrong, not merely late.
    */
   function isCurrent(): boolean {
@@ -134,8 +139,12 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
         return;
       }
       submitBind(serviceId).catch(() => {
+        // A rejected `send` means the message channel closed before an answer
+        // arrived — most often the MV3 service worker restarting mid-call.
+        // Nothing was parsed, so the malformed note would misattribute the
+        // cause; the `unreachable` refusal already exists for exactly this.
         if (isCurrent()) {
-          renderMalformed();
+          renderRefusal("unreachable");
         }
       });
     });
@@ -149,6 +158,7 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
     const res = await send({
       kind: "deploy-preflight",
       product: ctx.product,
+      origin: ctx.origin,
       scope: ctx.scope,
       ...(ctx.itemId === undefined ? {} : { itemId: ctx.itemId }),
     });
@@ -175,15 +185,15 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
   async function submitBind(serviceId: string): Promise<void> {
     const res = await send({
       kind: "service-bind",
-      binding: { product: ctx.product, scope: ctx.scope, serviceId },
+      binding: { product: ctx.product, origin: ctx.origin, scope: ctx.scope, serviceId },
     });
     if (!isCurrent()) {
       // The page navigated while this bind was in flight. The request already
-      // went out for the product/scope that was current when the user clicked
+      // went out for the product/origin/scope that was current when the user clicked
       // Bind — that part is correct — but rendering its answer here, over
       // whatever the NEW mount has since painted, is exactly the stale-form
       // bug this guard exists to prevent: a bind form built from this closure
-      // still targets the OLD product/scope were the user to submit it again.
+      // still targets the OLD product/origin/scope were the user to submit it again.
       return;
     }
     if (!isServiceBindResponse(res)) {
@@ -202,8 +212,10 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
 
   body.replaceChildren(statusParagraph(doc, "nimbus-deploy__status", "Checking deploy readiness…"));
   ask().catch(() => {
+    // Same reasoning as `submitBind`'s catch above: a rejected `send` means
+    // nothing arrived to parse, so this is `unreachable`, not `malformed`.
     if (isCurrent()) {
-      renderMalformed();
+      renderRefusal("unreachable");
     }
   });
 }

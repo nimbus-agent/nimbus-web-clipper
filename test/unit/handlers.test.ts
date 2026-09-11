@@ -482,6 +482,7 @@ describe("handleRecognise", () => {
         ref: "acme/web #482",
         resolveUrl: "https://github.com/acme/web/pull/482",
         scope: "acme/web",
+        origin: "https://github.com",
       },
     });
   });

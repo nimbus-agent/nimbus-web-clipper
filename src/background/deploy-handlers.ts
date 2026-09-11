@@ -22,7 +22,7 @@ export interface DeployDeps {
   readonly getOrigin: () => Promise<string | null>;
   readonly getBindings: () => Promise<ServiceBinding[]>;
   readonly putBinding: (entry: ServiceBinding) => Promise<void>;
-  readonly dropBinding: (product: Product, scope: string) => Promise<void>;
+  readonly dropBinding: (origin: string, product: Product, scope: string) => Promise<void>;
   readonly doFetch: typeof fetch;
 }
 
@@ -68,7 +68,7 @@ export async function handleDeployPreflight(
   if (origin === null) {
     return { kind: "deploy-preflight", ok: false, reason: "unreachable" };
   }
-  const binding = findBinding(await deps.getBindings(), req.product, req.scope);
+  const binding = findBinding(await deps.getBindings(), req.origin, req.product, req.scope);
   if (binding === null) {
     return {
       kind: "deploy-preflight",
@@ -99,7 +99,7 @@ export async function handleDeployPreflight(
  * than storing something that may be wrong — the user can retry, and a stored
  * wrong id produces a permanently confusing section.
  *
- * What is persisted is RECONSTRUCTED from the four fields, never `req.binding`
+ * What is persisted is RECONSTRUCTED from the five fields, never `req.binding`
  * itself. `isServiceBinding` is a shape check and accepts extra properties, so
  * storing the request's object would let a page-supplied message write arbitrary
  * keys into `chrome.storage.local` — a quota shared with the clip queue and the
@@ -113,7 +113,7 @@ export async function handleServiceBind(
   if (origin === null) {
     return { kind: "service-bind", ok: false, reason: "unreachable" };
   }
-  const { product, scope, serviceId, defaultBranch } = req.binding;
+  const { product, scope, serviceId, defaultBranch, origin: bindingOrigin } = req.binding;
   const probe = await fetchPreflight(origin, serviceId, defaultBranch ?? "HEAD", deps.doFetch);
   if (!probe.ok) {
     return { kind: "service-bind", ok: false, reason: probe.reason };
@@ -123,6 +123,7 @@ export async function handleServiceBind(
   }
   await deps.putBinding({
     product,
+    origin: bindingOrigin,
     scope,
     serviceId,
     // `exactOptionalPropertyTypes` is on: an explicit `defaultBranch: undefined`
@@ -137,7 +138,7 @@ export async function handleServiceUnbind(
   req: ServiceUnbindRequest,
   deps: DeployDeps,
 ): Promise<ServiceBindResponse> {
-  await deps.dropBinding(req.product, req.scope);
+  await deps.dropBinding(req.origin, req.product, req.scope);
   return { kind: "service-bind", ok: true };
 }
 

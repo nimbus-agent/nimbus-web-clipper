@@ -83,6 +83,16 @@ describe("self-hosted instances", () => {
       resolveUrl: "https://corp.example/jira/browse/PLAT-91",
     });
   });
+  // The matched `ConfiguredOrigin.origin` — path prefix included — must be
+  // carried onto `Recognition.origin` verbatim: it is what a service binding
+  // is keyed on alongside product/scope (C10 review), and two products can
+  // share a host with different prefixes (Jira and Confluence do exactly
+  // this), so `origin` must never be re-derived from `resolveUrl`'s bare
+  // `new URL(x).origin`, which would drop the prefix and collide the two.
+  test("carries the matched ConfiguredOrigin.origin, path prefix included", () => {
+    const r = recognise("https://corp.example/jira/browse/PLAT-91", SELF_HOSTED);
+    expect(r.ok && r.origin).toBe("https://corp.example/jira");
+  });
   test("Jenkins build under nested folders", () => {
     expectItem("https://corp.example/jenkins/job/web/job/deploy/42/console", SELF_HOSTED, {
       product: "jenkins",
@@ -371,6 +381,12 @@ describe("dashboard (home) surfaces", () => {
     const dev = recognise("https://jenkins.dev.local/", origins);
     const prod = recognise("https://jenkins.prod.local/", origins);
     expect(sameItem(dev, prod)).toBe(true);
+    // But `sameItem`'s equality is NOT the binding identity: `origin` must
+    // still tell the two instances apart, or a service binding keyed on
+    // `(product, scope)` alone would answer one instance's page with a
+    // verdict computed for the other. See `Recognition.origin`.
+    expect(dev.ok && dev.origin).toBe("https://jenkins.dev.local");
+    expect(prod.ok && prod.origin).toBe("https://jenkins.prod.local");
   });
 
   it("renders a home surface line as the label alone", () => {

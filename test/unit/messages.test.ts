@@ -1121,16 +1121,37 @@ describe("isLaneState guards the done arm's structured fields", () => {
 });
 
 describe("C10 deploy messages", () => {
+  const ORIGIN = "https://github.com";
+
   test("a well-formed preflight request is accepted", () => {
     expect(
-      isDeployPreflightRequest({ kind: "deploy-preflight", product: "github", scope: "acme/web" }),
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        origin: ORIGIN,
+        scope: "acme/web",
+      }),
     ).toBe(true);
+  });
+  test("a missing or empty origin is rejected — it is part of the binding identity", () => {
+    expect(
+      isDeployPreflightRequest({ kind: "deploy-preflight", product: "github", scope: "acme/web" }),
+    ).toBe(false);
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        origin: "",
+        scope: "acme/web",
+      }),
+    ).toBe(false);
   });
   test("an optional itemId is accepted, a non-string one is not", () => {
     expect(
       isDeployPreflightRequest({
         kind: "deploy-preflight",
         product: "github",
+        origin: ORIGIN,
         scope: "acme/web",
         itemId: "i1",
       }),
@@ -1139,6 +1160,7 @@ describe("C10 deploy messages", () => {
       isDeployPreflightRequest({
         kind: "deploy-preflight",
         product: "github",
+        origin: ORIGIN,
         scope: "acme/web",
         itemId: 7,
       }),
@@ -1149,6 +1171,7 @@ describe("C10 deploy messages", () => {
       isDeployPreflightRequest({
         kind: "deploy-preflight",
         product: "github",
+        origin: ORIGIN,
         scope: "acme/web",
         targetRef: "main",
       }),
@@ -1157,6 +1180,7 @@ describe("C10 deploy messages", () => {
       isDeployPreflightRequest({
         kind: "deploy-preflight",
         product: "github",
+        origin: ORIGIN,
         scope: "acme/web",
         targetRef: 7,
       }),
@@ -1164,24 +1188,55 @@ describe("C10 deploy messages", () => {
   });
   test("an unknown product is rejected at the boundary", () => {
     expect(
-      isDeployPreflightRequest({ kind: "deploy-preflight", product: "nope", scope: "a" }),
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "nope",
+        origin: ORIGIN,
+        scope: "a",
+      }),
     ).toBe(false);
   });
   test("a bind request must carry a valid binding", () => {
     expect(
       isServiceBindRequest({
         kind: "service-bind",
-        binding: { product: "github", scope: "acme/web", serviceId: "web" },
+        binding: { product: "github", origin: ORIGIN, scope: "acme/web", serviceId: "web" },
       }),
     ).toBe(true);
     expect(isServiceBindRequest({ kind: "service-bind", binding: { product: "github" } })).toBe(
       false,
     );
+    // A binding with no origin is exactly the ambiguity this field exists to
+    // remove — the shared `isServiceBinding` guard must refuse it here too.
+    expect(
+      isServiceBindRequest({
+        kind: "service-bind",
+        binding: { product: "github", scope: "acme/web", serviceId: "web" },
+      }),
+    ).toBe(false);
   });
-  test("an unbind request carries product and scope", () => {
+  test("an unbind request carries product, origin and scope", () => {
+    expect(
+      isServiceUnbindRequest({
+        kind: "service-unbind",
+        product: "github",
+        origin: ORIGIN,
+        scope: "acme/web",
+      }),
+    ).toBe(true);
+  });
+  test("an unbind request with a missing or empty origin is rejected", () => {
     expect(
       isServiceUnbindRequest({ kind: "service-unbind", product: "github", scope: "acme/web" }),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      isServiceUnbindRequest({
+        kind: "service-unbind",
+        product: "github",
+        origin: "",
+        scope: "acme/web",
+      }),
+    ).toBe(false);
   });
   test("a refusal response names a reason from the closed set", () => {
     expect(
@@ -1211,7 +1266,7 @@ describe("C10 deploy messages", () => {
       isServiceBindingsListResponse({
         kind: "service-bindings-list",
         ok: true,
-        bindings: [{ product: "github", scope: "a", serviceId: "b" }],
+        bindings: [{ product: "github", origin: ORIGIN, scope: "a", serviceId: "b" }],
       }),
     ).toBe(true);
     expect(

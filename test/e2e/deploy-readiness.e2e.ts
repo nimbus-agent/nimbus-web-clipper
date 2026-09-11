@@ -81,11 +81,11 @@ test("a bound repo with a failing CI run shows that finding as a link", async ()
   const h = await launchExtension({ scenario });
   try {
     await seedSelfHostedGithub(h);
-    await h.sw.evaluate(async () => {
+    await h.sw.evaluate(async (origin) => {
       await chrome.storage.local.set({
-        serviceBindings: [{ product: "github", scope: "acme/web", serviceId: "web-ci" }],
+        serviceBindings: [{ product: "github", origin, scope: "acme/web", serviceId: "web-ci" }],
       });
-    });
+    }, h.origin);
     const page = await h.context.newPage();
     const url = await gotoRecognisedPage(page, h.origin, PR_PATH);
     await togglePanel(h.sw, url);

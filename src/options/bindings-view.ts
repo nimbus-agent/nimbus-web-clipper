@@ -12,7 +12,7 @@ function cell(text: string): HTMLTableCellElement {
 
 /**
  * One row per binding. The Unbind button's handler closes over the BINDING
- * ITSELF, not its product/scope read back off a dataset attribute — so
+ * ITSELF, not its product/origin/scope read back off a dataset attribute — so
  * `onUnbind` always receives the same object identity the row was built from,
  * never a value reconstructed (and possibly mismatched) from markup.
  */
@@ -28,12 +28,23 @@ function row(
   const unbind = document.createElement("button");
   unbind.type = "button";
   unbind.textContent = "Unbind";
+  // Every row's visible text is the same "Unbind" — a screen-reader user
+  // navigating between controls otherwise cannot tell which binding a given
+  // button belongs to. The origin is what makes the name unique even between
+  // two rows that differ only by origin (two self-hosted instances of one
+  // product with the same scope) — the exact case the binding identity fix
+  // (C10 review) exists to keep apart.
+  unbind.setAttribute(
+    "aria-label",
+    `Unbind ${productName(binding.product)} ${binding.scope} (${binding.origin})`,
+  );
   unbind.addEventListener("click", () => onUnbind(binding));
   const action = document.createElement("td");
   action.append(unbind);
 
   tr.append(
     scope,
+    cell(binding.origin),
     cell(productName(binding.product)),
     cell(binding.serviceId),
     cell(binding.defaultBranch ?? ""),
@@ -62,7 +73,7 @@ export function renderBindingsTable(
 
   const thead = document.createElement("thead");
   const head = document.createElement("tr");
-  for (const label of ["Scope", "Product", "Service", "Default branch", ""]) {
+  for (const label of ["Scope", "Origin", "Product", "Service", "Default branch", ""]) {
     const th = document.createElement("th");
     th.textContent = label;
     head.append(th);

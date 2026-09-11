@@ -42,7 +42,14 @@ const deps = (over: Partial<DeployDeps> = {}): DeployDeps => ({
   ...over,
 });
 
-const req = { kind: "deploy-preflight", product: "github", scope: "acme/web" } as const;
+const ORIGIN = "https://github.com";
+
+const req = {
+  kind: "deploy-preflight",
+  product: "github",
+  origin: ORIGIN,
+  scope: "acme/web",
+} as const;
 
 describe("handleDeployPreflight", () => {
   test("an unbound scope refuses with the slug guess as the seed", async () => {
@@ -69,7 +76,9 @@ describe("handleDeployPreflight", () => {
     const r = await handleDeployPreflight(
       { ...req, itemId: "i1" },
       deps({
-        getBindings: async () => [{ product: "github", scope: "acme/web", serviceId: "web" }],
+        getBindings: async () => [
+          { product: "github", origin: ORIGIN, scope: "acme/web", serviceId: "web" },
+        ],
         doFetch: doFetch as unknown as typeof fetch,
       }),
     );
@@ -90,7 +99,13 @@ describe("handleDeployPreflight", () => {
       { ...req, itemId: "i1" },
       deps({
         getBindings: async () => [
-          { product: "github", scope: "acme/web", serviceId: "web", defaultBranch: "release" },
+          {
+            product: "github",
+            origin: ORIGIN,
+            scope: "acme/web",
+            serviceId: "web",
+            defaultBranch: "release",
+          },
         ],
         doFetch: doFetch as unknown as typeof fetch,
       }),
@@ -101,12 +116,39 @@ describe("handleDeployPreflight", () => {
     expect(preflightCall).toContain("target_ref=release");
   });
 
+  // The bug this fix closes: a binding for the SAME product/scope on a
+  // DIFFERENT self-hosted origin must never answer this request — that would
+  // silently render one instance's verdict on the other instance's page.
+  test("a binding on a different origin is treated as unbound, not reused", async () => {
+    const r = await handleDeployPreflight(
+      { ...req, origin: "https://jenkins.prod.local" },
+      deps({
+        getBindings: async () => [
+          {
+            product: "github",
+            origin: "https://jenkins.dev.local",
+            scope: "acme/web",
+            serviceId: "web",
+          },
+        ],
+      }),
+    );
+    expect(r).toEqual({
+      kind: "deploy-preflight",
+      ok: false,
+      reason: "unbound",
+      guessServiceId: "web",
+    });
+  });
+
   test("with neither branch nor defaultBranch it still asks — two checks answer regardless", async () => {
     const doFetch = vi.fn(async () => jsonRes(envelope()));
     const r = await handleDeployPreflight(
       req,
       deps({
-        getBindings: async () => [{ product: "github", scope: "acme/web", serviceId: "web" }],
+        getBindings: async () => [
+          { product: "github", origin: ORIGIN, scope: "acme/web", serviceId: "web" },
+        ],
         doFetch: doFetch as unknown as typeof fetch,
       }),
     );
@@ -121,7 +163,9 @@ describe("handleDeployPreflight", () => {
     const r = await handleDeployPreflight(
       { ...req, itemId: "i1" },
       deps({
-        getBindings: async () => [{ product: "github", scope: "acme/web", serviceId: "web" }],
+        getBindings: async () => [
+          { product: "github", origin: ORIGIN, scope: "acme/web", serviceId: "web" },
+        ],
         doFetch: doFetch as unknown as typeof fetch,
       }),
     );
@@ -137,7 +181,13 @@ describe("handleDeployPreflight", () => {
       req,
       deps({
         getBindings: async () => [
-          { product: "github", scope: "acme/web", serviceId: "web", defaultBranch: "release" },
+          {
+            product: "github",
+            origin: ORIGIN,
+            scope: "acme/web",
+            serviceId: "web",
+            defaultBranch: "release",
+          },
         ],
         doFetch: doFetch as unknown as typeof fetch,
       }),
@@ -151,7 +201,7 @@ describe("handleDeployPreflight", () => {
 describe("handleServiceBind", () => {
   const bindReq = {
     kind: "service-bind",
-    binding: { product: "github", scope: "acme/web", serviceId: "web" },
+    binding: { product: "github", origin: ORIGIN, scope: "acme/web", serviceId: "web" },
   } as const;
 
   test("saves a binding the gateway recognises", async () => {
@@ -164,13 +214,14 @@ describe("handleServiceBind", () => {
   // `isServiceBinding` is a shape CHECK — it accepts extra properties — so a
   // handler that stored `req.binding` would let a content script write whatever
   // it liked into a storage quota shared with the clip queue. What is persisted
-  // is rebuilt from the four fields the type declares.
+  // is rebuilt from the five fields the type declares.
   test("persists a reconstructed binding, never the request's own object", async () => {
     const putBinding = vi.fn(async (_entry: ServiceBinding) => undefined);
     const hostile = {
       kind: "service-bind",
       binding: {
         product: "github",
+        origin: ORIGIN,
         scope: "acme/web",
         serviceId: "web",
         defaultBranch: "main",
@@ -183,6 +234,7 @@ describe("handleServiceBind", () => {
     const stored = putBinding.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
     expect(stored).toEqual({
       product: "github",
+      origin: ORIGIN,
       scope: "acme/web",
       serviceId: "web",
       defaultBranch: "main",
@@ -197,7 +249,7 @@ describe("handleServiceBind", () => {
     const putBinding = vi.fn(async (_entry: ServiceBinding) => undefined);
     await handleServiceBind(bindReq, deps({ putBinding }));
     const stored = putBinding.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
-    expect(Object.keys(stored).sort()).toEqual(["product", "scope", "serviceId"]);
+    expect(Object.keys(stored).sort()).toEqual(["origin", "product", "scope", "serviceId"]);
   });
 
   test("refuses — and does NOT save — an id the gateway has never heard of", async () => {
@@ -251,10 +303,30 @@ describe("handleServiceUnbind", () => {
   test("drops the named binding", async () => {
     const dropBinding = vi.fn(async () => undefined);
     const r = await handleServiceUnbind(
-      { kind: "service-unbind", product: "github", scope: "acme/web" },
+      { kind: "service-unbind", product: "github", origin: ORIGIN, scope: "acme/web" },
       deps({ dropBinding }),
     );
     expect(r).toEqual({ kind: "service-bind", ok: true });
-    expect(dropBinding).toHaveBeenCalledWith("github", "acme/web");
+    expect(dropBinding).toHaveBeenCalledWith(ORIGIN, "github", "acme/web");
+  });
+
+  // The regression this fix closes: dropping a binding on one self-hosted
+  // instance must not touch the other instance's binding for the same scope.
+  test("passes the request's origin through, not just product and scope", async () => {
+    const dropBinding = vi.fn(async () => undefined);
+    await handleServiceUnbind(
+      {
+        kind: "service-unbind",
+        product: "jenkins",
+        origin: "https://jenkins.dev.local",
+        scope: "platform/web",
+      },
+      deps({ dropBinding }),
+    );
+    expect(dropBinding).toHaveBeenCalledWith(
+      "https://jenkins.dev.local",
+      "jenkins",
+      "platform/web",
+    );
   });
 });

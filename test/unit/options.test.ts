@@ -1165,7 +1165,12 @@ describe("the disclosure log panel", () => {
 });
 
 describe("service bindings (#bindings-list)", () => {
-  const binding = { product: "github", scope: "acme/web", serviceId: "web" };
+  const binding = {
+    product: "github",
+    origin: "https://github.com",
+    scope: "acme/web",
+    serviceId: "web",
+  };
 
   /** A kind-aware reply table, same shape as the ledger describe block's
    *  `bootWith` above — the page now sends several message kinds on load. */
@@ -1222,6 +1227,7 @@ describe("service bindings (#bindings-list)", () => {
     expect(harness.sendMessage).toHaveBeenCalledWith({
       kind: "service-unbind",
       product: "github",
+      origin: "https://github.com",
       scope: "acme/web",
     });
     // The worker is the sole writer of bindings — Options mutates by message

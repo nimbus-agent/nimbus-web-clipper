@@ -1163,6 +1163,13 @@ export type DeployRefusal = (typeof DEPLOY_REFUSALS)[number];
 export interface DeployPreflightRequest {
   readonly kind: "deploy-preflight";
   readonly product: Product;
+  /**
+   * The matched `ConfiguredOrigin.origin` (`Recognition.origin`). Part of the
+   * binding identity alongside `product`/`scope` — see `ServiceBinding.origin`'s
+   * doc comment for why two self-hosted instances of one product must not share
+   * a binding. Untrusted, like `scope` below — it arrives from a content script.
+   */
+  readonly origin: string;
   /** The recogniser's repo-level scope. Untrusted — it arrives from a content
    *  script — so it is guarded here like every other page-supplied value. */
   readonly scope: string;
@@ -1221,6 +1228,8 @@ export interface ServiceBindRequest {
 export interface ServiceUnbindRequest {
   readonly kind: "service-unbind";
   readonly product: Product;
+  /** See `DeployPreflightRequest.origin` — part of the binding identity. */
+  readonly origin: string;
   readonly scope: string;
 }
 
@@ -1240,6 +1249,8 @@ export function isDeployPreflightRequest(v: unknown): v is DeployPreflightReques
   const itemId = v["itemId"];
   return (
     isProduct(v["product"]) &&
+    typeof v["origin"] === "string" &&
+    v["origin"] !== "" &&
     typeof v["scope"] === "string" &&
     v["scope"] !== "" &&
     (ref === undefined || typeof ref === "string") &&
@@ -1260,6 +1271,8 @@ export function isServiceUnbindRequest(v: unknown): v is ServiceUnbindRequest {
     isObject(v) &&
     v["kind"] === "service-unbind" &&
     isProduct(v["product"]) &&
+    typeof v["origin"] === "string" &&
+    v["origin"] !== "" &&
     typeof v["scope"] === "string" &&
     v["scope"] !== ""
   );

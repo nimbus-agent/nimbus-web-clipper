@@ -1825,8 +1825,18 @@ The gateway already holds the reverse map — repo to service — internally
 but exposes no `GET` route over it; only the I13 write dispatcher can see it.
 **That is why the client keeps its own copy despite the duplication looking
 avoidable**: there is nothing to read it from. `src/shared/services.ts` declares
-`ServiceBinding { product, scope, serviceId, defaultBranch? }`, keyed by
-`` `${product}:${scope}` ``, persisted by `src/background/service-binding-store.ts`.
+`ServiceBinding { product, origin, scope, serviceId, defaultBranch? }`, keyed by
+`` `${origin}:${product}:${scope}` ``, persisted by
+`src/background/service-binding-store.ts`. `origin` is the matched
+`ConfiguredOrigin.origin` (`Recognition.origin`), and it is part of the key
+because `upsertOrigin` (`src/shared/origins.ts`) dedupes configured origins by
+origin, not by product — two self-hosted instances of one product (two
+Jenkins, two Bitbucket Servers) are a supported configuration. Keying a
+binding on `(product, scope)` alone would let a job path shared by both
+instances collide onto one binding, so a page on ONE instance could silently
+render a deploy verdict computed against the OTHER's service. `origin` is
+never sent to the gateway, exactly like `scope` — it exists only to keep two
+bindings that would otherwise collide apart.
 A `GET /v1/services` route is proposed upstream (design spec §7) that would
 turn this from the only path into an override; until it lands, this binding is
 not wasted work regardless, because a service whose repos are not configured
@@ -1905,7 +1915,7 @@ It renders like a lane, through the same lane views' `findingLink` /
 
 **Chosen:** its own panel section — `src/panel/deploy/deploy-section.ts` (the
 in-page controller, mounted from `panel-in-page.ts` via one `mountDeploySection`
-call per repaint, idempotent for an unchanged `(product, scope, itemId)` so
+call per repaint, idempotent for an unchanged `(origin, product, scope, itemId)` so
 the ~20 repaints a panel session can go through neither re-ask the gateway nor
 wipe a half-typed bind input) and a pure `deploy-view.ts` — rendering through
 the lanes' existing views without joining `AGENT_LANES`. Nothing in the agent-lane machinery moves, no

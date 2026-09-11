@@ -30,6 +30,17 @@ export const MAX_SCOPE_LEN = 255;
 
 export interface ServiceBinding {
   readonly product: Product;
+  /**
+   * The matched `ConfiguredOrigin.origin` (`Recognition.origin`) — scheme + host
+   * [+ port] plus any path prefix. REQUIRED here, unlike on `Recognition`: a
+   * stored binding with no origin is exactly the ambiguity this field exists to
+   * remove. Two self-hosted instances of one product (two Jenkins, two
+   * Bitbucket Servers) are a supported configuration (`upsertOrigin` dedupes by
+   * origin, not by product) and would otherwise share one binding, so a verdict
+   * bound on one instance would silently answer for the other. Never sent to
+   * the gateway — like `scope`, it is a local key only.
+   */
+  readonly origin: string;
   /** The registry-supplied repo-level key (`Recognition.scope`). Never sent to
    *  the gateway — it is a local key only. */
   readonly scope: string;
@@ -60,11 +71,20 @@ export function isServiceBinding(v: unknown): v is ServiceBinding {
     return false;
   }
   const rec = v as Record<string, unknown>;
+  const origin = rec["origin"];
   const serviceId = rec["serviceId"];
   const scope = rec["scope"];
   const branch = rec["defaultBranch"];
   return (
     isProduct(rec["product"]) &&
+    // Bounded the same way as `scope` and for the same reason: `origin` never
+    // crosses the wire either, but it does cross into `chrome.storage.local`, a
+    // quota shared with the clip queue and the connection record. `MAX_SCOPE_LEN`
+    // is reused rather than a second constant because both fields are bounded
+    // for the identical storage-quota reason, not by any gateway-side limit.
+    typeof origin === "string" &&
+    origin !== "" &&
+    origin.length <= MAX_SCOPE_LEN &&
     typeof scope === "string" &&
     scope !== "" &&
     scope.length <= MAX_SCOPE_LEN &&
@@ -79,34 +99,42 @@ export function isServiceBinding(v: unknown): v is ServiceBinding {
   );
 }
 
-export function bindingKey(product: Product, scope: string): string {
-  return `${product}:${scope}`;
+/**
+ * Keyed by `(origin, product, scope)`, not `(product, scope)` alone — see
+ * `ServiceBinding.origin`'s doc comment for why the origin has to be part of
+ * the identity: two self-hosted instances of one product are a supported
+ * configuration, and without the origin their bindings would collide.
+ */
+export function bindingKey(origin: string, product: Product, scope: string): string {
+  return `${origin}:${product}:${scope}`;
 }
 
 export function findBinding(
   list: readonly ServiceBinding[],
+  origin: string,
   product: Product,
   scope: string,
 ): ServiceBinding | null {
-  const key = bindingKey(product, scope);
-  return list.find((x) => bindingKey(x.product, x.scope) === key) ?? null;
+  const key = bindingKey(origin, product, scope);
+  return list.find((x) => bindingKey(x.origin, x.product, x.scope) === key) ?? null;
 }
 
 export function upsertBinding(
   list: readonly ServiceBinding[],
   entry: ServiceBinding,
 ): ServiceBinding[] {
-  const key = bindingKey(entry.product, entry.scope);
-  return [...list.filter((x) => bindingKey(x.product, x.scope) !== key), entry];
+  const key = bindingKey(entry.origin, entry.product, entry.scope);
+  return [...list.filter((x) => bindingKey(x.origin, x.product, x.scope) !== key), entry];
 }
 
 export function removeBinding(
   list: readonly ServiceBinding[],
+  origin: string,
   product: Product,
   scope: string,
 ): ServiceBinding[] {
-  const key = bindingKey(product, scope);
-  return list.filter((x) => bindingKey(x.product, x.scope) !== key);
+  const key = bindingKey(origin, product, scope);
+  return list.filter((x) => bindingKey(x.origin, x.product, x.scope) !== key);
 }
 
 /**

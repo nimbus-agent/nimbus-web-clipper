@@ -39,8 +39,8 @@ export function putBinding(entry: ServiceBinding): Promise<void> {
   });
 }
 
-export function dropBinding(product: Product, scope: string): Promise<void> {
+export function dropBinding(origin: string, product: Product, scope: string): Promise<void> {
   return exclusively(async () => {
-    await storageSet(BINDINGS_KEY, removeBinding(await getBindings(), product, scope));
+    await storageSet(BINDINGS_KEY, removeBinding(await getBindings(), origin, product, scope));
   });
 }
