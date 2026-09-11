@@ -8,6 +8,8 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-11
+
 ### Added
 
 - **A deploy-readiness section, on pull request and build pages.** Answers the
