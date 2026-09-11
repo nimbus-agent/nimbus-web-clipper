@@ -291,7 +291,8 @@ export type LaneFindings =
  * `CatchupItem`: a URL is a client-side enrichment of the answer, not part of
  * what the agent said, so folding it into `LaneFindings` would make the element
  * guards in `findings-guards.ts` grow a branch each and re-prove
- * `sanitiseState`'s idempotence for no reason — see
- * docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md §3.
+ * `sanitiseState`'s idempotence for no reason — see `docs/architecture.md`,
+ * "What can be linked, and what cannot". The phase's design spec was pruned
+ * once C9 shipped and lives on in git history.
  */
 export type ItemUrlMap = Readonly<Record<string, string>>;

@@ -247,9 +247,10 @@ export async function getRun(
 const exclusively = createWriteChain();
 
 /**
- * The most findings — PLUS the resolved `itemUrls` map, Task 3 (see
- * docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md §5) — we
- * will persist for one run, in UTF-8 BYTES.
+ * The most findings — PLUS the resolved `itemUrls` map (see
+ * `docs/architecture.md`, "What can be linked, and what cannot" — the
+ * phase's design spec was pruned once C9 shipped and lives on in git
+ * history) — we will persist for one run, in UTF-8 BYTES.
  *
  * Bytes, not `String.length` — that counts UTF-16 code units, undercounts every
  * non-ASCII title, and would disagree with how every other cap in this repo is
