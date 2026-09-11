@@ -354,6 +354,27 @@ describe("recognise message guards", () => {
     expect(wrap({ ...base, forgeFile: { repo: "a/b" } })).toBe(false);
     expect(wrap({ ...base, forgeFile: "a/b" })).toBe(false);
   });
+
+  // `origin` is optional but, when present, must be a string — the same
+  // "type narrow, runtime wide" class as `scope` immediately above it. A
+  // numeric origin passing this guard would reach `DeployCtx.origin`
+  // (typed `string`) as a number.
+  it("rejects a non-string origin, accepts a string one or none at all", () => {
+    const base = {
+      ok: true,
+      product: "github",
+      kind: "pr",
+      label: "GitHub PR",
+      ref: "acme/web #482",
+      resolveUrl: "https://github.com/acme/web/pull/482",
+    };
+    const wrap = (recognition: unknown) =>
+      isRecognitionResponse({ kind: "recognition", ok: true, recognition });
+
+    expect(wrap({ ...base, origin: "https://github.com" })).toBe(true);
+    expect(wrap({ ...base })).toBe(true);
+    expect(wrap({ ...base, origin: 42 })).toBe(false);
+  });
 });
 
 describe("resolve guards", () => {

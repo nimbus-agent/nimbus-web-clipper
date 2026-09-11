@@ -85,15 +85,20 @@ crosses the wire.
 // src/shared/services.ts — pure: the type, its guard, the slug→id guess
 export interface ServiceBinding {
   readonly product: Product;        // which forge or CI product
+  readonly origin: string;          // the matched ConfiguredOrigin.origin
   readonly scope: string;           // registry-supplied repo-level key
   readonly serviceId: string;       // the Nimbus [metrics.dora.<id>] id
   readonly defaultBranch?: string;  // target_ref fallback (§4.3)
 }
 ```
 
-Keyed by `${product}:${scope}`. A product whose rule supplies no `scope` offers
-no deploy readiness — the section simply does not appear, the same way `doc`
-carries no lane at all.
+Keyed by `${origin}:${product}:${scope}`, not `${product}:${scope}` alone: two
+self-hosted instances of one product (two Jenkins, two Bitbucket Servers) are a
+supported configuration — `upsertOrigin` dedupes configured origins by origin,
+not by product — so `origin` has to be part of the identity or two instances
+sharing a scope would collide onto one binding. A product whose rule supplies
+no `scope` offers no deploy readiness — the section simply does not appear,
+the same way `doc` carries no lane at all.
 
 ### 3.1.1 Storage, and the writer that has to be single
 
@@ -425,7 +430,7 @@ guard narrows it, never `any`.
 
 Four requests, and their replies:
 
-- `deploy-preflight` — `{ product, scope, targetRef? }` → the envelope, or a
+- `deploy-preflight` — `{ product, origin, scope, itemId?, targetRef? }` → the envelope, or a
   refusal naming `unbound` / `unreachable` / `server_error`, carrying the slug
   guess when unbound so the panel can seed its input.
 - `service-bindings-list` — the bindings, for the Options table and the DORA
