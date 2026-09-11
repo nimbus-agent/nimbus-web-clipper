@@ -16,6 +16,7 @@ function match(s: readonly string[]): Match | null {
       ref: `${key}/${slug} #${num}`,
       path,
       matchedPath: path,
+      scope: `${key}/${slug}`,
     };
   }
   // Bitbucket Cloud source file: /{workspace}/{repo}/src/{ref}/{path}. Bitbucket spells
@@ -50,6 +51,7 @@ function match(s: readonly string[]): Match | null {
     ref: `${workspace}/${repo} #${num}`,
     path,
     matchedPath: path,
+    scope: `${workspace}/${repo}`,
   };
 }
 

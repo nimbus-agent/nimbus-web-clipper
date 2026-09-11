@@ -8,6 +8,21 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Added
+
+- **A deploy-readiness section, on pull request and build pages.** Answers the
+  question every other lane sidesteps — is this safe to ship right now? —
+  over three checks the gateway already computes: active P1 incidents,
+  failing CI runs, open merge conflicts. Each finding that carries a URL
+  renders as a clickable link, the same path C8.1 and C9 established. The
+  first time a repo is seen, the section shows an editable bind form seeded
+  with a guess rather than guessing silently, and validates whatever service
+  id you type by asking the gateway — an id it does not recognise is refused,
+  not saved; Options gains a table to review and correct bindings afterward.
+  Both routes this reads (`GET /v1/preflight/deploy`, `GET /v1/items/{id}`)
+  sit on the gateway's public read-only table, so this needed no new token
+  scope and no re-pairing to start using.
+
 ## [0.8.0] - 2026-09-08
 
 ### Added

@@ -12,6 +12,8 @@ import {
   isConnectionResponse,
   isConnectionStatusRequest,
   isCueOpenRequest,
+  isDeployPreflightRequest,
+  isDeployPreflightResponse,
   isFetchResponse,
   isPairRequest,
   isPassageClearRequest,
@@ -27,6 +29,10 @@ import {
   isRelatedResponse,
   isResolveRequest,
   isResolveResponse,
+  isServiceBindingsListResponse,
+  isServiceBindRequest,
+  isServiceBindResponse,
+  isServiceUnbindRequest,
   isUnpairRequest,
 } from "../../src/shared/messages.ts";
 import { AGENT_LANES } from "../../src/shared/types.ts";
@@ -347,6 +353,27 @@ describe("recognise message guards", () => {
     expect(wrap({ ...base, forgeFile: { repo: 1, refAndPath: "main/index.ts" } })).toBe(false);
     expect(wrap({ ...base, forgeFile: { repo: "a/b" } })).toBe(false);
     expect(wrap({ ...base, forgeFile: "a/b" })).toBe(false);
+  });
+
+  // `origin` is optional but, when present, must be a string — the same
+  // "type narrow, runtime wide" class as `scope` immediately above it. A
+  // numeric origin passing this guard would reach `DeployCtx.origin`
+  // (typed `string`) as a number.
+  it("rejects a non-string origin, accepts a string one or none at all", () => {
+    const base = {
+      ok: true,
+      product: "github",
+      kind: "pr",
+      label: "GitHub PR",
+      ref: "acme/web #482",
+      resolveUrl: "https://github.com/acme/web/pull/482",
+    };
+    const wrap = (recognition: unknown) =>
+      isRecognitionResponse({ kind: "recognition", ok: true, recognition });
+
+    expect(wrap({ ...base, origin: "https://github.com" })).toBe(true);
+    expect(wrap({ ...base })).toBe(true);
+    expect(wrap({ ...base, origin: 42 })).toBe(false);
   });
 });
 
@@ -1111,5 +1138,174 @@ describe("isLaneState guards the done arm's structured fields", () => {
     ]) {
       expect(isAgentStateResponse({ kind: "agent-state", lane: "why", state: bad })).toBe(false);
     }
+  });
+});
+
+describe("C10 deploy messages", () => {
+  const ORIGIN = "https://github.com";
+
+  test("a well-formed preflight request is accepted", () => {
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        origin: ORIGIN,
+        scope: "acme/web",
+      }),
+    ).toBe(true);
+  });
+  test("a missing or empty origin is rejected — it is part of the binding identity", () => {
+    expect(
+      isDeployPreflightRequest({ kind: "deploy-preflight", product: "github", scope: "acme/web" }),
+    ).toBe(false);
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        origin: "",
+        scope: "acme/web",
+      }),
+    ).toBe(false);
+  });
+  test("an optional itemId is accepted, a non-string one is not", () => {
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        origin: ORIGIN,
+        scope: "acme/web",
+        itemId: "i1",
+      }),
+    ).toBe(true);
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        origin: ORIGIN,
+        scope: "acme/web",
+        itemId: 7,
+      }),
+    ).toBe(false);
+  });
+  test("an optional targetRef is accepted, a non-string one is not", () => {
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        origin: ORIGIN,
+        scope: "acme/web",
+        targetRef: "main",
+      }),
+    ).toBe(true);
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "github",
+        origin: ORIGIN,
+        scope: "acme/web",
+        targetRef: 7,
+      }),
+    ).toBe(false);
+  });
+  test("an unknown product is rejected at the boundary", () => {
+    expect(
+      isDeployPreflightRequest({
+        kind: "deploy-preflight",
+        product: "nope",
+        origin: ORIGIN,
+        scope: "a",
+      }),
+    ).toBe(false);
+  });
+  test("a bind request must carry a valid binding", () => {
+    expect(
+      isServiceBindRequest({
+        kind: "service-bind",
+        binding: { product: "github", origin: ORIGIN, scope: "acme/web", serviceId: "web" },
+      }),
+    ).toBe(true);
+    expect(isServiceBindRequest({ kind: "service-bind", binding: { product: "github" } })).toBe(
+      false,
+    );
+    // A binding with no origin is exactly the ambiguity this field exists to
+    // remove — the shared `isServiceBinding` guard must refuse it here too.
+    expect(
+      isServiceBindRequest({
+        kind: "service-bind",
+        binding: { product: "github", scope: "acme/web", serviceId: "web" },
+      }),
+    ).toBe(false);
+  });
+  test("an unbind request carries product, origin and scope", () => {
+    expect(
+      isServiceUnbindRequest({
+        kind: "service-unbind",
+        product: "github",
+        origin: ORIGIN,
+        scope: "acme/web",
+      }),
+    ).toBe(true);
+  });
+  test("an unbind request with a missing or empty origin is rejected", () => {
+    expect(
+      isServiceUnbindRequest({ kind: "service-unbind", product: "github", scope: "acme/web" }),
+    ).toBe(false);
+    expect(
+      isServiceUnbindRequest({
+        kind: "service-unbind",
+        product: "github",
+        origin: "",
+        scope: "acme/web",
+      }),
+    ).toBe(false);
+  });
+  test("a refusal response names a reason from the closed set", () => {
+    expect(
+      isDeployPreflightResponse({ kind: "deploy-preflight", ok: false, reason: "unbound" }),
+    ).toBe(true);
+    expect(
+      isDeployPreflightResponse({ kind: "deploy-preflight", ok: false, reason: "invented" }),
+    ).toBe(false);
+  });
+  test("an unbound refusal may carry the slug guess for the input seed", () => {
+    expect(
+      isDeployPreflightResponse({
+        kind: "deploy-preflight",
+        ok: false,
+        reason: "unbound",
+        guessServiceId: "web",
+      }),
+    ).toBe(true);
+  });
+  test("a bind response reports unknown_service", () => {
+    expect(
+      isServiceBindResponse({ kind: "service-bind", ok: false, reason: "unknown_service" }),
+    ).toBe(true);
+  });
+  test("a bindings-list response filters corrupt rows", () => {
+    expect(
+      isServiceBindingsListResponse({
+        kind: "service-bindings-list",
+        ok: true,
+        bindings: [{ product: "github", origin: ORIGIN, scope: "a", serviceId: "b" }],
+      }),
+    ).toBe(true);
+    expect(
+      isServiceBindingsListResponse({
+        kind: "service-bindings-list",
+        ok: true,
+        bindings: [{ product: "nope" }],
+      }),
+    ).toBe(false);
+  });
+  test("a bindings-list response accepts an honest ok:false, but not one carrying a corrupt binding", () => {
+    expect(isServiceBindingsListResponse({ kind: "service-bindings-list", ok: false })).toBe(true);
+    expect(
+      isServiceBindingsListResponse({
+        kind: "service-bindings-list",
+        ok: true,
+        bindings: [{ product: "nope" }],
+      }),
+    ).toBe(false);
   });
 });

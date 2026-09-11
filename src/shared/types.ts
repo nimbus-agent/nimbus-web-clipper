@@ -235,6 +235,25 @@ export type Recognition =
        * this client must never make. The gateway holds the file list and splits there.
        */
       readonly forgeFile?: { readonly repo: string; readonly refAndPath: string };
+      /** The repo-level service-binding key (C10), on `pr`/`build` only — see `Match.scope`. */
+      readonly scope?: string;
+      /**
+       * The matched `ConfiguredOrigin.origin` — scheme + host [+ port] plus any
+       * path prefix, e.g. `https://corp.example/jenkins`. ALWAYS set by
+       * `recognise()`: it is what disambiguates two self-hosted instances of one
+       * product (two Jenkins, two Bitbucket Servers) that `upsertOrigin` dedupes
+       * by origin, not by product, so both are a supported configuration at once.
+       * Without this, a binding keyed on `(product, scope)` alone would answer a
+       * page on ONE instance with a verdict computed for the OTHER.
+       *
+       * Typed optional only so the many `Recognition` literals across the unit
+       * tests need not carry an origin irrelevant to what they assert — the same
+       * treatment `scope` and `forgeFile` already get above. Never derive this
+       * from `resolveUrl` instead: `new URL(x).origin` drops the path prefix, and
+       * two products can share a host with different prefixes (Jira and
+       * Confluence do exactly this).
+       */
+      readonly origin?: string;
     }
   | { readonly ok: false; readonly reason: "unknown-host" | "unrecognised-path" };
 

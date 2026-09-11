@@ -83,6 +83,16 @@ describe("self-hosted instances", () => {
       resolveUrl: "https://corp.example/jira/browse/PLAT-91",
     });
   });
+  // The matched `ConfiguredOrigin.origin` — path prefix included — must be
+  // carried onto `Recognition.origin` verbatim: it is what a service binding
+  // is keyed on alongside product/scope (C10 review), and two products can
+  // share a host with different prefixes (Jira and Confluence do exactly
+  // this), so `origin` must never be re-derived from `resolveUrl`'s bare
+  // `new URL(x).origin`, which would drop the prefix and collide the two.
+  test("carries the matched ConfiguredOrigin.origin, path prefix included", () => {
+    const r = recognise("https://corp.example/jira/browse/PLAT-91", SELF_HOSTED);
+    expect(r.ok && r.origin).toBe("https://corp.example/jira");
+  });
   test("Jenkins build under nested folders", () => {
     expectItem("https://corp.example/jenkins/job/web/job/deploy/42/console", SELF_HOSTED, {
       product: "jenkins",
@@ -371,6 +381,12 @@ describe("dashboard (home) surfaces", () => {
     const dev = recognise("https://jenkins.dev.local/", origins);
     const prod = recognise("https://jenkins.prod.local/", origins);
     expect(sameItem(dev, prod)).toBe(true);
+    // But `sameItem`'s equality is NOT the binding identity: `origin` must
+    // still tell the two instances apart, or a service binding keyed on
+    // `(product, scope)` alone would answer one instance's page with a
+    // verdict computed for the other. See `Recognition.origin`.
+    expect(dev.ok && dev.origin).toBe("https://jenkins.dev.local");
+    expect(prod.ok && prod.origin).toBe("https://jenkins.prod.local");
   });
 
   it("renders a home surface line as the label alone", () => {
@@ -1036,5 +1052,47 @@ describe("a file page carries its forge coordinate into the Recognition", () => 
     expect(r.kind).toBe("file");
     // The Match already carried this; the Recognition dropped it, which is the bug.
     expect(r.forgeFile).toEqual({ repo, refAndPath });
+  });
+});
+
+describe("scope — the repo-level binding key (C10)", () => {
+  const origins = [
+    { origin: "https://github.com", product: "github" },
+    { origin: "https://gitlab.com", product: "gitlab" },
+    { origin: "https://bitbucket.org", product: "bitbucket" },
+    { origin: "https://app.circleci.com", product: "circleci" },
+    { origin: "https://ci.corp.example", product: "jenkins" },
+  ] as const;
+
+  const scopeOf = (url: string): string | undefined => {
+    const r = recognise(url, origins);
+    return r.ok ? r.scope : undefined;
+  };
+
+  test("github pr carries owner/repo", () => {
+    expect(scopeOf("https://github.com/acme/web/pull/482")).toBe("acme/web");
+  });
+  test("gitlab mr carries the nested project path", () => {
+    expect(scopeOf("https://gitlab.com/acme/team/web/-/merge_requests/7")).toBe("acme/team/web");
+  });
+  test("bitbucket cloud pr carries workspace/repo", () => {
+    expect(scopeOf("https://bitbucket.org/acme/web/pull-requests/12")).toBe("acme/web");
+  });
+  test("bitbucket server pr carries KEY/slug", () => {
+    expect(scopeOf("https://bitbucket.org/projects/ACME/repos/web/pull-requests/12")).toBe(
+      "ACME/web",
+    );
+  });
+  test("circleci build carries org/repo", () => {
+    expect(scopeOf("https://app.circleci.com/pipelines/github/acme/web/99")).toBe("acme/web");
+  });
+  test("jenkins build carries the JOB PATH, which is not a forge repo", () => {
+    expect(scopeOf("https://ci.corp.example/job/platform/job/web/41")).toBe("platform/web");
+  });
+  test("a home surface carries no scope at all", () => {
+    expect(scopeOf("https://github.com/")).toBeUndefined();
+  });
+  test("a file surface carries no scope — it is not a deploy surface", () => {
+    expect(scopeOf("https://github.com/acme/web/blob/main/src/a.ts")).toBeUndefined();
   });
 });

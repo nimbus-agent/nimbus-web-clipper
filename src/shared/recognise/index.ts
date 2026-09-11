@@ -176,6 +176,12 @@ export function recognise(url: string, origins: readonly ConfiguredOrigin[]): Re
     ref: match.ref,
     resolveUrl,
     ...(match.forgeFile === undefined ? {} : { forgeFile: match.forgeFile }),
+    ...(match.scope === undefined ? {} : { scope: match.scope }),
+    // Unconditional, unlike `forgeFile`/`scope` above: every match came from
+    // some `entry`, so the origin it matched on is always known. See
+    // `Recognition.origin`'s doc comment for why the FIELD stays optional
+    // regardless.
+    origin: entry.origin,
   };
 }
 

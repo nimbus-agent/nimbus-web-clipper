@@ -5,6 +5,7 @@
 import { isCanonicalRejection } from "./canonical.ts";
 import { isSourceShape } from "./clip.ts";
 import { CONNECTOR_STATES, type ConnectorHealth } from "./connector-health.ts";
+import { type DeployPreflightResult, parseDeployPreflight } from "./deploy.ts";
 import type {
   EgressError,
   EgressPartition,
@@ -18,10 +19,12 @@ import {
   laneFindingsFrom,
   synthesisFrom,
 } from "./findings-guards.ts";
+import { isProduct } from "./origins.ts";
 import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
 import { safeHttpUrl } from "./safe-url.ts";
+import { isServiceBinding, type ServiceBinding } from "./services.ts";
 import { isNormalisedTerm } from "./term.ts";
 import {
   AGENT_ERRORS,
@@ -36,6 +39,7 @@ import {
   type FileResolution,
   type LaneState,
   type PairError,
+  type Product,
   RESOLVE_MATCH_KINDS,
   type Recognition,
   type RelatedError,
@@ -431,7 +435,11 @@ export type ExtensionRequest =
   | PassageClearRequest
   | EgressWindowRequest
   | EgressVerifyRequest
-  | EgressProveRequest;
+  | EgressProveRequest
+  | DeployPreflightRequest
+  | ServiceBindingsListRequest
+  | ServiceBindRequest
+  | ServiceUnbindRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -775,7 +783,9 @@ function isRecognition(v: unknown): v is Recognition {
       typeof v["label"] === "string" &&
       typeof v["ref"] === "string" &&
       typeof v["resolveUrl"] === "string" &&
-      isForgeFile(v["forgeFile"])
+      isForgeFile(v["forgeFile"]) &&
+      (v["scope"] === undefined || typeof v["scope"] === "string") &&
+      (v["origin"] === undefined || typeof v["origin"] === "string")
     );
   }
   return v["ok"] === false && typeof v["reason"] === "string";
@@ -1144,4 +1154,172 @@ export function isConnectionResponse(v: unknown): v is ConnectionResponse {
     );
   }
   return false;
+}
+
+/** The reasons the worker can refuse a deploy-readiness request. Closed, and
+ *  single-sourced so the guard reads this rather than a second literal list. */
+export const DEPLOY_REFUSALS = ["unbound", "unreachable", "server_error", "malformed"] as const;
+export type DeployRefusal = (typeof DEPLOY_REFUSALS)[number];
+
+export interface DeployPreflightRequest {
+  readonly kind: "deploy-preflight";
+  readonly product: Product;
+  /**
+   * The matched `ConfiguredOrigin.origin` (`Recognition.origin`). Part of the
+   * binding identity alongside `product`/`scope` — see `ServiceBinding.origin`'s
+   * doc comment for why two self-hosted instances of one product must not share
+   * a binding. Untrusted, like `scope` below — it arrives from a content script.
+   */
+  readonly origin: string;
+  /** The recogniser's repo-level scope. Untrusted — it arrives from a content
+   *  script — so it is guarded here like every other page-supplied value. */
+  readonly scope: string;
+  /**
+   * The item the panel has ALREADY resolved this page to (`shownItemId`), when
+   * it has one. This is where §4.3's first rung gets its input: the worker has
+   * no way to resolve the page itself at this point, so a request without this
+   * silently skips straight to the binding's `defaultBranch`.
+   *
+   * Untrusted, like `scope` — it arrives from a content script.
+   */
+  readonly itemId?: string;
+  readonly targetRef?: string;
+}
+
+export type DeployPreflightResponse =
+  | {
+      readonly kind: "deploy-preflight";
+      readonly ok: true;
+      /**
+       * The bound id the verdict was computed for. Unread by S1's section — the
+       * envelope already carries `service` — and deliberately kept: S2's DORA
+       * page is linked from here as `dora.html?service=<id>` (design spec §5.4),
+       * and that link needs the id the BINDING resolved to, not the one the
+       * page happened to guess. Pre-wiring, not dead code.
+       */
+      readonly serviceId: string;
+      readonly preflight: DeployPreflightResult;
+    }
+  | {
+      readonly kind: "deploy-preflight";
+      readonly ok: false;
+      readonly reason: DeployRefusal;
+      /** Only on `unbound`: the seed for the bind input, so the panel does not
+       *  need its own copy of the guess rule. */
+      readonly guessServiceId?: string;
+    };
+
+export interface ServiceBindingsListRequest {
+  readonly kind: "service-bindings-list";
+}
+
+export type ServiceBindingsListResponse =
+  | {
+      readonly kind: "service-bindings-list";
+      readonly ok: true;
+      readonly bindings: readonly ServiceBinding[];
+    }
+  | { readonly kind: "service-bindings-list"; readonly ok: false };
+
+export interface ServiceBindRequest {
+  readonly kind: "service-bind";
+  readonly binding: ServiceBinding;
+}
+
+export interface ServiceUnbindRequest {
+  readonly kind: "service-unbind";
+  readonly product: Product;
+  /** See `DeployPreflightRequest.origin` — part of the binding identity. */
+  readonly origin: string;
+  readonly scope: string;
+}
+
+export type ServiceBindResponse =
+  | { readonly kind: "service-bind"; readonly ok: true }
+  | {
+      readonly kind: "service-bind";
+      readonly ok: false;
+      readonly reason: "unknown_service" | "unreachable" | "server_error" | "malformed";
+    };
+
+export function isDeployPreflightRequest(v: unknown): v is DeployPreflightRequest {
+  if (!isObject(v) || v["kind"] !== "deploy-preflight") {
+    return false;
+  }
+  const ref = v["targetRef"];
+  const itemId = v["itemId"];
+  return (
+    isProduct(v["product"]) &&
+    typeof v["origin"] === "string" &&
+    v["origin"] !== "" &&
+    typeof v["scope"] === "string" &&
+    v["scope"] !== "" &&
+    (ref === undefined || typeof ref === "string") &&
+    (itemId === undefined || typeof itemId === "string")
+  );
+}
+
+export function isServiceBindingsListRequest(v: unknown): v is ServiceBindingsListRequest {
+  return isObject(v) && v["kind"] === "service-bindings-list";
+}
+
+export function isServiceBindRequest(v: unknown): v is ServiceBindRequest {
+  return isObject(v) && v["kind"] === "service-bind" && isServiceBinding(v["binding"]);
+}
+
+export function isServiceUnbindRequest(v: unknown): v is ServiceUnbindRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "service-unbind" &&
+    isProduct(v["product"]) &&
+    typeof v["origin"] === "string" &&
+    v["origin"] !== "" &&
+    typeof v["scope"] === "string" &&
+    v["scope"] !== ""
+  );
+}
+
+export function isDeployPreflightResponse(v: unknown): v is DeployPreflightResponse {
+  if (!isObject(v) || v["kind"] !== "deploy-preflight") {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return typeof v["serviceId"] === "string" && parseDeployPreflight(v["preflight"]) !== null;
+  }
+  if (v["ok"] !== false || typeof v["reason"] !== "string") {
+    return false;
+  }
+  const guess = v["guessServiceId"];
+  return (
+    (DEPLOY_REFUSALS as readonly string[]).includes(v["reason"]) &&
+    (guess === undefined || typeof guess === "string")
+  );
+}
+
+export function isServiceBindingsListResponse(v: unknown): v is ServiceBindingsListResponse {
+  if (!isObject(v) || v["kind"] !== "service-bindings-list") {
+    return false;
+  }
+  if (v["ok"] === true) {
+    const list = v["bindings"];
+    return Array.isArray(list) && list.every(isServiceBinding);
+  }
+  return v["ok"] === false;
+}
+
+export function isServiceBindResponse(v: unknown): v is ServiceBindResponse {
+  if (!isObject(v) || v["kind"] !== "service-bind") {
+    return false;
+  }
+  if (v["ok"] === true) {
+    return true;
+  }
+  const reason = v["reason"];
+  return (
+    v["ok"] === false &&
+    (reason === "unknown_service" ||
+      reason === "unreachable" ||
+      reason === "server_error" ||
+      reason === "malformed")
+  );
 }

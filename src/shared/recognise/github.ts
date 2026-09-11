@@ -30,7 +30,13 @@ function match(s: readonly string[]): Match | null {
     return null;
   }
   const path = `/${owner}/${repo}/pull/${num}`;
-  return { kind: "pr", ref: `${owner}/${repo} #${num}`, path, matchedPath: path };
+  return {
+    kind: "pr",
+    ref: `${owner}/${repo} #${num}`,
+    path,
+    matchedPath: path,
+    scope: `${owner}/${repo}`,
+  };
 }
 
 export const githubRule: ProductRule = {

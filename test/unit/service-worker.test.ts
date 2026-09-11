@@ -2259,3 +2259,60 @@ describe("the selection context menus", () => {
     expect(hookCalls()).toEqual([]);
   });
 });
+
+describe("C10 routing", () => {
+  test("routes deploy-preflight and answers on the port", async () => {
+    await load();
+    const res = await harness.emitMessage({
+      kind: "deploy-preflight",
+      product: "github",
+      origin: "https://github.com",
+      scope: "acme/web",
+    });
+    expect(res).toMatchObject({ kind: "deploy-preflight" });
+  });
+
+  test("routes service-bindings-list", async () => {
+    await load();
+    const res = await harness.emitMessage({ kind: "service-bindings-list" });
+    expect(res).toMatchObject({ kind: "service-bindings-list", ok: true });
+  });
+
+  test("a malformed deploy-preflight is refused, not routed", async () => {
+    await load();
+    const res = await harness.emitMessage({ kind: "deploy-preflight", product: "nope", scope: "" });
+    expect(res).toBeUndefined();
+  });
+
+  test("service-bindings-list: a storage read failure → ok:false, not a fabricated empty list", async () => {
+    await load();
+    harness.storageGet.mockRejectedValueOnce(new Error("boom"));
+    const res = await harness.emitMessage({ kind: "service-bindings-list" });
+    expect(res).toEqual({ kind: "service-bindings-list", ok: false });
+  });
+
+  test("routes service-bind", async () => {
+    await load();
+    const res = await harness.emitMessage({
+      kind: "service-bind",
+      binding: {
+        product: "github",
+        origin: "https://github.com",
+        scope: "acme/web",
+        serviceId: "svc-1",
+      },
+    });
+    expect(res).toMatchObject({ kind: "service-bind" });
+  });
+
+  test("routes service-unbind", async () => {
+    await load();
+    const res = await harness.emitMessage({
+      kind: "service-unbind",
+      product: "github",
+      origin: "https://github.com",
+      scope: "acme/web",
+    });
+    expect(res).toEqual({ kind: "service-bind", ok: true });
+  });
+});

@@ -1441,6 +1441,77 @@ proposed and landed upstream as Nimbus#1464 and Nimbus#1465, and consumed here.*
 
 ---
 
+## Phase C10 — Before you ship it 🟢
+
+*Theme: `GET /v1/preflight/deploy` and `GET /v1/metrics/dora` are contracted,
+shipped, and sit on the gateway's public read-only table — reachable today,
+with no new token scope and no re-pairing. The one thing blocking them was
+this client not knowing which Nimbus service the page in front of it belongs
+to; that gap is what this phase closes.*
+
+### C10.1 Deploy readiness: the service binding and the panel section · 🟢 · M — ✅ shipped
+> **What** A deploy-readiness section on a pull request or build page asks the
+> gateway `is this safe to ship right now?` and shows the verdict over three
+> checks — active P1 incidents, failing CI runs, merge conflicts — with each
+> finding that carries a URL rendered as a clickable link. The first time a
+> repo is seen, the section shows an editable bind form seeded with a guess
+> instead of guessing silently, and validates the typed service id by asking
+> the gateway rather than a new route. Options gains a table to review and
+> correct existing bindings.
+> **Why it wows** The one question every other lane sidesteps — right before
+> you deploy, not sometime during review — answered from data the gateway
+> already computes, with no new pairing and no new upstream work required to
+> start.
+> **Touches** `src/shared/recognise/*` (`Match.scope`, one per-product
+> spelling), `src/shared/services.ts` (new — `ServiceBinding`, its guard, the
+> slug guess), `src/background/service-binding-store.ts` (new — the worker as
+> sole writer), `src/shared/deploy.ts` (new — the wire types and guards),
+> `src/background/deploy-client.ts` / `deploy-handlers.ts` (new),
+> `src/shared/messages.ts` (`deploy-preflight`, `service-bindings-list`,
+> `service-bind`, `service-unbind`), `src/panel/deploy/` (new —
+> `deploy-section.ts`, `deploy-view.ts`, `deploy-css.ts`),
+> `src/options/` (the bindings management table), `src/shared/gateway.ts`
+> (`preflightDeploy`, `items` in `GATEWAY_PATHS`).
+> **Approach** The gateway holds a repo-to-service map internally but exposes
+> no route over it, so the client keeps its own: a binding is keyed by a
+> registry-supplied repo-level `scope` (not always a forge repo — Jenkins
+> yields a job path), bound once per scope, validated by firing one preflight
+> call and refusing to save an id every check reports `unknown_service` for.
+> Bind is a panel gesture; managing bindings is an Options one; both mutate
+> through the service worker, the store's single writer, never `chrome.storage`
+> directly from Options. The section renders through the agent lanes' own
+> pure views without joining `AGENT_LANES` — no roster-gate exemption, no
+> collision with the `agents.preflight` method upstream never exposes.
+> **Done when** An unbound repo shows the seeded bind form and binding reveals
+> the verdict with no page refresh; a bound repo with a failing CI run shows
+> that finding as a link; `verdict: "warn"` with a zero count and a gap on
+> every check reads as "could not evaluate", never "all clear". **All met**,
+> pinned by `test/e2e/deploy-readiness.e2e.ts` end to end and by
+> `services.test.ts` / `service-binding-store.test.ts` / `deploy-client.test.ts`
+> / `deploy-view.test.ts` / `deploy-section.test.ts` at the unit level.
+> Full design:
+> [`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`](./docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md).
+
+### C10.2 The DORA metrics page · 🟢 · M
+> **What** A `dora.html` page renders the four DORA metrics — deployment
+> frequency, lead time for changes, change failure rate, MTTR — for a bound
+> service across three nested windows (7d / 30d / 90d, each ending now, never
+> stitched into a line a disjoint-window contract cannot honestly draw), each
+> metric's `null`/low-sample/approximate gaps shown rather than hidden.
+> **Why it wows** The metrics half of "before you ship it", reachable from the
+> same bindings C10.1 already collects, with an honesty rule that shows its
+> own uncertainty instead of a confident-looking number nobody should trust.
+> **Touches** `src/shared/dora.ts` (new), `src/dora/` (new — `dora.ts`,
+> `dora-view.ts`, `dora.html`/`dora.css`), the `dora` esbuild entry, Options
+> and the deploy-readiness section (a link to `dora.html?service=<id>`).
+> **Depends** C10.1's bindings, for the service picker.
+> **Done when** Three independently-fallible reads (`Promise.allSettled`, never
+> `Promise.all`) each render their own column or their own failure; a `null`
+> metric value renders as a gap, never a zero.
+> Full design:
+> [`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`](./docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md)
+> (§5).
+
 ## Phase 1 — Trust you can see 🟢
 
 *Theme: turn the invisible privacy guarantee into a visible, provable feature —

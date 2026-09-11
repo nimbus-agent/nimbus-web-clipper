@@ -649,6 +649,46 @@ mock-gateway` makes step 1 reproducible.
    (`item-urls.test.ts`, `gateway-client.test.ts`) but not by this e2e suite,
    which only drives a mock that always serves the route.
 
+## Manual verification — Deploy readiness (C10)
+
+**Both steps run on every PR** (`test/e2e/deploy-readiness.e2e.ts`), so this
+pass is not outstanding for the client half. What it cannot prove is a real
+`GET /v1/preflight/deploy` answer — the mock returns exactly the fixture a
+scenario hands it, never a real preflight computation over a real index.
+
+Prereq: paired, gateway running, page access granted on a repo you have bound
+or want to bind. Both routes this section calls (`preflight/deploy`,
+`items/{id}`) are on the gateway's public read-only table — no scope, no
+re-pairing, no `nimbus clip scopes`.
+
+1. <!-- e2e:deploy-bind --> On a pull request or a build page whose repo has no
+   service binding yet, the deploy-readiness section — headed **Deploy
+   readiness**, below Related and below every agent lane, on `pr` and `build`
+   surfaces only, never on a dashboard, an issue, a doc or a source file —
+   renders an editable input seeded with a guess — the repo's last path
+   segment — never a silent auto-bind. Typing a Nimbus service id and
+   submitting saves the binding **only if the gateway recognises it**: an id
+   that comes back `unknown_service` on every check is refused, with the input
+   left in place to retype. On success, the same section repaints in place
+   with the verdict — no page refresh, no re-opening the panel.
+2. <!-- e2e:deploy-verdict --> On a repo that already has a binding, the
+   section renders the verdict directly. `verdict: "ok"` reads as clear to
+   deploy; `verdict: "warn"` names how many things need a look, broken down
+   per check (active P1 incidents, failing CI runs, merge conflicts) — **never**
+   a bare count with no explanation when every check reports a gap instead
+   (that combination means "could not evaluate", not "all clear", and the
+   section says so in words, not a checkmark). Every finding that carries a
+   `url` — an incident, a CI run, a pull request — renders its title as a
+   clickable link; one that carries none renders as plain text, never a raw id.
+3. **(human — needs a real gateway with a real repo indexed.)** Confirm the
+   `target_ref` ladder's first rung against a live checkout: open a PR whose
+   branch Nimbus has actually indexed (`metadata.branch` on the resolved item),
+   and confirm `failing_ci_runs` is evaluated against **that** branch — not the
+   binding's `defaultBranch` fallback, which only takes over when the page
+   resolves to no item or to one carrying no branch. The mock's `GET
+   /v1/items/{id}` fixture cannot distinguish "the real branch" from "a
+   plausible one" the way a real checkout can.
+
 ## Manual verification — Setup that works (discovery, connection health, the trust panel)
 
 Prereq: a Nimbus gateway available to start/stop on demand. Step 1 needs a

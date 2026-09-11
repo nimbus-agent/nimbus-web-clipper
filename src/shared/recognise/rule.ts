@@ -24,6 +24,21 @@ export interface Match {
    * never make. The gateway holds the file list and splits it there.
    */
   readonly forgeFile?: { readonly repo: string; readonly refAndPath: string };
+  /**
+   * The repo-level key a service binding is keyed by (C10), on `pr` and `build`
+   * matches only.
+   *
+   * Carried here rather than derived from `ref` at the call site: `ref` is HEADER
+   * TEXT ("acme/web #482") and is per-PR, so it identifies the wrong thing at the
+   * wrong granularity. Same reasoning as `forgeFile` above — the products spell
+   * this differently and deriving it twice is the drift the registry prevents.
+   *
+   * NOT always a forge repo. Jenkins yields a JOB PATH, which need not resemble
+   * the `repos = ["github:owner/repo"]` URNs in the gateway's config. That is
+   * fine: the scope is a stable local key the user binds once. It is never sent
+   * to the gateway and never parsed by it.
+   */
+  readonly scope?: string;
 }
 
 /**

@@ -7,7 +7,13 @@ function match(s: readonly string[]): Match | null {
       return null;
     }
     const path = `/pipelines/${vcs}/${org}/${repo}/${num}`;
-    return { kind: "build", ref: `${org}/${repo} #${num}`, path, matchedPath: path };
+    return {
+      kind: "build",
+      ref: `${org}/${repo} #${num}`,
+      path,
+      matchedPath: path,
+      scope: `${org}/${repo}`,
+    };
   }
   // The org- and repo-scoped pipeline lists (`/pipelines/<vcs>/<org>` and
   // `/pipelines/<vcs>/<org>/<repo>`) fall through to here and are declined,

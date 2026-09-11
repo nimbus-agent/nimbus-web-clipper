@@ -8,6 +8,7 @@ import { isCapturedCopy } from "../shared/capture-offer.ts";
 import { gatePolicy } from "../shared/connector-health.ts";
 import {
   type ClipResponse,
+  type ExtensionRequest,
   isAgentStateResponse,
   isCaptureResponse,
   isFetchResponse,
@@ -33,6 +34,8 @@ import {
   type ResolveCandidate,
   type SurfaceKind,
 } from "../shared/types.ts";
+import { DEPLOY_CSS } from "./deploy/deploy-css.ts";
+import { deployBelongsOnSurface, mountDeploySection, type Send } from "./deploy/deploy-section.ts";
 import { FINDINGS_CSS } from "./findings/findings-css.ts";
 import {
   type LaneContext,
@@ -404,6 +407,7 @@ const STYLES = `
 .nimbus-related__fetch-send { background: var(--nimbus-accent); color: #fff; }
 .nimbus-related__fetch-cancel { background: var(--nimbus-border); color: var(--nimbus-fg); }
 ${FINDINGS_CSS}
+${DEPLOY_CSS}
 `;
 
 interface NimbusHost extends HTMLElement {
@@ -613,6 +617,15 @@ function queuedClipMessage(reason: string): string {
 }
 
 /**
+ * The deploy section's `Send`: `sendMessage` already carries the full
+ * `ExtensionRequest` union, and every message this module builds for it
+ * (`deploy-preflight`, `service-bind`) is a member of that union — the cast is
+ * narrowing a caller-owned literal back to the type `sendMessage` always
+ * wanted, not an escape hatch for unrelated data.
+ */
+const sendToWorker: Send = (msg) => sendMessage(msg as ExtensionRequest);
+
+/**
  * The item the shown header names: `resolved`'s item, `chosen`'s candidate, or
  * nothing at all on a miss, an error, or an unpicked ambiguous answer.
  */
@@ -649,6 +662,13 @@ function createPanel(body: HTMLElement): {
   applySelection: (text: string, intent: PanelSelection["intent"] | null) => void;
 } {
   let header: HeaderState = { kind: "loading" };
+  /** The deploy-readiness section's own host, created once per panel mount and
+   *  re-appended (never re-created) on every repaint — `mountDeploySection`
+   *  keys its idempotency off this element's identity, so a fresh one each
+   *  paint would re-ask on every tick. Bare here on purpose: the section
+   *  classes and fills it (`.nimbus-deploy-section`, deploy-section.ts), so its
+   *  title and insets live beside its own CSS rather than here. */
+  const deployHost = document.createElement("div");
   /**
    * The page this panel describes, captured ONCE at mount.
    *
@@ -1520,6 +1540,30 @@ function createPanel(body: HTMLElement): {
       ),
     );
     attachLaneToggles();
+    if (
+      pinnedRecognition?.ok === true &&
+      pinnedRecognition.scope !== undefined &&
+      // `origin` is set unconditionally by `recognise()` alongside `scope` —
+      // see `Recognition.origin`'s doc comment — so this check never actually
+      // fails once the `scope` one above passed. It stays here anyway because
+      // TS narrows only the property it was asked about: without this,
+      // `pinnedRecognition.origin` below is still `string | undefined`.
+      pinnedRecognition.origin !== undefined &&
+      deployBelongsOnSurface(pinnedRecognition.kind)
+    ) {
+      const itemId = shownItemId(shown);
+      body.append(deployHost);
+      mountDeploySection(
+        deployHost,
+        {
+          product: pinnedRecognition.product,
+          origin: pinnedRecognition.origin,
+          scope: pinnedRecognition.scope,
+          ...(itemId === undefined ? {} : { itemId }),
+        },
+        sendToWorker,
+      );
+    }
   }
 
   async function loadHeader(): Promise<void> {

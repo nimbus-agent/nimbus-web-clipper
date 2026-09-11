@@ -97,6 +97,29 @@ export const GATEWAY_PATHS = {
    * bearer token.
    */
   connectors: "/v1/connectors",
+  /**
+   * `GET /v1/preflight/deploy?service=&target_ref=[&max_findings=]` — the deploy
+   * verdict (C10). On the gateway's PUBLIC read-only table
+   * (`dispatchReadOnlyDataGet`), like `/v1/connectors`: no bearer, no scope.
+   *
+   * NOT `agents.preflight`, which is on EXTERNAL_EXCLUDED_AGENT_METHODS and is
+   * never exposed externally. The names collide; the things do not.
+   */
+  preflightDeploy: "/v1/preflight/deploy",
+  /** `GET /v1/metrics/dora?service=&since=` — the DORA envelope (C10). Same
+   *  public table. Takes NO `until`, which is why the page renders nested
+   *  windows rather than a series. */
+  metricsDora: "/v1/metrics/dora",
+  /**
+   * BASE, not a complete path: callers append `/${encodeURIComponent(id)}`.
+   * Same treatment as `agents` / `agentRuns` above — a static map cannot express
+   * a path parameter, and a second map is what the resolve slice existed to
+   * delete.
+   *
+   * Returns the FULL row including `body`. Only the caller in the background
+   * worker may read it, and only `metadata.branch` may cross into a page.
+   */
+  items: "/v1/items",
 } as const;
 
 export type GatewayEndpoint = keyof typeof GATEWAY_PATHS;

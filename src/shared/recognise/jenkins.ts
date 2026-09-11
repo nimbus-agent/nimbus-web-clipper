@@ -22,7 +22,13 @@ function match(s: readonly string[]): Match | null {
   }
   const jobSegments = names.map((n) => `job/${n}`).join("/");
   const path = `/${jobSegments}/${num}`;
-  return { kind: "build", ref: `${names.join("/")} #${num}`, path, matchedPath: path };
+  return {
+    kind: "build",
+    ref: `${names.join("/")} #${num}`,
+    path,
+    matchedPath: path,
+    scope: names.join("/"),
+  };
 }
 
 export const jenkinsRule: ProductRule = {

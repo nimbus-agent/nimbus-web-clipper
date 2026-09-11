@@ -1163,3 +1163,98 @@ describe("the disclosure log panel", () => {
     expect(el("brief-log").textContent).toContain("what changed in auth");
   });
 });
+
+describe("service bindings (#bindings-list)", () => {
+  const binding = {
+    product: "github",
+    origin: "https://github.com",
+    scope: "acme/web",
+    serviceId: "web",
+  };
+
+  /** A kind-aware reply table, same shape as the ledger describe block's
+   *  `bootWith` above — the page now sends several message kinds on load. */
+  function bootBindings(list: unknown): Promise<void> {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) =>
+      m.kind === "service-bindings-list"
+        ? { kind: "service-bindings-list", ok: true, bindings: list }
+        : unpaired,
+    );
+    document.body.innerHTML = `${FIXTURE}<output id="bindings-status"></output><div id="bindings-list"></div>`;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    return flush();
+  }
+
+  test("renders the bindings the worker reports", async () => {
+    await bootBindings([binding]);
+    expect(el("bindings-list").textContent).toContain("acme/web");
+  });
+
+  // LOAD-BEARING: `ok: false` is a failed READ, not "you have no bindings".
+  // Rendering it as an empty table would invite a user to rebind a repository
+  // that is already bound.
+  test("ok: false renders an honest error, never an empty table", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) =>
+      m.kind === "service-bindings-list" ? { kind: "service-bindings-list", ok: false } : unpaired,
+    );
+    document.body.innerHTML = `${FIXTURE}<output id="bindings-status"></output><div id="bindings-list"></div>`;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    expect(el("bindings-list").querySelector("table")).toBeNull();
+    expect(el("bindings-list").textContent).toMatch(/could not read/i);
+    expect(el("bindings-list").textContent).not.toMatch(/no service bindings/i);
+  });
+
+  test("a REJECTING channel renders the error state rather than throwing", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockRejectedValue(new Error("channel closed"));
+    document.body.innerHTML = `${FIXTURE}<output id="bindings-status"></output><div id="bindings-list"></div>`;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    expect(el("bindings-list").textContent).toMatch(/could not read/i);
+  });
+
+  test("Unbind sends service-unbind for the clicked binding, and re-reads the list — never writes storage directly", async () => {
+    await bootBindings([binding]);
+
+    el("bindings-list").querySelector<HTMLButtonElement>("table tbody tr button")?.click();
+    await flush();
+
+    expect(harness.sendMessage).toHaveBeenCalledWith({
+      kind: "service-unbind",
+      product: "github",
+      origin: "https://github.com",
+      scope: "acme/web",
+    });
+    // The worker is the sole writer of bindings — Options mutates by message
+    // only, never by writing chrome.storage directly (which would reintroduce
+    // the lost-update the worker's write-chain lock exists to prevent).
+    expect(harness.storageSet).not.toHaveBeenCalled();
+  });
+
+  test("a failed unbind reports status without abandoning the list", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: [binding] };
+      }
+      if (m.kind === "service-unbind") {
+        return { kind: "service-bind", ok: false, reason: "server_error" };
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = `${FIXTURE}<output id="bindings-status"></output><div id="bindings-list"></div>`;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    el("bindings-list").querySelector<HTMLButtonElement>("table tbody tr button")?.click();
+    await flush();
+
+    expect(el("bindings-status").textContent).toContain("try again");
+    expect(el("bindings-list").textContent).toContain("acme/web");
+  });
+});

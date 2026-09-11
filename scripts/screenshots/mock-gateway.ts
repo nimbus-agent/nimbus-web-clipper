@@ -10,6 +10,7 @@ import {
   AGENT_RUN_DONE,
   BRIEF_REPORT,
   CLIP_INGEST,
+  DORA_METRICS_FIXTURE,
   EGRESS_HEAD,
   EGRESS_PROVE,
   EGRESS_VERIFY,
@@ -19,7 +20,10 @@ import {
   type FedBriefSource,
   type FedClip,
   INDEX_BRIEF_REPORT,
+  ITEM_WITH_BRANCH,
   PAIR_CONFIRM,
+  PREFLIGHT_OK,
+  PREFLIGHT_UNKNOWN_SERVICE,
   RELATED,
   RESOLVE_FILE_FIXTURE,
   RESOLVE_FIXTURE,
@@ -200,6 +204,39 @@ export async function handleRequest(
     const ids = new Set(url.searchParams.getAll("id"));
     const items = (scenario.resolveIds ?? []).filter((row) => ids.has(row.id));
     return jsonResponse({ items });
+  }
+  // `GET /v1/preflight/deploy?service=&target_ref=[&max_findings=]` — the
+  // deploy verdict (C10). On the gateway's PUBLIC read-only table, same as
+  // `health` above: no bearer, no scope, no separate auth check here. Keyed
+  // by the exact `service` param, same shape as `resolve` above — except
+  // `service=unknown` is hardcoded to the all-unknown_service envelope,
+  // mirroring the real gateway's `unconfiguredEnvelope` for any id it has
+  // never heard of, so the bind flow's validate-by-asking has something
+  // deterministic to refuse.
+  if (req.method === "GET" && url.pathname === GATEWAY_PATHS.preflightDeploy) {
+    const service = url.searchParams.get("service") ?? "";
+    if (service === "unknown") {
+      return jsonResponse(PREFLIGHT_UNKNOWN_SERVICE);
+    }
+    const keyed = scenario.preflight?.[service];
+    return jsonResponse(keyed ?? scenario.preflightDefault ?? PREFLIGHT_OK);
+  }
+  // `GET /v1/metrics/dora?service=&since=` — the DORA envelope (C10). Same
+  // public table as `preflightDeploy` above. Unused by this slice (S2's DORA
+  // page is the first reader) — seeded here only so the route has an answer
+  // rather than a 404 nothing yet asks for.
+  if (req.method === "GET" && url.pathname === GATEWAY_PATHS.metricsDora) {
+    return jsonResponse(scenario.doraMetrics ?? DORA_METRICS_FIXTURE);
+  }
+  // `GET /v1/items/{id}` (C10) — the full row `fetchItemBranch`
+  // (src/background/deploy-client.ts) reads `metadata.branch` off of. Checked
+  // AFTER `resolve`/`resolve-file`/`resolve-ids` above, which already own
+  // their own exact paths under this same `/v1/items` base — an id literally
+  // spelled "resolve" can never reach here because the exact match above
+  // already claimed it, same precedent as the `agentRuns` prefix check below
+  // being checked ahead of the generic `/v1/agents/{agent}` one.
+  if (req.method === "GET" && url.pathname.startsWith(`${GATEWAY_PATHS.items}/`)) {
+    return jsonResponse(scenario.item ?? ITEM_WITH_BRANCH);
   }
   // The four egress-ledger reads. GETs, checked before the POST-only gate below.
   // `egress` is matched before its three children because none of them is a
