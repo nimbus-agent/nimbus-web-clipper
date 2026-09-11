@@ -1790,9 +1790,15 @@ the same table `GET /v1/connectors` already answers from: no bearer, no scope,
 no re-pairing. One thing blocked reading it before C10, and it was the whole
 of the phase's novelty — the client did not know which Nimbus **service** the
 page in front of it belongs to. This section is the durable record of that
-gap and how it closed; the design spec that worked it out
-(`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`) is pruned
-once both of its slices ship.
+gap and how it closed. The design spec that worked it out was pruned once
+slice 1 (the service binding and the panel section) shipped, per the
+convention in `CLAUDE.md`, and lives on in git history
+(`2026-09-10-before-you-ship-it-design.md`). Slice 2 (the DORA metrics page)
+has not shipped yet, so the one piece of its design that does not belong to
+any not-yet-written client code — the nested-windows constraint on the route
+itself — is recorded below rather than left to die with the spec; the rest of
+slice 2's design (the wire types, the message envelope, the page) is
+reachable only from that same git history until the slice is built.
 
 ### `deploy.preflight` is not `agents.preflight`
 
@@ -1958,6 +1964,22 @@ a newer vocabulary, and still rejects the check. `GAP_NOTE` carries a sentence
 for the unrecognised member like any other, because a gapped check that says
 nothing renders as a bare label under a zero — the "all clear" this whole rule
 exists to prevent.
+
+### The DORA route's windows are nested, not a trend
+
+`GET /v1/metrics/dora` takes `since` and **no `until`**, so every window it
+answers ends at *now*: 7d, 30d and 90d are three **nested** windows sharing an
+end point, not three consecutive periods — a disjoint series is not
+expressible on the contract as it stands. Stitching three such windows into a
+line would draw a slope between three readings of the same metric at
+different resolutions, which any reader takes as change over time; it is not
+that. Whichever surface renders these three windows has to show them side by
+side, each column labelled as a window ending now — still directional, and
+still honest, without implying a trend the contract cannot back. `until` is
+proposed upstream precisely to make a real series expressible; until it
+lands, this constraint is a property of the route, not of any one client, and
+binds every future consumer of it, including the DORA page slice 2 has not
+built yet.
 
 ## Research briefs
 

@@ -3,7 +3,8 @@
 // chunked against BOTH of `/v1/items/resolve-ids`'s bounds, and tolerant of a
 // chunk — or every chunk — failing. Runs in the background service worker, when
 // an agent run lands, never in the panel (which holds no token). See
-// docs/superpowers/specs/2026-09-08-a-title-you-can-follow-design.md §4.
+// `docs/architecture.md`, "What can be linked, and what cannot" — the
+// phase's design spec was pruned once C9 shipped and lives on in git history.
 import type { ItemUrlMap, LaneFindings } from "../shared/findings.ts";
 import { RESOLVE_IDS_MAX_BATCH, type ResolvedIdRow } from "./gateway-client.ts";
 
