@@ -2,7 +2,7 @@ import { describe, expect, it, test } from "vitest";
 import { endpointUrl, GATEWAY_PATHS, isLoopbackOrigin } from "../../src/shared/gateway.ts";
 
 describe("GATEWAY_PATHS", () => {
-  it("is the nineteen contracted gateway paths", () => {
+  it("is the twenty contracted gateway paths", () => {
     expect(GATEWAY_PATHS).toEqual({
       ingest: "/v1/clips",
       pairConfirm: "/v1/clips/pair/confirm",
@@ -22,6 +22,7 @@ describe("GATEWAY_PATHS", () => {
       connectors: "/v1/connectors",
       preflightDeploy: "/v1/preflight/deploy",
       metricsDora: "/v1/metrics/dora",
+      servicesResolve: "/v1/services/resolve",
       items: "/v1/items",
     });
   });
@@ -86,4 +87,11 @@ describe("health endpoint", () => {
   test("health is a contracted path", () => {
     expect(endpointUrl("http://127.0.0.1:7474", "health")).toBe("http://127.0.0.1:7474/v1/health");
   });
+});
+
+test("servicesResolve is a contracted path and joins onto an origin", () => {
+  expect(GATEWAY_PATHS.servicesResolve).toBe("/v1/services/resolve");
+  expect(endpointUrl("http://127.0.0.1:8787", "servicesResolve")).toBe(
+    "http://127.0.0.1:8787/v1/services/resolve",
+  );
 });

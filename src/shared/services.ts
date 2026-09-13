@@ -2,9 +2,16 @@
 //
 // A Nimbus SERVICE is a `[metrics.dora.<id>]` block in the gateway's own config.
 // It is NOT `PRODUCT_SERVICE_ID`'s connector id ("github", "jenkins") — a
-// different axis entirely, and the one the agent lanes use. The gateway holds
-// the reverse map internally but exposes no route over it, so the user binds it
-// here, once per scope.
+// different axis entirely, and the one the agent lanes use.
+//
+// The gateway holds this reverse map internally and, since Nimbus#1491
+// (gateway v7.19.0), exposes `GET /v1/services/resolve` over it. The client
+// still keeps its own binding: that route is scoped and can be unavailable
+// (403 on a narrow token, 404 on an older gateway), its match against
+// `nimbus.toml` is an EXACT string comparison that a live page's coordinate can
+// legitimately miss, and a binding is a local key (`origin` + `product` +
+// `scope`) the gateway never sees. The route makes the binding ACCURATE; it
+// does not remove the need for one. See the C10.3 design, §1 and §3.1.
 import { isProduct } from "./origins.ts";
 import type { Product } from "./types.ts";
 
