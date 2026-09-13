@@ -1515,6 +1515,50 @@ to; that gap is what this phase closes.*
 > Full design:
 > [`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`](./docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md)
 > (§5).
+> **Correction (2026-09-13, unbuilt)** The "never stitched into a line" rule
+> above, and §5.1 of the spec it cites, rest on `GET /v1/metrics/dora` taking
+> `since` and no `until` — so the three windows nest and a slope between them
+> would mean nothing. That held when it was written and does not now.
+> `GET /v1/metrics/stats` (Nimbus#1493, 2026-09-11, released in gateway
+> **v7.19.0**) serves one metric as a genuine **bucketed time series**
+> (`window_ms` + `bucket_ms` → `points[]`, each with `value | null`, `unit`,
+> `sample`, `gap`), it is **public** like the two routes C10.1 already uses, and
+> its metric set is *wider* than DORA's — the four, plus `pr-merges` and
+> `incidents-opened`, with `StatsGap` widening the gap vocabulary by
+> `github_only_merge_data` and `incidents_missing_opened_at`. Whoever builds
+> this slice should revisit §5.1 before writing the renderer: the page can now
+> honestly draw the trend its own spec forbids. The `until` proposed in §7 is
+> moot.
+
+### C10.3 The binding stops guessing · 🟢 · M
+> **What** The bind form stops seeding itself with a guessed slug and asks the
+> gateway which service claims the repo, offering the candidates when more than
+> one does; Options gains a check that flags a stored binding the gateway no
+> longer claims or now maps elsewhere, with the correction one click away.
+> **Why it wows** The one place the deploy section still asks the user to know
+> something the gateway already knows. C10.1 had to guess because no route
+> exposed the repo-to-service map; one shipped two days later, built expressly
+> to feed the two routes C10.1 consumes.
+> **Touches** `src/shared/gateway.ts` (`servicesResolve`),
+> `src/shared/services.ts` (`repoUrn` + `URN_PROVIDER`, and the opening comment
+> that is now false), `src/shared/deploy.ts`, `src/background/deploy-client.ts`
+> (`fetchServiceResolution` — the deploy family's first *bearer* read),
+> `src/background/deploy-handlers.ts`, `src/shared/messages.ts`,
+> `src/panel/deploy/`, `src/options/`, `scripts/mock-gateway.ts`.
+> **Approach** Asked in the worker, inside `handleDeployPreflight`'s existing
+> `unbound` arm — the token never enters a page, and that arm already carries a
+> seed and an optional note, so the seeding half needs no new message. Bearer
+> read under the `resolve` scope C7 and C9 already use. The match upstream is an
+> exact string comparison against `nimbus.toml`, so `service: null` proves only
+> that no service spells the repo this way — the note says that and never that
+> the repo is unconfigured, and the guess survives as the seed.
+> **Done when** A bound-for-the-first-time repo shows the gateway's own answer
+> rather than a slug guess; two claimants render as a picker; a gateway without
+> the route behaves exactly as C10.1 shipped, silently and with no version
+> floor; a stored binding the gateway now maps elsewhere is flagged in Options
+> and correctable in one click, still validated by the existing preflight probe.
+> Full design:
+> [`docs/superpowers/specs/2026-09-13-the-binding-stops-guessing-design.md`](./docs/superpowers/specs/2026-09-13-the-binding-stops-guessing-design.md).
 
 ## Phase 1 — Trust you can see 🟢
 
