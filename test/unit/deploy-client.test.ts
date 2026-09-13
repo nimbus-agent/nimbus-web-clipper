@@ -1,6 +1,10 @@
 // test/unit/deploy-client.test.ts
 import { describe, expect, test, vi } from "vitest";
-import { fetchItemBranch, fetchPreflight } from "../../src/background/deploy-client.ts";
+import {
+  fetchItemBranch,
+  fetchPreflight,
+  fetchServiceResolution,
+} from "../../src/background/deploy-client.ts";
 
 const ORIGIN = "http://127.0.0.1:7474";
 
@@ -117,5 +121,95 @@ describe("fetchItemBranch", () => {
     await fetchItemBranch(ORIGIN, "a/b", doFetch as unknown as typeof fetch);
     const [url] = doFetch.mock.calls[0] as unknown as [string];
     expect(url).toBe(`${ORIGIN}/v1/items/a%2Fb`);
+  });
+});
+
+function res(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), { status });
+}
+
+describe("fetchServiceResolution", () => {
+  test("sends a bearer token and the repo query, and parses a claimant", async () => {
+    let seenUrl = "";
+    let seenAuth = "";
+    const doFetch = (async (url: string, init: RequestInit) => {
+      seenUrl = url;
+      seenAuth = (init.headers as Record<string, string>)["authorization"] ?? "";
+      return res(200, { service: "checkout", ambiguous: false, candidates: ["checkout"] });
+    }) as unknown as typeof fetch;
+
+    const out = await fetchServiceResolution(
+      "http://127.0.0.1:8787",
+      "tok",
+      "github:acme/web",
+      doFetch,
+    );
+
+    expect(seenUrl).toBe("http://127.0.0.1:8787/v1/services/resolve?repo=github%3Aacme%2Fweb");
+    expect(seenAuth).toBe("Bearer tok");
+    expect(out).toEqual({
+      ok: true,
+      value: { service: "checkout", ambiguous: false, candidates: ["checkout"] },
+    });
+  });
+
+  test("maps each status the way egress-client does", async () => {
+    const at = async (status: number, body: unknown = {}) =>
+      fetchServiceResolution("http://127.0.0.1:8787", "t", "github:a/b", (async () =>
+        res(status, body)) as unknown as typeof fetch);
+
+    expect((await at(401)).ok).toBe(false);
+    expect(await at(401)).toMatchObject({ reason: "unauthorized" });
+    expect(await at(404)).toMatchObject({ reason: "unsupported" });
+    expect(await at(429)).toMatchObject({ reason: "rate_limited" });
+    expect(await at(500, { error: "config_unreadable" })).toMatchObject({
+      reason: "server_error",
+    });
+  });
+
+  test("carries a full scope gap on 403, and none from a partial body", async () => {
+    const withGap = await fetchServiceResolution(
+      "http://127.0.0.1:8787",
+      "t",
+      "github:a/b",
+      (async () =>
+        res(403, { required: "resolve", granted: ["clip", "briefs"] })) as unknown as typeof fetch,
+    );
+    expect(withGap).toEqual({
+      ok: false,
+      reason: "insufficient_scope",
+      scopeGap: { required: "resolve", granted: ["clip", "briefs"] },
+    });
+
+    const partial = await fetchServiceResolution(
+      "http://127.0.0.1:8787",
+      "t",
+      "github:a/b",
+      (async () => res(403, { required: "resolve" })) as unknown as typeof fetch,
+    );
+    expect(partial).toEqual({ ok: false, reason: "insufficient_scope" });
+  });
+
+  test("a body the guard rejects is server_error, not a silent pass-through", async () => {
+    const out = await fetchServiceResolution(
+      "http://127.0.0.1:8787",
+      "t",
+      "github:a/b",
+      (async () =>
+        res(200, { service: "a", ambiguous: true, candidates: ["a"] })) as unknown as typeof fetch,
+    );
+    expect(out).toEqual({ ok: false, reason: "server_error" });
+  });
+
+  test("a thrown fetch is unreachable", async () => {
+    const out = await fetchServiceResolution(
+      "http://127.0.0.1:8787",
+      "t",
+      "github:a/b",
+      (async () => {
+        throw new Error("down");
+      }) as unknown as typeof fetch,
+    );
+    expect(out).toEqual({ ok: false, reason: "unreachable" });
   });
 });
