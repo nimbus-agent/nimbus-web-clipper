@@ -2,7 +2,6 @@
 // background service worker via chrome.runtime messaging. External data crossing
 // the messaging boundary is `unknown` until narrowed by a guard here — never `any`.
 
-import type { ServiceResolveError } from "../background/deploy-client.ts";
 import { isCanonicalRejection } from "./canonical.ts";
 import { isSourceShape } from "./clip.ts";
 import { CONNECTOR_STATES, type ConnectorHealth } from "./connector-health.ts";
@@ -1391,12 +1390,34 @@ export interface ServiceBindingsCheckRequest {
   readonly kind: "service-bindings-check";
 }
 
+// Mirrors `ServiceResolveError` (background/deploy-client.ts) member for
+// member. "malformed" is NOT here because it is not there: a body the guard
+// rejects maps to `server_error`, so no branch can produce it, and a state no
+// code can reach is a branch a reader will write and never exercise.
+//
+// Declared as a runtime list, and `CheckUncheckedReason` derived from it below,
+// rather than importing `ServiceResolveError` itself: `src/shared/` is the
+// layer `src/background/` consumes, never the reverse. The two types stay
+// structurally identical, so a `ServiceResolveError` value still assigns
+// straight into `unchecked.reason` — and if `ServiceResolveError` ever gains a
+// seventh member, that assignment stops compiling until this list is updated
+// to match, which is the right outcome.
+const CHECK_UNCHECKED_REASONS = [
+  "unauthorized",
+  "insufficient_scope",
+  "unsupported",
+  "rate_limited",
+  "unreachable",
+  "server_error",
+] as const;
+type CheckUncheckedReason = (typeof CHECK_UNCHECKED_REASONS)[number];
+
 export type BindingCheckStatus =
   | { readonly state: "agrees" }
   | { readonly state: "disagrees"; readonly proposedServiceId: string }
   | { readonly state: "unclaimed" }
   | { readonly state: "ambiguous"; readonly candidates: readonly string[] }
-  | { readonly state: "unchecked"; readonly reason: ServiceResolveError };
+  | { readonly state: "unchecked"; readonly reason: CheckUncheckedReason };
 
 export interface ServiceBindingCheckRow {
   readonly binding: ServiceBinding;
@@ -1416,18 +1437,6 @@ export type ServiceBindingsCheckResponse =
     };
 
 const CHECK_STATES = ["agrees", "disagrees", "unclaimed", "ambiguous", "unchecked"] as const;
-// Mirrors `ServiceResolveError` member for member. "malformed" is NOT here
-// because it is not there: a body the guard rejects maps to `server_error`, so
-// no branch can produce it, and a state no code can reach is a branch a reader
-// will write and never exercise.
-const CHECK_UNCHECKED_REASONS = [
-  "unauthorized",
-  "insufficient_scope",
-  "unsupported",
-  "rate_limited",
-  "unreachable",
-  "server_error",
-] as const;
 
 function isBindingCheckStatus(v: unknown): v is BindingCheckStatus {
   if (!isObject(v)) return false;
