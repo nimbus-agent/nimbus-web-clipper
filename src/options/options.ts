@@ -526,8 +526,27 @@ async function refreshBindings(): Promise<void> {
   );
 }
 
+/**
+ * Bumped by EVERY operation that mutates bindings (`onUnbind`, `onCorrect`).
+ *
+ * A check renders from its OWN response snapshot rather than re-reading the
+ * list, and only the check button is disabled while it is in flight — the
+ * per-row Unbind controls, and the correction buttons a previous check left on
+ * screen, stay live. Without this counter a check whose reply lands after a
+ * mutation repaints the pre-mutation table: an unbound row comes back from the
+ * dead, carrying a working "Use …" button that would `service-bind` it into
+ * existence again. Disabling Unbind for the duration would narrow that window
+ * without closing it, since the correction path mutates too.
+ *
+ * So: capture it before the round trip, compare before painting, and let the
+ * post-mutation table stand. Monotonic and never reset — only equality against
+ * a captured value is ever asked of it.
+ */
+let bindingsGeneration = 0;
+
 async function onUnbind(binding: ServiceBinding): Promise<void> {
   setBindingsStatus("");
+  bindingsGeneration += 1;
   try {
     const res = await sendMessage({
       kind: "service-unbind",
@@ -580,6 +599,10 @@ async function onCheckBindings(keepStatus = false): Promise<void> {
   if (button === null || host === null) {
     return;
   }
+  // Captured BEFORE the round trip — see `bindingsGeneration`. `onCorrect`
+  // bumps it before it awaits this, so the re-check it drives reads its own
+  // post-mutation value and paints normally.
+  const generation = bindingsGeneration;
   // Disabled for the duration of the check — a second click mid-flight would
   // race two renders against one table.
   button.disabled = true;
@@ -599,6 +622,17 @@ async function onCheckBindings(keepStatus = false): Promise<void> {
           ? "Pair with a Nimbus gateway to check your bindings"
           : "Could not check your bindings — try again.",
       );
+      return;
+    }
+    if (generation !== bindingsGeneration) {
+      // The bindings changed while this was in flight, so these rows describe a
+      // table that no longer exists. Discard the render — whatever the mutation
+      // painted is the current truth — and do not clear the status either: the
+      // one caller that passes `keepStatus` has a refusal on screen that
+      // outranks anything a superseded check has to say.
+      if (!keepStatus) {
+        setBindingsStatus("Your bindings changed while that check ran — check again.");
+      }
       return;
     }
     if (!keepStatus) {
@@ -648,6 +682,10 @@ async function onCheckBindings(keepStatus = false): Promise<void> {
  */
 async function onCorrect(binding: ServiceBinding, proposedServiceId: string): Promise<void> {
   setBindingsStatus("");
+  // A correction is a mutation like any other: bumped BEFORE the write, so a
+  // check already in flight cannot paint over its result. See
+  // `bindingsGeneration`.
+  bindingsGeneration += 1;
   let refused = false;
   try {
     const res = await sendMessage({

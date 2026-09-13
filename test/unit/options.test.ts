@@ -1335,6 +1335,55 @@ describe("service bindings check (#bindings-check)", () => {
     expect(button("bindings-check").textContent).toBe("Check with Nimbus");
   });
 
+  // LOAD-BEARING: the check renders from its OWN snapshot, and only the check
+  // button is disabled while it runs — the row's Unbind stays live. A reply
+  // that lands after an unbind would otherwise repaint the deleted row,
+  // correction button and all, offering to `service-bind` it back into
+  // existence. The generation guard is what makes a superseded check silent.
+  test("a check whose reply lands AFTER an unbind cannot repaint the removed row", async () => {
+    let releaseCheck = (): void => {};
+    const checkLanded = new Promise<void>((r) => {
+      releaseCheck = r;
+    });
+    let unbound = false;
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: unbound ? [] : [binding] };
+      }
+      if (m.kind === "service-bindings-check") {
+        await checkLanded;
+        return {
+          kind: "service-bindings-check",
+          ok: true,
+          rows: [{ binding, status: { state: "disagrees", proposedServiceId: "web-api" } }],
+        };
+      }
+      if (m.kind === "service-unbind") {
+        unbound = true;
+        return { kind: "service-bind", ok: true };
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = BINDINGS_FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    button("bindings-check").click();
+    await flush();
+    // The check is still in flight; the row's Unbind control is not disabled.
+    el("bindings-list").querySelector<HTMLButtonElement>("table tbody tr button")?.click();
+    await flush();
+    expect(el("bindings-list").textContent).not.toContain("acme/web");
+
+    releaseCheck();
+    await flush();
+
+    expect(el("bindings-list").textContent).not.toContain("acme/web");
+    expect(el("bindings-list").querySelector("button[data-proposed]")).toBeNull();
+    expect(el("bindings-status").textContent).toMatch(/check again/i);
+  });
+
   /** The whole correction round trip: the check answers `disagrees`, the row's
    *  "Use …" button sends `service-bind`, and the SAME check reply is served
    *  again by the re-check that follows. The caller supplies only the bind
