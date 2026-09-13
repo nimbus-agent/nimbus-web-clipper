@@ -226,12 +226,17 @@ describe("handleDeployPreflight", () => {
       deps({
         resolveService: async () => ({
           ok: true,
-          value: { service: "checkout", ambiguous: true, candidates: ["checkout", "cart"] },
+          // `service` deliberately is NOT `candidates[0]` here: `parseServiceResolution`
+          // only requires `service` to be a MEMBER of `candidates`, not the first one.
+          // Upstream happens to always send them equal, which is exactly why this
+          // fixture must not — a wire-realistic ordering would pass even if the
+          // implementation wrongly seeded from `candidates[0]`.
+          value: { service: "checkout", ambiguous: true, candidates: ["cart", "checkout"] },
         }),
       }),
     );
     expect(out).toMatchObject({
-      resolution: { kind: "ambiguous", serviceId: "checkout", candidates: ["checkout", "cart"] },
+      resolution: { kind: "ambiguous", serviceId: "checkout", candidates: ["cart", "checkout"] },
     });
   });
 
