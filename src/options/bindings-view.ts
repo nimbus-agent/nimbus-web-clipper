@@ -1,12 +1,59 @@
-// Pure DOM builder for the Options "Service bindings" table (C10). A binding's
-// `scope` is a registry-supplied repo-level key, not gateway-attested — every
-// field here is written with textContent, never innerHTML.
+// Pure DOM builder for the Options "Service bindings" table (C10, C10.3 slice
+// 2). A binding's `scope` is a registry-supplied repo-level key, not
+// gateway-attested — every field here is written with textContent, never
+// innerHTML.
+import type { BindingCheckStatus } from "../shared/messages.ts";
 import { productName } from "../shared/recognise/registry.ts";
-import type { ServiceBinding } from "../shared/services.ts";
+import { bindingKey, type ServiceBinding } from "../shared/services.ts";
 
 function cell(text: string): HTMLTableCellElement {
   const td = document.createElement("td");
   td.textContent = text;
+  return td;
+}
+
+/**
+ * The `service-bindings-check` verdict for one row, as DOM. `unchecked` NEVER
+ * says the binding is wrong — a 403 or a rate limit is a fact about this
+ * browser's token or this moment, not about the binding, and the bindings
+ * table it decorates was already read successfully. The `unclaimed` wording is
+ * the panel's §5.2 wording again, verbatim: upstream's match against
+ * `nimbus.toml` is an EXACT string comparison, so a null answer also covers a
+ * repo configured under different casing or a different coordinate form —
+ * never "not configured", never an invitation to add a service.
+ */
+function statusCell(
+  binding: ServiceBinding,
+  status: BindingCheckStatus,
+  onUpdate: ((binding: ServiceBinding, proposedServiceId: string) => void) | undefined,
+): HTMLTableCellElement {
+  const td = document.createElement("td");
+  switch (status.state) {
+    case "agrees":
+      td.textContent = "Matches Nimbus";
+      break;
+    case "disagrees": {
+      const { proposedServiceId } = status;
+      const span = document.createElement("span");
+      span.textContent = `Nimbus now maps this to “${proposedServiceId}”`;
+      const use = document.createElement("button");
+      use.type = "button";
+      use.textContent = `Use “${proposedServiceId}”`;
+      use.dataset["proposed"] = proposedServiceId;
+      use.addEventListener("click", () => onUpdate?.(binding, proposedServiceId));
+      td.append(span, use);
+      break;
+    }
+    case "unclaimed":
+      td.textContent = "No Nimbus service names this repository by this coordinate";
+      break;
+    case "ambiguous":
+      td.textContent = `${status.candidates.length} services name this repository`;
+      break;
+    case "unchecked":
+      td.textContent = "Could not check";
+      break;
+  }
   return td;
 }
 
@@ -19,6 +66,8 @@ function cell(text: string): HTMLTableCellElement {
 function row(
   binding: ServiceBinding,
   onUnbind: (binding: ServiceBinding) => void,
+  status: BindingCheckStatus | undefined,
+  onUpdate: ((binding: ServiceBinding, proposedServiceId: string) => void) | undefined,
 ): HTMLTableRowElement {
   const tr = document.createElement("tr");
 
@@ -48,17 +97,33 @@ function row(
     cell(productName(binding.product)),
     cell(binding.serviceId),
     cell(binding.defaultBranch ?? ""),
-    action,
   );
+  if (status !== undefined) {
+    tr.append(statusCell(binding, status, onUpdate));
+  }
+  tr.append(action);
   return tr;
 }
 
-/** Renders the bindings table, or — when there are none — says so rather than
- *  showing a headed empty table (an empty table with column headers reads as
- *  "still loading", not "there is nothing here"). */
+/**
+ * Renders the bindings table, or — when there are none — says so rather than
+ * showing a headed empty table (an empty table with column headers reads as
+ * "still loading", not "there is nothing here").
+ *
+ * `statuses` and `onUpdate` are both optional and both absent by default
+ * (C10.3 slice 2): with no `statuses` map the table renders exactly as it did
+ * before this feature existed — no "Status" column, no correction button — so
+ * every pre-existing caller keeps its original shape. The map is keyed by
+ * `bindingKey(origin, product, scope)`, the one structural encoding this
+ * codebase already uses for binding identity everywhere else; see that
+ * function's doc comment in `src/shared/services.ts` for why a delimiter-joined
+ * key is never a substitute.
+ */
 export function renderBindingsTable(
   bindings: readonly ServiceBinding[],
   onUnbind: (binding: ServiceBinding) => void,
+  statuses?: ReadonlyMap<string, BindingCheckStatus>,
+  onUpdate?: (binding: ServiceBinding, proposedServiceId: string) => void,
 ): HTMLElement {
   if (bindings.length === 0) {
     const empty = document.createElement("p");
@@ -73,7 +138,12 @@ export function renderBindingsTable(
 
   const thead = document.createElement("thead");
   const head = document.createElement("tr");
-  for (const label of ["Scope", "Origin", "Product", "Service", "Default branch", ""]) {
+  const labels = ["Scope", "Origin", "Product", "Service", "Default branch"];
+  if (statuses !== undefined) {
+    labels.push("Status");
+  }
+  labels.push("");
+  for (const label of labels) {
     const th = document.createElement("th");
     th.textContent = label;
     head.append(th);
@@ -82,7 +152,8 @@ export function renderBindingsTable(
 
   const tbody = document.createElement("tbody");
   for (const binding of bindings) {
-    tbody.append(row(binding, onUnbind));
+    const status = statuses?.get(bindingKey(binding.origin, binding.product, binding.scope));
+    tbody.append(row(binding, onUnbind, status, onUpdate));
   }
 
   table.append(thead, tbody);

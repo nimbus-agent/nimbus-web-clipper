@@ -7,10 +7,12 @@ import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.t
 import { isFirefoxRuntime, sendMessage } from "../browser/runtime.ts";
 import { isBriefLogEntry } from "../shared/brief-log.ts";
 import {
+  type BindingCheckStatus,
   type DiscoverResponse,
   type EgressWindowResponse,
   isConnectionResponse,
   isEgressWindowSuccess,
+  isServiceBindingsCheckResponse,
   isServiceBindingsListResponse,
   isServiceBindResponse,
   type PairResponse,
@@ -24,7 +26,7 @@ import {
 } from "../shared/origins.ts";
 import { BUILT_IN_SURFACES } from "../shared/recognise/index.ts";
 import { RULE_BY_PRODUCT, SELF_HOSTABLE_PRODUCTS } from "../shared/recognise/registry.ts";
-import type { ServiceBinding } from "../shared/services.ts";
+import { bindingKey, type ServiceBinding } from "../shared/services.ts";
 import type { ConfiguredOrigin } from "../shared/types.ts";
 import { renderBindingsError, renderBindingsTable } from "./bindings-view.ts";
 import { renderBriefLog } from "./brief-log-view.ts";
@@ -542,6 +544,115 @@ async function onUnbind(binding: ServiceBinding): Promise<void> {
   await refreshBindings();
 }
 
+const CHECK_LABEL = "Check with Nimbus";
+
+function checkButton(): HTMLButtonElement | null {
+  const el = document.getElementById("bindings-check");
+  return el instanceof HTMLButtonElement ? el : null;
+}
+
+/**
+ * Check every stored binding against the gateway's current config (C10.3
+ * slice 2, spec §7.1) — USER-INITIATED ONLY, never on page load. Options opens
+ * for several unrelated reasons (pairing, surfaces, shortcuts, the brief log),
+ * and none of them should spend one request per binding against a gateway
+ * that may not even be running.
+ *
+ * The response's rows already carry both the bindings and their verdicts, so
+ * this renders straight from them rather than re-reading
+ * `service-bindings-list` — one round trip answers both "what do I have" and
+ * "does the gateway still agree".
+ */
+async function onCheckBindings(): Promise<void> {
+  const button = checkButton();
+  const host = document.getElementById("bindings-list");
+  if (button === null || host === null) {
+    return;
+  }
+  // Disabled for the duration of the check — a second click mid-flight would
+  // race two renders against one table.
+  button.disabled = true;
+  button.textContent = "Checking…";
+  try {
+    const res = await sendMessage({ kind: "service-bindings-check" });
+    if (!isServiceBindingsCheckResponse(res)) {
+      setBindingsStatus("Unexpected response.");
+      return;
+    }
+    if (!res.ok) {
+      // Neither refusal alters or empties the table below: the bindings were
+      // read successfully earlier (or at the last successful check) and are
+      // still correct on screen — this is a fact about the check, not them.
+      setBindingsStatus(
+        res.reason === "not_paired"
+          ? "Pair with a Nimbus gateway to check your bindings"
+          : "Could not check your bindings — try again.",
+      );
+      return;
+    }
+    setBindingsStatus("");
+    const statuses = new Map<string, BindingCheckStatus>(
+      res.rows.map((row) => [
+        bindingKey(row.binding.origin, row.binding.product, row.binding.scope),
+        row.status,
+      ]),
+    );
+    host.replaceChildren(
+      renderBindingsTable(
+        res.rows.map((row) => row.binding),
+        (binding) => void onUnbind(binding),
+        statuses,
+        (binding, proposedServiceId) => void onCorrect(binding, proposedServiceId),
+      ),
+    );
+  } catch {
+    // The message channel rejected — most often the MV3 service worker
+    // restarting mid-call. The bindings on screen are untouched; only the
+    // check itself failed, so only the status line says so.
+    setBindingsStatus("Couldn't reach the extension — please try again.");
+  } finally {
+    // Restored in a `finally` — NOT after the try block — so a rejected
+    // `send` above cannot leave the button stuck reading "Checking…" and
+    // permanently disabled.
+    button.disabled = false;
+    button.textContent = CHECK_LABEL;
+  }
+}
+
+/**
+ * The correction goes through the existing `service-bind` message, exactly
+ * like the panel's bind form — so §6's preflight validation still applies and
+ * a proposed id the gateway does not actually know is still refused. This
+ * never writes `chrome.storage` directly; the worker is the sole writer of
+ * bindings.
+ */
+async function onCorrect(binding: ServiceBinding, proposedServiceId: string): Promise<void> {
+  setBindingsStatus("");
+  try {
+    const res = await sendMessage({
+      kind: "service-bind",
+      binding: {
+        product: binding.product,
+        origin: binding.origin,
+        scope: binding.scope,
+        serviceId: proposedServiceId,
+        // `exactOptionalPropertyTypes` is on: an explicit `defaultBranch:
+        // undefined` is not the same type as an absent key.
+        ...(binding.defaultBranch === undefined ? {} : { defaultBranch: binding.defaultBranch }),
+      },
+    });
+    if (!isServiceBindResponse(res) || !res.ok) {
+      setBindingsStatus("Couldn't update that binding — please try again.");
+    }
+  } catch {
+    setBindingsStatus("Couldn't reach the extension — please try again.");
+  }
+  // Re-ask rather than assume: the row's status is the worker's (and the
+  // gateway's) to compute, not ours to guess, whether the correction landed
+  // or was refused.
+  await onCheckBindings();
+}
+
 /**
  * Paint the disclosure log from the worker's copy.
  *
@@ -654,6 +765,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("unpair")?.addEventListener("click", () => void onUnpairClick());
   document.getElementById("unpair-cancel")?.addEventListener("click", () => disarmUnpair());
   document.getElementById("surface-add")?.addEventListener("click", () => void addSurface());
+  document
+    .getElementById("bindings-check")
+    ?.addEventListener("click", () => void onCheckBindings());
   document
     .getElementById("surface-list")
     ?.addEventListener("click", (event) => void onSurfaceClick(event));

@@ -20,6 +20,17 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   gateway too old for the route, or one that answers nothing for a repo, the
   form falls back to the guess exactly as before — this needed no re-pairing
   and changes nothing for a gateway that predates it.
+- **Options can now check stored bindings against the gateway.** A binding
+  goes stale silently when the owner edits `nimbus.toml` — a repository bound
+  to one service keeps pointing at it even after the config moves on. A
+  "Check with Nimbus" button in Options asks (never on page load — it is one
+  request per binding), and marks every row as matching, pointing elsewhere
+  now, claimed by more than one service, named by none, or simply
+  uncheckable this time (a scope gap or a busy gateway — never read as the
+  binding being wrong). A row the gateway now maps elsewhere offers a
+  one-click correction that goes through the same validated `service-bind`
+  path as binding it the first time, so an id the gateway does not recognise
+  is still refused.
 
 ## [0.9.0] - 2026-09-11
 

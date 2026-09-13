@@ -3,6 +3,9 @@
 import { describe, expect, test, vi } from "vitest";
 import { renderBindingsError, renderBindingsTable } from "../../src/options/bindings-view.ts";
 import type { ServiceBinding } from "../../src/shared/services.ts";
+import { bindingKey } from "../../src/shared/services.ts";
+
+const NOOP = (): void => undefined;
 
 const list: ServiceBinding[] = [
   { product: "github", origin: "https://github.com", scope: "acme/web", serviceId: "web" },
@@ -112,5 +115,74 @@ describe("renderBindingsError", () => {
     expect(el.querySelector("table")).toBeNull();
     expect(el.textContent).not.toMatch(/no service bindings/i);
     expect(el.textContent).toMatch(/could not read/i);
+  });
+});
+
+describe("renderBindingsTable status (C10.3 slice 2)", () => {
+  test("renders a status cell per row, and a correction only for disagrees", () => {
+    const bindings = [
+      { product: "github" as const, origin: "https://github.com", scope: "acme/a", serviceId: "a" },
+      {
+        product: "github" as const,
+        origin: "https://github.com",
+        scope: "acme/b",
+        serviceId: "old",
+      },
+    ];
+    const statuses = new Map([
+      [bindingKey("https://github.com", "github", "acme/a"), { state: "agrees" } as const],
+      [
+        bindingKey("https://github.com", "github", "acme/b"),
+        { state: "disagrees", proposedServiceId: "new" } as const,
+      ],
+    ]);
+    const table = renderBindingsTable(bindings, NOOP, statuses, NOOP);
+    const text = table.textContent ?? "";
+    expect(text).toMatch(/new/);
+    expect(table.querySelectorAll("button[data-proposed]").length).toBe(1);
+  });
+
+  test("the correction button reports the binding and the proposed id", () => {
+    const binding = {
+      product: "github" as const,
+      origin: "https://github.com",
+      scope: "acme/b",
+      serviceId: "old",
+    };
+    const statuses = new Map([
+      [
+        bindingKey(binding.origin, binding.product, binding.scope),
+        { state: "disagrees", proposedServiceId: "new" } as const,
+      ],
+    ]);
+    const seen: Array<[string, string]> = [];
+    const table = renderBindingsTable([binding], NOOP, statuses, (b, id) => {
+      seen.push([b.scope, id]);
+    });
+    (table.querySelector("button[data-proposed]") as HTMLButtonElement).click();
+    expect(seen).toEqual([["acme/b", "new"]]);
+  });
+
+  test("unchecked says could not check, never that the binding is wrong", () => {
+    const bindings = [
+      { product: "github" as const, origin: "https://github.com", scope: "acme/a", serviceId: "a" },
+    ];
+    const statuses = new Map([
+      [
+        bindingKey("https://github.com", "github", "acme/a"),
+        { state: "unchecked", reason: "insufficient_scope" } as const,
+      ],
+    ]);
+    const text = renderBindingsTable(bindings, NOOP, statuses, NOOP).textContent ?? "";
+    expect(text).toMatch(/could not check|resolve. scope/i);
+    expect(text).not.toMatch(/wrong|incorrect|invalid/i);
+  });
+
+  test("with no statuses the table renders exactly as before", () => {
+    const bindings = [
+      { product: "github" as const, origin: "https://github.com", scope: "acme/a", serviceId: "a" },
+    ];
+    const table = renderBindingsTable(bindings, NOOP);
+    expect(table.querySelectorAll("button[data-proposed]").length).toBe(0);
   });
 });
