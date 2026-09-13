@@ -49,6 +49,7 @@ import {
   isRecogniseRequest,
   isRelatedRequest,
   isResolveRequest,
+  isServiceBindingsCheckRequest,
   isServiceBindingsListRequest,
   isServiceBindRequest,
   isServiceUnbindRequest,
@@ -90,10 +91,12 @@ import {
   setConnection,
 } from "./connection-store.ts";
 import { readConnectorHealth as storeReadConnectorHealth } from "./connector-health-store.ts";
+import { fetchServiceResolution } from "./deploy-client.ts";
 import {
   type DeployDeps,
   handleDeployPreflight,
   handleServiceBind,
+  handleServiceBindingsCheck,
   handleServiceBindingsList,
   handleServiceUnbind,
 } from "./deploy-handlers.ts";
@@ -727,13 +730,15 @@ const egressDeps: EgressDeps = {
   proveEgressWindow,
 };
 
-// The deploy-readiness routes (C10) are unauthenticated reads over the paired
-// origin alone — no token, unlike every other client bound in this file.
+// Two of the three deploy reads are unauthenticated (public read-only table);
+// `resolveService` is a bearer read under the `resolve` scope, which is why the
+// whole connection is injected rather than an origin.
 const deployDeps: DeployDeps = {
-  getOrigin: async () => (await getConnection())?.origin ?? null,
+  getConnection,
   getBindings,
   putBinding,
   dropBinding,
+  resolveService: fetchServiceResolution,
   doFetch: fetch,
 };
 
@@ -1378,6 +1383,14 @@ function routeDeploy(message: unknown, respond: Respond): Routed {
       .then(respond)
       .catch(() => {
         respond({ kind: "service-bindings-list", ok: false });
+      });
+    return true;
+  }
+  if (isServiceBindingsCheckRequest(message)) {
+    handleServiceBindingsCheck(deployDeps)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "service-bindings-check", ok: false, reason: "server_error" });
       });
     return true;
   }

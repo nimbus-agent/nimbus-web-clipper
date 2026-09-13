@@ -1258,3 +1258,235 @@ describe("service bindings (#bindings-list)", () => {
     expect(el("bindings-list").textContent).toContain("acme/web");
   });
 });
+
+describe("service bindings check (#bindings-check)", () => {
+  const binding = {
+    product: "github",
+    origin: "https://github.com",
+    scope: "acme/web",
+    serviceId: "web",
+  };
+
+  const BINDINGS_FIXTURE =
+    `${FIXTURE}<button id="bindings-check" type="button">Check with Nimbus</button>` +
+    `<output id="bindings-status"></output><div id="bindings-list"></div>`;
+
+  /** Same kind-aware reply table pattern as `bootBindings` above, with
+   *  `service-bindings-check` added — the caller supplies just that reply. */
+  function bootCheck(checkReply: (() => Promise<unknown>) | unknown): Promise<void> {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: [binding] };
+      }
+      if (m.kind === "service-bindings-check") {
+        return typeof checkReply === "function" ? checkReply() : checkReply;
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = BINDINGS_FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    return flush();
+  }
+
+  // LOAD-BEARING: this is the path the brief singled out as fragile — the MV3
+  // service worker can restart mid-call, rejecting the `sendMessage` promise.
+  // Restoration lives in a `finally` precisely so this case cannot leave the
+  // button permanently reading "Checking…" and disabled.
+  test("a REJECTING channel restores the button's label and re-enables it", async () => {
+    await bootCheck(() => {
+      throw new Error("channel closed");
+    });
+
+    button("bindings-check").click();
+    await flush();
+
+    expect(button("bindings-check").disabled).toBe(false);
+    expect(button("bindings-check").textContent).toBe("Check with Nimbus");
+  });
+
+  test("ok: false shows a status message and leaves the table untouched", async () => {
+    await bootCheck({ kind: "service-bindings-check", ok: false, reason: "not_paired" });
+
+    button("bindings-check").click();
+    await flush();
+
+    expect(el("bindings-status").textContent).toMatch(/pair/i);
+    // The bindings themselves were read successfully earlier — a failed CHECK
+    // must not empty or alter the table.
+    expect(el("bindings-list").querySelectorAll("tbody tr")).toHaveLength(1);
+    expect(el("bindings-list").textContent).toContain("acme/web");
+    expect(button("bindings-check").disabled).toBe(false);
+    expect(button("bindings-check").textContent).toBe("Check with Nimbus");
+  });
+
+  test("ok: true renders each row with its status", async () => {
+    await bootCheck({
+      kind: "service-bindings-check",
+      ok: true,
+      rows: [{ binding, status: { state: "agrees" } }],
+    });
+
+    button("bindings-check").click();
+    await flush();
+
+    expect(el("bindings-list").textContent).toContain("Matches Nimbus");
+    expect(button("bindings-check").disabled).toBe(false);
+    expect(button("bindings-check").textContent).toBe("Check with Nimbus");
+  });
+
+  // LOAD-BEARING: the check renders from its OWN snapshot, and only the check
+  // button is disabled while it runs — the row's Unbind stays live. A reply
+  // that lands after an unbind would otherwise repaint the deleted row,
+  // correction button and all, offering to `service-bind` it back into
+  // existence. The generation guard is what makes a superseded check silent.
+  test("a check whose reply lands AFTER an unbind cannot repaint the removed row", async () => {
+    let releaseCheck = (): void => {};
+    const checkLanded = new Promise<void>((r) => {
+      releaseCheck = r;
+    });
+    let unbound = false;
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: unbound ? [] : [binding] };
+      }
+      if (m.kind === "service-bindings-check") {
+        await checkLanded;
+        return {
+          kind: "service-bindings-check",
+          ok: true,
+          rows: [{ binding, status: { state: "disagrees", proposedServiceId: "web-api" } }],
+        };
+      }
+      if (m.kind === "service-unbind") {
+        unbound = true;
+        return { kind: "service-bind", ok: true };
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = BINDINGS_FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    button("bindings-check").click();
+    await flush();
+    // The check is still in flight; the row's Unbind control is not disabled.
+    el("bindings-list").querySelector<HTMLButtonElement>("table tbody tr button")?.click();
+    await flush();
+    expect(el("bindings-list").textContent).not.toContain("acme/web");
+
+    releaseCheck();
+    await flush();
+
+    expect(el("bindings-list").textContent).not.toContain("acme/web");
+    expect(el("bindings-list").querySelector("button[data-proposed]")).toBeNull();
+    expect(el("bindings-status").textContent).toMatch(/check again/i);
+  });
+
+  /** The whole correction round trip: the check answers `disagrees`, the row's
+   *  "Use …" button sends `service-bind`, and the SAME check reply is served
+   *  again by the re-check that follows. The caller supplies only the bind
+   *  reply, which is the one thing these two tests differ on. */
+  function bootCorrection(bindReply: unknown): Promise<void> {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: [binding] };
+      }
+      if (m.kind === "service-bindings-check") {
+        return {
+          kind: "service-bindings-check",
+          ok: true,
+          rows: [{ binding, status: { state: "disagrees", proposedServiceId: "web-api" } }],
+        };
+      }
+      if (m.kind === "service-bind") {
+        return bindReply;
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = BINDINGS_FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    return flush();
+  }
+
+  function clickCorrection(): void {
+    const use = el("bindings-list").querySelector<HTMLButtonElement>("button[data-proposed]");
+    if (use === null) {
+      throw new Error("no correction button rendered");
+    }
+    use.click();
+  }
+
+  // LOAD-BEARING: `unknown_service` is the exact refusal the validated bind
+  // path exists to produce. The correction re-checks afterwards, and the
+  // re-check's success path clears the status line — so without `keepStatus`
+  // the refusal is erased microseconds after it appears, the row re-renders
+  // `disagrees` with the same button, and the user clicks again forever.
+  test("a REFUSED correction still says so after the re-check that follows it", async () => {
+    await bootCorrection({ kind: "service-bind", ok: false, reason: "unknown_service" });
+
+    button("bindings-check").click();
+    await flush();
+    clickCorrection();
+    await flush();
+
+    expect(el("bindings-status").textContent).toMatch(/couldn't update that binding/i);
+    // The binding was NOT changed, so the row must still offer the correction —
+    // a surviving message over a vanished button would be its own confusion.
+    expect(el("bindings-list").querySelector("button[data-proposed]")).not.toBeNull();
+  });
+
+  test("a rejecting channel mid-correction keeps its own message too", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: [binding] };
+      }
+      if (m.kind === "service-bindings-check") {
+        return {
+          kind: "service-bindings-check",
+          ok: true,
+          rows: [{ binding, status: { state: "disagrees", proposedServiceId: "web-api" } }],
+        };
+      }
+      if (m.kind === "service-bind") {
+        throw new Error("channel closed");
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = BINDINGS_FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    button("bindings-check").click();
+    await flush();
+    clickCorrection();
+    await flush();
+
+    expect(el("bindings-status").textContent).toMatch(/couldn't reach the extension/i);
+  });
+
+  test("an ACCEPTED correction reports nothing and re-reads the row from the worker", async () => {
+    await bootCorrection({ kind: "service-bind", ok: true });
+
+    button("bindings-check").click();
+    await flush();
+    clickCorrection();
+    await flush();
+
+    expect(el("bindings-status").textContent).toBe("");
+    // Never a direct storage write — the worker is the sole writer of bindings.
+    expect(harness.storageSet).not.toHaveBeenCalled();
+    expect(harness.sendMessage).toHaveBeenCalledWith({
+      kind: "service-bind",
+      binding: {
+        product: "github",
+        origin: "https://github.com",
+        scope: "acme/web",
+        serviceId: "web-api",
+      },
+    });
+  });
+});

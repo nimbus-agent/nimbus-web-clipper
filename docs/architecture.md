@@ -1820,11 +1820,11 @@ config, carrying `repos = [...]` as provider URNs. It is not `PRODUCT_SERVICE_ID
 id (`"github"`, `"jenkins"`) — a different axis, and not what `/v1/preflight/deploy`
 or `/v1/metrics/dora` take as `service`.
 
-The gateway already holds the reverse map — repo to service — internally
-(`buildServiceIdentityResolver`, `packages/gateway/src/metrics/service-identity.ts`),
-but exposes no `GET` route over it; only the I13 write dispatcher can see it.
-**That is why the client keeps its own copy despite the duplication looking
-avoidable**: there is nothing to read it from. `src/shared/services.ts` declares
+The gateway holds this reverse map internally
+(`buildServiceIdentityResolver`, `packages/gateway/src/metrics/service-identity.ts`).
+At the time the binding was designed it exposed no `GET` route over it — only
+the I13 write dispatcher could see it — which is why the client keeps its own
+copy at all: `src/shared/services.ts` declares
 `ServiceBinding { product, origin, scope, serviceId, defaultBranch? }`, keyed by
 `` `${origin}:${product}:${scope}` ``, persisted by
 `src/background/service-binding-store.ts`. `origin` is the matched
@@ -1837,10 +1837,17 @@ instances collide onto one binding, so a page on ONE instance could silently
 render a deploy verdict computed against the OTHER's service. `origin` is
 never sent to the gateway, exactly like `scope` — it exists only to keep two
 bindings that would otherwise collide apart.
-A `GET /v1/services` route is proposed upstream (design spec §7) that would
-turn this from the only path into an override; until it lands, this binding is
-not wasted work regardless, because a service whose repos are not configured
-upstream still needs one.
+
+`GET /v1/services/resolve?repo=<urn>` (Nimbus#1491, gateway v7.19.0) landed a
+day after the above was written and answers the reverse-map question directly.
+It does **not** retire the binding store, for a reason worth stating plainly
+because it is easy to assume the route made the store redundant: the store is
+still the only thing that is ever actually sent to the gateway as `service` on
+`/v1/preflight/deploy` and `/v1/metrics/dora`, and `resolve`'s own match is an
+exact string comparison a live page's coordinate can legitimately fail (see
+"The exact-comparison limitation" below). `resolve` makes the binding
+**accurate to seed and cheap to check**; it does not make it optional. See the
+next two subsections for how it is used and where it stops being trusted.
 
 Validation needs no new route either: the client cannot list services, and it
 does not have to. An unknown service id does not error — `unconfiguredEnvelope`
@@ -1851,7 +1858,207 @@ fires one preflight call with the typed id and refuses to save it only when
 every check reports `unknown_service` (`isUnknownService`, `src/shared/deploy.ts`)
 — a service that exists with no repos bound is a different, more fixable
 problem (upstream separated the two gaps deliberately), and the client saves
-that binding and shows the gap rather than refusing it.
+that binding and shows the gap rather than refusing it. `resolve` never
+shortcuts this: it proposes an id for the bind form to seed, `handleServiceBind`
+still decides whether that id — or whatever the user typed over it — is ever
+saved. "A binding is never saved unverified" held before `resolve` existed and
+still holds with it in the loop.
+
+### `services/resolve` seeds the bind form from the worker, never the panel
+
+Two routes answered `/v1/preflight/deploy` and `/v1/metrics/dora` before this
+one, and both sit on the gateway's public read-only table — no bearer, no
+scope. `services/resolve` is the deploy family's **first bearer-authed read**,
+under the same `resolve` scope `resolveFile` (C7) and `resolveIds` (C9) already
+use, and that changes where it can be asked from: the bearer token lives in the
+service worker and never enters a page, so a panel-side fetch would need the
+token in a content script, which the architecture forbids outright (see "The
+bearer token is the only secret" above). The resolution is therefore asked
+**inside `handleDeployPreflight`, in its existing `unbound` arm**
+(`resolutionFor`, `deploy-handlers.ts`), not as a new panel round trip.
+
+That arm was already the right seam before this route existed:
+`DeployPreflightResponse`'s `unbound` case already carried a seed
+(`guessServiceId`) and the panel's bind form already took one, so widening what
+the seed is backed by needed no new message and no new state on the panel side
+— only a richer payload on an arm that was already there. `guessServiceId` is
+also **required**, not optional, on that arm: `guessServiceId(scope)` returns
+`string`, never `undefined`, so an optional marker only ever forced a `?? ""`
+at the one call site that read it.
+
+Reaching the gateway as a bearer read cost `DeployDeps` its `getOrigin` method.
+`getOrigin: () => Promise<string | null>` was enough for two public routes that
+need only an address; a bearer read needs the token too, and a 403 on it needs
+the device **label** as well, because the pasteable
+`nimbus clip scopes <label> --set …` command cannot be built without it and the
+403 body itself cannot carry client-side state. So `getOrigin` was **replaced**
+by `getConnection: () => Promise<Connection | null>` — the same shape
+`EgressDeps` already exposes (`egress-handlers.ts`) — rather than adding a
+second dependency beside it: `getOrigin`'s own doc comment said the address was
+learned from the pairing, so every caller that had an origin already had a
+connection to get it from. The 403 path reuses `parseScopeGap`
+(`http-json.ts`) and a `withLabel` helper copied from `egress-handlers.ts`
+(same behaviour, not imported, per that file's own note on why three hand-rolled
+copies of this parser once drifted) to build the same pasteable command the
+egress surfaces already show.
+
+The outcome the worker hands back, `ServiceResolutionOutcome`
+(`messages.ts`), is a five-member discriminated union, never prose — the
+worker decides, `deploy-view.ts` owns every English sentence, the layering the
+rest of the repo keeps. One member of it is easy to get backwards:
+**`ambiguous` still carries a non-null `serviceId`, seeded from the gateway's
+own `candidates[0]`, and `serviceId === null` (folded into `unclaimed` here)
+happens exactly when `candidates` is empty.** Nothing in an example response
+body shows this — `resolveServicesByRepoUrn` upstream returns
+`{ serviceId: claimants[0] ?? null, candidateServiceIds: claimants }`, so there
+is no gateway answer where several services claim a repo and `service` is
+still null. Code that assumed `ambiguous ⇒ serviceId === null` would carry a
+dead branch and seed an empty input on the one outcome with the most to offer;
+`resolutionFor` seeds from `service`, in both the single and the ambiguous
+case, and never indexes into `candidates` itself.
+
+Those properties are asserted at **two** boundaries, not one, and the two must
+not drift. `parseServiceResolution` (`shared/deploy.ts`) validates the wire
+body: every id bounded by `MAX_SERVICE_ID_LEN` and non-empty, `ambiguous`
+exactly when there are two or more candidates, and the nominated `service`
+among them. `isServiceResolutionOutcome` (`shared/messages.ts`) validates the
+same data again as it crosses `chrome.runtime`, and for a while it asked only
+`typeof === "string"` — so a message the wire parser would have rejected still
+reached the panel, which faithfully rendered the impossible thing it described:
+an "ambiguous" picker with a single chip, or a seed no chip can re-select after
+a refused bind. The message guards now go through the parser's own exported
+`sendableId` rather than respelling the bound, and `isBindingCheckStatus` holds
+the same line for the Options table — minus membership, since that status
+carries no `serviceId` to be a member of.
+
+A refusal is the one case where the gateway's id does **not** win.
+`renderBindForm` takes a `seed` beside the resolution and prefers the
+resolution's vouched-for id — but only on the FIRST render. Its `noteOverride`
+is only ever a bind refusal, and on that repaint `seed` is the id the user
+actually submitted; preferring the resolution's would silently swap their
+choice, so picking `cart` out of an ambiguous set and having the bind refused
+would leave the form reading `checkout` — and the next click binding a service
+they never selected, while looking exactly like a retry of the one they did.
+
+404, `unauthorized`, `rate_limited`, `unreachable` and a guard-rejected body all
+fold into one `silent` outcome at this boundary, because the bind form renders
+all five identically: the same guess it always showed, and no note. The
+distinctions are not lost — they live on the client's own result type and the
+Options check ("Checking a stored binding for staleness" below) reads them
+apart — they are simply not worth carrying into a form that would say nothing
+with any of them. Two of those five are worth naming directly because a reader
+could otherwise wonder why they are not surfaced:
+
+- **No version floor.** A gateway that predates `services/resolve` 404s, and
+  that renders exactly as `silent` — the bind form looks precisely as it did
+  before this feature existed, on gateway or client. `GATEWAY_PATHS` records no
+  minimum version for this route, deliberately, the same pattern C7's file
+  lanes and C9's links both followed: the route's answer, or its absence, is
+  the entire capability signal.
+- **The 404's cause is deliberately not reported**, even though it is folded
+  into the same bucket as every other silent case for a second reason beyond
+  "the form says nothing anyway": upstream's `services_disabled` 404 tests that
+  the clips surface is *mounted*, not that this particular route exists, so a
+  gateway too old to carry `services/resolve` and a paired gateway with no
+  matching client surface answer identically. A client cannot tell those two
+  apart, and both readings lead to the same fallback, so nothing is lost by not
+  trying.
+
+### The exact-comparison limitation: `service: null` does not mean unconfigured
+
+This is the one property of `services/resolve` most likely to come back as a
+confused bug report — "the panel says my repo isn't configured, but it is" —
+so it is recorded here even though nothing about it is fixed. Upstream's match,
+`resolveServicesByRepoUrn`, tests `u.provider === query.provider &&
+u.providerId === query.providerId` against the URNs in the owner's
+`nimbus.toml`. Nothing is normalised: not case, not coordinate form. Three real
+ways a correctly-configured repo still comes back `null`:
+
+- **Case.** GitHub treats `Acme/Web` and `acme/web` as the same repository;
+  this comparison does not.
+- **Bitbucket Server.** The recogniser's scope is `projectKey/slug`, which is
+  not necessarily the coordinate form the owner spelled in `nimbus.toml`.
+- **Jenkins.** The scope is a job path, and whether an owner's
+  `jenkins:<job path>` URN is spelled the same way is not something this
+  client can verify from a page.
+
+So `service: null` proves only that no configured service spells this repo the
+way this client just did — never that the repo is unconfigured, that DORA is
+not set up, or that the user should go add one. The `unclaimed` note is worded
+to say exactly the narrower true thing, and never the broader false one: a
+confident wrong sentence here is worse than the guess it replaced, because the
+user would go edit a config that was already correct. For the same reason, the
+pre-`resolve` guess **survives as the seed** on `unclaimed` (and on `forbidden`
+and `silent`) rather than being replaced by an empty input — `null` is not
+evidence against the guess, only an absence of confirmation.
+
+### Checking a stored binding for staleness: two messages, not one
+
+A stored binding goes stale silently whenever the owner edits `nimbus.toml`
+after the fact — `handleServiceBind`'s own comment already named this failure
+("a stored wrong id produces a permanently confusing section") before
+`services/resolve` existed to do anything about it. Options can now ask.
+
+`service-bindings-check` is a **second** message beside
+`service-bindings-list`, not a parameter on it, because the two answer
+different cost questions. `list` is a local storage read: free, offline-capable,
+and it is what paints the bindings table every time Options opens for any
+reason — pairing, surfaces, shortcuts, the brief log. `check` costs one
+`services/resolve` request per stored binding and needs a paired,
+`resolve`-scoped gateway; folding that cost into the read that paints the page
+would make the table's normal path slower, and failable, for a check the user
+did not ask for. So `check` is behind its own button, disabled while unpaired
+or in flight, and nothing calls it on page load.
+
+`handleServiceBindingsCheck` resolves every binding through
+**`Promise.allSettled`**, never `Promise.all`, so one unreachable or
+rate-limited binding never discards every good answer; a rejected promise
+becomes its own `unchecked` row instead of failing the whole check. Fan-out is
+unbounded on purpose, for now: the destination is loopback, this route carries
+no rate limiter of its own today, and bindings are created by hand, one page
+at a time, so a handful is the realistic count. The fact that argues the other
+way is recorded rather than ignored — upstream reads and re-parses
+`nimbus.toml` on every call, deliberately uncached so it can never answer from
+a config the owner has since fixed — so N bindings is N concurrent parses, and
+a small concurrency pool is the fix if that ever shows up as a slow or failing
+check.
+
+Each row lands in one of five states (`agrees`, `disagrees`, `unclaimed`,
+`ambiguous`, `unchecked`), and `disagrees` — the staleness case, where the
+gateway now names a *different* id — offers a one-click correction that submits
+through the ordinary bind path, so `handleServiceBind`'s own preflight probe
+still decides whether the gateway's newer answer is actually saved; `resolve`'s
+proposal is never trusted blindly even here. `unchecked` deliberately keeps the
+finer-grained reason (`CheckUncheckedReason`, `messages.ts`) rather than
+collapsing to the bind form's single `silent` bucket: Options is the one
+surface where the difference between "your token lacks `resolve`", "this
+gateway has no such route" and "the gateway is rate-limiting you" is worth the
+words, because the user came here specifically to manage bindings.
+
+The check renders straight from its own response rows rather than re-reading
+the list — one round trip answers both "what do I have" and "does the gateway
+still agree" — which makes that snapshot **stale the moment anything mutates a
+binding**, and only the check button is disabled while it runs. So a
+module-level generation counter in `options.ts`, bumped by every mutation and
+compared before the paint, lets a superseded check discard its render instead
+of resurrecting an unbound row complete with a working correction button.
+Disabling the per-row Unbind controls for the duration would not do: the
+correction path mutates too.
+
+That reason type is also the one place this feature quietly extends a rule
+`src/shared/egress.ts` already states: nothing under `src/shared/` may import
+from `src/background/`, because that layer is bundled into every page and
+content script, so a dependency the other way round would ship background code
+into a content script. `ServiceResolveError` — the finer-grained failure the
+worker's own client produces — lives in `src/background/deploy-client.ts` for
+exactly that reason. `CheckUncheckedReason` in `messages.ts` does not import
+it; it is a second, hand-declared runtime list
+(`CHECK_UNCHECKED_REASONS`) whose members are kept in step with
+`ServiceResolveError`'s by hand and by comment, not by the type system. This is
+not an oversight to eventually fix by finding a shared location — the layering
+rule is exactly why a shared import is not on offer, and mirroring the
+vocabulary by hand at the boundary is the deliberate, if slightly repetitive,
+alternative.
 
 ### The binding scope is not a forge repo — and `Recognition.ref` could never have been it
 

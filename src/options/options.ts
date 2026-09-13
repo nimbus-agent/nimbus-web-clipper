@@ -7,10 +7,12 @@ import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.t
 import { isFirefoxRuntime, sendMessage } from "../browser/runtime.ts";
 import { isBriefLogEntry } from "../shared/brief-log.ts";
 import {
+  type BindingCheckStatus,
   type DiscoverResponse,
   type EgressWindowResponse,
   isConnectionResponse,
   isEgressWindowSuccess,
+  isServiceBindingsCheckResponse,
   isServiceBindingsListResponse,
   isServiceBindResponse,
   type PairResponse,
@@ -24,7 +26,7 @@ import {
 } from "../shared/origins.ts";
 import { BUILT_IN_SURFACES } from "../shared/recognise/index.ts";
 import { RULE_BY_PRODUCT, SELF_HOSTABLE_PRODUCTS } from "../shared/recognise/registry.ts";
-import type { ServiceBinding } from "../shared/services.ts";
+import { bindingKey, type ServiceBinding } from "../shared/services.ts";
 import type { ConfiguredOrigin } from "../shared/types.ts";
 import { renderBindingsError, renderBindingsTable } from "./bindings-view.ts";
 import { renderBriefLog } from "./brief-log-view.ts";
@@ -524,8 +526,27 @@ async function refreshBindings(): Promise<void> {
   );
 }
 
+/**
+ * Bumped by EVERY operation that mutates bindings (`onUnbind`, `onCorrect`).
+ *
+ * A check renders from its OWN response snapshot rather than re-reading the
+ * list, and only the check button is disabled while it is in flight — the
+ * per-row Unbind controls, and the correction buttons a previous check left on
+ * screen, stay live. Without this counter a check whose reply lands after a
+ * mutation repaints the pre-mutation table: an unbound row comes back from the
+ * dead, carrying a working "Use …" button that would `service-bind` it into
+ * existence again. Disabling Unbind for the duration would narrow that window
+ * without closing it, since the correction path mutates too.
+ *
+ * So: capture it before the round trip, compare before painting, and let the
+ * post-mutation table stand. Monotonic and never reset — only equality against
+ * a captured value is ever asked of it.
+ */
+let bindingsGeneration = 0;
+
 async function onUnbind(binding: ServiceBinding): Promise<void> {
   setBindingsStatus("");
+  bindingsGeneration += 1;
   try {
     const res = await sendMessage({
       kind: "service-unbind",
@@ -540,6 +561,160 @@ async function onUnbind(binding: ServiceBinding): Promise<void> {
     setBindingsStatus("Couldn't reach the extension — please try again.");
   }
   await refreshBindings();
+}
+
+const CHECK_LABEL = "Check with Nimbus";
+
+function checkButton(): HTMLButtonElement | null {
+  const el = document.getElementById("bindings-check");
+  return el instanceof HTMLButtonElement ? el : null;
+}
+
+/**
+ * Check every stored binding against the gateway's current config (C10.3
+ * slice 2; see `docs/architecture.md`, "Checking a stored binding for
+ * staleness: two messages, not one") — USER-INITIATED ONLY, never on page
+ * load. Options opens for several unrelated reasons (pairing, surfaces,
+ * shortcuts, the brief log), and none of them should spend one request per
+ * binding against a gateway that may not even be running.
+ *
+ * The response's rows already carry both the bindings and their verdicts, so
+ * this renders straight from them rather than re-reading
+ * `service-bindings-list` — one round trip answers both "what do I have" and
+ * "does the gateway still agree".
+ *
+ * `keepStatus` exists for the one caller that has ALREADY written to the
+ * status line and must not have it erased: `onCorrect` below re-checks after a
+ * REFUSED correction, and the success path's `setBindingsStatus("")` would
+ * otherwise wipe the refusal microseconds after it appeared — leaving a row
+ * that still reads `disagrees`, the same button, and no explanation for why
+ * the click did nothing. It suppresses only the CLEAR: a check that fails on
+ * its own terms still writes its own message over the refusal, which is the
+ * right precedence (that message is newer and at least as actionable), and
+ * the refusal stands exactly when the check has nothing of its own to say.
+ */
+async function onCheckBindings(keepStatus = false): Promise<void> {
+  const button = checkButton();
+  const host = document.getElementById("bindings-list");
+  if (button === null || host === null) {
+    return;
+  }
+  // Captured BEFORE the round trip — see `bindingsGeneration`. `onCorrect`
+  // bumps it before it awaits this, so the re-check it drives reads its own
+  // post-mutation value and paints normally.
+  const generation = bindingsGeneration;
+  // Disabled for the duration of the check — a second click mid-flight would
+  // race two renders against one table.
+  button.disabled = true;
+  button.textContent = "Checking…";
+  try {
+    const res = await sendMessage({ kind: "service-bindings-check" });
+    if (!isServiceBindingsCheckResponse(res)) {
+      setBindingsStatus("Unexpected response.");
+      return;
+    }
+    if (!res.ok) {
+      // Neither refusal alters or empties the table below: the bindings were
+      // read successfully earlier (or at the last successful check) and are
+      // still correct on screen — this is a fact about the check, not them.
+      setBindingsStatus(
+        res.reason === "not_paired"
+          ? "Pair with a Nimbus gateway to check your bindings"
+          : "Could not check your bindings — try again.",
+      );
+      return;
+    }
+    if (generation !== bindingsGeneration) {
+      // The bindings changed while this was in flight, so these rows describe a
+      // table that no longer exists. Discard the render — whatever the mutation
+      // painted is the current truth — and do not clear the status either: the
+      // one caller that passes `keepStatus` has a refusal on screen that
+      // outranks anything a superseded check has to say.
+      if (!keepStatus) {
+        setBindingsStatus("Your bindings changed while that check ran — check again.");
+      }
+      return;
+    }
+    if (!keepStatus) {
+      setBindingsStatus("");
+    }
+    const statuses = new Map<string, BindingCheckStatus>(
+      res.rows.map((row) => [
+        bindingKey(row.binding.origin, row.binding.product, row.binding.scope),
+        row.status,
+      ]),
+    );
+    host.replaceChildren(
+      renderBindingsTable(
+        res.rows.map((row) => row.binding),
+        (binding) => void onUnbind(binding),
+        statuses,
+        (binding, proposedServiceId) => void onCorrect(binding, proposedServiceId),
+      ),
+    );
+  } catch {
+    // The message channel rejected — most often the MV3 service worker
+    // restarting mid-call. The bindings on screen are untouched; only the
+    // check itself failed, so only the status line says so.
+    setBindingsStatus("Couldn't reach the extension — please try again.");
+  } finally {
+    // Restored in a `finally` — NOT after the try block — so a rejected
+    // `send` above cannot leave the button stuck reading "Checking…" and
+    // permanently disabled.
+    button.disabled = false;
+    button.textContent = CHECK_LABEL;
+  }
+}
+
+/**
+ * The correction goes through the existing `service-bind` message, exactly
+ * like the panel's bind form — so `handleServiceBind`'s preflight validation
+ * still applies (`docs/architecture.md`, "The service binding, and the map the
+ * client keeps despite the gateway holding one too") and a proposed id the
+ * gateway does not actually know is still refused. This never writes
+ * `chrome.storage` directly; the worker is the sole writer of bindings.
+ *
+ * A refusal has to SURVIVE the re-check below — `unknown_service` is the exact
+ * outcome the validated bind path exists to produce, and a user who is told
+ * nothing simply clicks the unchanged button again. The panel keeps its
+ * refusal note on screen for the same reason (`BIND_REFUSAL_NOTE`,
+ * `deploy-section.ts`); `keepStatus` is how this surface does it.
+ */
+async function onCorrect(binding: ServiceBinding, proposedServiceId: string): Promise<void> {
+  setBindingsStatus("");
+  // A correction is a mutation like any other: bumped BEFORE the write, so a
+  // check already in flight cannot paint over its result. See
+  // `bindingsGeneration`.
+  bindingsGeneration += 1;
+  let refused = false;
+  try {
+    const res = await sendMessage({
+      kind: "service-bind",
+      binding: {
+        product: binding.product,
+        origin: binding.origin,
+        scope: binding.scope,
+        serviceId: proposedServiceId,
+        // `exactOptionalPropertyTypes` is on: an explicit `defaultBranch:
+        // undefined` is not the same type as an absent key.
+        ...(binding.defaultBranch === undefined ? {} : { defaultBranch: binding.defaultBranch }),
+      },
+    });
+    if (!isServiceBindResponse(res) || !res.ok) {
+      refused = true;
+      setBindingsStatus("Couldn't update that binding — please try again.");
+    }
+  } catch {
+    // A rejected channel is NOT "the bind was refused" — nothing came back to
+    // say either way — so the re-check below still has to run. The message is
+    // preserved for the same reason a refusal's is.
+    refused = true;
+    setBindingsStatus("Couldn't reach the extension — please try again.");
+  }
+  // Re-ask rather than assume: the row's status is the worker's (and the
+  // gateway's) to compute, not ours to guess, whether the correction landed
+  // or was refused.
+  await onCheckBindings(refused);
 }
 
 /**
@@ -654,6 +829,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("unpair")?.addEventListener("click", () => void onUnpairClick());
   document.getElementById("unpair-cancel")?.addEventListener("click", () => disarmUnpair());
   document.getElementById("surface-add")?.addEventListener("click", () => void addSurface());
+  document
+    .getElementById("bindings-check")
+    ?.addEventListener("click", () => void onCheckBindings());
   document
     .getElementById("surface-list")
     ?.addEventListener("click", (event) => void onSurfaceClick(event));

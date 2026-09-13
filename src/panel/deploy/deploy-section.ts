@@ -10,6 +10,7 @@ import {
   isDeployPreflightResponse,
   isServiceBindResponse,
   type ServiceBindResponse,
+  type ServiceResolutionOutcome,
 } from "../../shared/messages.ts";
 import type { Product, SurfaceKind } from "../../shared/types.ts";
 import { renderBindForm, renderDeployBody, renderSectionFrame } from "./deploy-view.ts";
@@ -129,8 +130,12 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
     );
   }
 
-  function renderBindFormState(guess: string, note?: string): void {
-    const form = renderBindForm(doc, guess);
+  function renderBindFormState(
+    seed: string,
+    resolution: ServiceResolutionOutcome,
+    note?: string,
+  ): void {
+    const form = renderBindForm(doc, seed, resolution, note);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const input = form.querySelector("input");
@@ -138,7 +143,7 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
       if (serviceId === "") {
         return;
       }
-      submitBind(serviceId).catch(() => {
+      submitBind(serviceId, resolution).catch(() => {
         // A rejected `send` means the message channel closed before an answer
         // arrived — most often the MV3 service worker restarting mid-call.
         // Nothing was parsed, so the malformed note would misattribute the
@@ -148,10 +153,11 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
         }
       });
     });
-    body.replaceChildren(
-      ...(note === undefined ? [] : [statusParagraph(doc, "nimbus-deploy__gap", note)]),
-      form,
-    );
+    // The note — resolution or refusal — is rendered INSIDE the form by
+    // `renderBindForm` now (`.nimbus-deploy__resolution`), not as a second,
+    // separate status paragraph here: doubling it up would either repeat the
+    // sentence or require this closure to duplicate `resolutionNote`'s switch.
+    body.replaceChildren(form);
   }
 
   async function ask(): Promise<void> {
@@ -176,13 +182,20 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
       return;
     }
     if (res.reason === "unbound") {
-      renderBindFormState(res.guessServiceId ?? "");
+      const seed =
+        res.resolution.kind === "resolved" || res.resolution.kind === "ambiguous"
+          ? res.resolution.serviceId
+          : res.guessServiceId;
+      renderBindFormState(seed, res.resolution);
       return;
     }
     renderRefusal(res.reason);
   }
 
-  async function submitBind(serviceId: string): Promise<void> {
+  async function submitBind(
+    serviceId: string,
+    resolution: ServiceResolutionOutcome,
+  ): Promise<void> {
     const res = await send({
       kind: "service-bind",
       binding: { product: ctx.product, origin: ctx.origin, scope: ctx.scope, serviceId },
@@ -207,7 +220,7 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
       await ask();
       return;
     }
-    renderBindFormState(serviceId, BIND_REFUSAL_NOTE[res.reason](serviceId));
+    renderBindFormState(serviceId, resolution, BIND_REFUSAL_NOTE[res.reason](serviceId));
   }
 
   body.replaceChildren(statusParagraph(doc, "nimbus-deploy__status", "Checking deploy readiness…"));

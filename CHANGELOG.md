@@ -8,6 +8,31 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Added
+
+- **The deploy-readiness bind form stops guessing.** It now asks the gateway
+  (`GET /v1/services/resolve`) which Nimbus service claims the repo, and seeds
+  the form with the gateway's own answer instead of a slug guessed from the
+  repo name. When more than one service claims a repo, the form offers a
+  button per candidate so picking one is a click, not a retype. A token
+  missing the `resolve` scope names the gap and gives the pasteable `nimbus
+  clip scopes` command to fix it, same as every other scoped read. Against a
+  gateway too old for the route, or one that answers nothing for a repo, the
+  form falls back to the guess exactly as before — this needed no re-pairing
+  and changes nothing for a gateway that predates it.
+- **Options can now check stored bindings against the gateway.** A binding
+  goes stale silently when the owner edits `nimbus.toml` — a repository bound
+  to one service keeps pointing at it even after the config moves on. A
+  "Check with Nimbus" button in Options asks the gateway (never on page load
+  — it is one request per binding), and marks every row as matching, pointing
+  elsewhere now, claimed by more than one service, named by none, or simply
+  uncheckable this time — and when it is uncheckable it says which of a scope
+  gap, an older gateway or a busy one stopped the check, never that the
+  binding is wrong. A row the gateway now maps elsewhere offers a
+  one-click correction that goes through the same validated `service-bind`
+  path as binding it the first time, so an id the gateway does not recognise
+  is still refused.
+
 ## [0.9.0] - 2026-09-11
 
 ### Added

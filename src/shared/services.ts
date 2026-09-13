@@ -2,9 +2,17 @@
 //
 // A Nimbus SERVICE is a `[metrics.dora.<id>]` block in the gateway's own config.
 // It is NOT `PRODUCT_SERVICE_ID`'s connector id ("github", "jenkins") — a
-// different axis entirely, and the one the agent lanes use. The gateway holds
-// the reverse map internally but exposes no route over it, so the user binds it
-// here, once per scope.
+// different axis entirely, and the one the agent lanes use.
+//
+// The gateway holds this reverse map internally and, since Nimbus#1491
+// (gateway v7.19.0), exposes `GET /v1/services/resolve` over it. The client
+// still keeps its own binding: that route is scoped and can be unavailable
+// (403 on a narrow token, 404 on an older gateway), its match against
+// `nimbus.toml` is an EXACT string comparison that a live page's coordinate can
+// legitimately miss, and a binding is a local key (`origin` + `product` +
+// `scope`) the gateway never sees. The route makes the binding ACCURATE; it
+// does not remove the need for one. See `docs/architecture.md`, "The service
+// binding, and the map the client keeps despite the gateway holding one too".
 import { isProduct } from "./origins.ts";
 import type { Product } from "./types.ts";
 
@@ -14,10 +22,11 @@ export const MAX_SERVICE_ID_LEN = 64;
 export const MAX_BRANCH_LEN = 255;
 /**
  * Our own bound on `scope` — the gateway has none, because `scope` never
- * crosses the wire (§3.1). It still has to be bounded HERE: this is the one
- * field a page-supplied message can carry into `chrome.storage.local`, which is
- * a quota shared with the clip queue and the connection record, so an unbounded
- * value is a way for a hostile page to evict either.
+ * crosses the wire (the C10 design's §3.1). It still has to be bounded HERE:
+ * this is the one field a page-supplied message can carry into
+ * `chrome.storage.local`, which is a quota shared with the clip queue and the
+ * connection record, so an unbounded value is a way for a hostile page to evict
+ * either.
  *
  * 255 is the ceiling of the coordinate shapes this key is made of, not a round
  * number: GitHub's `owner/repo` cannot exceed 140 (39 + 1 + 100), GitLab bounds
@@ -162,4 +171,56 @@ export function removeBinding(
 export function guessServiceId(scope: string): string {
   const last = scope.slice(scope.lastIndexOf("/") + 1);
   return last.slice(0, MAX_SERVICE_ID_LEN);
+}
+
+/**
+ * The `parseDoraRepoUrn` provider whose coordinate a product's `scope` is, or
+ * `null` for a product that never carries one.
+ *
+ * A `Record` keyed by `Product`, NOT a switch: a switch whose arms return
+ * `string | null` answers `undefined` for a tenth product and reads as "no
+ * provider" with no error anywhere, while this is a compile error until the new
+ * product is spelled. It also needs no `satisfies never` backstop, whose
+ * unreachable lines are permanently uncovered new code in the coverage gate.
+ *
+ * The five non-null keys are spelled identically upstream and here, which is
+ * luck worth stating: upstream's `KNOWN_PROVIDERS` is
+ * ["github", "gitlab", "bitbucket", "jenkins", "circleci"]. If either list ever
+ * moves, this map is the seam — not a `product` cast.
+ *
+ * Module-private on purpose. `repoUrn` is the only reader; an exported table
+ * invites a second caller to build the URN slightly differently, which is the
+ * one thing this function exists to prevent.
+ */
+const URN_PROVIDER: Record<Product, string | null> = {
+  bitbucket: "bitbucket",
+  circleci: "circleci",
+  confluence: null,
+  github: "github",
+  gitlab: "gitlab",
+  jenkins: "jenkins",
+  jira: null,
+  linear: null,
+  pagerduty: null,
+};
+
+/**
+ * The `provider:id` URN for `GET /v1/services/resolve`, or `null` when this
+ * product/scope pair can never produce one.
+ *
+ * TRIMMED, matching upstream's `coordinateParam`, which trims `?repo=` for this
+ * route specifically — unlike `resolve-file`'s `refAndPath`, where a path's own
+ * whitespace is real and not ours to edit. Bounded by `MAX_SCOPE_LEN` after
+ * trimming so a coordinate that could never be sent never becomes a query.
+ */
+export function repoUrn(product: Product, scope: string): string | null {
+  const provider = URN_PROVIDER[product];
+  if (provider === null) {
+    return null;
+  }
+  const trimmed = scope.trim();
+  if (trimmed === "" || trimmed.length > MAX_SCOPE_LEN) {
+    return null;
+  }
+  return `${provider}:${trimmed}`;
 }

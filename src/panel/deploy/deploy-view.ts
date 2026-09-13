@@ -3,6 +3,8 @@
 // fetch, no DOM outside the fragment it returns — so it is unit-testable in
 // jsdom, like every other view in this folder.
 import type { DeployPreflightResult, PreflightGap } from "../../shared/deploy.ts";
+import type { ServiceResolutionOutcome } from "../../shared/messages.ts";
+import { scopeCommand } from "../../shared/scope-command.ts";
 import { MAX_SERVICE_ID_LEN } from "../../shared/services.ts";
 import { findingLink } from "../findings/shared-view.ts";
 
@@ -162,8 +164,48 @@ export function renderSectionFrame(doc: Document): {
   return { title, body };
 }
 
-/** The unbound state: an editable seed, never a silent guess. */
-export function renderBindForm(doc: Document, guess: string): HTMLElement {
+/**
+ * The note for an outcome, or `null` for `silent` — which renders NOTHING, the
+ * byte-for-byte C10.1 behaviour a gateway without this route still gets.
+ *
+ * `unclaimed`'s wording is load-bearing. Upstream matches the URN against
+ * `nimbus.toml` by EXACT string comparison, so a null answer also covers a repo
+ * that IS configured under different casing, a different coordinate form, or a
+ * Jenkins job path spelled another way. Saying "not configured" would send the
+ * user to edit a file that is already correct. Say only what was established.
+ */
+function resolutionNote(resolution: ServiceResolutionOutcome): string | null {
+  switch (resolution.kind) {
+    case "resolved":
+      return `Nimbus maps this repository to “${resolution.serviceId}”.`;
+    case "ambiguous":
+      return "More than one Nimbus service names this repository. Pick the one you want:";
+    case "unclaimed":
+      return "No Nimbus service names this repository by this coordinate. The suggestion below is a guess from the repository name.";
+    case "forbidden":
+      return "This browser's token cannot look that up — it is missing the “resolve” scope.";
+    case "silent":
+      return null;
+  }
+}
+
+/** The unbound state: an editable seed, never a silent guess.
+ *
+ * `resolution` is what the gateway said about this repository (Task 5's
+ * `ServiceResolutionOutcome`); `noteOverride`, when present, is a bind
+ * REFUSAL and is rendered INSTEAD of the resolution's own note — never both,
+ * since "Nimbus maps this repository to checkout" sitting above "Nimbus has
+ * no [metrics.dora.checkout] block" reads as a contradiction. The candidate
+ * group (present only for `ambiguous`) renders either way, so a refused bind
+ * never loses the chips the user was choosing from.
+ */
+export function renderBindForm(
+  doc: Document,
+  seed: string,
+  resolution: ServiceResolutionOutcome,
+  /** A bind refusal, rendered INSTEAD of the resolution's own note — see above. */
+  noteOverride?: string,
+): HTMLElement {
   const form = doc.createElement("form");
   form.className = "nimbus-deploy__bind";
 
@@ -171,7 +213,18 @@ export function renderBindForm(doc: Document, guess: string): HTMLElement {
   label.textContent = "Nimbus service for this repository";
   const input = doc.createElement("input");
   input.type = "text";
-  input.value = guess;
+  // `resolved`/`ambiguous` carry an id the gateway itself vouches for, so it
+  // seeds the FIRST render — the form never shows a guess when a real answer
+  // is sitting right there. A refusal is the other case: `noteOverride` is
+  // only ever a bind refusal, and `seed` is then the id the user actually
+  // submitted. Preferring the resolution's id there would silently swap their
+  // choice — pick `cart` out of an ambiguous set, have the bind refused, and
+  // the form repaints reading `checkout`, so the next click binds a service
+  // they never selected while looking like a retry of the one they did.
+  const useResolvedSeed =
+    noteOverride === undefined &&
+    (resolution.kind === "resolved" || resolution.kind === "ambiguous");
+  input.value = useResolvedSeed ? resolution.serviceId : seed;
   // The route's own bound, from the one file that writes it down — not a third
   // spelling of 64 (see `MAX_SERVICE_ID_LEN`'s siblings in deploy-client.ts).
   input.maxLength = MAX_SERVICE_ID_LEN;
@@ -182,6 +235,55 @@ export function renderBindForm(doc: Document, guess: string): HTMLElement {
   submit.type = "submit";
   submit.textContent = "Bind";
 
-  form.append(label, submit);
+  const noteText = noteOverride ?? resolutionNote(resolution);
+  let note: HTMLElement | null = null;
+  if (noteText !== null && noteText !== "") {
+    note = doc.createElement("p");
+    note.className = "nimbus-deploy__resolution";
+    note.textContent = noteText;
+    // `noteOverride === undefined` is half of this condition, not decoration:
+    // the scope command belongs to the RESOLUTION's note, and an override has
+    // replaced that note with a bind refusal. Without it, a `forbidden`
+    // resolution followed by a refused bind renders "Nimbus has no
+    // [metrics.dora.x] block…" with `nimbus clip scopes …` underneath — a
+    // remedy for the problem that is no longer on screen, and the exact
+    // "never both" this function's own doc comment promises.
+    if (
+      noteOverride === undefined &&
+      resolution.kind === "forbidden" &&
+      resolution.scopeGap !== undefined
+    ) {
+      const cmd = scopeCommand(resolution.scopeGap);
+      if (cmd !== null) {
+        const code = doc.createElement("code");
+        code.textContent = cmd;
+        note.append(doc.createElement("br"), code);
+      }
+    }
+  }
+
+  let group: HTMLElement | null = null;
+  if (resolution.kind === "ambiguous") {
+    group = doc.createElement("div");
+    group.className = "nimbus-deploy__candidates";
+    group.setAttribute("role", "group");
+    group.setAttribute("aria-label", "Nimbus services that name this repository");
+    for (const candidate of resolution.candidates) {
+      const chip = doc.createElement("button");
+      // A real button: already focusable, already activated by Enter and
+      // Space. No tabindex and no keydown handler — adding either
+      // re-implements native behaviour, and a keydown beside native
+      // activation fires the click twice.
+      chip.type = "button";
+      chip.className = "nimbus-deploy__chip";
+      chip.textContent = candidate;
+      chip.addEventListener("click", () => {
+        input.value = candidate;
+      });
+      group.append(chip);
+    }
+  }
+
+  form.append(...(note === null ? [] : [note]), ...(group === null ? [] : [group]), label, submit);
   return form;
 }

@@ -1,9 +1,11 @@
 // test/unit/deploy-handlers.test.ts
 import { describe, expect, test, vi } from "vitest";
+import type { ServiceResolveResult } from "../../src/background/deploy-client.ts";
 import type { DeployDeps } from "../../src/background/deploy-handlers.ts";
 import {
   handleDeployPreflight,
   handleServiceBind,
+  handleServiceBindingsCheck,
   handleServiceUnbind,
 } from "../../src/background/deploy-handlers.ts";
 import type { ServiceBinding } from "../../src/shared/services.ts";
@@ -33,11 +35,14 @@ const unknownEnvelope = envelope({
 const jsonRes = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+const CONN = { origin: "http://127.0.0.1:7474", token: "tok", label: "laptop", pairedAt: 1 };
+
 const deps = (over: Partial<DeployDeps> = {}): DeployDeps => ({
-  getOrigin: async () => "http://127.0.0.1:7474",
+  getConnection: async () => CONN,
   getBindings: async () => [] as ServiceBinding[],
   putBinding: vi.fn(async () => undefined),
   dropBinding: vi.fn(async () => undefined),
+  resolveService: async () => ({ ok: false, reason: "unsupported" }),
   doFetch: (async () => jsonRes(envelope())) as unknown as typeof fetch,
   ...over,
 });
@@ -59,11 +64,12 @@ describe("handleDeployPreflight", () => {
       ok: false,
       reason: "unbound",
       guessServiceId: "web",
+      resolution: { kind: "silent" },
     });
   });
 
   test("no paired gateway origin is unreachable, not unbound", async () => {
-    const r = await handleDeployPreflight(req, deps({ getOrigin: async () => null }));
+    const r = await handleDeployPreflight(req, deps({ getConnection: async () => null }));
     expect(r).toEqual({ kind: "deploy-preflight", ok: false, reason: "unreachable" });
   });
 
@@ -138,6 +144,7 @@ describe("handleDeployPreflight", () => {
       ok: false,
       reason: "unbound",
       guessServiceId: "web",
+      resolution: { kind: "silent" },
     });
   });
 
@@ -195,6 +202,136 @@ describe("handleDeployPreflight", () => {
     const urls = doFetch.mock.calls.map((c) => c[0] as string);
     expect(urls.some((u) => u.includes("/v1/items/"))).toBe(false);
     expect(urls.find((u) => u.includes("/v1/preflight/deploy"))).toContain("target_ref=release");
+  });
+
+  test("an unbound repo with one claimant resolves to it", async () => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => ({
+          ok: true,
+          value: { service: "checkout", ambiguous: false, candidates: ["checkout"] },
+        }),
+      }),
+    );
+    expect(out).toMatchObject({
+      ok: false,
+      reason: "unbound",
+      guessServiceId: "web",
+      resolution: { kind: "resolved", serviceId: "checkout" },
+    });
+  });
+
+  test("two claimants become ambiguous, seeded from service not candidates[0]", async () => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => ({
+          ok: true,
+          // `service` deliberately is NOT `candidates[0]` here: `parseServiceResolution`
+          // only requires `service` to be a MEMBER of `candidates`, not the first one.
+          // Upstream happens to always send them equal, which is exactly why this
+          // fixture must not — a wire-realistic ordering would pass even if the
+          // implementation wrongly seeded from `candidates[0]`.
+          value: { service: "checkout", ambiguous: true, candidates: ["cart", "checkout"] },
+        }),
+      }),
+    );
+    expect(out).toMatchObject({
+      resolution: { kind: "ambiguous", serviceId: "checkout", candidates: ["cart", "checkout"] },
+    });
+  });
+
+  test("no claimant is unclaimed, and the guess survives", async () => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => ({
+          ok: true,
+          value: { service: null, ambiguous: false, candidates: [] },
+        }),
+      }),
+    );
+    expect(out).toMatchObject({ guessServiceId: "web", resolution: { kind: "unclaimed" } });
+  });
+
+  test("a 403 becomes forbidden, with the device label attached for the command", async () => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => ({
+          ok: false,
+          reason: "insufficient_scope",
+          scopeGap: { required: "resolve", granted: ["clip"] },
+        }),
+      }),
+    );
+    expect(out).toMatchObject({
+      resolution: {
+        kind: "forbidden",
+        scopeGap: { label: "laptop", required: "resolve", granted: ["clip"] },
+      },
+    });
+  });
+
+  test.each([
+    "unsupported",
+    "unauthorized",
+    "rate_limited",
+    "unreachable",
+    "server_error",
+  ] as const)("%s is silent — the guess, and no sentence", async (reason) => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => ({ ok: false, reason }),
+      }),
+    );
+    expect(out).toMatchObject({ guessServiceId: "web", resolution: { kind: "silent" } });
+  });
+
+  test("a product with no URN provider is silent without a request", async () => {
+    let called = false;
+    const out = await handleDeployPreflight(
+      { ...req, product: "jira", origin: "https://jira.acme.com", scope: "PROJ" },
+      deps({
+        resolveService: async () => {
+          called = true;
+          return { ok: false, reason: "unsupported" };
+        },
+      }),
+    );
+    expect(called).toBe(false);
+    expect(out).toMatchObject({ resolution: { kind: "silent" } });
+  });
+
+  // `resolutionFor`'s doc comment promises it never throws, and the `unbound`
+  // answer it decorates is correct with or without a resolution. Unguarded,
+  // a rejection here would escape `handleDeployPreflight` entirely and the
+  // panel would render a `server_error` refusal in place of the bind form the
+  // user needs — so the promise is defended, not merely asserted. Its sibling
+  // `handleServiceBindingsCheck` already wraps the same injected dep in
+  // `Promise.allSettled`; this is the other half of that symmetry.
+  test("a THROWING resolveService is silent, not a thrown preflight", async () => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => {
+          throw new Error("boom");
+        },
+      }),
+    );
+    expect(out).toMatchObject({
+      ok: false,
+      reason: "unbound",
+      guessServiceId: "web",
+      resolution: { kind: "silent" },
+    });
+  });
+
+  test("nothing paired refuses before resolving", async () => {
+    const out = await handleDeployPreflight(req, deps({ getConnection: async () => null }));
+    expect(out).toEqual({ kind: "deploy-preflight", ok: false, reason: "unreachable" });
   });
 });
 
@@ -328,5 +465,134 @@ describe("handleServiceUnbind", () => {
       "jenkins",
       "platform/web",
     );
+  });
+});
+
+describe("handleServiceBindingsCheck", () => {
+  const B = (scope: string, serviceId: string) => ({
+    product: "github" as const,
+    origin: "https://github.com",
+    scope,
+    serviceId,
+  });
+
+  test("classifies each binding independently, and one failure does not sink the rest", async () => {
+    const answers: Record<string, ServiceResolveResult> = {
+      "github:acme/agree": {
+        ok: true,
+        value: { service: "agree", ambiguous: false, candidates: ["agree"] },
+      },
+      "github:acme/stale": {
+        ok: true,
+        value: { service: "moved", ambiguous: false, candidates: ["moved"] },
+      },
+      "github:acme/none": { ok: true, value: { service: null, ambiguous: false, candidates: [] } },
+      "github:acme/two": {
+        ok: true,
+        value: { service: "a", ambiguous: true, candidates: ["a", "b"] },
+      },
+      "github:acme/boom": { ok: false, reason: "rate_limited" },
+    };
+    const out = await handleServiceBindingsCheck(
+      deps({
+        getBindings: async () => [
+          B("acme/agree", "agree"),
+          B("acme/stale", "old"),
+          B("acme/none", "x"),
+          B("acme/two", "a"),
+          B("acme/boom", "z"),
+        ],
+        resolveService: async (_o, _t, urn) => answers[urn] ?? { ok: false, reason: "unsupported" },
+      }),
+    );
+
+    expect(out.ok).toBe(true);
+    const states = out.ok ? out.rows.map((r) => r.status) : [];
+    expect(states[0]).toEqual({ state: "agrees" });
+    expect(states[1]).toEqual({ state: "disagrees", proposedServiceId: "moved" });
+    expect(states[2]).toEqual({ state: "unclaimed" });
+    expect(states[3]).toEqual({ state: "ambiguous", candidates: ["a", "b"] });
+    expect(states[4]).toEqual({ state: "unchecked", reason: "rate_limited" });
+  });
+
+  test("a binding whose product has no URN provider is unchecked WITHOUT a request", async () => {
+    // `called` is the point of this test. The default `resolveService` also
+    // answers `unsupported`, so asserting only the status would pass even if the
+    // URN guard were deleted — the test would prove nothing about the branch it
+    // exists to cover.
+    let called = false;
+    const out = await handleServiceBindingsCheck(
+      deps({
+        getBindings: async () => [
+          { product: "jira", origin: "https://jira.acme.com", scope: "PROJ", serviceId: "x" },
+        ],
+        resolveService: async () => {
+          called = true;
+          return { ok: false, reason: "unsupported" };
+        },
+      }),
+    );
+    expect(called).toBe(false);
+    expect(out.ok && out.rows[0]?.status).toEqual({ state: "unchecked", reason: "unsupported" });
+  });
+
+  test("nothing paired is not_paired, with no requests made", async () => {
+    let called = false;
+    const out = await handleServiceBindingsCheck(
+      deps({
+        getConnection: async () => null,
+        getBindings: async () => [B("acme/web", "web")],
+        resolveService: async () => {
+          called = true;
+          return { ok: false, reason: "unsupported" };
+        },
+      }),
+    );
+    expect(called).toBe(false);
+    expect(out).toEqual({ kind: "service-bindings-check", ok: false, reason: "not_paired" });
+  });
+
+  test("a rejected resolve is unchecked rather than a thrown check", async () => {
+    const out = await handleServiceBindingsCheck(
+      deps({
+        getBindings: async () => [B("acme/web", "web")],
+        resolveService: async () => {
+          throw new Error("boom");
+        },
+      }),
+    );
+    expect(out.ok && out.rows[0]?.status).toEqual({ state: "unchecked", reason: "server_error" });
+  });
+
+  // Distinguishes `Promise.allSettled` from `Promise.all`: a genuine REJECTION
+  // (not merely a resolved `{ ok: false }`) on one binding, alongside siblings
+  // that resolve normally to DIFFERENT non-unchecked states. `Promise.all`
+  // would reject the whole batch on the throw, so the check itself would throw
+  // instead of returning `{ ok: true, rows: [...] }` — and even if only the
+  // thrown row's status were asserted, that alone would not show the siblings
+  // survived.
+  test("a thrown resolve among several does not sink the siblings' answers", async () => {
+    const out = await handleServiceBindingsCheck(
+      deps({
+        getBindings: async () => [
+          B("acme/agree", "agree"),
+          B("acme/boom", "z"),
+          B("acme/stale", "old"),
+        ],
+        resolveService: async (_o, _t, urn) => {
+          if (urn === "github:acme/boom") {
+            throw new Error("boom");
+          }
+          return urn === "github:acme/agree"
+            ? { ok: true, value: { service: "agree", ambiguous: false, candidates: ["agree"] } }
+            : { ok: true, value: { service: "moved", ambiguous: false, candidates: ["moved"] } };
+        },
+      }),
+    );
+    expect(out.ok).toBe(true);
+    const states = out.ok ? out.rows.map((r) => r.status) : [];
+    expect(states[0]).toEqual({ state: "agrees" });
+    expect(states[1]).toEqual({ state: "unchecked", reason: "server_error" });
+    expect(states[2]).toEqual({ state: "disagrees", proposedServiceId: "moved" });
   });
 });

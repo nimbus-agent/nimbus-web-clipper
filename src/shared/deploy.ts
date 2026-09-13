@@ -8,6 +8,8 @@
 // Duplicated here rather than imported: the gateway is a SEPARATE repository and
 // this extension ships with no node_modules.
 
+import { MAX_SERVICE_ID_LEN } from "./services.ts";
+
 /** Two values. There is no "pass" and no third verdict. */
 export type PreflightVerdict = "ok" | "warn";
 
@@ -239,4 +241,77 @@ export function isUnknownService(r: DeployPreflightResult): boolean {
     failing_ci_runs.gap === "unknown_service" &&
     merge_conflicts.gap === "unknown_service"
   );
+}
+
+/**
+ * `GET /v1/services/resolve`'s body. A TOTAL key set upstream: `ambiguous` and
+ * `candidates` are present on every answer, including the null one, so a client
+ * cannot mistake "this gateway does not disclose ambiguity" for "this binding
+ * is uncontested".
+ */
+export interface ServiceResolution {
+  readonly service: string | null;
+  readonly ambiguous: boolean;
+  readonly candidates: readonly string[];
+}
+
+/**
+ * An id short enough that it could be sent back to the gateway.
+ *
+ * Exported so the message-boundary guards in `messages.ts` enforce the SAME
+ * bound as this wire parser rather than spelling `64` a third time. The two
+ * validate one shape at two boundaries — a resolution parsed off the wire here,
+ * and the same data crossing `chrome.runtime` there — and a guard that accepts
+ * a bare `string` where this one demands a bounded id is how the panel ends up
+ * rendering an id it can never send back.
+ */
+export function sendableId(v: unknown): v is string {
+  return typeof v === "string" && v.length >= 1 && v.length <= MAX_SERVICE_ID_LEN;
+}
+
+/**
+ * The resolution, or `null` for anything this client does not fully understand.
+ *
+ * REJECTS THE WHOLE BODY on a bad member rather than filtering it out —
+ * `parseScopeGap` is the precedent, and the reasoning transfers: a partially
+ * accepted body silently changes what the client believes the gateway said.
+ * A rejection surfaces as `server_error`, which the panel renders as the silent
+ * row: the guess, and no false sentence.
+ *
+ * Bounds every id by `MAX_SERVICE_ID_LEN`, `service` and candidates alike. An
+ * id longer than the gateway's own bound can never be sent back to it, so it
+ * must not be readable back as though it could — the rule `isServiceBinding`
+ * already applies to stored bindings.
+ *
+ * Asserts the two invariants rather than trusting either field alone
+ * (`docs/architecture.md`, "`services/resolve` seeds the bind form from the
+ * worker, never the panel", read off upstream's `resolveServicesByRepoUrn`,
+ * which returns `serviceId: claimants[0] ?? null` beside
+ * `candidateServiceIds: claimants`):
+ *   - `ambiguous` is exactly `candidates.length > 1`;
+ *   - `service` is null exactly when `candidates` is empty.
+ * A body where those disagree is a gateway this client does not understand, and
+ * guessing which field to believe is how a dead branch gets written.
+ */
+export function parseServiceResolution(v: unknown): ServiceResolution | null {
+  if (!isObj(v)) return null;
+  const service = v["service"];
+  const ambiguous = v["ambiguous"];
+  const candidates = v["candidates"];
+  if (typeof ambiguous !== "boolean" || !Array.isArray(candidates)) return null;
+  if (service !== null && !sendableId(service)) return null;
+  for (const c of candidates) {
+    if (!sendableId(c)) return null;
+  }
+  if (ambiguous !== candidates.length > 1) return null;
+  if ((service === null) !== (candidates.length === 0)) return null;
+  // The nominated service must be one of the disclosed candidates. Upstream
+  // guarantees it by construction — `serviceId` IS `claimants[0]` and
+  // `candidateServiceIds` IS `claimants` — so a body where it does not hold is
+  // not a gateway this client understands. Checked rather than assumed for the
+  // same reason as the two invariants above: the seed is taken from `service`,
+  // so a `service` outside `candidates` would seed an id the picker cannot
+  // reach and the user cannot re-select after a failed bind.
+  if (service !== null && !candidates.includes(service)) return null;
+  return { service, ambiguous, candidates: [...candidates] };
 }

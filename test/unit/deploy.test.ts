@@ -2,8 +2,10 @@ import { describe, expect, test } from "vitest";
 import {
   isUnknownService,
   parseDeployPreflight,
+  parseServiceResolution,
   UNRECOGNISED_GAP,
 } from "../../src/shared/deploy.ts";
+import { MAX_SERVICE_ID_LEN } from "../../src/shared/services.ts";
 
 const check = (over: Record<string, unknown> = {}) => ({
   count: 0,
@@ -254,5 +256,71 @@ describe("isUnknownService", () => {
       }),
     );
     expect(isUnknownService(some!)).toBe(false);
+  });
+});
+
+describe("parseServiceResolution", () => {
+  test("accepts a single claimant", () => {
+    expect(
+      parseServiceResolution({ service: "checkout", ambiguous: false, candidates: ["checkout"] }),
+    ).toEqual({ service: "checkout", ambiguous: false, candidates: ["checkout"] });
+  });
+
+  test("accepts an ambiguous answer, whose service is still non-null", () => {
+    const out = parseServiceResolution({
+      service: "checkout",
+      ambiguous: true,
+      candidates: ["checkout", "cart"],
+    });
+    expect(out?.service).toBe("checkout");
+    expect(out?.candidates).toEqual(["checkout", "cart"]);
+  });
+
+  test("accepts the null answer with empty candidates", () => {
+    expect(parseServiceResolution({ service: null, ambiguous: false, candidates: [] })).toEqual({
+      service: null,
+      ambiguous: false,
+      candidates: [],
+    });
+  });
+
+  test("rejects a body whose ambiguous disagrees with the candidate count", () => {
+    expect(parseServiceResolution({ service: "a", ambiguous: true, candidates: ["a"] })).toBeNull();
+    expect(
+      parseServiceResolution({ service: "a", ambiguous: false, candidates: ["a", "b"] }),
+    ).toBeNull();
+  });
+
+  test("rejects a nominated service that is not among the candidates", () => {
+    expect(
+      parseServiceResolution({ service: "foo", ambiguous: true, candidates: ["bar", "baz"] }),
+    ).toBeNull();
+    expect(
+      parseServiceResolution({ service: "foo", ambiguous: false, candidates: ["bar"] }),
+    ).toBeNull();
+  });
+
+  test("rejects null service alongside a candidate, and vice versa", () => {
+    expect(
+      parseServiceResolution({ service: null, ambiguous: false, candidates: ["a"] }),
+    ).toBeNull();
+    expect(parseServiceResolution({ service: "a", ambiguous: false, candidates: [] })).toBeNull();
+  });
+
+  test("rejects the WHOLE body when any id is unsendable, rather than filtering", () => {
+    const long = "x".repeat(MAX_SERVICE_ID_LEN + 1);
+    expect(
+      parseServiceResolution({ service: "ok", ambiguous: true, candidates: ["ok", long] }),
+    ).toBeNull();
+    expect(parseServiceResolution({ service: "", ambiguous: false, candidates: [""] })).toBeNull();
+  });
+
+  test("rejects wrong types and non-objects", () => {
+    expect(parseServiceResolution(null)).toBeNull();
+    expect(parseServiceResolution("nope")).toBeNull();
+    expect(parseServiceResolution({ service: 1, ambiguous: false, candidates: [] })).toBeNull();
+    expect(parseServiceResolution({ service: null, ambiguous: "no", candidates: [] })).toBeNull();
+    expect(parseServiceResolution({ service: null, ambiguous: false, candidates: {} })).toBeNull();
+    expect(parseServiceResolution({ service: null, ambiguous: false })).toBeNull();
   });
 });

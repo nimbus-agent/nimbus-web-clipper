@@ -111,6 +111,26 @@ export const GATEWAY_PATHS = {
    *  windows rather than a series. */
   metricsDora: "/v1/metrics/dora",
   /**
+   * `GET /v1/services/resolve?repo=<provider:id>` — which Nimbus service claims
+   * a repo. A BEARER read under the `resolve` scope, the same one `resolve`,
+   * `resolveFile` and `resolveIds` already use, so a browser those work for
+   * needs no re-pairing. `resolve` is NOT in upstream's
+   * `LEGACY_SCOPES = ["clip", "briefs"]`, so a browser paired before scopes
+   * existed gets a 403, cleared with `nimbus clip scopes`.
+   *
+   * NOT on the public read-only table, unlike `preflightDeploy` and `items`
+   * beside it: upstream mounts it scoped because it CLAIMS narrowness (one repo
+   * the caller named) and a public mount would let N cheap calls rebuild the
+   * whole service-to-repo grouping it exists not to expose.
+   *
+   * Its 404 `services_disabled` names a GATE, not the route: it tests that the
+   * clips surface is mounted, so a gateway too old to carry the route and a new
+   * one with no paired-client surface answer identically. A client cannot tell
+   * them apart — which is why the panel says nothing on 404 and falls back to
+   * the guess. No version floor.
+   */
+  servicesResolve: "/v1/services/resolve",
+  /**
    * BASE, not a complete path: callers append `/${encodeURIComponent(id)}`.
    * Same treatment as `agents` / `agentRuns` above — a static map cannot express
    * a path parameter, and a second map is what the resolve slice existed to

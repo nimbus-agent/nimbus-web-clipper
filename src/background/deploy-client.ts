@@ -1,18 +1,23 @@
 // src/background/deploy-client.ts
 // The deploy-readiness reads (C10), and nothing else.
 //
-// Split from gateway-client.ts on the egress-client.ts precedent, and for a
-// sharper reason than size: these routes are UNAUTHENTICATED. They sit on the
-// gateway's public read-only table, so there is no bearer header, no 403, no
-// scope gap and no `nimbus clip scopes` remedy. The error vocabulary here is
-// deliberately smaller than every sibling client's, and that asymmetry is a
-// property of the routes rather than an oversight.
+// Split from gateway-client.ts on the egress-client.ts precedent. Two of the
+// three reads here are UNAUTHENTICATED — `fetchPreflight` and `fetchItemBranch`
+// sit on the gateway's public read-only table, so they send no bearer header and
+// their error vocabulary (`DeployError`) has no 403, no scope gap and no
+// `nimbus clip scopes` remedy.
+//
+// `fetchServiceResolution` is NOT one of them (C10.3). It is a bearer read under
+// the `resolve` scope with the full sibling vocabulary, and it carries its own
+// result type rather than widening `DeployError` — a 403 on a public route would
+// be a contradiction, and one shared union would make that unrepresentable
+// difference invisible.
 
-import type { DeployPreflightResult } from "../shared/deploy.ts";
-import { parseDeployPreflight } from "../shared/deploy.ts";
+import type { DeployPreflightResult, ServiceResolution } from "../shared/deploy.ts";
+import { parseDeployPreflight, parseServiceResolution } from "../shared/deploy.ts";
 import { endpointUrl } from "../shared/gateway.ts";
 import { MAX_BRANCH_LEN, MAX_SERVICE_ID_LEN } from "../shared/services.ts";
-import { isObject, readJson } from "./http-json.ts";
+import { isObject, parseScopeGap, readJson } from "./http-json.ts";
 
 /** Reads over a local index; short enough that a wedged gateway does not hang
  *  the section behind it. */
@@ -121,4 +126,86 @@ export async function fetchItemBranch(
   }
   const branch = meta["branch"];
   return { ok: true, value: typeof branch === "string" && branch !== "" ? branch : null };
+}
+
+/**
+ * The full sibling vocabulary, unlike `DeployError` — see this file's header.
+ * Mirrors `egress-client.ts`'s ladder rather than inventing names for the same
+ * statuses; that client is this repo's established shape for a scoped read.
+ */
+export type ServiceResolveError =
+  | "unauthorized"
+  | "insufficient_scope"
+  | "unsupported"
+  | "rate_limited"
+  | "unreachable"
+  | "server_error";
+
+export type ServiceResolveResult =
+  | { ok: true; value: ServiceResolution }
+  | {
+      ok: false;
+      reason: ServiceResolveError;
+      scopeGap?: { required: string; granted: string[] };
+    };
+
+/**
+ * Which Nimbus service claims `urn`, as the gateway sees it.
+ *
+ * Deliberately NOT routed through this file's `getJson`: that helper sends no
+ * authorization header and collapses every non-200 to `server_error`, which
+ * would erase exactly the 403 this route exists to report actionably.
+ *
+ * The 429 arm is carried even though this route is not rate-limited today — the
+ * server has an `HttpWriteRateLimiter` and does answer 429 on at least one route
+ * (`/v1/egress/prove`), and a client that cannot represent the status would
+ * report it as `server_error` and say something false.
+ */
+export async function fetchServiceResolution(
+  origin: string,
+  token: string,
+  urn: string,
+  doFetch: FetchLike,
+): Promise<ServiceResolveResult> {
+  const qs = new URLSearchParams({ repo: urn }).toString();
+  const url = `${endpointUrl(origin, "servicesResolve")}?${qs}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEPLOY_TIMEOUT_MS);
+  try {
+    let res: Response;
+    try {
+      res = await doFetch(url, {
+        method: "GET",
+        headers: { authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+    } catch {
+      return { ok: false, reason: "unreachable" };
+    }
+    // The timer stays ARMED across the body read and is cleared in `finally`,
+    // so a gateway that answers 200 and then hangs its body stream is still
+    // bounded — the same rule egress-client.ts states at length.
+    if (res.status === 200) {
+      const value = parseServiceResolution(await readJson(res));
+      return value === null ? { ok: false, reason: "server_error" } : { ok: true, value };
+    }
+    if (res.status === 401) {
+      return { ok: false, reason: "unauthorized" };
+    }
+    if (res.status === 403) {
+      const gap = parseScopeGap(await readJson(res));
+      return gap === null
+        ? { ok: false, reason: "insufficient_scope" }
+        : { ok: false, reason: "insufficient_scope", scopeGap: gap };
+    }
+    if (res.status === 404) {
+      return { ok: false, reason: "unsupported" };
+    }
+    if (res.status === 429) {
+      return { ok: false, reason: "rate_limited" };
+    }
+    return { ok: false, reason: "server_error" };
+  } finally {
+    clearTimeout(timer);
+  }
 }

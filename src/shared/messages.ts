@@ -5,7 +5,7 @@
 import { isCanonicalRejection } from "./canonical.ts";
 import { isSourceShape } from "./clip.ts";
 import { CONNECTOR_STATES, type ConnectorHealth } from "./connector-health.ts";
-import { type DeployPreflightResult, parseDeployPreflight } from "./deploy.ts";
+import { type DeployPreflightResult, parseDeployPreflight, sendableId } from "./deploy.ts";
 import type {
   EgressError,
   EgressPartition,
@@ -439,7 +439,8 @@ export type ExtensionRequest =
   | DeployPreflightRequest
   | ServiceBindingsListRequest
   | ServiceBindRequest
-  | ServiceUnbindRequest;
+  | ServiceUnbindRequest
+  | ServiceBindingsCheckRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -1186,6 +1187,34 @@ export interface DeployPreflightRequest {
   readonly targetRef?: string;
 }
 
+/**
+ * What asking `GET /v1/services/resolve` produced, as STRUCTURE — never prose.
+ * `deploy-view.ts` owns every English string; the tempting shortcut is to have
+ * the worker return the note it already knows, and that is the layering this
+ * repo keeps everywhere else.
+ *
+ * `ambiguous` carries `serviceId` ALONGSIDE the candidates because the gateway
+ * answers both (`docs/architecture.md`, "`services/resolve` seeds the bind form
+ * from the worker, never the panel": `service` is `candidates[0]`, never null,
+ * when ambiguous) — so no view ever indexes into `candidates` to find its seed.
+ *
+ * `silent` folds 404, `unauthorized`, `rate_limited`, `unreachable` and
+ * `server_error` together AT THIS BOUNDARY, because the panel renders them
+ * identically: the guess, and no sentence. The distinctions are not lost —
+ * they live on `ServiceResolveError`, and the Options check reads them —
+ * they are merely not carried into a surface that would say nothing with them.
+ */
+export type ServiceResolutionOutcome =
+  | { readonly kind: "resolved"; readonly serviceId: string }
+  | {
+      readonly kind: "ambiguous";
+      readonly serviceId: string;
+      readonly candidates: readonly string[];
+    }
+  | { readonly kind: "unclaimed" }
+  | { readonly kind: "forbidden"; readonly scopeGap?: ScopeGap }
+  | { readonly kind: "silent" };
+
 export type DeployPreflightResponse =
   | {
       readonly kind: "deploy-preflight";
@@ -1203,10 +1232,19 @@ export type DeployPreflightResponse =
   | {
       readonly kind: "deploy-preflight";
       readonly ok: false;
-      readonly reason: DeployRefusal;
-      /** Only on `unbound`: the seed for the bind input, so the panel does not
-       *  need its own copy of the guess rule. */
-      readonly guessServiceId?: string;
+      readonly reason: "unbound";
+      /**
+       * REQUIRED, unlike the optional field this replaced: `guessServiceId()`
+       * returns `string` and never `undefined`, so the optional marker only ever
+       * forced a `?? ""` at the one call site that reads it.
+       */
+      readonly guessServiceId: string;
+      readonly resolution: ServiceResolutionOutcome;
+    }
+  | {
+      readonly kind: "deploy-preflight";
+      readonly ok: false;
+      readonly reason: Exclude<DeployRefusal, "unbound">;
     };
 
 export interface ServiceBindingsListRequest {
@@ -1279,6 +1317,49 @@ export function isServiceUnbindRequest(v: unknown): v is ServiceUnbindRequest {
   );
 }
 
+const RESOLUTION_KINDS = ["resolved", "ambiguous", "unclaimed", "forbidden", "silent"] as const;
+
+/**
+ * The SAME contract `parseServiceResolution` (`./deploy.ts`) enforces on the
+ * `GET /v1/services/resolve` body this outcome is derived from — one shape, two
+ * boundaries, and they must not disagree.
+ *
+ * Every id is bounded by `MAX_SERVICE_ID_LEN` through the parser's own
+ * `sendableId`, never a second inline spelling of the bound: an id longer than
+ * the gateway's limit can never be sent back to it, so it must not be readable
+ * back as though it could. `ambiguous` additionally asserts what the word
+ * means — at least two candidates, and the nominated `serviceId` among them.
+ * A bare `typeof === "string"` here let a message the wire parser would have
+ * rejected through, and the panel rendered the impossible choice it described:
+ * an ambiguous picker offering one option, or a seed no chip can re-select
+ * after a failed bind.
+ */
+function isServiceResolutionOutcome(v: unknown): v is ServiceResolutionOutcome {
+  if (!isObject(v)) return false;
+  const kind = v["kind"];
+  if (typeof kind !== "string" || !(RESOLUTION_KINDS as readonly string[]).includes(kind)) {
+    return false;
+  }
+  if (kind === "resolved") return sendableId(v["serviceId"]);
+  if (kind === "ambiguous") {
+    const c = v["candidates"];
+    // The same contract `parseServiceResolution` enforces on the wire body this
+    // outcome is derived from, restated at the message boundary — see
+    // `isServiceResolutionOutcome`'s doc comment.
+    return (
+      sendableId(v["serviceId"]) &&
+      Array.isArray(c) &&
+      c.length > 1 &&
+      c.every(sendableId) &&
+      c.includes(v["serviceId"])
+    );
+  }
+  if (kind === "forbidden") {
+    return v["scopeGap"] === undefined || isScopeGap(v["scopeGap"]);
+  }
+  return true;
+}
+
 export function isDeployPreflightResponse(v: unknown): v is DeployPreflightResponse {
   if (!isObject(v) || v["kind"] !== "deploy-preflight") {
     return false;
@@ -1289,11 +1370,13 @@ export function isDeployPreflightResponse(v: unknown): v is DeployPreflightRespo
   if (v["ok"] !== false || typeof v["reason"] !== "string") {
     return false;
   }
-  const guess = v["guessServiceId"];
-  return (
-    (DEPLOY_REFUSALS as readonly string[]).includes(v["reason"]) &&
-    (guess === undefined || typeof guess === "string")
-  );
+  if (!(DEPLOY_REFUSALS as readonly string[]).includes(v["reason"])) {
+    return false;
+  }
+  if (v["reason"] === "unbound") {
+    return typeof v["guessServiceId"] === "string" && isServiceResolutionOutcome(v["resolution"]);
+  }
+  return true;
 }
 
 export function isServiceBindingsListResponse(v: unknown): v is ServiceBindingsListResponse {
@@ -1322,4 +1405,110 @@ export function isServiceBindResponse(v: unknown): v is ServiceBindResponse {
       reason === "server_error" ||
       reason === "malformed")
   );
+}
+
+export interface ServiceBindingsCheckRequest {
+  readonly kind: "service-bindings-check";
+}
+
+// Mirrors `ServiceResolveError` (background/deploy-client.ts) member for
+// member. "malformed" is NOT here because it is not there: a body the guard
+// rejects maps to `server_error`, so no branch can produce it, and a state no
+// code can reach is a branch a reader will write and never exercise.
+//
+// Declared as a runtime list, and `CheckUncheckedReason` derived from it below,
+// rather than importing `ServiceResolveError` itself: `src/shared/` is the
+// layer `src/background/` consumes, never the reverse. The two types stay
+// structurally identical, so a `ServiceResolveError` value still assigns
+// straight into `unchecked.reason` — and if `ServiceResolveError` ever gains a
+// seventh member, that assignment stops compiling until this list is updated
+// to match, which is the right outcome.
+const CHECK_UNCHECKED_REASONS = [
+  "unauthorized",
+  "insufficient_scope",
+  "unsupported",
+  "rate_limited",
+  "unreachable",
+  "server_error",
+] as const;
+/**
+ * Exported because `bindings-view.ts` renders a sentence per member, keyed by
+ * a `Record<CheckUncheckedReason, string>` — a seventh member is then a
+ * compile error there until it is given words, which is the whole reason this
+ * type is finer-grained than the bind form's single `silent`.
+ */
+export type CheckUncheckedReason = (typeof CHECK_UNCHECKED_REASONS)[number];
+
+export type BindingCheckStatus =
+  | { readonly state: "agrees" }
+  | { readonly state: "disagrees"; readonly proposedServiceId: string }
+  | { readonly state: "unclaimed" }
+  | { readonly state: "ambiguous"; readonly candidates: readonly string[] }
+  | { readonly state: "unchecked"; readonly reason: CheckUncheckedReason };
+
+export interface ServiceBindingCheckRow {
+  readonly binding: ServiceBinding;
+  readonly status: BindingCheckStatus;
+}
+
+export type ServiceBindingsCheckResponse =
+  | {
+      readonly kind: "service-bindings-check";
+      readonly ok: true;
+      readonly rows: readonly ServiceBindingCheckRow[];
+    }
+  | {
+      readonly kind: "service-bindings-check";
+      readonly ok: false;
+      readonly reason: "not_paired" | "server_error";
+    };
+
+const CHECK_STATES = ["agrees", "disagrees", "unclaimed", "ambiguous", "unchecked"] as const;
+
+function isBindingCheckStatus(v: unknown): v is BindingCheckStatus {
+  if (!isObject(v)) return false;
+  const state = v["state"];
+  if (typeof state !== "string" || !(CHECK_STATES as readonly string[]).includes(state)) {
+    return false;
+  }
+  // Bounded ids and a real ambiguity, the same contract
+  // `isServiceResolutionOutcome` above restates from `parseServiceResolution`.
+  // No membership check here: this status carries no `serviceId` to be a member
+  // OF — the row's own binding holds the stored id, and the check exists
+  // precisely because the gateway may no longer name it.
+  if (state === "disagrees") return sendableId(v["proposedServiceId"]);
+  if (state === "ambiguous") {
+    const c = v["candidates"];
+    return Array.isArray(c) && c.length > 1 && c.every(sendableId);
+  }
+  if (state === "unchecked") {
+    const r = v["reason"];
+    return typeof r === "string" && (CHECK_UNCHECKED_REASONS as readonly string[]).includes(r);
+  }
+  return true;
+}
+
+/**
+ * Validates EVERY ROW — the binding through `isServiceBinding`, the status
+ * through its own closed sets. `Array.isArray(rows)` alone, or
+ * `typeof reason === "string"`, would type-narrow far more than it checks: the
+ * recurring defect in this codebase is a guard that accepts `string` for a
+ * closed union, or a validator that passes the caller's object through.
+ */
+export function isServiceBindingsCheckResponse(v: unknown): v is ServiceBindingsCheckResponse {
+  if (!isObject(v) || v["kind"] !== "service-bindings-check") return false;
+  if (v["ok"] === true) {
+    const rows = v["rows"];
+    return (
+      Array.isArray(rows) &&
+      rows.every(
+        (r) => isObject(r) && isServiceBinding(r["binding"]) && isBindingCheckStatus(r["status"]),
+      )
+    );
+  }
+  return v["ok"] === false && (v["reason"] === "not_paired" || v["reason"] === "server_error");
+}
+
+export function isServiceBindingsCheckRequest(v: unknown): v is ServiceBindingsCheckRequest {
+  return isObject(v) && v["kind"] === "service-bindings-check";
 }

@@ -205,6 +205,48 @@ export async function handleRequest(
     const items = (scenario.resolveIds ?? []).filter((row) => ids.has(row.id));
     return jsonResponse({ items });
   }
+  // `GET /v1/services/resolve?repo=<provider:id>` — which Nimbus service
+  // claims a repo (C10.3). A BEARER read under the `resolve` scope, unlike
+  // `preflightDeploy`/`metricsDora` below — the first path in this file to
+  // check an `authorization` header at all, because this is the first route
+  // whose panel-visible behaviour (the 403 arm, and the pasteable
+  // `nimbus clip scopes` command it feeds) depends on there being a real gap
+  // to report rather than a mocked-away one. Keyed by the exact `repo` param,
+  // same shape as `resolve`/`preflightDeploy` above; everything not listed
+  // 404s as `services_disabled` — the gate the panel must survive silently,
+  // whether it means no clips surface mounted or a gateway older than the
+  // route.
+  if (req.method === "GET" && url.pathname === GATEWAY_PATHS.servicesResolve) {
+    const auth = req.headers.get("authorization") ?? "";
+    if (auth === "Bearer no-resolve-scope") {
+      // A real gap body, so the pasteable `nimbus clip scopes` command is
+      // exercised end to end rather than mocked away.
+      return new Response(JSON.stringify({ required: "resolve", granted: ["clip", "briefs"] }), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    const repo = url.searchParams.get("repo");
+    if (repo === "github:acme/payments-service") {
+      return jsonResponse({ service: "payments", ambiguous: false, candidates: ["payments"] });
+    }
+    if (repo === "github:acme/monorepo") {
+      return jsonResponse({
+        service: "checkout",
+        ambiguous: true,
+        candidates: ["checkout", "cart"],
+      });
+    }
+    if (repo === "github:acme/unconfigured") {
+      return jsonResponse({ service: null, ambiguous: false, candidates: [] });
+    }
+    // Everything else: the gate that means "no clips surface mounted, or a
+    // gateway older than the route" — the case the panel must survive silently.
+    return new Response(JSON.stringify({ error: "services_disabled" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
   // `GET /v1/preflight/deploy?service=&target_ref=[&max_findings=]` — the
   // deploy verdict (C10). On the gateway's PUBLIC read-only table, same as
   // `health` above: no bearer, no scope, no separate auth check here. Keyed
