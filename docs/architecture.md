@@ -1917,6 +1917,29 @@ dead branch and seed an empty input on the one outcome with the most to offer;
 `resolutionFor` seeds from `service`, in both the single and the ambiguous
 case, and never indexes into `candidates` itself.
 
+Those properties are asserted at **two** boundaries, not one, and the two must
+not drift. `parseServiceResolution` (`shared/deploy.ts`) validates the wire
+body: every id bounded by `MAX_SERVICE_ID_LEN` and non-empty, `ambiguous`
+exactly when there are two or more candidates, and the nominated `service`
+among them. `isServiceResolutionOutcome` (`shared/messages.ts`) validates the
+same data again as it crosses `chrome.runtime`, and for a while it asked only
+`typeof === "string"` — so a message the wire parser would have rejected still
+reached the panel, which faithfully rendered the impossible thing it described:
+an "ambiguous" picker with a single chip, or a seed no chip can re-select after
+a refused bind. The message guards now go through the parser's own exported
+`sendableId` rather than respelling the bound, and `isBindingCheckStatus` holds
+the same line for the Options table — minus membership, since that status
+carries no `serviceId` to be a member of.
+
+A refusal is the one case where the gateway's id does **not** win.
+`renderBindForm` takes a `seed` beside the resolution and prefers the
+resolution's vouched-for id — but only on the FIRST render. Its `noteOverride`
+is only ever a bind refusal, and on that repaint `seed` is the id the user
+actually submitted; preferring the resolution's would silently swap their
+choice, so picking `cart` out of an ambiguous set and having the bind refused
+would leave the form reading `checkout` — and the next click binding a service
+they never selected, while looking exactly like a retry of the one they did.
+
 404, `unauthorized`, `rate_limited`, `unreachable` and a guard-rejected body all
 fold into one `silent` outcome at this boundary, because the bind form renders
 all five identically: the same guess it always showed, and no note. The
@@ -2011,6 +2034,16 @@ collapsing to the bind form's single `silent` bucket: Options is the one
 surface where the difference between "your token lacks `resolve`", "this
 gateway has no such route" and "the gateway is rate-limiting you" is worth the
 words, because the user came here specifically to manage bindings.
+
+The check renders straight from its own response rows rather than re-reading
+the list — one round trip answers both "what do I have" and "does the gateway
+still agree" — which makes that snapshot **stale the moment anything mutates a
+binding**, and only the check button is disabled while it runs. So a
+module-level generation counter in `options.ts`, bumped by every mutation and
+compared before the paint, lets a superseded check discard its render instead
+of resurrecting an unbound row complete with a working correction button.
+Disabling the per-row Unbind controls for the duration would not do: the
+correction path mutates too.
 
 That reason type is also the one place this feature quietly extends a rule
 `src/shared/egress.ts` already states: nothing under `src/shared/` may import
