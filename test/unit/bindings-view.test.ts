@@ -2,6 +2,7 @@
 // test/unit/bindings-view.test.ts
 import { describe, expect, test, vi } from "vitest";
 import { renderBindingsError, renderBindingsTable } from "../../src/options/bindings-view.ts";
+import type { BindingCheckStatus } from "../../src/shared/messages.ts";
 import type { ServiceBinding } from "../../src/shared/services.ts";
 import { bindingKey } from "../../src/shared/services.ts";
 
@@ -163,7 +164,70 @@ describe("renderBindingsTable status (C10.3 slice 2)", () => {
     expect(seen).toEqual([["acme/b", "new"]]);
   });
 
-  test("unchecked says could not check, never that the binding is wrong", () => {
+  /** The six `unchecked` reasons and the phrase that must be in each one's
+   *  sentence. A bare `/could not check/` would pass for all six identically
+   *  and prove nothing about the finer-grained reason — which is the entire
+   *  justification for `CheckUncheckedReason` being a six-member union rather
+   *  than the bind form's single `silent`. */
+  const UNCHECKED_CASES: ReadonlyArray<readonly [string, RegExp]> = [
+    ["unauthorized", /did not accept this browser's token/i],
+    ["insufficient_scope", /missing the .resolve. scope/i],
+    ["unsupported", /no service lookup/i],
+    ["rate_limited", /rate-limiting/i],
+    ["unreachable", /could not be reached/i],
+    ["server_error", /errored/i],
+  ];
+
+  test.each(UNCHECKED_CASES)(
+    "unchecked/%s names its own reason, still says could not check, and never says the binding is wrong",
+    (reason, phrase) => {
+      const bindings = [
+        {
+          product: "github" as const,
+          origin: "https://github.com",
+          scope: "acme/a",
+          serviceId: "a",
+        },
+      ];
+      const statuses = new Map([
+        [
+          bindingKey("https://github.com", "github", "acme/a"),
+          { state: "unchecked", reason } as BindingCheckStatus,
+        ],
+      ]);
+      const text = renderBindingsTable(bindings, NOOP, statuses, NOOP).textContent ?? "";
+      expect(text).toMatch(phrase);
+      // The rule the reason must not soften: this is a fact about the CHECK.
+      expect(text).toMatch(/could not check/i);
+      expect(text).not.toMatch(/wrong|incorrect|invalid/i);
+    },
+  );
+
+  // Each of the six has to read DIFFERENTLY, not merely contain its phrase — a
+  // `Record` that mapped several reasons to one string would satisfy every
+  // assertion above and still be the "Could not check" the user already had.
+  test("no two unchecked reasons render the same sentence", () => {
+    const bindings = [
+      { product: "github" as const, origin: "https://github.com", scope: "acme/a", serviceId: "a" },
+    ];
+    const rendered = UNCHECKED_CASES.map(([reason]) => {
+      const statuses = new Map([
+        [
+          bindingKey("https://github.com", "github", "acme/a"),
+          { state: "unchecked", reason } as BindingCheckStatus,
+        ],
+      ]);
+      return renderBindingsTable(bindings, NOOP, statuses, NOOP).textContent ?? "";
+    });
+    expect(new Set(rendered).size).toBe(UNCHECKED_CASES.length);
+  });
+
+  // The panel pastes a `nimbus clip scopes <label> --set …` command on the same
+  // 403; this surface cannot, because `BindingCheckStatus` carries no
+  // `ScopeGap` (no device label, no granted list) and inventing one would be a
+  // command that does not paste. Naming the command without arguments is the
+  // deliberate stopping point — asserted so a later change has to be a choice.
+  test("insufficient_scope names the remedy but never fabricates a pasteable command", () => {
     const bindings = [
       { product: "github" as const, origin: "https://github.com", scope: "acme/a", serviceId: "a" },
     ];
@@ -174,8 +238,9 @@ describe("renderBindingsTable status (C10.3 slice 2)", () => {
       ],
     ]);
     const text = renderBindingsTable(bindings, NOOP, statuses, NOOP).textContent ?? "";
-    expect(text).toMatch(/could not check|resolve. scope/i);
-    expect(text).not.toMatch(/wrong|incorrect|invalid/i);
+    expect(text).toContain("nimbus clip scopes");
+    expect(text).not.toContain("--set");
+    expect(text).not.toContain("<label>");
   });
 
   test("with no statuses the table renders exactly as before", () => {

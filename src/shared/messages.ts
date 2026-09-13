@@ -1194,8 +1194,9 @@ export interface DeployPreflightRequest {
  * repo keeps everywhere else.
  *
  * `ambiguous` carries `serviceId` ALONGSIDE the candidates because the gateway
- * answers both (design §2.1: `service` is `candidates[0]`, never null, when
- * ambiguous) — so no view ever indexes into `candidates` to find its seed.
+ * answers both (`docs/architecture.md`, "`services/resolve` seeds the bind form
+ * from the worker, never the panel": `service` is `candidates[0]`, never null,
+ * when ambiguous) — so no view ever indexes into `candidates` to find its seed.
  *
  * `silent` folds 404, `unauthorized`, `rate_limited`, `unreachable` and
  * `server_error` together AT THIS BOUNDARY, because the panel renders them
@@ -1410,7 +1411,13 @@ const CHECK_UNCHECKED_REASONS = [
   "unreachable",
   "server_error",
 ] as const;
-type CheckUncheckedReason = (typeof CHECK_UNCHECKED_REASONS)[number];
+/**
+ * Exported because `bindings-view.ts` renders a sentence per member, keyed by
+ * a `Record<CheckUncheckedReason, string>` — a seventh member is then a
+ * compile error there until it is given words, which is the whole reason this
+ * type is finer-grained than the bind form's single `silent`.
+ */
+export type CheckUncheckedReason = (typeof CHECK_UNCHECKED_REASONS)[number];
 
 export type BindingCheckStatus =
   | { readonly state: "agrees" }

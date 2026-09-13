@@ -26,8 +26,9 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   "Check with Nimbus" button in Options asks the gateway (never on page load
   — it is one request per binding), and marks every row as matching, pointing
   elsewhere now, claimed by more than one service, named by none, or simply
-  uncheckable this time (a scope gap or a busy gateway — never read as the
-  binding being wrong). A row the gateway now maps elsewhere offers a
+  uncheckable this time — and when it is uncheckable it says which of a scope
+  gap, an older gateway or a busy one stopped the check, never that the
+  binding is wrong. A row the gateway now maps elsewhere offers a
   one-click correction that goes through the same validated `service-bind`
   path as binding it the first time, so an id the gateway does not recognise
   is still refused.

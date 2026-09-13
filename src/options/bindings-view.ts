@@ -2,7 +2,7 @@
 // 2). A binding's `scope` is a registry-supplied repo-level key, not
 // gateway-attested — every field here is written with textContent, never
 // innerHTML.
-import type { BindingCheckStatus } from "../shared/messages.ts";
+import type { BindingCheckStatus, CheckUncheckedReason } from "../shared/messages.ts";
 import { productName } from "../shared/recognise/registry.ts";
 import { bindingKey, type ServiceBinding } from "../shared/services.ts";
 
@@ -13,14 +13,54 @@ function cell(text: string): HTMLTableCellElement {
 }
 
 /**
+ * A sentence per `unchecked` reason, as a Record rather than a switch — the
+ * same rule `URN_PROVIDER` (`src/shared/services.ts`) and `GAP_NOTE`
+ * (`deploy-view.ts`) follow: a switch returning `string | undefined` answers
+ * `undefined` for a seventh reason with no error anywhere, while this is a
+ * compile error until the new member is given words.
+ *
+ * This is the whole point of `CheckUncheckedReason` being finer-grained than
+ * the bind form's single `silent` bucket (`docs/architecture.md`, "Checking a
+ * stored binding for staleness: two messages, not one"): Options is where the
+ * user came to manage bindings, so "your token lacks `resolve`", "this gateway
+ * has no such route" and "you are being rate-limited" are worth the words.
+ *
+ * EVERY sentence opens with "Could not check" and none of them says the
+ * binding is wrong. That rule is not softened by naming a cause: a 403 is a
+ * fact about this browser's token, a 429 a fact about this moment — neither is
+ * evidence against the stored id.
+ *
+ * `insufficient_scope` names the remedy but NOT as a pasteable command. The
+ * panel's `forbidden` arm can paste one because `ServiceResolutionOutcome`
+ * carries a `ScopeGap` (device label + granted scopes) that `scopeCommand`
+ * needs; `BindingCheckStatus` carries only the reason, and inventing a label
+ * here — or widening the message type to carry one per row — is not worth a
+ * sentence. So it names the scope and the command, without the arguments.
+ */
+const UNCHECKED_NOTE: Record<CheckUncheckedReason, string> = {
+  unauthorized:
+    "Could not check — Nimbus did not accept this browser's token. Pair this browser again.",
+  insufficient_scope:
+    "Could not check — this browser's token is missing the “resolve” scope. Grant it with nimbus clip scopes on your gateway, without re-pairing.",
+  unsupported:
+    "Could not check — this gateway has no service lookup to ask. It may predate the route, or this product may carry no coordinate to ask about.",
+  rate_limited: "Could not check — Nimbus is rate-limiting requests. Try again in a moment.",
+  unreachable: "Could not check — Nimbus could not be reached.",
+  server_error:
+    "Could not check — Nimbus errored, or answered with something this page can't read.",
+};
+
+/**
  * The `service-bindings-check` verdict for one row, as DOM. `unchecked` NEVER
  * says the binding is wrong — a 403 or a rate limit is a fact about this
  * browser's token or this moment, not about the binding, and the bindings
  * table it decorates was already read successfully. The `unclaimed` wording is
- * the panel's §5.2 wording again, verbatim: upstream's match against
- * `nimbus.toml` is an EXACT string comparison, so a null answer also covers a
- * repo configured under different casing or a different coordinate form —
- * never "not configured", never an invitation to add a service.
+ * the panel's wording again, verbatim (`docs/architecture.md`, "The
+ * exact-comparison limitation: `service: null` does not mean unconfigured"):
+ * upstream's match against `nimbus.toml` is an EXACT string comparison, so a
+ * null answer also covers a repo configured under different casing or a
+ * different coordinate form — never "not configured", never an invitation to
+ * add a service.
  */
 function statusCell(
   binding: ServiceBinding,
@@ -51,7 +91,7 @@ function statusCell(
       td.textContent = `${status.candidates.length} services name this repository`;
       break;
     case "unchecked":
-      td.textContent = "Could not check";
+      td.textContent = UNCHECKED_NOTE[status.reason];
       break;
   }
   return td;
