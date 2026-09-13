@@ -124,6 +124,34 @@ describe("mountDeploySection", () => {
     expect(host.querySelector("form")).not.toBeNull();
   });
 
+  // The case the brief calls out by name: a user picks one of several
+  // candidates, the gateway refuses the bind, and the OTHER candidates must
+  // not vanish with it — they'd otherwise have to reopen the panel to get
+  // back a list the client was already holding. `serviceId` is deliberately
+  // not `candidates[0]` (Task 6's fixture convention), so nothing here can
+  // pass by coincidentally reading the first candidate as the answer.
+  test("a refused bind on an ambiguous resolution keeps the candidate chips", async () => {
+    const host = document.createElement("div");
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({
+        kind: "deploy-preflight",
+        ok: false,
+        reason: "unbound",
+        resolution: { kind: "ambiguous", serviceId: "checkout", candidates: ["cart", "checkout"] },
+        guessServiceId: "checkout",
+      })
+      .mockResolvedValueOnce({ kind: "service-bind", ok: false, reason: "unknown_service" });
+    mountDeploySection(host, ctx, send);
+    await flush();
+    expect(host.querySelectorAll('[role="group"] button').length).toBe(2);
+
+    host.querySelector("form")?.dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+    expect(host.querySelectorAll('[role="group"] button').length).toBe(2);
+    expect(host.textContent).toContain("[metrics.dora.");
+  });
+
   test("an unreachable gateway says so and renders no verdict", async () => {
     const host = document.createElement("div");
     const send = vi.fn(async () => ({
