@@ -225,11 +225,11 @@ export type ServiceResolutionOutcome =
 the gateway's own first pick in both answering cases, so the view never has to
 reach into `candidates[0]` itself.
 
-`silent` folds 404, `unauthorized`, `rate_limited`, `unreachable`,
-`server_error` and `malformed` together **at the response boundary**, because
-§5.1 renders them identically. The distinctions are not lost — they exist on the
-client's own result type (§2.2) and §7 reads them — they are merely not carried
-into a panel that would say nothing with them.
+`silent` folds 404, `unauthorized`, `rate_limited`, `unreachable` and
+`server_error` together **at the response boundary**, because §5.1 renders them
+identically. The distinctions are not lost — they exist on the client's own
+result type (§2.2) and §7 reads them — they are merely not carried into a
+panel that would say nothing with them.
 
 And the `ok: false` arm is **split**, rather than widened with more optionals:
 

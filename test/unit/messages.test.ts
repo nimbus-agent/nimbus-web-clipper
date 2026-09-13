@@ -1355,6 +1355,12 @@ describe("DeployPreflightResponse unbound arm", () => {
     expect(
       isDeployPreflightResponse({ ...base, resolution: { kind: "ambiguous", serviceId: "a" } }),
     ).toBe(false);
+    expect(
+      isDeployPreflightResponse({
+        ...base,
+        resolution: { kind: "ambiguous", candidates: ["a"] },
+      }),
+    ).toBe(false);
   });
 
   test("a non-unbound refusal carries no resolution and still parses", () => {

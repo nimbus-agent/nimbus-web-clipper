@@ -1196,10 +1196,10 @@ export interface DeployPreflightRequest {
  * answers both (design §2.1: `service` is `candidates[0]`, never null, when
  * ambiguous) — so no view ever indexes into `candidates` to find its seed.
  *
- * `silent` folds 404, `unauthorized`, `rate_limited`, `unreachable`,
- * `server_error` and `malformed` together AT THIS BOUNDARY, because the panel
- * renders them identically: the guess, and no sentence. The distinctions are not
- * lost — they live on `ServiceResolveError`, and the Options check reads them —
+ * `silent` folds 404, `unauthorized`, `rate_limited`, `unreachable` and
+ * `server_error` together AT THIS BOUNDARY, because the panel renders them
+ * identically: the guess, and no sentence. The distinctions are not lost —
+ * they live on `ServiceResolveError`, and the Options check reads them —
  * they are merely not carried into a surface that would say nothing with them.
  */
 export type ServiceResolutionOutcome =
