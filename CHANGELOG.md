@@ -23,9 +23,9 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 - **Options can now check stored bindings against the gateway.** A binding
   goes stale silently when the owner edits `nimbus.toml` — a repository bound
   to one service keeps pointing at it even after the config moves on. A
-  "Check with Nimbus" button in Options asks (never on page load — it is one
-  request per binding), and marks every row as matching, pointing elsewhere
-  now, claimed by more than one service, named by none, or simply
+  "Check with Nimbus" button in Options asks the gateway (never on page load
+  — it is one request per binding), and marks every row as matching, pointing
+  elsewhere now, claimed by more than one service, named by none, or simply
   uncheckable this time (a scope gap or a busy gateway — never read as the
   binding being wrong). A row the gateway now maps elsewhere offers a
   one-click correction that goes through the same validated `service-bind`

@@ -1258,3 +1258,80 @@ describe("service bindings (#bindings-list)", () => {
     expect(el("bindings-list").textContent).toContain("acme/web");
   });
 });
+
+describe("service bindings check (#bindings-check)", () => {
+  const binding = {
+    product: "github",
+    origin: "https://github.com",
+    scope: "acme/web",
+    serviceId: "web",
+  };
+
+  const BINDINGS_FIXTURE =
+    `${FIXTURE}<button id="bindings-check" type="button">Check with Nimbus</button>` +
+    `<output id="bindings-status"></output><div id="bindings-list"></div>`;
+
+  /** Same kind-aware reply table pattern as `bootBindings` above, with
+   *  `service-bindings-check` added — the caller supplies just that reply. */
+  function bootCheck(checkReply: (() => Promise<unknown>) | unknown): Promise<void> {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: [binding] };
+      }
+      if (m.kind === "service-bindings-check") {
+        return typeof checkReply === "function" ? checkReply() : checkReply;
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = BINDINGS_FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    return flush();
+  }
+
+  // LOAD-BEARING: this is the path the brief singled out as fragile — the MV3
+  // service worker can restart mid-call, rejecting the `sendMessage` promise.
+  // Restoration lives in a `finally` precisely so this case cannot leave the
+  // button permanently reading "Checking…" and disabled.
+  test("a REJECTING channel restores the button's label and re-enables it", async () => {
+    await bootCheck(() => {
+      throw new Error("channel closed");
+    });
+
+    button("bindings-check").click();
+    await flush();
+
+    expect(button("bindings-check").disabled).toBe(false);
+    expect(button("bindings-check").textContent).toBe("Check with Nimbus");
+  });
+
+  test("ok: false shows a status message and leaves the table untouched", async () => {
+    await bootCheck({ kind: "service-bindings-check", ok: false, reason: "not_paired" });
+
+    button("bindings-check").click();
+    await flush();
+
+    expect(el("bindings-status").textContent).toMatch(/pair/i);
+    // The bindings themselves were read successfully earlier — a failed CHECK
+    // must not empty or alter the table.
+    expect(el("bindings-list").querySelectorAll("tbody tr")).toHaveLength(1);
+    expect(el("bindings-list").textContent).toContain("acme/web");
+    expect(button("bindings-check").disabled).toBe(false);
+    expect(button("bindings-check").textContent).toBe("Check with Nimbus");
+  });
+
+  test("ok: true renders each row with its status", async () => {
+    await bootCheck({
+      kind: "service-bindings-check",
+      ok: true,
+      rows: [{ binding, status: { state: "agrees" } }],
+    });
+
+    button("bindings-check").click();
+    await flush();
+
+    expect(el("bindings-list").textContent).toContain("Matches Nimbus");
+    expect(button("bindings-check").disabled).toBe(false);
+    expect(button("bindings-check").textContent).toBe("Check with Nimbus");
+  });
+});

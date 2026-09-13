@@ -184,5 +184,10 @@ describe("renderBindingsTable status (C10.3 slice 2)", () => {
     ];
     const table = renderBindingsTable(bindings, NOOP);
     expect(table.querySelectorAll("button[data-proposed]").length).toBe(0);
+    // Not just "no correction button" — no Status COLUMN at all. A regression
+    // that always rendered the header (with empty, button-less cells) would
+    // still pass the assertion above, so the header itself has to be checked.
+    expect(table.textContent).not.toMatch(/Status/);
+    expect(table.querySelectorAll("thead th")).toHaveLength(6);
   });
 });
