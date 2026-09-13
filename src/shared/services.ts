@@ -170,3 +170,55 @@ export function guessServiceId(scope: string): string {
   const last = scope.slice(scope.lastIndexOf("/") + 1);
   return last.slice(0, MAX_SERVICE_ID_LEN);
 }
+
+/**
+ * The `parseDoraRepoUrn` provider whose coordinate a product's `scope` is, or
+ * `null` for a product that never carries one.
+ *
+ * A `Record` keyed by `Product`, NOT a switch: a switch whose arms return
+ * `string | null` answers `undefined` for a tenth product and reads as "no
+ * provider" with no error anywhere, while this is a compile error until the new
+ * product is spelled. It also needs no `satisfies never` backstop, whose
+ * unreachable lines are permanently uncovered new code in the coverage gate.
+ *
+ * The five non-null keys are spelled identically upstream and here, which is
+ * luck worth stating: upstream's `KNOWN_PROVIDERS` is
+ * ["github", "gitlab", "bitbucket", "jenkins", "circleci"]. If either list ever
+ * moves, this map is the seam — not a `product` cast.
+ *
+ * Module-private on purpose. `repoUrn` is the only reader; an exported table
+ * invites a second caller to build the URN slightly differently, which is the
+ * one thing this function exists to prevent.
+ */
+const URN_PROVIDER: Record<Product, string | null> = {
+  bitbucket: "bitbucket",
+  circleci: "circleci",
+  confluence: null,
+  github: "github",
+  gitlab: "gitlab",
+  jenkins: "jenkins",
+  jira: null,
+  linear: null,
+  pagerduty: null,
+};
+
+/**
+ * The `provider:id` URN for `GET /v1/services/resolve`, or `null` when this
+ * product/scope pair can never produce one.
+ *
+ * TRIMMED, matching upstream's `coordinateParam`, which trims `?repo=` for this
+ * route specifically — unlike `resolve-file`'s `refAndPath`, where a path's own
+ * whitespace is real and not ours to edit. Bounded by `MAX_SCOPE_LEN` after
+ * trimming so a coordinate that could never be sent never becomes a query.
+ */
+export function repoUrn(product: Product, scope: string): string | null {
+  const provider = URN_PROVIDER[product];
+  if (provider === null) {
+    return null;
+  }
+  const trimmed = scope.trim();
+  if (trimmed === "" || trimmed.length > MAX_SCOPE_LEN) {
+    return null;
+  }
+  return `${provider}:${trimmed}`;
+}

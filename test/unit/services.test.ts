@@ -8,6 +8,7 @@ import {
   isServiceBinding,
   MAX_SCOPE_LEN,
   removeBinding,
+  repoUrn,
   upsertBinding,
 } from "../../src/shared/services.ts";
 
@@ -251,5 +252,30 @@ describe("the binding list", () => {
     );
     expect(list).toHaveLength(1);
     expect(list[0]?.origin).toBe(jenkinsB);
+  });
+});
+
+describe("repoUrn", () => {
+  test("spells the five binding-capable products as their URN provider", () => {
+    expect(repoUrn("github", "acme/web")).toBe("github:acme/web");
+    expect(repoUrn("gitlab", "group/sub/project")).toBe("gitlab:group/sub/project");
+    expect(repoUrn("bitbucket", "TEAM/repo")).toBe("bitbucket:TEAM/repo");
+    expect(repoUrn("circleci", "acme/web")).toBe("circleci:acme/web");
+    expect(repoUrn("jenkins", "folder/job")).toBe("jenkins:folder/job");
+  });
+
+  test("is null for the four products that never carry a scope", () => {
+    expect(repoUrn("confluence", "x")).toBeNull();
+    expect(repoUrn("jira", "x")).toBeNull();
+    expect(repoUrn("linear", "x")).toBeNull();
+    expect(repoUrn("pagerduty", "x")).toBeNull();
+  });
+
+  test("trims, and refuses a scope that could never be sent", () => {
+    // Upstream's `coordinateParam` trims `?repo=` for this route specifically.
+    expect(repoUrn("github", "  acme/web  ")).toBe("github:acme/web");
+    expect(repoUrn("github", "   ")).toBeNull();
+    expect(repoUrn("github", "")).toBeNull();
+    expect(repoUrn("github", "a".repeat(MAX_SCOPE_LEN + 1))).toBeNull();
   });
 });
