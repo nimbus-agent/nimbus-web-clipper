@@ -139,8 +139,7 @@ export type ServiceResolveError =
   | "unsupported"
   | "rate_limited"
   | "unreachable"
-  | "server_error"
-  | "malformed";
+  | "server_error";
 
 export type ServiceResolveResult =
   | { ok: true; value: ServiceResolution }
