@@ -330,6 +330,22 @@ describe("renderBindForm", () => {
     expect(form.querySelectorAll('[role="group"] button').length).toBe(2);
   });
 
+  // LOAD-BEARING: a `noteOverride` is only ever a bind REFUSAL, and `seed` is
+  // then the id the user actually submitted. Preferring the resolution's id
+  // there silently swaps their choice: pick `cart` out of the ambiguous set,
+  // have the bind refused, and the form repaints reading `checkout` — so the
+  // next click binds a service they never selected, while looking exactly like
+  // a retry of the one they did.
+  test("a refusal keeps the id the user submitted, not the resolution's", () => {
+    const form = renderBindForm(
+      document,
+      "cart",
+      { kind: "ambiguous", serviceId: "checkout", candidates: ["checkout", "cart"] },
+      "Nimbus has no [metrics.dora.cart] block configured for that id.",
+    );
+    expect(form.querySelector("input")?.value).toBe("cart");
+  });
+
   // The same "never both" rule, on the one outcome that carries a SECOND piece
   // of prose beside its note. A refusal replaces the forbidden note but the
   // scope command used to survive it, leaving `nimbus clip scopes …` sitting

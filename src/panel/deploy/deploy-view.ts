@@ -213,11 +213,18 @@ export function renderBindForm(
   label.textContent = "Nimbus service for this repository";
   const input = doc.createElement("input");
   input.type = "text";
-  // `resolved`/`ambiguous` carry an id the gateway itself vouches for — that
-  // wins over `seed` even if a caller passed something else, so the form
-  // never shows a guess when a real answer is sitting right there.
-  input.value =
-    resolution.kind === "resolved" || resolution.kind === "ambiguous" ? resolution.serviceId : seed;
+  // `resolved`/`ambiguous` carry an id the gateway itself vouches for, so it
+  // seeds the FIRST render — the form never shows a guess when a real answer
+  // is sitting right there. A refusal is the other case: `noteOverride` is
+  // only ever a bind refusal, and `seed` is then the id the user actually
+  // submitted. Preferring the resolution's id there would silently swap their
+  // choice — pick `cart` out of an ambiguous set, have the bind refused, and
+  // the form repaints reading `checkout`, so the next click binds a service
+  // they never selected while looking like a retry of the one they did.
+  const useResolvedSeed =
+    noteOverride === undefined &&
+    (resolution.kind === "resolved" || resolution.kind === "ambiguous");
+  input.value = useResolvedSeed ? resolution.serviceId : seed;
   // The route's own bound, from the one file that writes it down — not a third
   // spelling of 64 (see `MAX_SERVICE_ID_LEN`'s siblings in deploy-client.ts).
   input.maxLength = MAX_SERVICE_ID_LEN;

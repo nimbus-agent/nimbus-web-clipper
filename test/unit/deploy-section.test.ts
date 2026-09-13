@@ -152,6 +152,45 @@ describe("mountDeploySection", () => {
     expect(host.textContent).toContain("[metrics.dora.");
   });
 
+  // The round trip behind the view-level rule: the user picks a candidate that
+  // is NOT the gateway's nomination, the bind is refused, and the form must
+  // still read what they chose. Repainting it with `resolution.serviceId`
+  // would make the next click bind `checkout` — a service they never selected
+  // — while looking like a retry of `cart`.
+  test("a refused bind keeps the candidate the user selected in the input", async () => {
+    const host = document.createElement("div");
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce({
+        kind: "deploy-preflight",
+        ok: false,
+        reason: "unbound",
+        resolution: { kind: "ambiguous", serviceId: "checkout", candidates: ["checkout", "cart"] },
+        guessServiceId: "checkout",
+      })
+      .mockResolvedValueOnce({ kind: "service-bind", ok: false, reason: "unknown_service" });
+    mountDeploySection(host, ctx, send);
+    await flush();
+
+    const chips = Array.from(host.querySelectorAll<HTMLButtonElement>('[role="group"] button'));
+    chips[1]?.click();
+    expect(host.querySelector("input")?.value).toBe("cart");
+
+    host.querySelector("form")?.dispatchEvent(new Event("submit", { cancelable: true }));
+    await flush();
+
+    expect(send).toHaveBeenNthCalledWith(2, {
+      kind: "service-bind",
+      binding: {
+        product: "github",
+        origin: "https://github.com",
+        scope: "acme/web",
+        serviceId: "cart",
+      },
+    });
+    expect(host.querySelector("input")?.value).toBe("cart");
+  });
+
   test("an unreachable gateway says so and renders no verdict", async () => {
     const host = document.createElement("div");
     const send = vi.fn(async () => ({
