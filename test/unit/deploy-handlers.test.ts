@@ -33,11 +33,14 @@ const unknownEnvelope = envelope({
 const jsonRes = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+const CONN = { origin: "http://127.0.0.1:7474", token: "tok", label: "laptop", pairedAt: 1 };
+
 const deps = (over: Partial<DeployDeps> = {}): DeployDeps => ({
-  getOrigin: async () => "http://127.0.0.1:7474",
+  getConnection: async () => CONN,
   getBindings: async () => [] as ServiceBinding[],
   putBinding: vi.fn(async () => undefined),
   dropBinding: vi.fn(async () => undefined),
+  resolveService: async () => ({ ok: false, reason: "unsupported" }),
   doFetch: (async () => jsonRes(envelope())) as unknown as typeof fetch,
   ...over,
 });
@@ -59,11 +62,12 @@ describe("handleDeployPreflight", () => {
       ok: false,
       reason: "unbound",
       guessServiceId: "web",
+      resolution: { kind: "silent" },
     });
   });
 
   test("no paired gateway origin is unreachable, not unbound", async () => {
-    const r = await handleDeployPreflight(req, deps({ getOrigin: async () => null }));
+    const r = await handleDeployPreflight(req, deps({ getConnection: async () => null }));
     expect(r).toEqual({ kind: "deploy-preflight", ok: false, reason: "unreachable" });
   });
 
@@ -138,6 +142,7 @@ describe("handleDeployPreflight", () => {
       ok: false,
       reason: "unbound",
       guessServiceId: "web",
+      resolution: { kind: "silent" },
     });
   });
 
@@ -195,6 +200,107 @@ describe("handleDeployPreflight", () => {
     const urls = doFetch.mock.calls.map((c) => c[0] as string);
     expect(urls.some((u) => u.includes("/v1/items/"))).toBe(false);
     expect(urls.find((u) => u.includes("/v1/preflight/deploy"))).toContain("target_ref=release");
+  });
+
+  test("an unbound repo with one claimant resolves to it", async () => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => ({
+          ok: true,
+          value: { service: "checkout", ambiguous: false, candidates: ["checkout"] },
+        }),
+      }),
+    );
+    expect(out).toMatchObject({
+      ok: false,
+      reason: "unbound",
+      guessServiceId: "web",
+      resolution: { kind: "resolved", serviceId: "checkout" },
+    });
+  });
+
+  test("two claimants become ambiguous, seeded from service not candidates[0]", async () => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => ({
+          ok: true,
+          value: { service: "checkout", ambiguous: true, candidates: ["checkout", "cart"] },
+        }),
+      }),
+    );
+    expect(out).toMatchObject({
+      resolution: { kind: "ambiguous", serviceId: "checkout", candidates: ["checkout", "cart"] },
+    });
+  });
+
+  test("no claimant is unclaimed, and the guess survives", async () => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => ({
+          ok: true,
+          value: { service: null, ambiguous: false, candidates: [] },
+        }),
+      }),
+    );
+    expect(out).toMatchObject({ guessServiceId: "web", resolution: { kind: "unclaimed" } });
+  });
+
+  test("a 403 becomes forbidden, with the device label attached for the command", async () => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => ({
+          ok: false,
+          reason: "insufficient_scope",
+          scopeGap: { required: "resolve", granted: ["clip"] },
+        }),
+      }),
+    );
+    expect(out).toMatchObject({
+      resolution: {
+        kind: "forbidden",
+        scopeGap: { label: "laptop", required: "resolve", granted: ["clip"] },
+      },
+    });
+  });
+
+  test.each([
+    "unsupported",
+    "unauthorized",
+    "rate_limited",
+    "unreachable",
+    "server_error",
+  ] as const)("%s is silent — the guess, and no sentence", async (reason) => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => ({ ok: false, reason }),
+      }),
+    );
+    expect(out).toMatchObject({ guessServiceId: "web", resolution: { kind: "silent" } });
+  });
+
+  test("a product with no URN provider is silent without a request", async () => {
+    let called = false;
+    const out = await handleDeployPreflight(
+      { ...req, product: "jira", origin: "https://jira.acme.com", scope: "PROJ" },
+      deps({
+        resolveService: async () => {
+          called = true;
+          return { ok: false, reason: "unsupported" };
+        },
+      }),
+    );
+    expect(called).toBe(false);
+    expect(out).toMatchObject({ resolution: { kind: "silent" } });
+  });
+
+  test("nothing paired refuses before resolving", async () => {
+    const out = await handleDeployPreflight(req, deps({ getConnection: async () => null }));
+    expect(out).toEqual({ kind: "deploy-preflight", ok: false, reason: "unreachable" });
   });
 });
 
