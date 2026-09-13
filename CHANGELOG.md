@@ -8,6 +8,19 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Added
+
+- **The deploy-readiness bind form stops guessing.** It now asks the gateway
+  (`GET /v1/services/resolve`) which Nimbus service claims the repo, and seeds
+  the form with the gateway's own answer instead of a slug guessed from the
+  repo name. When more than one service claims a repo, the form offers a
+  button per candidate so picking one is a click, not a retype. A token
+  missing the `resolve` scope names the gap and gives the pasteable `nimbus
+  clip scopes` command to fix it, same as every other scoped read. Against a
+  gateway too old for the route, or one that answers nothing for a repo, the
+  form falls back to the guess exactly as before — this needed no re-pairing
+  and changes nothing for a gateway that predates it.
+
 ## [0.9.0] - 2026-09-11
 
 ### Added

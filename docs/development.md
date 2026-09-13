@@ -651,10 +651,11 @@ mock-gateway` makes step 1 reproducible.
 
 ## Manual verification — Deploy readiness (C10)
 
-**Both steps run on every PR** (`test/e2e/deploy-readiness.e2e.ts`), so this
-pass is not outstanding for the client half. What it cannot prove is a real
-`GET /v1/preflight/deploy` answer — the mock returns exactly the fixture a
-scenario hands it, never a real preflight computation over a real index.
+**Every numbered step but the last runs on every PR**
+(`test/e2e/deploy-readiness.e2e.ts`), so this pass is not outstanding for the
+client half. What it cannot prove is a real `GET /v1/preflight/deploy` answer
+— the mock returns exactly the fixture a scenario hands it, never a real
+preflight computation over a real index.
 
 Prereq: paired, gateway running, page access granted on a repo you have bound
 or want to bind. Both routes this section calls (`preflight/deploy`,
@@ -680,7 +681,15 @@ re-pairing, no `nimbus clip scopes`.
    section says so in words, not a checkmark). Every finding that carries a
    `url` — an incident, a CI run, a pull request — renders its title as a
    clickable link; one that carries none renders as plain text, never a raw id.
-3. **(human — needs a real gateway with a real repo indexed.)** Confirm the
+3. <!-- e2e:c10-3-bind-seeded --> <!-- e2e:c10-3-bind-ambiguous --> On a repo
+   `GET /v1/services/resolve` (C10.3) names, the bind form's seed comes from the
+   gateway's own answer, not the slug guess: a repo one service claims is
+   pre-filled with that service's id; a repo more than one service claims
+   offers a candidate button per service, and clicking one rewrites the input
+   before the user ever submits. A repo the route does not recognise, or a
+   gateway too old to have it, falls back to the guess exactly as before — this
+   route's absence changes nothing visible.
+4. **(human — needs a real gateway with a real repo indexed.)** Confirm the
    `target_ref` ladder's first rung against a live checkout: open a PR whose
    branch Nimbus has actually indexed (`metadata.branch` on the resolved item),
    and confirm `failing_ci_runs` is evaluated against **that** branch — not the

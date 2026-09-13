@@ -316,6 +316,52 @@ describe("deploy readiness routes (C10)", () => {
   });
 });
 
+describe("GET /v1/services/resolve (C10.3)", () => {
+  const scenario: Scenario = {};
+
+  test("services/resolve answers each fixture shape", async () => {
+    const call = (repo: string, auth = "Bearer test-token") =>
+      handleRequest(
+        new Request(`http://127.0.0.1:8787/v1/services/resolve?repo=${encodeURIComponent(repo)}`, {
+          headers: { authorization: auth },
+        }),
+        scenario,
+      );
+
+    expect(await (await call("github:acme/payments-service")).json()).toEqual({
+      service: "payments",
+      ambiguous: false,
+      candidates: ["payments"],
+    });
+    expect(await (await call("github:acme/monorepo")).json()).toEqual({
+      service: "checkout",
+      ambiguous: true,
+      candidates: ["checkout", "cart"],
+    });
+    expect(await (await call("github:acme/unconfigured")).json()).toEqual({
+      service: null,
+      ambiguous: false,
+      candidates: [],
+    });
+    expect((await call("github:acme/anything-else")).status).toBe(404);
+    expect((await call("github:acme/payments-service", "Bearer no-resolve-scope")).status).toBe(
+      403,
+    );
+  });
+
+  test("the 403 carries a real scope gap, so the pasteable command is exercised end to end", async () => {
+    const res = await handleRequest(
+      new Request(
+        "http://127.0.0.1:8787/v1/services/resolve?repo=github%3Aacme%2Fpayments-service",
+        { headers: { authorization: "Bearer no-resolve-scope" } },
+      ),
+      scenario,
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ required: "resolve", granted: ["clip", "briefs"] });
+  });
+});
+
 describe("scenarios", () => {
   test("no scenario returns today's fixtures (the screenshot path)", async () => {
     const res = await handleRequest(
