@@ -60,6 +60,7 @@ describe("mountDeploySection", () => {
       kind: "deploy-preflight",
       ok: false,
       reason: "unbound",
+      resolution: { kind: "unclaimed" },
       guessServiceId: "web",
     }));
     mountDeploySection(host, ctx, send);
@@ -76,6 +77,7 @@ describe("mountDeploySection", () => {
         kind: "deploy-preflight",
         ok: false,
         reason: "unbound",
+        resolution: { kind: "unclaimed" },
         guessServiceId: "web",
       })
       .mockResolvedValueOnce({ kind: "service-bind", ok: true })
@@ -110,6 +112,7 @@ describe("mountDeploySection", () => {
         kind: "deploy-preflight",
         ok: false,
         reason: "unbound",
+        resolution: { kind: "unclaimed" },
         guessServiceId: "nope",
       })
       .mockResolvedValueOnce({ kind: "service-bind", ok: false, reason: "unknown_service" });
@@ -233,6 +236,7 @@ describe("mountDeploySection", () => {
       kind: "deploy-preflight",
       ok: false,
       reason: "unbound",
+      resolution: { kind: "unclaimed" },
       guessServiceId: "web",
     }));
     mountDeploySection(host, ctx, send);
@@ -275,6 +279,7 @@ describe("mountDeploySection", () => {
         kind: "deploy-preflight",
         ok: false,
         reason: "unbound",
+        resolution: { kind: "unclaimed" },
         guessServiceId: "web",
       })
       .mockRejectedValueOnce(new Error("message channel closed"));

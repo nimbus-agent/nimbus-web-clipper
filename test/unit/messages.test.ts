@@ -1261,21 +1261,11 @@ describe("C10 deploy messages", () => {
   });
   test("a refusal response names a reason from the closed set", () => {
     expect(
-      isDeployPreflightResponse({ kind: "deploy-preflight", ok: false, reason: "unbound" }),
+      isDeployPreflightResponse({ kind: "deploy-preflight", ok: false, reason: "unreachable" }),
     ).toBe(true);
     expect(
       isDeployPreflightResponse({ kind: "deploy-preflight", ok: false, reason: "invented" }),
     ).toBe(false);
-  });
-  test("an unbound refusal may carry the slug guess for the input seed", () => {
-    expect(
-      isDeployPreflightResponse({
-        kind: "deploy-preflight",
-        ok: false,
-        reason: "unbound",
-        guessServiceId: "web",
-      }),
-    ).toBe(true);
   });
   test("a bind response reports unknown_service", () => {
     expect(
@@ -1307,5 +1297,73 @@ describe("C10 deploy messages", () => {
         bindings: [{ product: "nope" }],
       }),
     ).toBe(false);
+  });
+});
+
+describe("DeployPreflightResponse unbound arm", () => {
+  test("accepts an unbound refusal carrying a resolution", () => {
+    expect(
+      isDeployPreflightResponse({
+        kind: "deploy-preflight",
+        ok: false,
+        reason: "unbound",
+        guessServiceId: "web",
+        resolution: { kind: "resolved", serviceId: "checkout" },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects an unbound refusal with no resolution, or no guess", () => {
+    expect(
+      isDeployPreflightResponse({
+        kind: "deploy-preflight",
+        ok: false,
+        reason: "unbound",
+        guessServiceId: "web",
+      }),
+    ).toBe(false);
+    expect(
+      isDeployPreflightResponse({
+        kind: "deploy-preflight",
+        ok: false,
+        reason: "unbound",
+        resolution: { kind: "silent" },
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects an unknown resolution kind rather than narrowing to it", () => {
+    expect(
+      isDeployPreflightResponse({
+        kind: "deploy-preflight",
+        ok: false,
+        reason: "unbound",
+        guessServiceId: "w",
+        resolution: { kind: "probably-fine" },
+      }),
+    ).toBe(false);
+  });
+
+  test("ambiguous must carry both a serviceId and candidates", () => {
+    const base = { kind: "deploy-preflight", ok: false, reason: "unbound", guessServiceId: "w" };
+    expect(
+      isDeployPreflightResponse({
+        ...base,
+        resolution: { kind: "ambiguous", serviceId: "a", candidates: ["a", "b"] },
+      }),
+    ).toBe(true);
+    expect(
+      isDeployPreflightResponse({ ...base, resolution: { kind: "ambiguous", serviceId: "a" } }),
+    ).toBe(false);
+  });
+
+  test("a non-unbound refusal carries no resolution and still parses", () => {
+    expect(
+      isDeployPreflightResponse({
+        kind: "deploy-preflight",
+        ok: false,
+        reason: "unreachable",
+      }),
+    ).toBe(true);
   });
 });

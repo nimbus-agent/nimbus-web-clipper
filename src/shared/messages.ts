@@ -1186,6 +1186,33 @@ export interface DeployPreflightRequest {
   readonly targetRef?: string;
 }
 
+/**
+ * What asking `GET /v1/services/resolve` produced, as STRUCTURE — never prose.
+ * `deploy-view.ts` owns every English string; the tempting shortcut is to have
+ * the worker return the note it already knows, and that is the layering this
+ * repo keeps everywhere else.
+ *
+ * `ambiguous` carries `serviceId` ALONGSIDE the candidates because the gateway
+ * answers both (design §2.1: `service` is `candidates[0]`, never null, when
+ * ambiguous) — so no view ever indexes into `candidates` to find its seed.
+ *
+ * `silent` folds 404, `unauthorized`, `rate_limited`, `unreachable`,
+ * `server_error` and `malformed` together AT THIS BOUNDARY, because the panel
+ * renders them identically: the guess, and no sentence. The distinctions are not
+ * lost — they live on `ServiceResolveError`, and the Options check reads them —
+ * they are merely not carried into a surface that would say nothing with them.
+ */
+export type ServiceResolutionOutcome =
+  | { readonly kind: "resolved"; readonly serviceId: string }
+  | {
+      readonly kind: "ambiguous";
+      readonly serviceId: string;
+      readonly candidates: readonly string[];
+    }
+  | { readonly kind: "unclaimed" }
+  | { readonly kind: "forbidden"; readonly scopeGap?: ScopeGap }
+  | { readonly kind: "silent" };
+
 export type DeployPreflightResponse =
   | {
       readonly kind: "deploy-preflight";
@@ -1203,10 +1230,19 @@ export type DeployPreflightResponse =
   | {
       readonly kind: "deploy-preflight";
       readonly ok: false;
-      readonly reason: DeployRefusal;
-      /** Only on `unbound`: the seed for the bind input, so the panel does not
-       *  need its own copy of the guess rule. */
-      readonly guessServiceId?: string;
+      readonly reason: "unbound";
+      /**
+       * REQUIRED, unlike the optional field this replaced: `guessServiceId()`
+       * returns `string` and never `undefined`, so the optional marker only ever
+       * forced a `?? ""` at the one call site that reads it.
+       */
+      readonly guessServiceId: string;
+      readonly resolution: ServiceResolutionOutcome;
+    }
+  | {
+      readonly kind: "deploy-preflight";
+      readonly ok: false;
+      readonly reason: Exclude<DeployRefusal, "unbound">;
     };
 
 export interface ServiceBindingsListRequest {
@@ -1279,6 +1315,29 @@ export function isServiceUnbindRequest(v: unknown): v is ServiceUnbindRequest {
   );
 }
 
+const RESOLUTION_KINDS = ["resolved", "ambiguous", "unclaimed", "forbidden", "silent"] as const;
+
+function isServiceResolutionOutcome(v: unknown): v is ServiceResolutionOutcome {
+  if (!isObject(v)) return false;
+  const kind = v["kind"];
+  if (typeof kind !== "string" || !(RESOLUTION_KINDS as readonly string[]).includes(kind)) {
+    return false;
+  }
+  if (kind === "resolved") return typeof v["serviceId"] === "string";
+  if (kind === "ambiguous") {
+    const c = v["candidates"];
+    return (
+      typeof v["serviceId"] === "string" &&
+      Array.isArray(c) &&
+      c.every((x) => typeof x === "string")
+    );
+  }
+  if (kind === "forbidden") {
+    return v["scopeGap"] === undefined || isScopeGap(v["scopeGap"]);
+  }
+  return true;
+}
+
 export function isDeployPreflightResponse(v: unknown): v is DeployPreflightResponse {
   if (!isObject(v) || v["kind"] !== "deploy-preflight") {
     return false;
@@ -1289,11 +1348,13 @@ export function isDeployPreflightResponse(v: unknown): v is DeployPreflightRespo
   if (v["ok"] !== false || typeof v["reason"] !== "string") {
     return false;
   }
-  const guess = v["guessServiceId"];
-  return (
-    (DEPLOY_REFUSALS as readonly string[]).includes(v["reason"]) &&
-    (guess === undefined || typeof guess === "string")
-  );
+  if (!(DEPLOY_REFUSALS as readonly string[]).includes(v["reason"])) {
+    return false;
+  }
+  if (v["reason"] === "unbound") {
+    return typeof v["guessServiceId"] === "string" && isServiceResolutionOutcome(v["resolution"]);
+  }
+  return true;
 }
 
 export function isServiceBindingsListResponse(v: unknown): v is ServiceBindingsListResponse {
