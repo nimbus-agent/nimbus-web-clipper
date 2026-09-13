@@ -3,8 +3,10 @@
 
 import { isUnknownService } from "../shared/deploy.ts";
 import type {
+  BindingCheckStatus,
   DeployPreflightRequest,
   DeployPreflightResponse,
+  ServiceBindingsCheckResponse,
   ServiceBindingsListResponse,
   ServiceBindRequest,
   ServiceBindResponse,
@@ -210,4 +212,62 @@ export async function handleServiceBindingsList(
   deps: DeployDeps,
 ): Promise<ServiceBindingsListResponse> {
   return { kind: "service-bindings-list", ok: true, bindings: await deps.getBindings() };
+}
+
+/**
+ * Check every stored binding against the gateway's current config.
+ *
+ * `Promise.allSettled`, never `Promise.all`: one unreachable or rate-limited
+ * binding must not discard four good answers. A rejected promise becomes an
+ * `unchecked` row rather than a failed check — the same rule the panel follows,
+ * one surface up.
+ *
+ * FAN-OUT IS UNBOUNDED, deliberately for now (design §7.2): the destination is
+ * loopback, this route is an unthrottled read, and bindings are created by hand
+ * one page at a time. The fact that argues the other way is recorded there —
+ * upstream re-reads and re-parses `nimbus.toml` on every call, uncached on
+ * purpose — so if a user with tens of bindings reports a slow check, a small
+ * pool here is the fix.
+ */
+export async function handleServiceBindingsCheck(
+  deps: DeployDeps,
+): Promise<ServiceBindingsCheckResponse> {
+  const conn = await deps.getConnection();
+  if (conn === null) {
+    return { kind: "service-bindings-check", ok: false, reason: "not_paired" };
+  }
+  const bindings = await deps.getBindings();
+  const settled = await Promise.allSettled(
+    bindings.map(async (binding): Promise<BindingCheckStatus> => {
+      const urn = repoUrn(binding.product, binding.scope);
+      if (urn === null) {
+        return { state: "unchecked", reason: "unsupported" };
+      }
+      const res = await deps.resolveService(conn.origin, conn.token, urn, deps.doFetch);
+      if (!res.ok) {
+        return { state: "unchecked", reason: res.reason };
+      }
+      const { service, candidates } = res.value;
+      if (service === null) {
+        return { state: "unclaimed" };
+      }
+      if (candidates.length > 1) {
+        return { state: "ambiguous", candidates };
+      }
+      return service === binding.serviceId
+        ? { state: "agrees" }
+        : { state: "disagrees", proposedServiceId: service };
+    }),
+  );
+  const rows = bindings.map((binding, i) => {
+    const outcome = settled[i];
+    return {
+      binding,
+      status:
+        outcome?.status === "fulfilled"
+          ? outcome.value
+          : ({ state: "unchecked", reason: "server_error" } as const),
+    };
+  });
+  return { kind: "service-bindings-check", ok: true, rows };
 }

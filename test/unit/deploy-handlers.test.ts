@@ -1,9 +1,11 @@
 // test/unit/deploy-handlers.test.ts
 import { describe, expect, test, vi } from "vitest";
+import type { ServiceResolveResult } from "../../src/background/deploy-client.ts";
 import type { DeployDeps } from "../../src/background/deploy-handlers.ts";
 import {
   handleDeployPreflight,
   handleServiceBind,
+  handleServiceBindingsCheck,
   handleServiceUnbind,
 } from "../../src/background/deploy-handlers.ts";
 import type { ServiceBinding } from "../../src/shared/services.ts";
@@ -439,5 +441,102 @@ describe("handleServiceUnbind", () => {
       "jenkins",
       "platform/web",
     );
+  });
+});
+
+describe("handleServiceBindingsCheck", () => {
+  const B = (scope: string, serviceId: string) => ({
+    product: "github" as const,
+    origin: "https://github.com",
+    scope,
+    serviceId,
+  });
+
+  test("classifies each binding independently, and one failure does not sink the rest", async () => {
+    const answers: Record<string, ServiceResolveResult> = {
+      "github:acme/agree": {
+        ok: true,
+        value: { service: "agree", ambiguous: false, candidates: ["agree"] },
+      },
+      "github:acme/stale": {
+        ok: true,
+        value: { service: "moved", ambiguous: false, candidates: ["moved"] },
+      },
+      "github:acme/none": { ok: true, value: { service: null, ambiguous: false, candidates: [] } },
+      "github:acme/two": {
+        ok: true,
+        value: { service: "a", ambiguous: true, candidates: ["a", "b"] },
+      },
+      "github:acme/boom": { ok: false, reason: "rate_limited" },
+    };
+    const out = await handleServiceBindingsCheck(
+      deps({
+        getBindings: async () => [
+          B("acme/agree", "agree"),
+          B("acme/stale", "old"),
+          B("acme/none", "x"),
+          B("acme/two", "a"),
+          B("acme/boom", "z"),
+        ],
+        resolveService: async (_o, _t, urn) => answers[urn] ?? { ok: false, reason: "unsupported" },
+      }),
+    );
+
+    expect(out.ok).toBe(true);
+    const states = out.ok ? out.rows.map((r) => r.status) : [];
+    expect(states[0]).toEqual({ state: "agrees" });
+    expect(states[1]).toEqual({ state: "disagrees", proposedServiceId: "moved" });
+    expect(states[2]).toEqual({ state: "unclaimed" });
+    expect(states[3]).toEqual({ state: "ambiguous", candidates: ["a", "b"] });
+    expect(states[4]).toEqual({ state: "unchecked", reason: "rate_limited" });
+  });
+
+  test("a binding whose product has no URN provider is unchecked WITHOUT a request", async () => {
+    // `called` is the point of this test. The default `resolveService` also
+    // answers `unsupported`, so asserting only the status would pass even if the
+    // URN guard were deleted — the test would prove nothing about the branch it
+    // exists to cover.
+    let called = false;
+    const out = await handleServiceBindingsCheck(
+      deps({
+        getBindings: async () => [
+          { product: "jira", origin: "https://jira.acme.com", scope: "PROJ", serviceId: "x" },
+        ],
+        resolveService: async () => {
+          called = true;
+          return { ok: false, reason: "unsupported" };
+        },
+      }),
+    );
+    expect(called).toBe(false);
+    expect(out.ok && out.rows[0]?.status).toEqual({ state: "unchecked", reason: "unsupported" });
+  });
+
+  test("nothing paired is not_paired, with no requests made", async () => {
+    let called = false;
+    const out = await handleServiceBindingsCheck(
+      deps({
+        getConnection: async () => null,
+        getBindings: async () => [B("acme/web", "web")],
+        resolveService: async () => {
+          called = true;
+          return { ok: false, reason: "unsupported" };
+        },
+      }),
+    );
+    expect(called).toBe(false);
+    expect(out).toEqual({ kind: "service-bindings-check", ok: false, reason: "not_paired" });
+  });
+
+  test("a rejected resolve is unchecked rather than a thrown check", async () => {
+    const out = await handleServiceBindingsCheck(
+      deps({
+        getBindings: async () => [B("acme/web", "web")],
+        resolveService: async () => {
+          throw new Error("boom");
+        },
+      }),
+    );
+    expect(out.ok && out.rows[0]?.status).toEqual({ state: "unchecked", reason: "server_error" });
   });
 });

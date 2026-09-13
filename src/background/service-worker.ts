@@ -49,6 +49,7 @@ import {
   isRecogniseRequest,
   isRelatedRequest,
   isResolveRequest,
+  isServiceBindingsCheckRequest,
   isServiceBindingsListRequest,
   isServiceBindRequest,
   isServiceUnbindRequest,
@@ -95,6 +96,7 @@ import {
   type DeployDeps,
   handleDeployPreflight,
   handleServiceBind,
+  handleServiceBindingsCheck,
   handleServiceBindingsList,
   handleServiceUnbind,
 } from "./deploy-handlers.ts";
@@ -1381,6 +1383,14 @@ function routeDeploy(message: unknown, respond: Respond): Routed {
       .then(respond)
       .catch(() => {
         respond({ kind: "service-bindings-list", ok: false });
+      });
+    return true;
+  }
+  if (isServiceBindingsCheckRequest(message)) {
+    handleServiceBindingsCheck(deployDeps)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "service-bindings-check", ok: false, reason: "server_error" });
       });
     return true;
   }
