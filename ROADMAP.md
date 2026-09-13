@@ -1530,7 +1530,7 @@ to; that gap is what this phase closes.*
 > honestly draw the trend its own spec forbids. The `until` proposed in §7 is
 > moot.
 
-### C10.3 The binding stops guessing · 🟢 · M
+### C10.3 The binding stops guessing · 🟢 · M — ✅ shipped
 > **What** The bind form stops seeding itself with a guessed slug and asks the
 > gateway which service claims the repo, offering the candidates when more than
 > one does; Options gains a check that flags a stored binding the gateway no
@@ -1557,8 +1557,13 @@ to; that gap is what this phase closes.*
 > the route behaves exactly as C10.1 shipped, silently and with no version
 > floor; a stored binding the gateway now maps elsewhere is flagged in Options
 > and correctable in one click, still validated by the existing preflight probe.
-> Full design:
-> [`docs/superpowers/specs/2026-09-13-the-binding-stops-guessing-design.md`](./docs/superpowers/specs/2026-09-13-the-binding-stops-guessing-design.md).
+> Full design: see [`docs/architecture.md`](./docs/architecture.md) under
+> "Deploy readiness (Phase C10)" — "`services/resolve` seeds the bind form
+> from the worker, never the panel", "The exact-comparison limitation", and
+> "Checking a stored binding for staleness: two messages, not one". The
+> phase's design spec was pruned once C10.3 shipped, per the convention in
+> `CLAUDE.md`; it is in this repo's git history if the slicing rationale is
+> ever wanted.
 
 ## Phase 1 — Trust you can see 🟢
 
