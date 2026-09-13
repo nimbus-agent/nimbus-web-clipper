@@ -2,6 +2,7 @@
 // background service worker via chrome.runtime messaging. External data crossing
 // the messaging boundary is `unknown` until narrowed by a guard here — never `any`.
 
+import type { ServiceResolveError } from "../background/deploy-client.ts";
 import { isCanonicalRejection } from "./canonical.ts";
 import { isSourceShape } from "./clip.ts";
 import { CONNECTOR_STATES, type ConnectorHealth } from "./connector-health.ts";
@@ -439,7 +440,8 @@ export type ExtensionRequest =
   | DeployPreflightRequest
   | ServiceBindingsListRequest
   | ServiceBindRequest
-  | ServiceUnbindRequest;
+  | ServiceUnbindRequest
+  | ServiceBindingsCheckRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -1383,4 +1385,89 @@ export function isServiceBindResponse(v: unknown): v is ServiceBindResponse {
       reason === "server_error" ||
       reason === "malformed")
   );
+}
+
+export interface ServiceBindingsCheckRequest {
+  readonly kind: "service-bindings-check";
+}
+
+export type BindingCheckStatus =
+  | { readonly state: "agrees" }
+  | { readonly state: "disagrees"; readonly proposedServiceId: string }
+  | { readonly state: "unclaimed" }
+  | { readonly state: "ambiguous"; readonly candidates: readonly string[] }
+  | { readonly state: "unchecked"; readonly reason: ServiceResolveError };
+
+export interface ServiceBindingCheckRow {
+  readonly binding: ServiceBinding;
+  readonly status: BindingCheckStatus;
+}
+
+export type ServiceBindingsCheckResponse =
+  | {
+      readonly kind: "service-bindings-check";
+      readonly ok: true;
+      readonly rows: readonly ServiceBindingCheckRow[];
+    }
+  | {
+      readonly kind: "service-bindings-check";
+      readonly ok: false;
+      readonly reason: "not_paired" | "server_error";
+    };
+
+const CHECK_STATES = ["agrees", "disagrees", "unclaimed", "ambiguous", "unchecked"] as const;
+// Mirrors `ServiceResolveError` member for member. "malformed" is NOT here
+// because it is not there: a body the guard rejects maps to `server_error`, so
+// no branch can produce it, and a state no code can reach is a branch a reader
+// will write and never exercise.
+const CHECK_UNCHECKED_REASONS = [
+  "unauthorized",
+  "insufficient_scope",
+  "unsupported",
+  "rate_limited",
+  "unreachable",
+  "server_error",
+] as const;
+
+function isBindingCheckStatus(v: unknown): v is BindingCheckStatus {
+  if (!isObject(v)) return false;
+  const state = v["state"];
+  if (typeof state !== "string" || !(CHECK_STATES as readonly string[]).includes(state)) {
+    return false;
+  }
+  if (state === "disagrees") return typeof v["proposedServiceId"] === "string";
+  if (state === "ambiguous") {
+    const c = v["candidates"];
+    return Array.isArray(c) && c.every((x) => typeof x === "string");
+  }
+  if (state === "unchecked") {
+    const r = v["reason"];
+    return typeof r === "string" && (CHECK_UNCHECKED_REASONS as readonly string[]).includes(r);
+  }
+  return true;
+}
+
+/**
+ * Validates EVERY ROW — the binding through `isServiceBinding`, the status
+ * through its own closed sets. `Array.isArray(rows)` alone, or
+ * `typeof reason === "string"`, would type-narrow far more than it checks: the
+ * recurring defect in this codebase is a guard that accepts `string` for a
+ * closed union, or a validator that passes the caller's object through.
+ */
+export function isServiceBindingsCheckResponse(v: unknown): v is ServiceBindingsCheckResponse {
+  if (!isObject(v) || v["kind"] !== "service-bindings-check") return false;
+  if (v["ok"] === true) {
+    const rows = v["rows"];
+    return (
+      Array.isArray(rows) &&
+      rows.every(
+        (r) => isObject(r) && isServiceBinding(r["binding"]) && isBindingCheckStatus(r["status"]),
+      )
+    );
+  }
+  return v["ok"] === false && (v["reason"] === "not_paired" || v["reason"] === "server_error");
+}
+
+export function isServiceBindingsCheckRequest(v: unknown): v is ServiceBindingsCheckRequest {
+  return isObject(v) && v["kind"] === "service-bindings-check";
 }

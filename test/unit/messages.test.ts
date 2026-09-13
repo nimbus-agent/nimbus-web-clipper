@@ -29,6 +29,7 @@ import {
   isRelatedResponse,
   isResolveRequest,
   isResolveResponse,
+  isServiceBindingsCheckResponse,
   isServiceBindingsListResponse,
   isServiceBindRequest,
   isServiceBindResponse,
@@ -1369,6 +1370,138 @@ describe("DeployPreflightResponse unbound arm", () => {
         kind: "deploy-preflight",
         ok: false,
         reason: "unreachable",
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("isServiceBindingsCheckResponse", () => {
+  const ROW = {
+    binding: {
+      product: "github",
+      origin: "https://github.com",
+      scope: "acme/web",
+      serviceId: "web",
+    },
+    status: { state: "agrees" },
+  };
+
+  test("accepts a well-formed check response", () => {
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [ROW],
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects rows whose binding or status is not validated", () => {
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [{ binding: { nope: 1 }, status: { state: "agrees" } }],
+      }),
+    ).toBe(false);
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [{ ...ROW, status: { state: "vibes" } }],
+      }),
+    ).toBe(false);
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [{ ...ROW, status: { state: "disagrees" } }],
+      }),
+    ).toBe(false);
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [{ ...ROW, status: { state: "unchecked", reason: "whatever" } }],
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects a bare array of rows without validating them", () => {
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: ["not a row"],
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects an arbitrary string for the closed failure reason", () => {
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: false,
+        reason: "because",
+      }),
+    ).toBe(false);
+  });
+
+  test("accepts every well-formed status state", () => {
+    const base = ROW.binding;
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [{ binding: base, status: { state: "unclaimed" } }],
+      }),
+    ).toBe(true);
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [{ binding: base, status: { state: "disagrees", proposedServiceId: "checkout" } }],
+      }),
+    ).toBe(true);
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [{ binding: base, status: { state: "ambiguous", candidates: ["web", "checkout"] } }],
+      }),
+    ).toBe(true);
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [{ binding: base, status: { state: "unchecked", reason: "unreachable" } }],
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects ambiguous candidates that are not all strings", () => {
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [{ ...ROW, status: { state: "ambiguous", candidates: ["web", 7] } }],
+      }),
+    ).toBe(false);
+  });
+
+  test("accepts both closed ok:false reasons", () => {
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: false,
+        reason: "not_paired",
+      }),
+    ).toBe(true);
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: false,
+        reason: "server_error",
       }),
     ).toBe(true);
   });
