@@ -329,4 +329,26 @@ describe("renderBindForm", () => {
     expect(text).not.toMatch(/Nimbus maps this repository/);
     expect(form.querySelectorAll('[role="group"] button').length).toBe(2);
   });
+
+  // The same "never both" rule, on the one outcome that carries a SECOND piece
+  // of prose beside its note. A refusal replaces the forbidden note but the
+  // scope command used to survive it, leaving `nimbus clip scopes …` sitting
+  // under "Nimbus has no [metrics.dora.web] block" — a remedy for a problem
+  // that is no longer on screen.
+  test("a refusal over a forbidden resolution drops the scope command too", () => {
+    const form = renderBindForm(
+      document,
+      "web",
+      {
+        kind: "forbidden",
+        scopeGap: { label: "laptop", required: "resolve", granted: ["clip", "briefs"] },
+      },
+      "Nimbus has no [metrics.dora.web] block configured for that id.",
+    );
+    const text = form.textContent ?? "";
+    expect(text).toMatch(/no \[metrics\.dora\.web\] block/);
+    expect(text).not.toMatch(/nimbus clip scopes/);
+    expect(text).not.toMatch(/missing the .resolve. scope/i);
+    expect(form.querySelectorAll(".nimbus-deploy__resolution")).toHaveLength(1);
+  });
 });

@@ -234,7 +234,18 @@ export function renderBindForm(
     note = doc.createElement("p");
     note.className = "nimbus-deploy__resolution";
     note.textContent = noteText;
-    if (resolution.kind === "forbidden" && resolution.scopeGap !== undefined) {
+    // `noteOverride === undefined` is half of this condition, not decoration:
+    // the scope command belongs to the RESOLUTION's note, and an override has
+    // replaced that note with a bind refusal. Without it, a `forbidden`
+    // resolution followed by a refused bind renders "Nimbus has no
+    // [metrics.dora.x] block…" with `nimbus clip scopes …` underneath — a
+    // remedy for the problem that is no longer on screen, and the exact
+    // "never both" this function's own doc comment promises.
+    if (
+      noteOverride === undefined &&
+      resolution.kind === "forbidden" &&
+      resolution.scopeGap !== undefined
+    ) {
       const cmd = scopeCommand(resolution.scopeGap);
       if (cmd !== null) {
         const code = doc.createElement("code");

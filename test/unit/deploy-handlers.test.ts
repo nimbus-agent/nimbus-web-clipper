@@ -305,6 +305,30 @@ describe("handleDeployPreflight", () => {
     expect(out).toMatchObject({ resolution: { kind: "silent" } });
   });
 
+  // `resolutionFor`'s doc comment promises it never throws, and the `unbound`
+  // answer it decorates is correct with or without a resolution. Unguarded,
+  // a rejection here would escape `handleDeployPreflight` entirely and the
+  // panel would render a `server_error` refusal in place of the bind form the
+  // user needs — so the promise is defended, not merely asserted. Its sibling
+  // `handleServiceBindingsCheck` already wraps the same injected dep in
+  // `Promise.allSettled`; this is the other half of that symmetry.
+  test("a THROWING resolveService is silent, not a thrown preflight", async () => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        resolveService: async () => {
+          throw new Error("boom");
+        },
+      }),
+    );
+    expect(out).toMatchObject({
+      ok: false,
+      reason: "unbound",
+      guessServiceId: "web",
+      resolution: { kind: "silent" },
+    });
+  });
+
   test("nothing paired refuses before resolving", async () => {
     const out = await handleDeployPreflight(req, deps({ getConnection: async () => null }));
     expect(out).toEqual({ kind: "deploy-preflight", ok: false, reason: "unreachable" });

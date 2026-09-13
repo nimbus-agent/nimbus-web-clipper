@@ -15,7 +15,12 @@ import type {
 } from "../shared/messages.ts";
 import { findBinding, guessServiceId, repoUrn, type ServiceBinding } from "../shared/services.ts";
 import type { Connection, Product } from "../shared/types.ts";
-import { fetchItemBranch, fetchPreflight, type fetchServiceResolution } from "./deploy-client.ts";
+import {
+  fetchItemBranch,
+  fetchPreflight,
+  type fetchServiceResolution,
+  type ServiceResolveResult,
+} from "./deploy-client.ts";
 
 export interface DeployDeps {
   /**
@@ -72,7 +77,15 @@ async function resolutionFor(
     // Asking would be a guaranteed 400; say nothing and keep the guess.
     return { kind: "silent" };
   }
-  const res = await deps.resolveService(conn.origin, conn.token, urn, deps.doFetch);
+  // Guarded, so "never throws" above is defended and not merely asserted.
+  // `fetchServiceResolution` folds its own fetch failure into `unreachable`
+  // today, so nothing reachable rejects here — but this is the SAME injected
+  // dep `handleServiceBindingsCheck` already wraps in `Promise.allSettled`,
+  // and an unguarded call in one of two callers is how an unconditional
+  // `unbound` bind form would turn into a `server_error` refusal.
+  const res = await deps
+    .resolveService(conn.origin, conn.token, urn, deps.doFetch)
+    .catch((): ServiceResolveResult => ({ ok: false, reason: "server_error" }));
   if (!res.ok) {
     if (res.reason === "insufficient_scope") {
       const gap = withLabel(conn.label, res.scopeGap);
@@ -84,8 +97,9 @@ async function resolutionFor(
   if (service === null) {
     return { kind: "unclaimed" };
   }
-  // Seeded from `service`, NOT `candidates[0]` — design §2.1. The gateway
-  // already picked; the client does not re-derive the pick.
+  // Seeded from `service`, NOT `candidates[0]` — see `docs/architecture.md`,
+  // "`services/resolve` seeds the bind form from the worker, never the panel".
+  // The gateway already picked; the client does not re-derive the pick.
   return candidates.length > 1
     ? { kind: "ambiguous", serviceId: service, candidates }
     : { kind: "resolved", serviceId: service };
@@ -222,9 +236,11 @@ export async function handleServiceBindingsList(
  * `unchecked` row rather than a failed check — the same rule the panel follows,
  * one surface up.
  *
- * FAN-OUT IS UNBOUNDED, deliberately for now (design §7.2): the destination is
- * loopback, this route is an unthrottled read, and bindings are created by hand
- * one page at a time. The fact that argues the other way is recorded there —
+ * FAN-OUT IS UNBOUNDED, deliberately for now (`docs/architecture.md`,
+ * "Checking a stored binding for staleness: two messages, not one"): the
+ * destination is loopback, this route is an unthrottled read, and bindings are
+ * created by hand one page at a time. The fact that argues the other way is
+ * recorded there —
  * upstream re-reads and re-parses `nimbus.toml` on every call, uncached on
  * purpose — so if a user with tens of bindings reports a slow check, a small
  * pool here is the fix.
