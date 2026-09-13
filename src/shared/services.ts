@@ -11,7 +11,8 @@
 // `nimbus.toml` is an EXACT string comparison that a live page's coordinate can
 // legitimately miss, and a binding is a local key (`origin` + `product` +
 // `scope`) the gateway never sees. The route makes the binding ACCURATE; it
-// does not remove the need for one. See the C10.3 design, §1 and §3.1.
+// does not remove the need for one. See `docs/architecture.md`, "The service
+// binding, and the map the client keeps despite the gateway holding one too".
 import { isProduct } from "./origins.ts";
 import type { Product } from "./types.ts";
 
@@ -21,10 +22,11 @@ export const MAX_SERVICE_ID_LEN = 64;
 export const MAX_BRANCH_LEN = 255;
 /**
  * Our own bound on `scope` — the gateway has none, because `scope` never
- * crosses the wire (§3.1). It still has to be bounded HERE: this is the one
- * field a page-supplied message can carry into `chrome.storage.local`, which is
- * a quota shared with the clip queue and the connection record, so an unbounded
- * value is a way for a hostile page to evict either.
+ * crosses the wire (the C10 design's §3.1). It still has to be bounded HERE:
+ * this is the one field a page-supplied message can carry into
+ * `chrome.storage.local`, which is a quota shared with the clip queue and the
+ * connection record, so an unbounded value is a way for a hostile page to evict
+ * either.
  *
  * 255 is the ceiling of the coordinate shapes this key is made of, not a round
  * number: GitHub's `owner/repo` cannot exceed 140 (39 + 1 + 100), GitLab bounds

@@ -274,9 +274,11 @@ function sendableId(v: unknown): v is string {
  * must not be readable back as though it could — the rule `isServiceBinding`
  * already applies to stored bindings.
  *
- * Asserts the two invariants rather than trusting either field alone (design
- * §2.1, read off upstream's `resolveServicesByRepoUrn`, which returns
- * `serviceId: claimants[0] ?? null` beside `candidateServiceIds: claimants`):
+ * Asserts the two invariants rather than trusting either field alone
+ * (`docs/architecture.md`, "`services/resolve` seeds the bind form from the
+ * worker, never the panel", read off upstream's `resolveServicesByRepoUrn`,
+ * which returns `serviceId: claimants[0] ?? null` beside
+ * `candidateServiceIds: claimants`):
  *   - `ambiguous` is exactly `candidates.length > 1`;
  *   - `service` is null exactly when `candidates` is empty.
  * A body where those disagree is a gateway this client does not understand, and
