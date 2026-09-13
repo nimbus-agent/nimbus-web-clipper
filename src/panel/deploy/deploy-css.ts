@@ -35,6 +35,18 @@ export const DEPLOY_CSS = `
     color: var(--nimbus-muted);
   }
   .nimbus-deploy__more { margin: 4px 0 0; font-size: 11px; opacity: 0.7; }
-  .nimbus-deploy__bind { display: flex; gap: 8px; align-items: flex-end; }
+  .nimbus-deploy__bind { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  .nimbus-deploy__resolution { margin: 0 0 8px; font-size: 12px; color: var(--nimbus-muted); flex-basis: 100%; }
+  .nimbus-deploy__candidates { display: flex; flex-wrap: wrap; gap: 6px; flex-basis: 100%; }
+  /* Inherits the panel's existing button styling — no new colour tokens. */
+  .nimbus-deploy__chip {
+    padding: 4px 8px;
+    border: 1px solid var(--nimbus-border);
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
   .nimbus-deploy__status { margin: 0 0 8px; font-size: 12px; color: var(--nimbus-muted); }
 `;

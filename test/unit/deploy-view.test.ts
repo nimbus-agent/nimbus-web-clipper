@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import {
   DEPLOY_SECTION_TITLE,
   GAP_NOTE,
+  renderBindForm,
   renderDeployBody,
   renderSectionFrame,
   verdictLine,
@@ -261,5 +262,71 @@ describe("renderDeployBody", () => {
     );
     expect(el.querySelector("img")).toBeNull();
     expect(el.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+});
+
+describe("renderBindForm", () => {
+  test("a resolved outcome seeds the gateway's id and says so", () => {
+    const form = renderBindForm(document, "web", { kind: "resolved", serviceId: "checkout" });
+    expect(form.querySelector("input")?.value).toBe("checkout");
+    expect(form.textContent).toMatch(/checkout/);
+  });
+
+  test("an unclaimed outcome keeps the guess and never says 'not configured'", () => {
+    const form = renderBindForm(document, "web", { kind: "unclaimed" });
+    expect(form.querySelector("input")?.value).toBe("web");
+    const text = form.textContent ?? "";
+    expect(text).toMatch(/names this repository/i);
+    expect(text).not.toMatch(/not configured|isn't configured|set up DORA/i);
+  });
+
+  test("ambiguous renders one real button per candidate, and clicking rewrites the input", () => {
+    const form = renderBindForm(document, "web", {
+      kind: "ambiguous",
+      serviceId: "checkout",
+      candidates: ["checkout", "cart"],
+    });
+    const input = form.querySelector("input") as HTMLInputElement;
+    expect(input.value).toBe("checkout");
+
+    const group = form.querySelector('[role="group"]') as HTMLElement;
+    expect(group.getAttribute("aria-label")).toBeTruthy();
+    const chips = Array.from(group.querySelectorAll("button"));
+    expect(chips.map((b) => b.textContent)).toEqual(["checkout", "cart"]);
+    // Native buttons: focusable and Enter/Space-activated without help.
+    expect(chips.every((b) => b.type === "button")).toBe(true);
+    expect(chips.some((b) => b.hasAttribute("tabindex"))).toBe(false);
+
+    chips[1]?.click();
+    expect(input.value).toBe("cart");
+  });
+
+  test("forbidden names the scope fix and renders a pasteable command", () => {
+    const form = renderBindForm(document, "web", {
+      kind: "forbidden",
+      scopeGap: { label: "laptop", required: "resolve", granted: ["clip", "briefs"] },
+    });
+    expect(form.querySelector("input")?.value).toBe("web");
+    expect(form.textContent).toMatch(/nimbus clip scopes/);
+  });
+
+  test("silent adds no note at all", () => {
+    const form = renderBindForm(document, "web", { kind: "silent" });
+    expect(form.querySelector("input")?.value).toBe("web");
+    expect(form.querySelector(".nimbus-deploy__resolution")).toBeNull();
+  });
+
+  test("a refusal note replaces the resolution note but keeps the candidates", () => {
+    const form = renderBindForm(
+      document,
+      "checkout",
+      { kind: "ambiguous", serviceId: "checkout", candidates: ["checkout", "cart"] },
+      "Nimbus has no [metrics.dora.checkout] block configured for that id.",
+    );
+    const text = form.textContent ?? "";
+    expect(text).toMatch(/no \[metrics\.dora\.checkout\] block/);
+    // Never both: the mapping sentence above the refusal reads as a contradiction.
+    expect(text).not.toMatch(/Nimbus maps this repository/);
+    expect(form.querySelectorAll('[role="group"] button').length).toBe(2);
   });
 });
