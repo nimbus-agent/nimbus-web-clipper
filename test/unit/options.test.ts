@@ -1334,4 +1334,110 @@ describe("service bindings check (#bindings-check)", () => {
     expect(button("bindings-check").disabled).toBe(false);
     expect(button("bindings-check").textContent).toBe("Check with Nimbus");
   });
+
+  /** The whole correction round trip: the check answers `disagrees`, the row's
+   *  "Use …" button sends `service-bind`, and the SAME check reply is served
+   *  again by the re-check that follows. The caller supplies only the bind
+   *  reply, which is the one thing these two tests differ on. */
+  function bootCorrection(bindReply: unknown): Promise<void> {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: [binding] };
+      }
+      if (m.kind === "service-bindings-check") {
+        return {
+          kind: "service-bindings-check",
+          ok: true,
+          rows: [{ binding, status: { state: "disagrees", proposedServiceId: "web-api" } }],
+        };
+      }
+      if (m.kind === "service-bind") {
+        return bindReply;
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = BINDINGS_FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    return flush();
+  }
+
+  function clickCorrection(): void {
+    const use = el("bindings-list").querySelector<HTMLButtonElement>("button[data-proposed]");
+    if (use === null) {
+      throw new Error("no correction button rendered");
+    }
+    use.click();
+  }
+
+  // LOAD-BEARING: `unknown_service` is the exact refusal the validated bind
+  // path exists to produce. The correction re-checks afterwards, and the
+  // re-check's success path clears the status line — so without `keepStatus`
+  // the refusal is erased microseconds after it appears, the row re-renders
+  // `disagrees` with the same button, and the user clicks again forever.
+  test("a REFUSED correction still says so after the re-check that follows it", async () => {
+    await bootCorrection({ kind: "service-bind", ok: false, reason: "unknown_service" });
+
+    button("bindings-check").click();
+    await flush();
+    clickCorrection();
+    await flush();
+
+    expect(el("bindings-status").textContent).toMatch(/couldn't update that binding/i);
+    // The binding was NOT changed, so the row must still offer the correction —
+    // a surviving message over a vanished button would be its own confusion.
+    expect(el("bindings-list").querySelector("button[data-proposed]")).not.toBeNull();
+  });
+
+  test("a rejecting channel mid-correction keeps its own message too", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: [binding] };
+      }
+      if (m.kind === "service-bindings-check") {
+        return {
+          kind: "service-bindings-check",
+          ok: true,
+          rows: [{ binding, status: { state: "disagrees", proposedServiceId: "web-api" } }],
+        };
+      }
+      if (m.kind === "service-bind") {
+        throw new Error("channel closed");
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = BINDINGS_FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    button("bindings-check").click();
+    await flush();
+    clickCorrection();
+    await flush();
+
+    expect(el("bindings-status").textContent).toMatch(/couldn't reach the extension/i);
+  });
+
+  test("an ACCEPTED correction reports nothing and re-reads the row from the worker", async () => {
+    await bootCorrection({ kind: "service-bind", ok: true });
+
+    button("bindings-check").click();
+    await flush();
+    clickCorrection();
+    await flush();
+
+    expect(el("bindings-status").textContent).toBe("");
+    // Never a direct storage write — the worker is the sole writer of bindings.
+    expect(harness.storageSet).not.toHaveBeenCalled();
+    expect(harness.sendMessage).toHaveBeenCalledWith({
+      kind: "service-bind",
+      binding: {
+        product: "github",
+        origin: "https://github.com",
+        scope: "acme/web",
+        serviceId: "web-api",
+      },
+    });
+  });
 });

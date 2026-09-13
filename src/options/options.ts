@@ -553,17 +553,28 @@ function checkButton(): HTMLButtonElement | null {
 
 /**
  * Check every stored binding against the gateway's current config (C10.3
- * slice 2, spec §7.1) — USER-INITIATED ONLY, never on page load. Options opens
- * for several unrelated reasons (pairing, surfaces, shortcuts, the brief log),
- * and none of them should spend one request per binding against a gateway
- * that may not even be running.
+ * slice 2; see `docs/architecture.md`, "Checking a stored binding for
+ * staleness: two messages, not one") — USER-INITIATED ONLY, never on page
+ * load. Options opens for several unrelated reasons (pairing, surfaces,
+ * shortcuts, the brief log), and none of them should spend one request per
+ * binding against a gateway that may not even be running.
  *
  * The response's rows already carry both the bindings and their verdicts, so
  * this renders straight from them rather than re-reading
  * `service-bindings-list` — one round trip answers both "what do I have" and
  * "does the gateway still agree".
+ *
+ * `keepStatus` exists for the one caller that has ALREADY written to the
+ * status line and must not have it erased: `onCorrect` below re-checks after a
+ * REFUSED correction, and the success path's `setBindingsStatus("")` would
+ * otherwise wipe the refusal microseconds after it appeared — leaving a row
+ * that still reads `disagrees`, the same button, and no explanation for why
+ * the click did nothing. It suppresses only the CLEAR: a check that fails on
+ * its own terms still writes its own message over the refusal, which is the
+ * right precedence (that message is newer and at least as actionable), and
+ * the refusal stands exactly when the check has nothing of its own to say.
  */
-async function onCheckBindings(): Promise<void> {
+async function onCheckBindings(keepStatus = false): Promise<void> {
   const button = checkButton();
   const host = document.getElementById("bindings-list");
   if (button === null || host === null) {
@@ -590,7 +601,9 @@ async function onCheckBindings(): Promise<void> {
       );
       return;
     }
-    setBindingsStatus("");
+    if (!keepStatus) {
+      setBindingsStatus("");
+    }
     const statuses = new Map<string, BindingCheckStatus>(
       res.rows.map((row) => [
         bindingKey(row.binding.origin, row.binding.product, row.binding.scope),
@@ -621,13 +634,21 @@ async function onCheckBindings(): Promise<void> {
 
 /**
  * The correction goes through the existing `service-bind` message, exactly
- * like the panel's bind form — so §6's preflight validation still applies and
- * a proposed id the gateway does not actually know is still refused. This
- * never writes `chrome.storage` directly; the worker is the sole writer of
- * bindings.
+ * like the panel's bind form — so `handleServiceBind`'s preflight validation
+ * still applies (`docs/architecture.md`, "The service binding, and the map the
+ * client keeps despite the gateway holding one too") and a proposed id the
+ * gateway does not actually know is still refused. This never writes
+ * `chrome.storage` directly; the worker is the sole writer of bindings.
+ *
+ * A refusal has to SURVIVE the re-check below — `unknown_service` is the exact
+ * outcome the validated bind path exists to produce, and a user who is told
+ * nothing simply clicks the unchanged button again. The panel keeps its
+ * refusal note on screen for the same reason (`BIND_REFUSAL_NOTE`,
+ * `deploy-section.ts`); `keepStatus` is how this surface does it.
  */
 async function onCorrect(binding: ServiceBinding, proposedServiceId: string): Promise<void> {
   setBindingsStatus("");
+  let refused = false;
   try {
     const res = await sendMessage({
       kind: "service-bind",
@@ -642,15 +663,20 @@ async function onCorrect(binding: ServiceBinding, proposedServiceId: string): Pr
       },
     });
     if (!isServiceBindResponse(res) || !res.ok) {
+      refused = true;
       setBindingsStatus("Couldn't update that binding — please try again.");
     }
   } catch {
+    // A rejected channel is NOT "the bind was refused" — nothing came back to
+    // say either way — so the re-check below still has to run. The message is
+    // preserved for the same reason a refusal's is.
+    refused = true;
     setBindingsStatus("Couldn't reach the extension — please try again.");
   }
   // Re-ask rather than assume: the row's status is the worker's (and the
   // gateway's) to compute, not ours to guess, whether the correction landed
   // or was refused.
-  await onCheckBindings();
+  await onCheckBindings(refused);
 }
 
 /**
