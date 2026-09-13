@@ -539,4 +539,36 @@ describe("handleServiceBindingsCheck", () => {
     );
     expect(out.ok && out.rows[0]?.status).toEqual({ state: "unchecked", reason: "server_error" });
   });
+
+  // Distinguishes `Promise.allSettled` from `Promise.all`: a genuine REJECTION
+  // (not merely a resolved `{ ok: false }`) on one binding, alongside siblings
+  // that resolve normally to DIFFERENT non-unchecked states. `Promise.all`
+  // would reject the whole batch on the throw, so the check itself would throw
+  // instead of returning `{ ok: true, rows: [...] }` — and even if only the
+  // thrown row's status were asserted, that alone would not show the siblings
+  // survived.
+  test("a thrown resolve among several does not sink the siblings' answers", async () => {
+    const out = await handleServiceBindingsCheck(
+      deps({
+        getBindings: async () => [
+          B("acme/agree", "agree"),
+          B("acme/boom", "z"),
+          B("acme/stale", "old"),
+        ],
+        resolveService: async (_o, _t, urn) => {
+          if (urn === "github:acme/boom") {
+            throw new Error("boom");
+          }
+          return urn === "github:acme/agree"
+            ? { ok: true, value: { service: "agree", ambiguous: false, candidates: ["agree"] } }
+            : { ok: true, value: { service: "moved", ambiguous: false, candidates: ["moved"] } };
+        },
+      }),
+    );
+    expect(out.ok).toBe(true);
+    const states = out.ok ? out.rows.map((r) => r.status) : [];
+    expect(states[0]).toEqual({ state: "agrees" });
+    expect(states[1]).toEqual({ state: "unchecked", reason: "server_error" });
+    expect(states[2]).toEqual({ state: "disagrees", proposedServiceId: "moved" });
+  });
 });
