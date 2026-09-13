@@ -5,7 +5,7 @@
 import { isCanonicalRejection } from "./canonical.ts";
 import { isSourceShape } from "./clip.ts";
 import { CONNECTOR_STATES, type ConnectorHealth } from "./connector-health.ts";
-import { type DeployPreflightResult, parseDeployPreflight } from "./deploy.ts";
+import { type DeployPreflightResult, parseDeployPreflight, sendableId } from "./deploy.ts";
 import type {
   EgressError,
   EgressPartition,
@@ -1319,19 +1319,39 @@ export function isServiceUnbindRequest(v: unknown): v is ServiceUnbindRequest {
 
 const RESOLUTION_KINDS = ["resolved", "ambiguous", "unclaimed", "forbidden", "silent"] as const;
 
+/**
+ * The SAME contract `parseServiceResolution` (`./deploy.ts`) enforces on the
+ * `GET /v1/services/resolve` body this outcome is derived from — one shape, two
+ * boundaries, and they must not disagree.
+ *
+ * Every id is bounded by `MAX_SERVICE_ID_LEN` through the parser's own
+ * `sendableId`, never a second inline spelling of the bound: an id longer than
+ * the gateway's limit can never be sent back to it, so it must not be readable
+ * back as though it could. `ambiguous` additionally asserts what the word
+ * means — at least two candidates, and the nominated `serviceId` among them.
+ * A bare `typeof === "string"` here let a message the wire parser would have
+ * rejected through, and the panel rendered the impossible choice it described:
+ * an ambiguous picker offering one option, or a seed no chip can re-select
+ * after a failed bind.
+ */
 function isServiceResolutionOutcome(v: unknown): v is ServiceResolutionOutcome {
   if (!isObject(v)) return false;
   const kind = v["kind"];
   if (typeof kind !== "string" || !(RESOLUTION_KINDS as readonly string[]).includes(kind)) {
     return false;
   }
-  if (kind === "resolved") return typeof v["serviceId"] === "string";
+  if (kind === "resolved") return sendableId(v["serviceId"]);
   if (kind === "ambiguous") {
     const c = v["candidates"];
+    // The same contract `parseServiceResolution` enforces on the wire body this
+    // outcome is derived from, restated at the message boundary — see
+    // `isServiceResolutionOutcome`'s doc comment.
     return (
-      typeof v["serviceId"] === "string" &&
+      sendableId(v["serviceId"]) &&
       Array.isArray(c) &&
-      c.every((x) => typeof x === "string")
+      c.length > 1 &&
+      c.every(sendableId) &&
+      c.includes(v["serviceId"])
     );
   }
   if (kind === "forbidden") {
@@ -1451,10 +1471,15 @@ function isBindingCheckStatus(v: unknown): v is BindingCheckStatus {
   if (typeof state !== "string" || !(CHECK_STATES as readonly string[]).includes(state)) {
     return false;
   }
-  if (state === "disagrees") return typeof v["proposedServiceId"] === "string";
+  // Bounded ids and a real ambiguity, the same contract
+  // `isServiceResolutionOutcome` above restates from `parseServiceResolution`.
+  // No membership check here: this status carries no `serviceId` to be a member
+  // OF — the row's own binding holds the stored id, and the check exists
+  // precisely because the gateway may no longer name it.
+  if (state === "disagrees") return sendableId(v["proposedServiceId"]);
   if (state === "ambiguous") {
     const c = v["candidates"];
-    return Array.isArray(c) && c.every((x) => typeof x === "string");
+    return Array.isArray(c) && c.length > 1 && c.every(sendableId);
   }
   if (state === "unchecked") {
     const r = v["reason"];

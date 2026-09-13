@@ -255,8 +255,17 @@ export interface ServiceResolution {
   readonly candidates: readonly string[];
 }
 
-/** An id short enough that it could be sent back to the gateway. */
-function sendableId(v: unknown): v is string {
+/**
+ * An id short enough that it could be sent back to the gateway.
+ *
+ * Exported so the message-boundary guards in `messages.ts` enforce the SAME
+ * bound as this wire parser rather than spelling `64` a third time. The two
+ * validate one shape at two boundaries — a resolution parsed off the wire here,
+ * and the same data crossing `chrome.runtime` there — and a guard that accepts
+ * a bare `string` where this one demands a bounded id is how the panel ends up
+ * rendering an id it can never send back.
+ */
+export function sendableId(v: unknown): v is string {
   return typeof v === "string" && v.length >= 1 && v.length <= MAX_SERVICE_ID_LEN;
 }
 

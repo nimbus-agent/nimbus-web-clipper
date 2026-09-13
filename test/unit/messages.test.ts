@@ -36,6 +36,7 @@ import {
   isServiceUnbindRequest,
   isUnpairRequest,
 } from "../../src/shared/messages.ts";
+import { MAX_SERVICE_ID_LEN } from "../../src/shared/services.ts";
 import { AGENT_LANES } from "../../src/shared/types.ts";
 
 describe("isPingMessage", () => {
@@ -1364,6 +1365,74 @@ describe("DeployPreflightResponse unbound arm", () => {
     ).toBe(false);
   });
 
+  // LOAD-BEARING: this guard and `parseServiceResolution` validate ONE shape at
+  // two boundaries — the wire body and the `chrome.runtime` message derived from
+  // it. While the guard only asked `typeof === "string"`, a message the wire
+  // parser would have rejected still reached the panel, which rendered the
+  // impossible thing it described: an "ambiguous" picker with a single chip, or
+  // a seed no chip can re-select after a refused bind.
+  describe("a resolution must clear the same bar the wire parser sets", () => {
+    const base = { kind: "deploy-preflight", ok: false, reason: "unbound", guessServiceId: "w" };
+    const tooLong = "x".repeat(MAX_SERVICE_ID_LEN + 1);
+
+    test("rejects an empty service id on resolved", () => {
+      expect(
+        isDeployPreflightResponse({ ...base, resolution: { kind: "resolved", serviceId: "" } }),
+      ).toBe(false);
+    });
+
+    test("rejects a service id longer than the route's own bound", () => {
+      expect(
+        isDeployPreflightResponse({
+          ...base,
+          resolution: { kind: "resolved", serviceId: tooLong },
+        }),
+      ).toBe(false);
+      // Bounded, not merely non-empty: the longest ACCEPTED id proves the
+      // rejection above is the bound firing and not an off-by-one elsewhere.
+      expect(
+        isDeployPreflightResponse({
+          ...base,
+          resolution: { kind: "resolved", serviceId: tooLong.slice(1) },
+        }),
+      ).toBe(true);
+    });
+
+    // "Ambiguous" with one candidate is not ambiguity — it is a picker offering
+    // the user a single choice. Everything else in this fixture is well-formed:
+    // the id is bounded and IS the only candidate, so only the arity clause can
+    // reject it.
+    test("rejects ambiguous with fewer than two candidates", () => {
+      expect(
+        isDeployPreflightResponse({
+          ...base,
+          resolution: { kind: "ambiguous", serviceId: "a", candidates: ["a"] },
+        }),
+      ).toBe(false);
+    });
+
+    // The seed the form shows must be one of the chips beside it, or the user
+    // cannot get back to it after a refused bind. Two bounded candidates here,
+    // so only the membership clause can reject it.
+    test("rejects an ambiguous serviceId that is not among its candidates", () => {
+      expect(
+        isDeployPreflightResponse({
+          ...base,
+          resolution: { kind: "ambiguous", serviceId: "cart", candidates: ["checkout", "web"] },
+        }),
+      ).toBe(false);
+    });
+
+    test("rejects an over-long candidate", () => {
+      expect(
+        isDeployPreflightResponse({
+          ...base,
+          resolution: { kind: "ambiguous", serviceId: "a", candidates: ["a", tooLong] },
+        }),
+      ).toBe(false);
+    });
+  });
+
   test("a non-unbound refusal carries no resolution and still parses", () => {
     expect(
       isDeployPreflightResponse({
@@ -1485,6 +1554,48 @@ describe("isServiceBindingsCheckResponse", () => {
         kind: "service-bindings-check",
         ok: true,
         rows: [{ ...ROW, status: { state: "ambiguous", candidates: ["web", 7] } }],
+      }),
+    ).toBe(false);
+  });
+
+  // The same contract as `isServiceResolutionOutcome` above, on the status that
+  // reaches the Options table. It carries no `serviceId`, so membership does not
+  // apply here — only the bound and the arity.
+  test("rejects a disagrees whose proposed id exceeds the route's bound", () => {
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [
+          {
+            ...ROW,
+            status: { state: "disagrees", proposedServiceId: "x".repeat(MAX_SERVICE_ID_LEN + 1) },
+          },
+        ],
+      }),
+    ).toBe(false);
+    // An id AT the bound still passes — the rejection above is the bound, not
+    // some earlier clause catching the fixture first.
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [
+          {
+            ...ROW,
+            status: { state: "disagrees", proposedServiceId: "x".repeat(MAX_SERVICE_ID_LEN) },
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects an ambiguous status with fewer than two candidates", () => {
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [{ ...ROW, status: { state: "ambiguous", candidates: ["web"] } }],
       }),
     ).toBe(false);
   });
