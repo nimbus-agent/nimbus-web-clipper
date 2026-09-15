@@ -33,12 +33,12 @@
     "promo": "node scripts/gen-promo.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.12",
+    "@biomejs/biome": "^2.5.13",
     "@mozilla/readability": "^0.6.0",
     "@nimbus-dev/sdk": "^2.0.0",
     "@playwright/test": "^1.63.0",
-    "@types/chrome": "^0.2.8",
-    "@types/node": "^26.4.1",
+    "@types/chrome": "^0.2.9",
+    "@types/node": "^26.5.1",
     "@vitest/coverage-v8": "^5.0.0",
     "chrome-webstore-upload-cli": "^4.0.1",
     "esbuild": "^0.28.2",
