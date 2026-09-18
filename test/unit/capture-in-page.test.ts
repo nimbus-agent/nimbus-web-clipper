@@ -244,9 +244,38 @@ describe("fallback (no readable article)", () => {
     expect(result.body).toBe("http://localhost:3000/");
   });
 
-  test("an og:description-only meta tag is not honored — falls back to the URL", () => {
+  test("falls back to an og:description when the standard description is absent", () => {
     setSparseDocument();
     addOgDescription("Open Graph description, not the standard meta description.");
+    const result = getCapture()("article");
+
+    expect(result.readableFound).toBe(false);
+    expect(result.body).toBe("Open Graph description, not the standard meta description.");
+  });
+
+  test("prefers the standard meta description when both descriptions are present", () => {
+    setSparseDocument();
+    addMetaDescription("Standard description.");
+    addOgDescription("Open Graph description.");
+    const result = getCapture()("article");
+
+    expect(result.readableFound).toBe(false);
+    expect(result.body).toBe("Standard description.");
+  });
+
+  test("falls back to an og:description when the standard description is blank", () => {
+    setSparseDocument();
+    addMetaDescription("   ");
+    addOgDescription("Open Graph description.");
+    const result = getCapture()("article");
+
+    expect(result.readableFound).toBe(false);
+    expect(result.body).toBe("Open Graph description.");
+  });
+
+  test("a blank og:description is treated as absent", () => {
+    setSparseDocument();
+    addOgDescription("   ");
     const result = getCapture()("article");
 
     expect(result.readableFound).toBe(false);
@@ -269,6 +298,16 @@ describe("fallback (no readable article)", () => {
 
     expect(result.canonicalUrl).toBe("http://localhost:3000/sparse");
     expect(result.readableFound).toBe(false);
+  });
+
+  test("an og:description does not affect a readable article", () => {
+    setArticleDocument();
+    addOgDescription("Bookmark-only fallback text.");
+    const result = getCapture()("article");
+
+    expect(result.readableFound).toBe(true);
+    expect(result.body).toContain("local-first index");
+    expect(result.body).not.toBe("Bookmark-only fallback text.");
   });
 });
 
