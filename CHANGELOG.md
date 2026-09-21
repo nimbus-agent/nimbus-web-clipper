@@ -8,6 +8,8 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-21
+
 ### Changed
 
 - **Renamed to Nimbus Companion.** The extension was "Nimbus Web Clipper", which
@@ -702,7 +704,11 @@ silently or showing an empty result.
   extension storage; never logged, never placed in the page or popup/options
   DOM, and never returned to the UI. The pairing code is likewise never logged.
 
-[Unreleased]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.9.0...v0.10.0
+[0.9.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.8.0...v0.9.0
+[0.8.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.2.0...v0.5.0
 [0.2.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.1.0...v0.2.0
