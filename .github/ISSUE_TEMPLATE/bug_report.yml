@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a problem with the Nimbus Web Clipper extension
+description: Report a problem with the Nimbus Companion extension
 labels: ["bug"]
 body:
   - type: markdown

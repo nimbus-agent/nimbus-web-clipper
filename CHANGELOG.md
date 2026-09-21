@@ -8,6 +8,16 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed to Nimbus Companion.** The extension was "Nimbus Web Clipper", which
+  collided in every store search with Nimbus Web Inc's unrelated "Web Clipper
+  (Nimbus)". The new name also says what the extension became: it recognises the
+  page you are on and runs your gateway's agents against it, and clipping is one
+  capability among several. Nothing else moves — the Firefox add-on id, the
+  Chrome item id, your pairing and your settings are all unchanged, so an
+  installed copy simply updates under the new name.
+
 ### Added
 
 - **The deploy-readiness bind form stops guessing.** It now asks the gateway

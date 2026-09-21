@@ -78,10 +78,10 @@ export interface WebClipperManifest {
 export function composeManifest(target: BrowserTarget, version: string): WebClipperManifest {
   const base = {
     manifest_version: 3 as const,
-    name: "Nimbus Web Clipper",
+    name: "Nimbus Companion",
     version,
     description:
-      "Clip articles and selections from the browser into your local-first Nimbus index.",
+      "Bring your local-first Nimbus index to the page you're on — clip it, ask about it, see what Nimbus already knows.",
     // Minimal, capability-scoped: storage holds the paired bearer token; activeTab +
     // scripting let the popup capture the current page on user action (no broad host
     // access); alarms wakes the SW to drain the offline retry queue; contextMenus

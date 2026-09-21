@@ -1,4 +1,4 @@
-# Nimbus Web Clipper — Roadmap
+# Nimbus Companion — Roadmap
 
 > **Status:** a direction, not a commitment. This roadmap is vision-first: it
 > states the end-state we're building toward, then breaks it into phases detailed
@@ -47,7 +47,7 @@ Most clippers are filing cabinets. You clip a page, it drops into a folder or a
 tag you never open again, and the value of the capture decays to zero the moment
 the tab closes. The clipper becomes a place things go to be forgotten.
 
-Nimbus Web Clipper is the opposite. A clip is not filed — it is **fed to a
+Nimbus Companion is the opposite. A clip is not filed — it is **fed to a
 private recall engine** that runs on your machine. What you save today makes what
 you read tomorrow smarter: the moment you land on a page, the extension can tell
 you *you've read three things about this before*, surface them in-context, and let
@@ -68,9 +68,9 @@ The clipper is a decent clipper. It is also in a fight it cannot win:
   AGPL licence, plus OCR, PDFs, mobile and an MCP server. Being a slightly
   better clipper than those two is not a plan.
 - **The name is already taken.** "Web Clipper (Nimbus)" by Nimbus Web Inc has
-  roughly 50,000 users, so we collide with it in every store search. What this
-  extension should be *called* after the reframe is an **open question**, not a
-  decision taken here.
+  roughly 50,000 users, so as "Nimbus Web Clipper" we collided with it in every
+  store search. That is why the extension is now **Nimbus Companion** — see
+  [The name](#the-name--decided-nimbus-companion) below.
 - **The cross-corpus idea isn't unique either.** SurfSense (~15.7k stars) has a
   comparable architecture — Gmail/Slack/Jira/Confluence/Linear/GitHub
   connectors and an MCP server. Execution and the local-first guarantee are the
@@ -81,39 +81,43 @@ agents over an index that already spans your pull requests, builds, issues and
 docs. No clipper has that. Reaching it from the page you are already on is the
 product.
 
-### The name — proposed, not decided
+### The name — decided: Nimbus Companion
 
-**Status: a proposal. This roadmap renames nothing.** It records the option and
-its constraints so the decision is taken deliberately rather than by drift.
+**Status: decided 2026-09-21.** The extension publishes as **Nimbus Companion**;
+until then it was "Nimbus Web Clipper".
 
-The collision is real and it is not ours to win by argument. "Web Clipper
+The collision was real and not ours to win by argument. "Web Clipper
 (Nimbus)" is published by **Nimbus Web Inc**, a Delaware company: roughly 50,000
 users, 154 ratings, 3.4 stars, last updated 2026-04-30. They hold the name in
-this category.
+this category, and the clash is with *Nimbus* sitting next to *Clipper*, not
+with one exact string — so the new name keeps the tie to the Nimbus gateway and
+leaves the clipper category. It also fits the reframe above: capture is one
+capability of the client, not the product.
 
-Under consideration: **"Nimbus — Change Impact Agent"** — the job, not the
-mechanism. That is the shipped precedent from the editor side, where
-[`nimbus-vscode`](https://github.com/nimbus-agent/nimbus-vscode) publishes as
-*Nimbus — On-Call & Incident Agent*; two surfaces of one gateway should read as
-siblings. Alternatives considered and not discarded: "PR & Build Context Agent",
-"Merge Readiness Agent", "Blast Radius".
+Considered and not taken: "Nimbus — Change Impact Agent" (the job-not-mechanism
+pattern [`nimbus-vscode`](https://github.com/nimbus-agent/nimbus-vscode) uses as
+*Nimbus — On-Call & Incident Agent*), "PR & Build Context Agent", "Merge
+Readiness Agent", "Blast Radius".
 
-Two things constrain any rename:
+What the rename is, and what it deliberately is not:
 
+- **It is the `name`, the UI headings and the store-listing copy — nothing
+  deeper.** "Clip" survives as a verb ("Clip to Nimbus", the clip commands, the
+  gateway's `nimbus clip pair` and `/v1/clips`): those name an action, not the
+  product.
 - **`FIREFOX_ADDON_ID` must not change.** `src/manifest/manifest.ts:17` pins it
   to the literal `web-clipper@nimbus-agent.dev`, and Firefox keys an install to
-  that gecko id — changing it orphans every existing Firefox install. A rename
-  is therefore a `name` change plus store-listing copy, and nothing deeper: the
-  Chrome item id is derived from the publisher's public key, not from `name`, so
-  it survives a rename untouched.
-- **Sequencing, re-opened: Nimbus#1006 closed 2026-08-11.** This bullet's
-  premise was that relaunching under a new name while **Nimbus#1006** was live
-  (the store listings claim clips stay local while `web_clip` routed to OpenAI
-  embeddings when a key was set) would *increase* exposure: a fresh listing
-  invites fresh scrutiny of a privacy claim we could not back. That premise no
-  longer holds — #1006 is closed. Whether the sequencing argument still stands
-  on some other ground, or the rename is now unblocked, needs its own re-read.
-  **Not decided here:** the rename is not this slice's call to make.
+  that gecko id — changing it orphans every existing Firefox install. The Chrome
+  item id is derived from the publisher's public key, not from `name`, so it
+  survives a rename untouched.
+- **The repo slug, package name, Sonar key and zip names stay
+  `nimbus-web-clipper`.** None of them is visible on a store page; renaming the
+  repo is separate outward-facing work.
+- **Sequencing is no longer a blocker.** The earlier worry — relaunching under a
+  new name while **Nimbus#1006** was live (listings claimed clips stay local
+  while `web_clip` routed to OpenAI embeddings when a key was set) would invite
+  scrutiny of a privacy claim we could not back — lapsed when #1006 closed on
+  2026-08-11.
 
 ### Why this is credible, not aspirational
 

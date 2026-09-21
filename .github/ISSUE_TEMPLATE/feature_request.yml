@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest an improvement to the Nimbus Web Clipper extension
+description: Suggest an improvement to the Nimbus Companion extension
 labels: ["enhancement"]
 body:
   - type: textarea

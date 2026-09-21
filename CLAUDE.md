@@ -1,6 +1,12 @@
-# Nimbus Web Clipper — Claude Code Context
+# Nimbus Companion — Claude Code Context
 
 ## What this is
+
+**Nimbus Companion** is the published name (it was "Nimbus Web Clipper" until a
+store-search collision with Nimbus Web Inc's "Web Clipper (Nimbus)" forced a
+rename — see `ROADMAP.md` § The name). The repo slug, package name, Sonar key,
+zip names and the Firefox gecko id keep the old `nimbus-web-clipper` /
+`web-clipper@…` spelling **on purpose**: they are identifiers, not branding.
 
 `nimbus-web-clipper` is a Chrome + Firefox **MV3 browser extension** that clips
 web pages (readable article or selection) into the user's local-first

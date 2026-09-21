@@ -88,7 +88,7 @@ function html(s: TileSpec): string {
     <div class="tile">
       <div class="mark">${MARK}</div>
       <div class="copy">
-        <div class="title">Nimbus Web&nbsp;Clipper</div>
+        <div class="title">Nimbus Companion</div>
         <div class="tagline">Clip what you read into your private, local-first index.</div>
         <div class="chips">
           <span class="chip">Local-first</span>

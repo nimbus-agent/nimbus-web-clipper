@@ -6,7 +6,7 @@ describe("composeManifest", () => {
     for (const target of BROWSER_TARGETS) {
       const m = composeManifest(target, "1.2.3");
       expect(m.manifest_version).toBe(3);
-      expect(m.name).toBe("Nimbus Web Clipper");
+      expect(m.name).toBe("Nimbus Companion");
       expect(m.version).toBe("1.2.3");
       // Loopback only — the extension never talks to a remote origin (I6).
       expect(m.host_permissions).toEqual(["http://127.0.0.1/*", "http://localhost/*"]);

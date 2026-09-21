@@ -1,11 +1,11 @@
-# Store Listing Copy — Nimbus Web Clipper
+# Store Listing Copy — Nimbus Companion
 
 Single source of truth for the Chrome Web Store and AMO listing fields. Paste
 these verbatim into each dashboard; keep this file in sync with any dashboard edit.
 
 ## Name
 
-Nimbus Web Clipper
+Nimbus Companion
 
 ## Short summary
 
@@ -28,7 +28,7 @@ surfacing what that index already holds about the page.
 Save what you read into your private, local-first Nimbus index — straight from
 the browser.
 
-Nimbus Web Clipper clips the readable article or your current text selection into
+Nimbus Companion clips the readable article or your current text selection into
 Nimbus, where it becomes searchable alongside your Drive files, email, and
 bookmarks. It also works the other way round: on a page Nimbus already knows — a
 pull request, a build, an issue — it recognises where you are, finds the matching
