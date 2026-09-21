@@ -1,4 +1,4 @@
-name: Publish Web Clipper
+name: Publish Nimbus Companion
 
 # Triggered by tags of the form `v0.1.0`. The tag version is written into
 # package.json before building so the manifest version matches the tag, then a
@@ -96,7 +96,7 @@ jobs:
         with:
           files: dist-zip/*.zip
           tag_name: ${{ github.ref_name }}
-          name: Web Clipper ${{ steps.version.outputs.version }}
+          name: Nimbus Companion ${{ steps.version.outputs.version }}
           generate_release_notes: true
 
       - name: Build source archive for AMO review

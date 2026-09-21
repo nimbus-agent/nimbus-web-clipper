@@ -1,8 +1,8 @@
-# Privacy Policy — Nimbus Web Clipper
+# Privacy Policy — Nimbus Companion
 
 _Last updated: 2026-08-24_
 
-Nimbus Web Clipper is a local-first browser extension. It does not collect,
+Nimbus Companion is a local-first browser extension. It does not collect,
 transmit, sell, or share any personal data, and it contains no analytics or
 telemetry.
 

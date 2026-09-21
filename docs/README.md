@@ -1,6 +1,6 @@
 # Docs
 
-Design reference for the Nimbus Web Clipper.
+Design reference for the Nimbus Companion.
 
 - **[`architecture.md`](./architecture.md)** — how the extension is built today:
   the load-bearing decisions, the layer map, the clip pipeline, and the two state

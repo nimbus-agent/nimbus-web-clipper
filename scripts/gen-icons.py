@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the Nimbus Web Clipper extension icons from scratch.
+"""Generate the Nimbus Companion extension icons from scratch.
 
 No third-party deps: shapes are rasterized with 4x supersampling and encoded to
 PNG via the stdlib `zlib`. Concept: a light Nimbus cloud + a bookmark/clip tag on

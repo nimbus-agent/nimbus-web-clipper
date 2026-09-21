@@ -1,7 +1,7 @@
 ---
 name: clipper-mv3-client
 description: >
-  The non-obvious mechanics of the Nimbus Web Clipper: which gates prove what and which
+  The non-obvious mechanics of the Nimbus Companion: which gates prove what and which
   pass while proving nothing, the coupled sites nothing enforces, the MV3 traps that
   exist only as a comment inside one file, and which half of the pairing/token contract
   belongs to the gateway repo. Use when asked "what should I run before pushing", "why
@@ -10,7 +10,7 @@ description: >
   `src/manifest/manifest.ts`, `esbuild.mjs`, `scripts/`, or `.github/workflows/`.
 ---
 
-# Nimbus Web Clipper — the MV3 client
+# Nimbus Companion — the MV3 client
 
 ## What this skill is not
 

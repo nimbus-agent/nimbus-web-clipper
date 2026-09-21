@@ -35,6 +35,14 @@ Build the artifacts locally (`bun run build && bun run package`), then:
 The first submission of each store must be done by hand; every release after that
 is automated.
 
+**Renaming the extension.** The automated upload carries the manifest `name`, so
+the Chrome listing title follows the next release on its own. Everything else on
+a listing is dashboard-only: the AMO listing name, and both stores' summary and
+description, must be re-pasted by hand from [`listing.md`](./listing.md). The zip
+names, the gecko id (`web-clipper@nimbus-agent.dev`) and the store URLs' slugs
+keep the original `nimbus-web-clipper` spelling on purpose — they are identifiers,
+not branding, and the gecko id can never change without orphaning installs.
+
 ### 3. Credentials
 
 - **Chrome (Google OAuth):** follow

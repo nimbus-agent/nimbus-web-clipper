@@ -1,6 +1,6 @@
 # Architecture
 
-How the Nimbus Web Clipper is built today. This is a reference for *what is* —
+How the Nimbus Companion is built today. This is a reference for *what is* —
 the roadmap ([`../ROADMAP.md`](../ROADMAP.md)) is *what's next*, and the
 per-feature design specs under [`superpowers/specs/`](./superpowers/specs/) are
 the record of how each slice was reasoned through. When code and this document

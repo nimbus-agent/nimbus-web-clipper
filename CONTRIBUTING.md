@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve the Nimbus Web Clipper!
+Thanks for helping improve the Nimbus Companion!
 
 ## Where to start
 
