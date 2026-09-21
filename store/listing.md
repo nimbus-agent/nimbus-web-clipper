@@ -57,7 +57,7 @@ Features:
 - Activity — what your gateway did on your behalf: what it fetched, when, and how each one ended, read from the gateway's own tamper-evident record.
 - Offline retry queue — clips made while the gateway is down are saved and retried automatically.
 
-Requires a running Nimbus gateway with the web-clipper surface, version 7.19.0 or later for every feature listed above. An older gateway still works: each surface tells you what that gateway cannot do rather than failing silently. See https://nimbus-agent.dev/user-guide/install/.
+Requires a running Nimbus gateway with the web-clipper surface, version 7.19.0 or later to get all of the features listed above. An older gateway still works with most of them: each surface tells you what that gateway cannot do rather than failing silently. See https://nimbus-agent.dev/user-guide/install/.
 
 ## URLs
 
