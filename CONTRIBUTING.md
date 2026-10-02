@@ -104,7 +104,7 @@ checks — the five commands under [Pull requests](#pull-requests) plus
   moot — `publish.yml` runs `web-ext` with the AMO credentials in its environment.
 - **Read `bun outdated`'s Latest column, not just Update.** Update stays inside
   your range, and a caret range on a `0.x` package stops at the next minor
-  (`^0.2.9` never reaches `0.3.0`). For those packages the minor *is* the breaking
+  (`^0.3.4` never reaches `0.4.0`). For those packages the minor *is* the breaking
   change: move the range by hand and expect type fixes. `@types/chrome` is one.
 - **These move together:**
   - `vitest` and `@vitest/coverage-v8` — the coverage provider peer-depends on
