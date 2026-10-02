@@ -85,6 +85,59 @@ pick up a rebuild.
   must pass (CI's `build-test` job runs exactly that on Ubuntu). CI also runs a
   second `e2e` job — `bun run test:e2e` — which those five do not cover.
 
+## Updating dependencies
+
+No bot updates dependencies here. A maintainer does it in periodic bulk PRs:
+`bun outdated`, edit the ranges in `package.json`, `bun install`, then run the full
+checks — the five commands under [Pull requests](#pull-requests) plus
+`bun run test:e2e`.
+
+- **Commit `bun.lock` with `package.json`.** CI installs with
+  `bun install --frozen-lockfile`, so a range changed without regenerating the
+  lockfile fails with `error: lockfile had changes, but lockfile is frozen`.
+- **`bun audit` is the vulnerability check — run it on every bulk update.**
+  Nothing opens a fix PR for a vulnerable package, and the Security tab is no
+  substitute: Dependabot alerts are still enabled, but when Dependabot was retired
+  this repo's dependency graph resolved no manifests, and not one alert had ever
+  been raised while `bun audit` reported dozens of advisories against the same
+  lockfile. That every package here is a devDependency does not make an advisory
+  moot — `publish.yml` runs `web-ext` with the AMO credentials in its environment.
+- **Read `bun outdated`'s Latest column, not just Update.** Update stays inside
+  your range, and a caret range on a `0.x` package stops at the next minor
+  (`^0.2.9` never reaches `0.3.0`). For those packages the minor *is* the breaking
+  change: move the range by hand and expect type fixes. `@types/chrome` is one.
+- **These move together:**
+  - `vitest` and `@vitest/coverage-v8` — the coverage provider peer-depends on
+    exactly its own version of `vitest`.
+  - `playwright` and `@playwright/test` — the latter depends on exactly its own
+    version of the former; keep both ranges equal so one copy is installed.
+  - `@biomejs/biome` and the `$schema` URL in `biome.json`, which names the Biome
+    version. `bunx biome migrate --write` updates it; a stale one only adds an
+    info diagnostic to `bun run lint`, which still passes.
+  - `github/codeql-action/init` and `github/codeql-action/analyze` in
+    `codeql.yml` — one commit for both: `init` writes a config file that `analyze`
+    reads back, and `analyze` refuses one written by a different release.
+- **Update the pinned GitHub Actions in the same pass.**
+  `gh api repos/<owner>/<repo>/releases/latest --jq .tag_name` names an action's
+  newest release — except for `github/codeql-action`, whose latest release is a
+  CodeQL bundle; take its newest `vN.x.y` tag instead. Each action is pinned to a
+  full commit SHA (`workflow-hygiene.test.ts` fails a floating tag) with its
+  version in a trailing comment; change both together. Resolve a tag with
+  `gh api repos/<owner>/<repo>/commits/<tag> --jq .sha`, which returns the commit
+  even for an annotated tag — whose own object SHA, the one
+  `git ls-remote --tags <url> <tag>` prints, is not a commit.
+- **The store CLIs first run on a release.** `web-ext` and
+  `chrome-webstore-upload-cli` are invoked only by `publish.yml`, on a `v*` tag,
+  so a changed flag passes PR CI unnoticed. Read their changelogs against the
+  flags `publish.yml` passes; `bunx web-ext lint --source-dir dist/firefox`,
+  after `bun run build`, runs its Firefox lint step locally.
+- **Turning Dependabot back on takes more than a `dependabot.yml`.** Its runs get
+  no Actions secrets, even under `pull_request_target`, so `cla.yml`'s token mint
+  fails and the required `cla` check blocks every Dependabot PR — the guard that
+  skipped those steps was removed with the config. The config must also declare
+  the `bun` ecosystem: `npm` does not understand `bun.lock`, so its PRs fail
+  `--frozen-lockfile`. Both files' git history holds the previous versions.
+
 ## Releases
 
 Releases are tag-driven: pushing a `vX.Y.Z` tag runs `.github/workflows/publish.yml`,

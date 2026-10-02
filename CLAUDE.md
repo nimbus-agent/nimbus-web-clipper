@@ -196,6 +196,11 @@ bun run test:e2e      # playwright test (needs `bun run build` + browsers first)
 CI runs `typecheck` / `lint` / `test` / `build` / `check-build` in the
 `build-test` job **and** `test:e2e` in a second `e2e` job — see `ci.yml`.
 
+Dependencies have no update bot: a maintainer bumps them in periodic bulk PRs.
+`CONTRIBUTING.md` § Updating dependencies has the procedure, the versions that
+must move together, and why `bun audit` — not the Security tab — is the
+vulnerability check.
+
 Store-asset tooling (regenerates `store/screenshots/` and `store/promo/`; not part
 of the extension build): `bun run mock-gateway`, `bun run screenshots:setup`,
 `bun run screenshots`, `bun run promo`.
