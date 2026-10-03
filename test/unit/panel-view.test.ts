@@ -26,6 +26,34 @@ const base: RelatedHit = {
 
 const HIT_NOW = 1_700_000_000_000;
 
+/**
+ * Clicks `button` and returns whatever its listeners threw.
+ *
+ * jsdom never rethrows a listener's exception from `click()` — it reports it as
+ * a window `error` event — so `expect(() => button.click()).not.toThrow()`
+ * cannot fail: the throw only surfaces afterwards, outside the test, as one of
+ * vitest's unhandled errors. Listening for that event is what lets an "inert
+ * control" test itself go red when the control is not inert.
+ * `preventDefault()` keeps a caught error out of jsdom's own console report.
+ */
+function errorsFromClicking(button: HTMLButtonElement | null | undefined): unknown[] {
+  if (button === null || button === undefined) {
+    throw new Error("no button to click");
+  }
+  const errors: unknown[] = [];
+  const onError = (event: ErrorEvent): void => {
+    event.preventDefault();
+    errors.push(event.error);
+  };
+  window.addEventListener("error", onError);
+  try {
+    button.click();
+  } finally {
+    window.removeEventListener("error", onError);
+  }
+  return errors;
+}
+
 describe("renderHit", () => {
   test("a url hit renders an anchor with safe target/rel and the title as text", () => {
     const el = renderHit(document, base, HIT_NOW);
@@ -450,7 +478,7 @@ describe("renderHeader — ambiguous", () => {
     });
     const buttons = el.querySelectorAll<HTMLButtonElement>("button.nimbus-related__candidate");
     expect(buttons).toHaveLength(2);
-    expect(() => buttons[0]?.click()).not.toThrow();
+    expect(errorsFromClicking(buttons[0])).toEqual([]);
   });
 });
 
@@ -1122,7 +1150,7 @@ describe("renderLaneBody", () => {
     const el = renderLaneBody(document, { kind: "failed", reason: "stale" }, NOW);
     const rerun = el.querySelector<HTMLButtonElement>("button");
     expect(rerun?.textContent).toBe("Re-run");
-    expect(() => rerun?.click()).not.toThrow();
+    expect(errorsFromClicking(rerun)).toEqual([]);
   });
 });
 

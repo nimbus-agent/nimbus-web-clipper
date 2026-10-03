@@ -1487,6 +1487,79 @@ describe("service bindings check (#bindings-check)", () => {
     expect(el("bindings-status").textContent).toMatch(/couldn't reach the extension/i);
   });
 
+  // Two corrections in a row, the first one's re-check still out when the second
+  // lands its own refusal. That first re-check is now SUPERSEDED (the second
+  // correction bumped the generation), and the one thing it must not do on
+  // landing is write "your bindings changed": `keepStatus` means a refusal is on
+  // screen, and the newer refusal outranks anything a stale check has to say.
+  test("a superseded re-check lands without painting over the newer correction's refusal", async () => {
+    let releaseFirstRecheck = (): void => {};
+    const firstRecheckHeld = new Promise<void>((r) => {
+      releaseFirstRecheck = r;
+    });
+    let checks = 0;
+    let binds = 0;
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: [binding] };
+      }
+      if (m.kind === "service-bindings-check") {
+        checks += 1;
+        if (checks === 2) {
+          // The first correction's re-check: held, and answering differently from
+          // every other check so a render of it would be visible.
+          await firstRecheckHeld;
+          return {
+            kind: "service-bindings-check",
+            ok: true,
+            rows: [{ binding, status: { state: "agrees" } }],
+          };
+        }
+        return {
+          kind: "service-bindings-check",
+          ok: true,
+          rows: [{ binding, status: { state: "disagrees", proposedServiceId: "web-api" } }],
+        };
+      }
+      if (m.kind === "service-bind") {
+        binds += 1;
+        if (binds === 1) {
+          return { kind: "service-bind", ok: false, reason: "unknown_service" };
+        }
+        throw new Error("channel closed");
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = BINDINGS_FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    button("bindings-check").click();
+    await flush();
+    clickCorrection(); // refused; its re-check is now held
+    await flush();
+    expect(el("bindings-status").textContent).toBe(
+      "Couldn't update that binding — please try again.",
+    );
+    clickCorrection(); // the row is still live: a second correction, whose channel rejects
+    await flush();
+    expect(el("bindings-status").textContent).toBe(
+      "Couldn't reach the extension — please try again.",
+    );
+
+    releaseFirstRecheck();
+    await flush();
+
+    expect(checks).toBe(3);
+    expect(el("bindings-status").textContent).toBe(
+      "Couldn't reach the extension — please try again.",
+    );
+    // Discarded, not painted: the held check's "agrees" row never reached the table.
+    expect(el("bindings-list").textContent).not.toContain("Matches Nimbus");
+    expect(el("bindings-list").querySelector("button[data-proposed]")).not.toBeNull();
+  });
+
   test("an ACCEPTED correction reports nothing and re-reads the row from the worker", async () => {
     await bootCorrection({ kind: "service-bind", ok: true });
 

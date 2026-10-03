@@ -1960,6 +1960,89 @@ describe("agent run polling — survives eviction", () => {
     expect(found?.state.kind === "done" && "itemUrls" in found.state).toBe(false);
   });
 
+  // The attach is detached from the poll on purpose (see its call site in
+  // service-worker.ts), so nothing awaits it. A storage write that fails while
+  // ATTACHING the map must therefore be swallowed there: the brief was stored
+  // before the attach began and stays the reader's answer, and the failure must
+  // not escape as an unhandled rejection from the worker.
+  test("an itemUrls attach whose storage write fails is swallowed, and the stored brief stands", async () => {
+    await loadPairedAtNow();
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        subject: { kind: "item", id: "gh-1" },
+        lane: "expert",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 60_000,
+      },
+      NOW,
+    );
+    stubFetch((url) =>
+      url.includes("/v1/agents/runs/")
+        ? jsonRes(200, {
+            status: "done",
+            brief: "answered",
+            findings: {
+              kind: "expert",
+              gaps: [],
+              ranked: [
+                {
+                  personId: "person:1",
+                  displayName: "Ada",
+                  score: 0.9,
+                  confidence: "high",
+                  evidence: [
+                    {
+                      itemId: "github:acme/web#1",
+                      type: "pr_authored",
+                      serviceId: "github",
+                      title: "t1",
+                      modifiedAt: 1,
+                      weight: 0.5,
+                    },
+                  ],
+                },
+              ],
+            },
+          })
+        : jsonRes(200, {
+            items: [{ id: "github:acme/web#1", url: "https://github.com/acme/web/pull/1" }],
+          }),
+    );
+    // Fail exactly the write that attaches the map. Every other write lands in
+    // the same backing map the harness's own storageSet writes to — the done
+    // state the poll stores first among them, so `mockRejectedValueOnce` would
+    // fail the wrong write.
+    let attachWrites = 0;
+    harness.storageSet.mockImplementation(async (items: Record<string, unknown>) => {
+      if (JSON.stringify(items).includes('"itemUrls"')) {
+        attachWrites += 1;
+        throw new Error("QUOTA_BYTES quota exceeded");
+      }
+      for (const [key, value] of Object.entries(items)) {
+        harness.storage.set(key, value);
+      }
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      await fireAlarm(AGENT_POLL_ALARM);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    // The failing write really was made — this is not a run that never got there.
+    expect(attachWrites).toBe(1);
+    expect(unhandled).toEqual([]);
+    const found = await getRun({ kind: "item", id: "gh-1" }, "expert", NOW);
+    expect(found?.state).toMatchObject({ kind: "done", brief: "answered" });
+    expect(found?.state.kind === "done" && "itemUrls" in found.state).toBe(false);
+  });
+
   // A terminal 403 carries the scope the owner must grant; the stored state
   // names the device too, so the panel can print the exact command.
   test("a terminal insufficient_scope poll result stores the gap with the device label", async () => {
