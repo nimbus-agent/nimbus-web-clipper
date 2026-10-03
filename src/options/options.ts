@@ -348,32 +348,39 @@ function mutateAmbient(pattern: string, on: boolean): Promise<void> {
  * row for github.com, gitlab.com, bitbucket.org or Jira Cloud — and since the
  * Grant button lives on a row, there was no way to grant page access to them at
  * all. See the design spec's "The prerequisite this slice discovered".
+ *
+ * The grant checks run together, not one row at a time: each is an independent,
+ * read-only question to the browser's permission set, and `Promise.all` keeps
+ * the rows in list order whatever order the answers arrive in.
  */
 async function surfaceRows(): Promise<SurfaceRow[]> {
   const ambient = await getAmbientHosts();
-  const rows: SurfaceRow[] = [];
-  for (const surface of BUILT_IN_SURFACES) {
-    rows.push({
-      origin: surface.label,
-      product: surface.product,
-      granted: await hasOrigin(surface.pattern),
-      builtIn: true,
-      pattern: surface.pattern,
-      ambient: ambient.includes(surface.pattern),
-    });
-  }
-  for (const entry of await getOrigins()) {
-    const pattern = hostPermissionPattern(entry.origin);
-    rows.push({
-      origin: entry.origin,
-      product: entry.product,
-      granted: pattern !== null && (await hasOrigin(pattern)),
-      builtIn: false,
-      pattern,
-      ambient: pattern !== null && ambient.includes(pattern),
-    });
-  }
-  return rows;
+  const builtIn = await Promise.all(
+    BUILT_IN_SURFACES.map(
+      async (surface): Promise<SurfaceRow> => ({
+        origin: surface.label,
+        product: surface.product,
+        granted: await hasOrigin(surface.pattern),
+        builtIn: true,
+        pattern: surface.pattern,
+        ambient: ambient.includes(surface.pattern),
+      }),
+    ),
+  );
+  const configured = await Promise.all(
+    (await getOrigins()).map(async (entry): Promise<SurfaceRow> => {
+      const pattern = hostPermissionPattern(entry.origin);
+      return {
+        origin: entry.origin,
+        product: entry.product,
+        granted: pattern !== null && (await hasOrigin(pattern)),
+        builtIn: false,
+        pattern,
+        ambient: pattern !== null && ambient.includes(pattern),
+      };
+    }),
+  );
+  return [...builtIn, ...configured];
 }
 
 async function refreshSurfaces(): Promise<void> {

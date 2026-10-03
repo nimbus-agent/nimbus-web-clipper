@@ -28,6 +28,7 @@ import type { ItemUrlMap, LaneFindings } from "../shared/findings.ts";
 import { gapsOfBrief, laneFindingsFrom, synthesisFrom } from "../shared/findings-guards.ts";
 import {
   type AgentStateResponse,
+  type ClipRequest,
   isAgentRunRequest,
   isAgentStateRequest,
   isBriefStartRequest,
@@ -236,7 +237,7 @@ async function syncQueueState(): Promise<void> {
     // Chrome honours a 30s floor (values under 0.5 are ignored and warn), so a
     // shorter Retry-After rounds up. An early or late tick is harmless — the pause
     // gate in flushQueue no-ops it.
-    rearmAlarm(FLUSH_ALARM, Math.max(0.5, remainingMs / 60_000), 1);
+    await rearmAlarm(FLUSH_ALARM, Math.max(0.5, remainingMs / 60_000), 1);
     return;
   }
   await ensureAlarm(FLUSH_ALARM, 1);
@@ -608,18 +609,24 @@ const briefDeps: BriefDeps = {
   capture: (tabId, expectedUrl) =>
     captureTab({ tabUrl, runCapture }, tabId, "article", expectedUrl),
   passages: getPassages,
-  // BY IDENTITY, page by page: each fed passage is dropped by the instant it was
-  // captured, through the same `removePassage` the composer's per-passage remove
-  // uses. Dropping the whole group would also destroy anything the user
-  // collected while the run was still feeding, which never left — see
-  // `FedPassages`.
+  // BY IDENTITY: each fed passage is dropped by the instant it was captured,
+  // through the same `removePassage` the composer's per-passage remove uses.
+  // Dropping the whole group would also destroy anything the user collected
+  // while the run was still feeding, which never left — see `FedPassages`.
+  //
+  // Every page in ONE read-modify-write, not one write per page: each removal is
+  // by identity, so applying them all in one pass leaves the collection exactly
+  // as one write per page did, and the store is written once, not once per page.
   forgetPassages: async (fed) => {
-    for (const { url, ats } of fed) {
-      await updatePassages((all) => ({
-        ok: true,
-        all: ats.reduce((rest, at) => removePassage(rest, url, at), all),
-      }));
-    }
+    await updatePassages((all) => {
+      let kept = all;
+      for (const { url, ats } of fed) {
+        for (const at of ats) {
+          kept = removePassage(kept, url, at);
+        }
+      }
+      return { ok: true, all: kept };
+    });
   },
   connection: async () => {
     const conn = await getConnection();
@@ -1211,22 +1218,30 @@ function routeCapturePair(message: unknown, respond: Respond, sender: SenderInfo
     return true;
   }
   if (isClipRequest(message)) {
-    handleClip(clipDeps, message)
-      .then(async (res) => {
-        if (res.ok) {
-          // Same rule as markStale above: `void` alone would leave a rejection
-          // unhandled.
-          void markClipSuccess(Date.now()).catch(() => undefined);
-        }
-        await syncQueueState();
-        respond(res);
-      })
-      .catch(() => {
-        respond({ kind: "clip", ok: false, reason: "server_error" });
-      });
+    clipThenReply(message, respond).catch(() => {
+      respond({ kind: "clip", ok: false, reason: "server_error" });
+    });
     return true;
   }
   return null;
+}
+
+/**
+ * The `clip` route, as one flat sequence: clip, note a success, reconcile the
+ * toolbar badge and the flush alarm, then answer. Its caller answers
+ * `server_error` if any of it rejects — the clip's own failure or the reconcile's.
+ *
+ * Noting the success is fire-and-forget, as `wrapRespond`'s `markStale` is: the
+ * answer must not wait on that storage write, and its `.catch` is what keeps a
+ * failed write from surfacing as an unhandled rejection.
+ */
+async function clipThenReply(message: ClipRequest, respond: Respond): Promise<void> {
+  const res = await handleClip(clipDeps, message);
+  if (res.ok) {
+    markClipSuccess(Date.now()).catch(() => undefined);
+  }
+  await syncQueueState();
+  respond(res);
 }
 
 function routeIndexReads(message: unknown, respond: Respond): Routed {

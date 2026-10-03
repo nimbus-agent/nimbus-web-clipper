@@ -167,14 +167,25 @@ describe("alarms seam", () => {
     expect(alarmCalls.filter((c) => "create" in (c as object))).toHaveLength(2);
   });
 
-  test("rearmAlarm always replaces, with a delay and a period", () => {
+  test("rearmAlarm always replaces, with a delay and a period", async () => {
     const { alarmCalls } = installChromeStub();
-    rearmAlarm("flush-clip-queue", 0.75, 1);
-    rearmAlarm("flush-clip-queue", 0.5, 1);
+    await rearmAlarm("flush-clip-queue", 0.75, 1);
+    await rearmAlarm("flush-clip-queue", 0.5, 1);
     expect(alarmCalls).toEqual([
       { create: "flush-clip-queue", info: { delayInMinutes: 0.75, periodInMinutes: 1 } },
       { create: "flush-clip-queue", info: { delayInMinutes: 0.5, periodInMinutes: 1 } },
     ]);
+  });
+
+  // Chrome's MV3 create() returns a promise. Fired and forgotten, its rejection
+  // escaped as an unhandled rejection while the caller saw success; awaited, it
+  // reaches the caller, whose own error handling then decides what happens.
+  test("a create() rejection reaches the caller of ensureAlarm and of rearmAlarm", async () => {
+    harness = installChromeMock();
+    harness.alarmsCreate.mockRejectedValue(new Error("alarm limit"));
+    await expect(ensureAlarm("flush-clip-queue", 1)).rejects.toThrow("alarm limit");
+    await expect(rearmAlarm("flush-clip-queue", 0.5, 1)).rejects.toThrow("alarm limit");
+    expect(harness.alarmsCreate).toHaveBeenCalledTimes(2);
   });
 });
 

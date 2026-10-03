@@ -354,6 +354,33 @@ describe("service worker brief poll loop", () => {
     expect(gets).toHaveLength(3);
   });
 
+  // Every fed page's passages leave the collection in ONE read-modify-write, by
+  // identity, and a page the run did not send keeps what it holds.
+  it("forgets every fed page's passages in a single write, keeping an unsent page's", async () => {
+    stubGateway([{ status: "running" }]);
+    await bootPaired();
+    const second = "https://example.com/b";
+    const unsent = { url: "https://example.com/c", title: "C", text: "not picked", at: 300 };
+    harness.storage.set("passages", [
+      { url: PAGE, title: "A", text: "collected words", at: 100 },
+      { url: second, title: "B", text: "more words", at: 200 },
+      unsent,
+    ]);
+    harness.storageSet.mockClear();
+
+    const picks = [
+      { kind: "passages", url: PAGE },
+      { kind: "passages", url: second },
+    ];
+    expect(await harness.emitMessage({ ...START, picks })).toEqual({ kind: "running", id: "b1" });
+
+    expect(harness.storage.get("passages")).toEqual([unsent]);
+    const passageWrites = harness.storageSet.mock.calls.filter(
+      ([items]) => typeof items === "object" && items !== null && "passages" in items,
+    );
+    expect(passageWrites).toHaveLength(1);
+  });
+
   // A tick scheduled under one pairing that fires after the user has unpaired
   // AND paired again must not act on the new pairing's state — here a run that
   // happens to carry the same id. Without the check at the top of the tick it

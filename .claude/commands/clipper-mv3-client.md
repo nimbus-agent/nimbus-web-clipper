@@ -279,6 +279,15 @@ prove the popup button).
   including one sitting directly above the code that says it is now four. Sonar does not
   read prose and no gate does either. After changing a shape, grep the phrase you just
   falsified — repo-wide, not in the file you edited.
+- **The promise rules switched on 2026-09-29 are SonarJS-decorated, not the bare ESLint
+  rules** (`packages/analysis/src/jsts/rules/<key>/decorator.ts` in SonarSource/SonarJS).
+  S9382 (await in a loop) stays silent when the loop body has a `break` or `return` after
+  the `await` — so `feedAll`, `handleDiscover`, `resolveItemUrls` and `flushQueue`,
+  sequential on purpose and each stopping early, need no marker, although a local
+  `no-await-in-loop` run reports all four. S9381 (nested promise) fires only when the
+  inner `.then`/`.catch` sits directly in a `.then`/`.catch` callback. S9383 (floating
+  promise) is typescript-eslint's `no-floating-promises`, which accepts `void`, and S3735
+  exempts a promise operand, so the pages' `void refresh…()` calls raise neither.
 
 ## What only a human in a real browser can prove
 

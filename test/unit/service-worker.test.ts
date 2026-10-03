@@ -2414,6 +2414,44 @@ describe("a rejected token is remembered", () => {
     expect(typeof stored.lastClipAt).toBe("number");
   });
 
+  // Recording that time is fire-and-forget: the answer never waits on it, and a
+  // failing write is caught there rather than escaping the worker. Awaiting it
+  // would turn the clip into a `server_error`; dropping its `.catch` would leave
+  // an unhandled rejection.
+  test("a clip whose success-time write fails still answers ok, with nothing unhandled", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(200, { id: "1", status: "created" }));
+    let connectionWrites = 0;
+    harness.storageSet.mockImplementation(async (items: Record<string, unknown>) => {
+      if (CONNECTION_KEY in items) {
+        connectionWrites += 1;
+        throw new Error("QUOTA_BYTES quota exceeded");
+      }
+      for (const [key, value] of Object.entries(items)) {
+        harness.storage.set(key, value);
+      }
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    let res: unknown;
+    try {
+      res = await harness.emitMessage({ kind: "clip", capture, tags: [] });
+      await settle();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+
+    expect(res).toEqual({ kind: "clip", ok: true, status: "created", bookmarked: false });
+    // The failing write really was made — not a clip that never got that far.
+    expect(connectionWrites).toBe(1);
+    expect(unhandled).toEqual([]);
+    expect(harness.storage.get(CONNECTION_KEY)).toEqual(conn);
+  });
+
   test("an unreachable gateway is NOT a rejected token", async () => {
     await load();
     harness.storage.set(CONNECTION_KEY, conn);
