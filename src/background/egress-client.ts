@@ -13,22 +13,15 @@
 import type { EgressError, EgressProof, EgressVerdict, EgressWindow } from "../shared/egress.ts";
 import { parseEgressWindow } from "../shared/egress.ts";
 import { endpointUrl, type GatewayEndpoint } from "../shared/gateway.ts";
-import { isObject, parseScopeGap, readJson } from "./http-json.ts";
+import { isObject } from "../shared/is-object.ts";
+import { type RawScopeGap, scopedGet } from "./http-json.ts";
 
 /** Reads over a local index. Long enough for a 1000-row page, short enough that
  *  a wedged gateway does not hang the page behind it. */
 const EGRESS_TIMEOUT_MS = 10_000;
 
-/**
- * The gateway's raw 403 detail.
- *
- * Deliberately NOT `shared/types.ts`'s `ScopeGap`, which also carries the device
- * `label`: the label is client-side state this module has no business knowing.
- * `egress-handlers.ts` widens it, exactly as `handlers.ts` does for resolve and
- * fetch.
- */
-export type RawScopeGap = { required: string; granted: string[] };
-
+/** `scopeGap` is the gateway's raw detail, label-free — `egress-handlers.ts`
+ *  widens it with `withLabel`. */
 export type EgressResult<T> =
   | { ok: true; value: T }
   | { ok: false; reason: EgressError; scopeGap?: RawScopeGap };
@@ -36,11 +29,14 @@ export type EgressResult<T> =
 type FetchLike = typeof fetch;
 
 /**
- * One GET, one status ladder, one parse.
+ * One GET, one status ladder, one parse — `http-json.ts`'s `scopedGet`, which
+ * owns the ladder and the timer that stays armed across the body read.
  *
  * Every route here differs only in its endpoint, its query and how it reads a
- * 200 — so the ladder lives once, and a new route cannot accidentally map its
- * statuses differently from its siblings.
+ * 200. Every reason that ladder can report must be an `EgressError`, and that is
+ * checked by the compiler rather than by this sentence: a reason the shared
+ * ladder gained and `EgressError` lacked would make the `return` below a type
+ * error.
  */
 async function read<T>(
   origin: string,
@@ -52,48 +48,7 @@ async function read<T>(
 ): Promise<EgressResult<T>> {
   const qs = new URLSearchParams(query).toString();
   const url = qs === "" ? endpointUrl(origin, endpoint) : `${endpointUrl(origin, endpoint)}?${qs}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), EGRESS_TIMEOUT_MS);
-  try {
-    let res: Response;
-    try {
-      res = await doFetch(url, {
-        method: "GET",
-        headers: { authorization: `Bearer ${token}` },
-        signal: controller.signal,
-      });
-    } catch {
-      return { ok: false, reason: "unreachable" };
-    }
-
-    // The timer stays ARMED across the body read, and is cleared in the outer
-    // `finally` once this function is done. Clearing it as soon as the headers
-    // arrive would leave a gateway that answers 200 and then hangs its body
-    // stream un-timed-out — the page would wait forever on a read that the
-    // timeout was supposed to bound.
-    if (res.status === 200) {
-      const value = parse(await readJson(res));
-      return value === null ? { ok: false, reason: "server_error" } : { ok: true, value };
-    }
-    if (res.status === 401) {
-      return { ok: false, reason: "unauthorized" };
-    }
-    if (res.status === 403) {
-      const gap = parseScopeGap(await readJson(res));
-      return gap === null
-        ? { ok: false, reason: "insufficient_scope" }
-        : { ok: false, reason: "insufficient_scope", scopeGap: gap };
-    }
-    if (res.status === 404) {
-      return { ok: false, reason: "unsupported" };
-    }
-    if (res.status === 429) {
-      return { ok: false, reason: "rate_limited" };
-    }
-    return { ok: false, reason: "server_error" };
-  } finally {
-    clearTimeout(timer);
-  }
+  return await scopedGet(url, token, EGRESS_TIMEOUT_MS, parse, doFetch);
 }
 
 /** Present numbers only. An absent option must not become the string "undefined". */

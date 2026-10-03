@@ -5,6 +5,7 @@ import { isPreviewEnabled, setPreviewEnabled } from "../background/preview-pref.
 import { getAllCommands } from "../browser/commands.ts";
 import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.ts";
 import { isFirefoxRuntime, sendMessage } from "../browser/runtime.ts";
+import { openExtensionPage } from "../browser/tabs.ts";
 import { isBriefLogEntry } from "../shared/brief-log.ts";
 import {
   type BindingCheckStatus,
@@ -847,7 +848,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Opens in a tab of its own — a brief run outlives this page too, and the
   // composer needs the room. Click-driven, deliberately not a `commands` entry.
   document.getElementById("open-brief")?.addEventListener("click", () => {
-    void chrome.tabs.create({ url: chrome.runtime.getURL("brief.html") }).catch(() => undefined);
+    openExtensionPage("brief.html");
   });
   document.getElementById("brief-log")?.addEventListener("click", (event) => {
     if (event.target instanceof HTMLButtonElement && event.target.id === "clear-brief-log") {
@@ -859,7 +860,7 @@ document.addEventListener("DOMContentLoaded", () => {
   void refreshSurfaces();
   void refreshBindings();
   document.getElementById("trust-ledger-open")?.addEventListener("click", () => {
-    void chrome.tabs.create({ url: chrome.runtime.getURL("ledger.html") }).catch(() => undefined);
+    openExtensionPage("ledger.html");
   });
   void refreshShortcuts();
   void refreshPreviewToggle();

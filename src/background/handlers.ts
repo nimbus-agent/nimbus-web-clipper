@@ -62,6 +62,7 @@ import {
   offeredLanes,
 } from "./agents-capability.ts";
 import type { CaptureOutcome } from "./capture-tab.ts";
+import { type RawScopeGap, withLabel } from "./http-json.ts";
 
 export interface CaptureDeps {
   readonly captureTab: (tabId: number, expectedUrl: string) => Promise<CaptureOutcome>;
@@ -379,15 +380,10 @@ async function resolveFileSurface(
   // `nimbus clip scopes` command it prints. The label comes from the connection, which
   // only this layer holds.
   if (!probe.ok && probe.reason === "insufficient_scope") {
-    return probe.scopeGap === undefined
+    const scopeGap = withLabel(conn.label, probe.scopeGap);
+    return scopeGap === undefined
       ? { kind: "resolve", ok: false, recognition, reason: probe.reason }
-      : {
-          kind: "resolve",
-          ok: false,
-          recognition,
-          reason: probe.reason,
-          scopeGap: { label: conn.label, ...probe.scopeGap },
-        };
+      : { kind: "resolve", ok: false, recognition, reason: probe.reason, scopeGap };
   }
   // Every OTHER refusal is silent: the page is still recognised, the header still
   // renders, and we claim nothing about a file we could not ask about.
@@ -484,15 +480,10 @@ export async function handleResolve(
     offeredFor(deps, conn.origin, conn.token, recognition.kind),
   ]);
   if (!r.ok) {
-    return r.scopeGap === undefined
+    const scopeGap = withLabel(conn.label, r.scopeGap);
+    return scopeGap === undefined
       ? { kind: "resolve", ok: false, recognition, reason: r.reason }
-      : {
-          kind: "resolve",
-          ok: false,
-          recognition,
-          reason: r.reason,
-          scopeGap: { label: conn.label, ...r.scopeGap },
-        };
+      : { kind: "resolve", ok: false, recognition, reason: r.reason, scopeGap };
   }
   return {
     kind: "resolve",
@@ -511,8 +502,7 @@ export interface FetchDeps {
     token: string,
     pageUrl: string,
   ) => Promise<
-    | { ok: true; outcome: FetchOutcome }
-    | { ok: false; reason: FetchError; scopeGap?: { required: string; granted: string[] } }
+    { ok: true; outcome: FetchOutcome } | { ok: false; reason: FetchError; scopeGap?: RawScopeGap }
   >;
 }
 
@@ -547,22 +537,13 @@ export async function handleFetch(deps: FetchDeps, req: FetchRequest): Promise<F
   }
   const r = await deps.fetchItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!r.ok) {
-    return r.scopeGap === undefined
+    const scopeGap = withLabel(conn.label, r.scopeGap);
+    return scopeGap === undefined
       ? { kind: "fetch", ok: false, recognition, reason: r.reason }
-      : {
-          kind: "fetch",
-          ok: false,
-          recognition,
-          reason: r.reason,
-          scopeGap: { label: conn.label, ...r.scopeGap },
-        };
+      : { kind: "fetch", ok: false, recognition, reason: r.reason, scopeGap };
   }
   return { kind: "fetch", ok: true, recognition, outcome: r.outcome };
 }
-
-/** A scope gap as the gateway's 403 body carries it — before the device label
- *  (only `handlers.ts` holds a `Connection`) is attached. */
-type RawScopeGap = { readonly required: string; readonly granted: string[] };
 
 /** The result of a call to `invokeAgent`, without the wire's `busy` reason — the
  *  retry loop below absorbs `busy` and never lets it escape as a lane state. */
@@ -765,6 +746,25 @@ async function resolveTermLane(
   };
 }
 
+/** The `item` scope {@link resolveItemLane} answers with once it holds its one item —
+ *  the item the resolve found, or the candidate the user picked. */
+function itemLaneScope(
+  conn: PairedConnection,
+  recognition: RecognisedPage,
+  item: ResolveCandidate,
+): ResolveForAgent {
+  return {
+    ok: true,
+    scope: "item",
+    origin: conn.origin,
+    token: conn.token,
+    label: conn.label,
+    resolveUrl: recognition.resolveUrl,
+    item,
+    surface: recognition.kind,
+  };
+}
+
 /**
  * The item-lane end of {@link resolveForAgent}'s page path: a surface whose lanes ask
  * about ONE indexed item, which only a resolve call can name. Extracted to bring
@@ -783,13 +783,10 @@ async function resolveItemLane(
 ): Promise<ResolveForAgent> {
   const resolved = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!resolved.ok) {
-    return resolved.scopeGap === undefined
+    const scopeGap = withLabel(conn.label, resolved.scopeGap);
+    return scopeGap === undefined
       ? { ok: false, reason: resolved.reason }
-      : {
-          ok: false,
-          reason: resolved.reason,
-          scopeGap: { label: conn.label, ...resolved.scopeGap },
-        };
+      : { ok: false, reason: resolved.reason, scopeGap };
   }
   // The picked-candidate path (C2.5). An ambiguous page is the one case where the
   // user has told the panel something it could not work out for itself, and
@@ -808,32 +805,14 @@ async function resolveItemLane(
     if (picked === undefined) {
       return { ok: false, reason: "not_resolved" };
     }
-    return {
-      ok: true,
-      scope: "item",
-      origin: conn.origin,
-      token: conn.token,
-      label: conn.label,
-      resolveUrl: recognition.resolveUrl,
-      item: picked,
-      surface: recognition.kind,
-    };
+    return itemLaneScope(conn, recognition, picked);
   }
   if (resolved.outcome.kind !== "found") {
     // A miss (not-indexed / unresolvable / ambiguous with nothing picked) means
     // there is no single item to ask about — refuse rather than guess.
     return { ok: false, reason: "not_resolved" };
   }
-  return {
-    ok: true,
-    scope: "item",
-    origin: conn.origin,
-    token: conn.token,
-    label: conn.label,
-    resolveUrl: recognition.resolveUrl,
-    item: resolved.outcome.item,
-    surface: recognition.kind,
-  };
+  return itemLaneScope(conn, recognition, resolved.outcome.item);
 }
 
 /**
@@ -1118,9 +1097,7 @@ export async function handleAgentRun(
   const params = agentParams(req.lane, resolved, rosterVersion);
   const invoked = await invokeWithRetry(deps, resolved.origin, resolved.token, req.lane, params);
   if (!invoked.ok) {
-    const scopeGap =
-      invoked.scopeGap === undefined ? undefined : { label: resolved.label, ...invoked.scopeGap };
-    return failedResponse(req.lane, invoked.reason, scopeGap);
+    return failedResponse(req.lane, invoked.reason, withLabel(resolved.label, invoked.scopeGap));
   }
   const state = { kind: "running" as const, runId: invoked.runId };
   await deps.putRun({ subject, lane: req.lane, runId: invoked.runId, state });

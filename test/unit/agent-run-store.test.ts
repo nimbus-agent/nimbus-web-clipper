@@ -241,6 +241,24 @@ describe("agent-run-store", () => {
     expect(await getRun({ kind: "item", id: "i1" }, "impact", NOW)).toBeNull();
   });
 
+  // The store's OWN `done` rule — the one arm it does not share with the SW→panel
+  // boundary: `brief` is the only thing a stored `done` run must carry.
+  it("drops a done entry with no brief", async () => {
+    chrome.storage.local.set({
+      agentRuns: {
+        [realKey("item", "i1", "impact")]: {
+          subject: { kind: "item", id: "i1" },
+          lane: "impact",
+          runId: "r1",
+          state: { kind: "done" },
+          expiresAtMs: NOW + 1000,
+          writtenAtMs: NOW,
+        },
+      },
+    });
+    expect(await getRun({ kind: "item", id: "i1" }, "impact", NOW)).toBeNull();
+  });
+
   it("does not leak the internal write-order tag across the public boundary", async () => {
     await putRun(run("i1", "impact", NOW + 1000), NOW);
     expect(await getRun({ kind: "item", id: "i1" }, "impact", NOW)).not.toHaveProperty(

@@ -5,6 +5,8 @@
 // guard says otherwise — the same rule every other cross-boundary value here
 // follows.
 
+import { isObject } from "./is-object.ts";
+
 export type BriefCitation = {
   readonly kind: "source" | "clip";
   readonly title: string;
@@ -47,10 +49,6 @@ export type BriefReport = {
  */
 export const QUOTES_OMITTED_GAP =
   "Supporting quotes were omitted from the saved copy (size limit).";
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
 
 function isCitation(v: unknown): v is BriefCitation {
   if (!isObject(v)) {

@@ -1,3 +1,4 @@
+import { isObject } from "./is-object.ts";
 import type { RelatedHit } from "./types.ts";
 
 /** The gateway request body for POST /v1/clips/related. */
@@ -41,10 +42,6 @@ export function buildRelatedQuery(
     ...(haveItem ? { itemId } : {}),
     limit,
   };
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
 }
 
 /**

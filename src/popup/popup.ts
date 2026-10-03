@@ -1,7 +1,7 @@
 import { isPreviewEnabled } from "../background/preview-pref.ts";
 import { sendMessage } from "../browser/runtime.ts";
 import { injectPanel, runCapture } from "../browser/scripting.ts";
-import { activeTab } from "../browser/tabs.ts";
+import { activeTab, openExtensionPage } from "../browser/tabs.ts";
 import { buildClipPayload, parseTags } from "../shared/clip.ts";
 import { type ClipResponse, isQueueResponse } from "../shared/messages.ts";
 import { buildClipPreview } from "../shared/preview.ts";
@@ -199,7 +199,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // click away. Click-driven rather than a `commands` entry — C1.5 exists
   // because `suggested_key` is a suggestion the browser may silently decline.
   document.getElementById("open-brief")?.addEventListener("click", () => {
-    void chrome.tabs.create({ url: chrome.runtime.getURL("brief.html") }).catch(() => undefined);
+    openExtensionPage("brief.html");
   });
   document.getElementById("preview-confirm")?.addEventListener("click", () => {
     const p = pending;

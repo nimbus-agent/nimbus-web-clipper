@@ -21,6 +21,7 @@ import {
   type fetchServiceResolution,
   type ServiceResolveResult,
 } from "./deploy-client.ts";
+import { withLabel } from "./http-json.ts";
 
 export interface DeployDeps {
   /**
@@ -42,21 +43,6 @@ export interface DeployDeps {
    *  per case — the same shape `EgressDeps` uses. */
   readonly resolveService: typeof fetchServiceResolution;
   readonly doFetch: typeof fetch;
-}
-
-/**
- * Widen the gateway's raw two-field gap into the `ScopeGap` the views need.
- *
- * Copied from `egress-handlers.ts` rather than imported — same behaviour,
- * unchanged. See that file's `withLabel` for the rationale: the device label is
- * client-side state, so the handler is what adds it, because the 403 body
- * cannot carry it.
- */
-function withLabel(
-  label: string,
-  gap: { required: string; granted: string[] } | undefined,
-): { label: string; required: string; granted: string[] } | undefined {
-  return gap === undefined ? undefined : { label, ...gap };
 }
 
 /**

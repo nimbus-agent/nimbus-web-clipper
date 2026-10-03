@@ -83,6 +83,18 @@ async function openOptions(ctx: BrowserContext, extId: string): Promise<Page> {
   return page;
 }
 
+/** Click Discover and return the status line once the probe has settled — i.e.
+ *  once it no longer reads "Looking…". Steps 2 and 3 differ only in what is
+ *  listening on the discovery port, so they share this. */
+async function discover(page: Page): Promise<string> {
+  await page.click("#discover");
+  await page.waitForFunction(
+    () => (document.getElementById("discover-status")?.textContent ?? "") !== "Looking…",
+    { timeout: 15_000 },
+  );
+  return await textOf(page, "discover-status");
+}
+
 async function main(): Promise<void> {
   let server: Server | null = null;
 
@@ -126,12 +138,7 @@ async function main(): Promise<void> {
     // ---- Step 2: gateway stopped -> "No gateway found", URL still editable ---
     {
       const page = await openOptions(context, extId);
-      await page.click("#discover");
-      await page.waitForFunction(
-        () => (document.getElementById("discover-status")?.textContent ?? "") !== "Looking…",
-        { timeout: 15_000 },
-      );
-      const status = await textOf(page, "discover-status");
+      const status = await discover(page);
       const editable = await page.evaluate(() => {
         const el = document.getElementById("origin");
         return el instanceof HTMLInputElement && !el.disabled && !el.readOnly;
@@ -148,12 +155,7 @@ async function main(): Promise<void> {
     server = startMockGateway({}, DISCOVERY_PORT);
     {
       const page = await openOptions(context, extId);
-      await page.click("#discover");
-      await page.waitForFunction(
-        () => (document.getElementById("discover-status")?.textContent ?? "") !== "Looking…",
-        { timeout: 15_000 },
-      );
-      const status = await textOf(page, "discover-status");
+      const status = await discover(page);
       const originValue = await page.evaluate(() => {
         const el = document.getElementById("origin");
         return el instanceof HTMLInputElement ? el.value : "<absent>";

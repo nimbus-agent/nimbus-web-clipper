@@ -1137,6 +1137,28 @@ describe("getAgentRun", () => {
     }
   });
 
+  // Every status the poll does not give a meaning of its own goes through the
+  // shared scoped-route ladder — a narrowed token's 403 included, gap and all.
+  it("maps 401, 403 (with its scope gap) and 500 through the shared ladder", async () => {
+    const cases: Array<[number, unknown, unknown]> = [
+      [401, {}, { ok: false, reason: "unauthorized" }],
+      [
+        403,
+        { required: "agents", granted: ["clip"] },
+        {
+          ok: false,
+          reason: "insufficient_scope",
+          scopeGap: { required: "agents", granted: ["clip"] },
+        },
+      ],
+      [500, {}, { ok: false, reason: "server_error" }],
+    ];
+    for (const [status, body, expected] of cases) {
+      const doFetch = async () => jsonRes(body, status);
+      expect(await getAgentRun("http://127.0.0.1:8765", "t", "r", doFetch)).toEqual(expected);
+    }
+  });
+
   it("carries findings and synthesis through untouched", async () => {
     const body = {
       status: "done",

@@ -630,6 +630,22 @@ describe("message routing — fail-closed on a thrown/rejected handler", () => {
     expect(res).toEqual({ kind: "related", ok: false, reason: "server_error" });
   });
 
+  test.each([
+    ["agent-run", "impact"],
+    ["agent-state", "expert"],
+  ])("%s: a storage read failure → that lane, failed with server_error", async (kind, lane) => {
+    await load();
+    harness.storageGet.mockRejectedValueOnce(new Error("boom"));
+
+    const res = await harness.emitMessage({ kind, lane, pageUrl: "https://example.com/nope" });
+
+    expect(res).toEqual({
+      kind: "agent-state",
+      lane,
+      state: { kind: "failed", reason: "server_error" },
+    });
+  });
+
   test("queue-list: a storage read failure → empty list, not an unhandled rejection", async () => {
     await load();
     harness.storageGet.mockRejectedValueOnce(new Error("boom"));

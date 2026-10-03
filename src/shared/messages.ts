@@ -19,6 +19,7 @@ import {
   laneFindingsFrom,
   synthesisFrom,
 } from "./findings-guards.ts";
+import { isObject } from "./is-object.ts";
 import { isProduct } from "./origins.ts";
 import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
@@ -588,10 +589,6 @@ export type ExtensionResponse =
   | ConnectionResponse
   | DiscoverResponse;
 
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
-
 function isPreviewField(v: unknown): v is { readonly label: string; readonly value: string } {
   return isObject(v) && typeof v["label"] === "string" && typeof v["value"] === "string";
 }
@@ -1040,12 +1037,23 @@ export function isPassageClearRequest(v: unknown): v is PassageClearRequest {
 }
 
 /**
- * Guards the DOMAIN state crossing the SW→panel boundary — not the wire shape.
- * The wire's `status`/`runId`/`failureReason` vocabulary is parsed in
- * gateway-client.ts and never reaches here (mirrors isResolveOutcome/isLedgerOutcome
- * above).
+ * Every arm of a `LaneState`, with the `done` arm's rule supplied by the caller.
+ *
+ * A lane state is read back in two places — the SW→panel boundary below and the
+ * run store (`agent-run-store.ts`), whose storage is external input too. Every
+ * arm but `done` must be checked identically by both, so it is written once
+ * here; a new `LaneState` kind is then one edit, not two that can disagree. The
+ * `done` arm differs ON PURPOSE — the store's guard discards a whole run on
+ * `false`, so it checks `brief` only — and each caller states its own rule at
+ * the call.
+ *
+ * `failed`: a known reason, with the optional scope gap and detail each ABSENT
+ * or well-formed. Any other `kind` is not a lane state at all.
  */
-function isLaneState(v: unknown, lane: AgentLane): v is LaneState {
+export function isLaneStateWith(
+  v: unknown,
+  isDone: (state: Record<string, unknown>) => boolean,
+): v is LaneState {
   if (!isObject(v)) {
     return false;
   }
@@ -1056,19 +1064,7 @@ function isLaneState(v: unknown, lane: AgentLane): v is LaneState {
     return typeof v["runId"] === "string";
   }
   if (v["kind"] === "done") {
-    if (typeof v["brief"] !== "string") {
-      return false;
-    }
-    // Each optional field must be ABSENT or well-formed. Re-uses the same
-    // predicates the SW narrowed with, rather than a second hand-rolled copy —
-    // the predicate-vs-type drift class that already shipped once as
-    // `isResolvedItem`. `lane` is in scope here because the envelope carries it.
-    return (
-      (v["gaps"] === undefined || gapNotesFrom(v["gaps"]) !== undefined) &&
-      (v["synthesis"] === undefined || synthesisFrom(v["synthesis"]) !== undefined) &&
-      (v["findings"] === undefined || laneFindingsFrom(lane, v["findings"]) !== undefined) &&
-      (v["itemUrls"] === undefined || itemUrlMapFrom(v["itemUrls"]) !== undefined)
-    );
+    return isDone(v);
   }
   return (
     v["kind"] === "failed" &&
@@ -1076,6 +1072,30 @@ function isLaneState(v: unknown, lane: AgentLane): v is LaneState {
     (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"])) &&
     (v["detail"] === undefined || typeof v["detail"] === "string")
   );
+}
+
+/**
+ * Guards the DOMAIN state crossing the SW→panel boundary — not the wire shape.
+ * The wire's `status`/`runId`/`failureReason` vocabulary is parsed in
+ * gateway-client.ts and never reaches here (mirrors isResolveOutcome/isLedgerOutcome
+ * above).
+ */
+function isLaneState(v: unknown, lane: AgentLane): v is LaneState {
+  return isLaneStateWith(v, (done) => {
+    if (typeof done["brief"] !== "string") {
+      return false;
+    }
+    // Each optional field must be ABSENT or well-formed. Re-uses the same
+    // predicates the SW narrowed with, rather than a second hand-rolled copy —
+    // the predicate-vs-type drift class that already shipped once as
+    // `isResolvedItem`. `lane` is in scope here because the envelope carries it.
+    return (
+      (done["gaps"] === undefined || gapNotesFrom(done["gaps"]) !== undefined) &&
+      (done["synthesis"] === undefined || synthesisFrom(done["synthesis"]) !== undefined) &&
+      (done["findings"] === undefined || laneFindingsFrom(lane, done["findings"]) !== undefined) &&
+      (done["itemUrls"] === undefined || itemUrlMapFrom(done["itemUrls"]) !== undefined)
+    );
+  });
 }
 
 export function isAgentStateResponse(v: unknown): v is AgentStateResponse {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { listCandidateTabs } from "../../src/browser/tabs.ts";
+import { listCandidateTabs, openExtensionPage } from "../../src/browser/tabs.ts";
 
 type FakeTab = { id?: number; url?: string | undefined; title?: string | undefined };
 
@@ -86,5 +86,58 @@ describe("listCandidateTabs", () => {
     installTabs([]);
     const out = await listCandidateTabs();
     expect(out).toEqual({ named: [], hiddenCount: 0, enumerationFailed: false });
+  });
+});
+
+describe("openExtensionPage", () => {
+  /**
+   * Plain functions, NOT `vi.fn`: a `vi.fn` spy attaches its own handlers to a
+   * promise it returns (to record how it settled), which would mark a rejection
+   * handled and let the swallow test pass with the `.catch` removed.
+   */
+  function installPages(create: (props: { url: string }) => Promise<unknown>): {
+    readonly created: { url: string }[];
+    readonly resolved: string[];
+  } {
+    const calls = { created: [] as { url: string }[], resolved: [] as string[] };
+    (globalThis as unknown as { chrome: unknown }).chrome = {
+      tabs: {
+        create: (props: { url: string }) => {
+          calls.created.push(props);
+          return create(props);
+        },
+      },
+      runtime: {
+        getURL: (path: string) => {
+          calls.resolved.push(path);
+          return `chrome-extension://abc/${path}`;
+        },
+      },
+    };
+    return calls;
+  }
+
+  it("opens the extension's own page, resolved against the extension root, in a new tab", () => {
+    const calls = installPages(() => Promise.resolve({}));
+    openExtensionPage("ledger.html");
+    expect(calls.resolved).toEqual(["ledger.html"]);
+    expect(calls.created).toEqual([{ url: "chrome-extension://abc/ledger.html" }]);
+  });
+
+  it("swallows a failed open rather than leaving an unhandled rejection", async () => {
+    const calls = installPages(() => Promise.reject(new Error("tabs.create refused")));
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      openExtensionPage("brief.html");
+      // Two turns: one for the rejection to settle, one for Node to report it
+      // if nothing handled it.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(calls.created).toHaveLength(1);
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
   });
 });

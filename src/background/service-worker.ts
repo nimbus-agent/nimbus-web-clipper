@@ -27,6 +27,7 @@ import {
 import type { ItemUrlMap, LaneFindings } from "../shared/findings.ts";
 import { gapsOfBrief, laneFindingsFrom, synthesisFrom } from "../shared/findings-guards.ts";
 import {
+  type AgentStateResponse,
   isAgentRunRequest,
   isAgentStateRequest,
   isBriefStartRequest,
@@ -54,6 +55,7 @@ import {
   isServiceBindRequest,
   isServiceUnbindRequest,
   isUnpairRequest,
+  type QueueResponse,
 } from "../shared/messages.ts";
 import { removeGroup, removePassage } from "../shared/passage.ts";
 import type { AgentError, AgentLane, LaneState, Recognition } from "../shared/types.ts";
@@ -138,6 +140,7 @@ import {
   handleResolve,
   handleUnpair,
 } from "./handlers.ts";
+import { type RawScopeGap, withLabel } from "./http-json.ts";
 import { itemIdsOf, resolveItemUrls } from "./item-urls.ts";
 import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
@@ -328,8 +331,8 @@ let pairingGeneration = 0;
  * omits the key entirely rather than sending an empty one); carried through as
  * `detail` when it is present and non-blank, omitted (never `detail:
  * undefined`) otherwise. `scopeGap`, when present, needs the device label
- * attached — only `service-worker.ts` holds a `Connection`, mirroring how
- * `handlers.ts` attaches it elsewhere.
+ * attached — only `service-worker.ts` holds a `Connection` here — through the
+ * same `withLabel` the handlers attach it with.
  */
 function terminalLaneState(
   result:
@@ -341,11 +344,7 @@ function terminalLaneState(
         readonly synthesis?: unknown;
       }
     | { readonly ok: true; readonly status: "failed"; readonly failureReason?: string }
-    | {
-        readonly ok: false;
-        readonly reason: AgentError;
-        readonly scopeGap?: { readonly required: string; readonly granted: string[] };
-      },
+    | { readonly ok: false; readonly reason: AgentError; readonly scopeGap?: RawScopeGap },
   label: string,
   lane: AgentLane,
 ): LaneState {
@@ -369,9 +368,10 @@ function terminalLaneState(
       ? { kind: "failed", reason: "agent_failed" }
       : { kind: "failed", reason: "agent_failed", detail: result.failureReason };
   }
-  return result.scopeGap === undefined
+  const scopeGap = withLabel(label, result.scopeGap);
+  return scopeGap === undefined
     ? { kind: "failed", reason: result.reason }
-    : { kind: "failed", reason: result.reason, scopeGap: { label, ...result.scopeGap } };
+    : { kind: "failed", reason: result.reason, scopeGap };
 }
 
 /** The reason the loop is STILL GOING as of the last tick — i.e. what it would
@@ -1142,6 +1142,28 @@ function wrapRespond(rawRespond: Respond): Respond {
   };
 }
 
+/** The answer to an `agent-run` or `agent-state` request whose handler rejected:
+ *  that lane, failed with `server_error`. */
+function failedLaneReply(lane: AgentLane): AgentStateResponse {
+  return { kind: "agent-state", lane, state: { kind: "failed", reason: "server_error" } };
+}
+
+/**
+ * Answer a queue MUTATION (retry, remove) only once the toolbar badge and the flush
+ * alarm have been reconciled with it, via `syncQueueState`. Any failure — the
+ * mutation's or the reconcile's — answers an empty queue, as the list read does.
+ */
+function replyAfterQueueSync(mutation: Promise<QueueResponse>, respond: Respond): void {
+  mutation
+    .then(async (res) => {
+      await syncQueueState();
+      respond(res);
+    })
+    .catch(() => {
+      respond({ kind: "queue", items: [] });
+    });
+}
+
 /**
  * The router is split into four in ORDER-PRESERVING slices, not for tidiness:
  * one function carrying every branch is past S3776's cognitive-complexity cap,
@@ -1262,11 +1284,7 @@ function routeIndexReads(message: unknown, respond: Respond): Routed {
     handleAgentRun(agentRunDeps, message)
       .then(respond)
       .catch(() => {
-        respond({
-          kind: "agent-state",
-          lane: message.lane,
-          state: { kind: "failed", reason: "server_error" },
-        });
+        respond(failedLaneReply(message.lane));
       });
     return true;
   }
@@ -1274,11 +1292,7 @@ function routeIndexReads(message: unknown, respond: Respond): Routed {
     handleAgentState(agentStateDeps, message)
       .then(respond)
       .catch(() => {
-        respond({
-          kind: "agent-state",
-          lane: message.lane,
-          state: { kind: "failed", reason: "server_error" },
-        });
+        respond(failedLaneReply(message.lane));
       });
     return true;
   }
@@ -1295,28 +1309,17 @@ function routeQueueAndConnection(message: unknown, respond: Respond): Routed {
     return true;
   }
   if (isQueueRetryRequest(message)) {
-    handleQueueRetry(
-      { flush: (opts) => flushQueue(flushDeps, opts).then(() => undefined), getQueue },
-      message,
-    )
-      .then(async (res) => {
-        await syncQueueState();
-        respond(res);
-      })
-      .catch(() => {
-        respond({ kind: "queue", items: [] });
-      });
+    replyAfterQueueSync(
+      handleQueueRetry(
+        { flush: (opts) => flushQueue(flushDeps, opts).then(() => undefined), getQueue },
+        message,
+      ),
+      respond,
+    );
     return true;
   }
   if (isQueueRemoveRequest(message)) {
-    handleQueueRemove({ updateQueue }, message)
-      .then(async (res) => {
-        await syncQueueState();
-        respond(res);
-      })
-      .catch(() => {
-        respond({ kind: "queue", items: [] });
-      });
+    replyAfterQueueSync(handleQueueRemove({ updateQueue }, message), respond);
     return true;
   }
   if (isConnectionStatusRequest(message)) {

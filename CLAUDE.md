@@ -110,8 +110,10 @@ monorepo's git history.)
   `egress-client.ts`/`egress-handlers.ts`, the `*-store.ts` persistence set
   (`agent-run`, `brief-run`, `brief-log`, `passage`, `origin`, of which the two
   run stores share `keyed-store.ts` and the rest deliberately do not — see that
-  file's header), `http-json.ts` (the wire-shape parsers the three gateway
-  clients share), `ambient.ts`, `capture-tab.ts`, `menus.ts`
+  file's header), `http-json.ts` (what the gateway clients share: the request
+  timeout, the body read, the scope-gap parse and the scoped-route status
+  ladder, plus the `withLabel` step the handlers apply to that gap),
+  `ambient.ts`, `capture-tab.ts`, `menus.ts`
 - `src/browser/` — the thin typed seam over `chrome.*` (`storage`, `tabs`,
   `scripting`, `runtime`, `action`, `alarms`, `context-menus`, `commands`,
   `permissions`); the only place WebExtension APIs are touched directly

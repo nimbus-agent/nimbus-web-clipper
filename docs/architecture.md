@@ -1897,11 +1897,11 @@ by `getConnection: () => Promise<Connection | null>` — the same shape
 `EgressDeps` already exposes (`egress-handlers.ts`) — rather than adding a
 second dependency beside it: `getOrigin`'s own doc comment said the address was
 learned from the pairing, so every caller that had an origin already had a
-connection to get it from. The 403 path reuses `parseScopeGap`
-(`http-json.ts`) and a `withLabel` helper copied from `egress-handlers.ts`
-(same behaviour, not imported, per that file's own note on why three hand-rolled
-copies of this parser once drifted) to build the same pasteable command the
-egress surfaces already show.
+connection to get it from. The 403 path is the egress reads' own, not a copy of
+it: `fetchServiceResolution` reads through `http-json.ts`'s `scopedGet` — the
+same status ladder, timer and `parseScopeGap` the four egress reads use — and
+the handler attaches the label with the same `withLabel` the egress handlers
+call, so it builds the same pasteable command the egress surfaces already show.
 
 The outcome the worker hands back, `ServiceResolutionOutcome`
 (`messages.ts`), is a five-member discriminated union, never prose — the

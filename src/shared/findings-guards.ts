@@ -53,11 +53,8 @@ import type {
   WhyItemSubject,
   WhySubject,
 } from "./findings.ts";
+import { isObject } from "./is-object.ts";
 import type { AgentLane } from "./types.ts";
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
 
 function isNullableString(v: unknown): v is string | null {
   return v === null || typeof v === "string";

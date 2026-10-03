@@ -1,4 +1,4 @@
-import { describe, expect, it, test } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import { BRIEF_CAPS } from "../../src/shared/brief.ts";
 import type { CueOpenRequest } from "../../src/shared/messages.ts";
 import {
@@ -15,6 +15,7 @@ import {
   isDeployPreflightRequest,
   isDeployPreflightResponse,
   isFetchResponse,
+  isLaneStateWith,
   isPairRequest,
   isPassageClearRequest,
   isPassageDropRequest,
@@ -818,8 +819,9 @@ describe("agent-lane guards", () => {
     // outside the union could pass validation, fall through every branch of
     // `renderLaneBody`'s `AgentError` if-chain, and hit its exhaustiveness
     // backstop, which returned the raw string where an `HTMLElement` was
-    // promised. `isAgentError` (also used by `agent-run-store.ts`'s own
-    // storage guard, so there is exactly one copy of this check) closes that.
+    // promised. `isAgentError` closes that — reached through
+    // `isLaneStateWith`, which `agent-run-store.ts`'s own storage guard calls
+    // too, so there is exactly one copy of this check.
     it("rejects a failed state whose reason is not a known AgentError", () => {
       expect(
         isAgentStateResponse({
@@ -828,6 +830,61 @@ describe("agent-lane guards", () => {
           state: { kind: "failed", reason: "not_a_real_reason" },
         }),
       ).toBe(false);
+    });
+  });
+
+  // The arms both lane-state guards share — this boundary's and the run store's —
+  // pinned directly, so a change to them is caught here and not as a mystery in
+  // whichever of the two callers happens to be tested first.
+  describe("isLaneStateWith", () => {
+    const anyDone = (): boolean => true;
+
+    it("hands ONLY the done arm to the caller's rule, with the state itself", () => {
+      const isDone = vi.fn(() => false);
+      const done = { kind: "done", brief: "b" };
+      expect(isLaneStateWith(done, isDone)).toBe(false);
+      expect(isDone).toHaveBeenCalledTimes(1);
+      expect(isDone).toHaveBeenCalledWith(done);
+
+      for (const state of [
+        { kind: "collapsed" },
+        { kind: "running", runId: "r1" },
+        { kind: "failed", reason: "stale" },
+      ]) {
+        expect(isLaneStateWith(state, isDone)).toBe(true);
+      }
+      expect(isDone).toHaveBeenCalledTimes(1);
+    });
+
+    it("accepts a failed state carrying a well-formed scopeGap or a string detail", () => {
+      expect(
+        isLaneStateWith(
+          {
+            kind: "failed",
+            reason: "insufficient_scope",
+            scopeGap: { label: "chrome", required: "agents", granted: ["clip"] },
+          },
+          anyDone,
+        ),
+      ).toBe(true);
+      expect(
+        isLaneStateWith({ kind: "failed", reason: "agent_failed", detail: "no LLM" }, anyDone),
+      ).toBe(true);
+    });
+
+    it.each([
+      ["a non-object", "failed"],
+      ["a running state without its runId", { kind: "running" }],
+      ["an unknown kind", { kind: "elsewhere" }],
+      ["an unknown reason", { kind: "failed", reason: "not_a_real_reason" }],
+      ["a missing reason", { kind: "failed" }],
+      [
+        "a scopeGap without its label",
+        { kind: "failed", reason: "insufficient_scope", scopeGap: { required: "a", granted: [] } },
+      ],
+      ["a non-string detail", { kind: "failed", reason: "agent_failed", detail: 42 }],
+    ])("rejects %s", (_name, state) => {
+      expect(isLaneStateWith(state, anyDone)).toBe(false);
     });
   });
 });
