@@ -202,6 +202,33 @@ describe("handlePair", () => {
     expect(setConnectionCalls).toBe(0);
     expect(clearRunsCalls).toBe(0);
   });
+
+  // The pairing is already durably stored when the cache clear runs; a stale
+  // cache is a lesser problem than telling the user pairing failed when it
+  // worked, so a rejecting clear must not turn success into a throw.
+  test("a rejecting clearRuns still reports the pairing it stored", async () => {
+    let stored: Connection | null = null;
+    const res = await handlePair(
+      {
+        confirmPair: async () => ({ ok: true, token: "tok-xyz", label: "chrome" }),
+        setConnection: async (c) => {
+          stored = c;
+        },
+        clearRuns: async () => {
+          throw new Error("QUOTA_BYTES quota exceeded");
+        },
+        nowMs: () => 100,
+      },
+      { kind: "pair", origin: "http://127.0.0.1:8765", code: "429173" },
+    );
+    expect(res).toEqual({ kind: "pair", ok: true, label: "chrome" });
+    expect(stored).toEqual({
+      origin: "http://127.0.0.1:8765",
+      token: "tok-xyz",
+      label: "chrome",
+      pairedAt: 100,
+    });
+  });
 });
 
 describe("handleClip", () => {
@@ -1264,6 +1291,53 @@ describe("handleFetch", () => {
     );
     expect(res).toMatchObject({ ok: false, reason: "not_paired" });
   });
+
+  // Defence in depth on an OUTBOUND path: a dashboard is recognised, but it is
+  // not a fetch candidate, so it must settle before the connection is even read.
+  it("refuses a recognised DASHBOARD without reading the connection or fetching", async () => {
+    let connectionReads = 0;
+    let fetched = false;
+    const res = await handleFetch(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => {
+          connectionReads += 1;
+          return conn;
+        },
+        fetchItem: async () => {
+          fetched = true;
+          return { ok: true as const, outcome: { kind: "indexed" as const, itemId: "i1" } };
+        },
+      },
+      { kind: "fetch", pageUrl: "https://github.com/" },
+    );
+    expect(fetched).toBe(false);
+    expect(connectionReads).toBe(0);
+    expect(res).toEqual({
+      kind: "fetch",
+      ok: true,
+      recognition: expect.objectContaining({ ok: true, kind: "home", product: "github" }),
+      outcome: { kind: "unfetchable" },
+    });
+  });
+
+  it("passes a failure without a scope gap through with NO scopeGap key", async () => {
+    const res = await handleFetch(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        fetchItem: async () => ({ ok: false as const, reason: "unreachable" as const }),
+      },
+      { kind: "fetch", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res).toEqual({
+      kind: "fetch",
+      ok: false,
+      recognition: expect.objectContaining({ ok: true, label: "GitHub PR" }),
+      reason: "unreachable",
+    });
+    expect("scopeGap" in res).toBe(false);
+  });
 });
 
 describe("handleAgentRun", () => {
@@ -1302,6 +1376,39 @@ describe("handleAgentRun", () => {
     // `not_resolved`, never `unsupported`: a page condition, not a gateway one —
     // a weaker `toMatchObject({kind:"failed"})` alone would pass either way.
     expect(res.state).toEqual({ kind: "failed", reason: "not_resolved" });
+  });
+
+  // The roster read is one extra loopback GET per lane expansion. Its failure is
+  // `unavailable`, never a throw: the lane must still run, on the arm it would
+  // use for a gateway whose version is unknown (`topicOrFile` for expert on a PR).
+  it("a roster read that REJECTS still runs expert on a PR, on topicOrFile", async () => {
+    const seen: Array<{ agent: string; params: unknown }> = [];
+    const res = await handleAgentRun(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({
+          ok: true as const,
+          outcome: { kind: "found" as const, item, matchKind: "exact" as const },
+        }),
+        readAgentRoster: async () => {
+          throw new Error("ECONNRESET");
+        },
+        invokeAgent: async (_o: string, _t: string, agent: string, params: unknown) => {
+          seen.push({ agent, params });
+          return { ok: true as const, runId: "r9" };
+        },
+        getRun: async () => null,
+        putRun: async () => undefined,
+      },
+      { kind: "agent-run", lane: "expert", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(seen).toEqual([{ agent: "expert", params: { topicOrFile: "Cache it" } }]);
+    expect(res).toEqual({
+      kind: "agent-state",
+      lane: "expert",
+      state: { kind: "running", runId: "r9" },
+    });
   });
 
   it("sends impact the page URL and expert the item title", async () => {

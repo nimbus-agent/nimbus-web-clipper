@@ -94,6 +94,14 @@ describe("sharedHostNote", () => {
   test("no note when the host carries a single entry", () => {
     expect(sharedHostNote([jira], "https://corp.example/jira")).toBeNull();
   });
+  // An origin that is neither a built-in label nor a parseable URL has no
+  // grant key, so there is no host to share — no note, never a guess. A second
+  // keyless row is present so "both have no key" cannot be read as "same key".
+  test("no note for an origin that names no grantable host", () => {
+    const odd = { ...jira, origin: "not a url" };
+    const odder = { ...jenkins, origin: "also not a url" };
+    expect(sharedHostNote([odd, odder, jenkins], "not a url")).toBeNull();
+  });
 });
 
 describe("built-in rows", () => {

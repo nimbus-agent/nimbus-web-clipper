@@ -98,6 +98,19 @@ describe("meetsFloor", () => {
   it("names a floor that is a real semver", () => {
     expect(meetsFloor(ITEM_ARM_FLOOR, ITEM_ARM_FLOOR)).toBe(true);
   });
+
+  // Every case above differs from the floor in its major or minor part, so the
+  // patch comparison — the last rung before "exactly the floor" — never ran.
+  it("compares the patch when major and minor agree", () => {
+    expect(meetsFloor("2.19.1", "2.19.0")).toBe(true);
+    expect(meetsFloor("2.19.0", "2.19.1")).toBe(false);
+    expect(meetsFloor("2.19.0-rc.1", "2.19.1")).toBe(false);
+  });
+
+  it("fails closed on an unparseable FLOOR, not just an unparseable version", () => {
+    expect(meetsFloor("2.19.0", "2.19")).toBe(false);
+    expect(meetsFloor("9.9.9", "latest")).toBe(false);
+  });
 });
 
 describe("fetchAgentRoster — the token never leaves loopback", () => {

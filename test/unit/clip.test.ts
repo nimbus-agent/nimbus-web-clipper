@@ -111,6 +111,13 @@ describe("buildClipSource", () => {
     });
   });
 
+  // Prose that is only whitespace is no prose: dropped, not sent as "".
+  test("drops prose that is only whitespace", () => {
+    expect(buildClipSource({ author: "   ", siteName: "Example Journal" })).toEqual({
+      siteName: "Example Journal",
+    });
+  });
+
   test("drops a non-integer or out-of-range publishedAt", () => {
     expect(buildClipSource({ publishedAt: 1.5 })).toBeUndefined();
     expect(buildClipSource({ publishedAt: Number.NaN })).toBeUndefined();

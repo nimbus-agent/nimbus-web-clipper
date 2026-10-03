@@ -75,6 +75,21 @@ describe("renderComposer", () => {
     expect(root.textContent).toContain("page access");
   });
 
+  it("speaks of ONE ungranted tab in the singular", () => {
+    renderComposer(root, {
+      named: [{ id: 1, url: "https://example.com/a", title: "A" }],
+      hiddenCount: 1,
+      questions: ["q"],
+      selected: new Set(),
+      passages: [],
+      useIndex: false,
+    });
+    expect(root.textContent).toContain(
+      "1 open tab is on sites you haven't granted page access to.",
+    );
+    expect(root.textContent).not.toContain("tabs are");
+  });
+
   it("says nothing about ungranted tabs when there are none", () => {
     renderComposer(root, {
       named: [{ id: 1, url: "https://example.com/a", title: "A" }],
@@ -226,6 +241,42 @@ describe("renderState", () => {
     renderState(root, { kind: "failed", id: "b1", reason: "briefs_disabled", hint: "turn it on" });
     expect(root.textContent).toContain("turn it on");
     expect(root.textContent?.trim()).not.toBe("");
+  });
+
+  it("renders a failure with no hint as its reason alone", () => {
+    renderState(root, { kind: "failed", id: "b1", reason: "unreachable" });
+    expect(root.querySelector(".brief__error")?.textContent).toBe("unreachable");
+    expect(root.querySelector(".brief__note")).toBeNull();
+  });
+
+  it("idle renders nothing — and clears whatever was there", () => {
+    renderState(root, done());
+    renderState(root, { kind: "idle" });
+    expect(root.childElementCount).toBe(0);
+  });
+
+  it("a remote answer with no disclosure of its own still says it was remote", () => {
+    renderState(
+      root,
+      done({ report: { ...report, gaps: [], synthesis: { model: "gpt", remote: true } } }),
+    );
+    expect(root.querySelector(".brief__banner--remote")?.textContent).toBe(
+      "This brief was written by a remote model.",
+    );
+  });
+
+  // `save-failed` with no retained report renders as its own state, in the
+  // user's words per reason — and an unexpected reason is named, not hidden.
+  it.each([
+    [
+      "not_found",
+      "This brief is no longer available to save — your gateway only keeps a finished brief for a while.",
+    ],
+    ["not_paired", "Not paired with a gateway any more, so there is nowhere to save it."],
+    ["unreachable", "Couldn't save it: unreachable."],
+  ])("a save-failed for %s says why in plain words", (reason, sentence) => {
+    renderState(root, { kind: "save-failed", id: "b1", reason });
+    expect(root.querySelector(".brief__error")?.textContent).toBe(sentence);
   });
 
   it("A FAILED SAVE KEEPS THE REPORT ON SCREEN and offers the button again", () => {

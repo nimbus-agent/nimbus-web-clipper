@@ -310,6 +310,18 @@ describe("renderBindForm", () => {
     expect(form.textContent).toMatch(/nimbus clip scopes/);
   });
 
+  // A label that is not safe to put in a shell command gets the note without
+  // a command — never a pasteable line built from untrusted text.
+  test("forbidden with an unsafe device label names the fix but builds no command", () => {
+    const form = renderBindForm(document, "web", {
+      kind: "forbidden",
+      scopeGap: { label: "laptop; rm -rf ~", required: "resolve", granted: ["clip"] },
+    });
+    expect(form.querySelector(".nimbus-deploy__resolution")).not.toBeNull();
+    expect(form.querySelector("code")).toBeNull();
+    expect(form.textContent).not.toContain("rm -rf");
+  });
+
   test("silent adds no note at all", () => {
     const form = renderBindForm(document, "web", { kind: "silent" });
     expect(form.querySelector("input")?.value).toBe("web");

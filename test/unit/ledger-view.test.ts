@@ -217,6 +217,39 @@ describe("renderLedger", () => {
     expect(root.textContent).toContain("absent");
   });
 
+  // An outcome with neither an item id nor a reason is the label alone — no
+  // dangling separator after it.
+  it("renders a bare outcome as its label, with no detail separator", () => {
+    const fetchRow = row({ sourceType: "sync", method: "items.fetch", rowHash: "ff" });
+    renderLedger(
+      root,
+      model({
+        partition: { ours: [fetchRow], others: [], unattributable: [] },
+        outcomes: new Map([["ff", { status: "rate_limited" }]]),
+      }),
+    );
+    expect(root.querySelector(".ledger__outcome")?.textContent).toBe("Rate-limited");
+  });
+
+  it("marks a blocked row as Blocked, and only that row", () => {
+    renderLedger(
+      root,
+      model({
+        partition: {
+          ours: [row({ id: 1, resultStatus: "blocked" }), row({ id: 2, destination: "jira" })],
+          others: [],
+          unattributable: [],
+        },
+      }),
+    );
+    const rows = [...root.querySelectorAll(".ledger__row")];
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r) => r.querySelector(".ledger__blocked")?.textContent ?? null)).toEqual([
+      "Blocked",
+      null,
+    ]);
+  });
+
   it("does not claim a missing outcome for rows that never have one", () => {
     // An agent run and a background sync have no outcome record, so printing
     // "not recorded" against them would invent a gap the ledger never claimed.

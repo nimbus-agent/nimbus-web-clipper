@@ -53,6 +53,34 @@ describe("renderQueueItem", () => {
     );
     expect(li.querySelector(".queue__item-status")?.textContent).toBe("Nimbus is busy · 2 tries");
   });
+  test("a page with no title is named by its host instead", () => {
+    const el = renderQueueItem(document, { ...base, title: "" }, 0);
+    expect(el.querySelector(".queue__item-title")?.textContent).toBe("ex.com");
+  });
+  // Singular for one attempt — "1 tries" reads as a bug.
+  test("one attempt with no recorded reason reads as Pending · 1 try", () => {
+    const el = renderQueueItem(document, { ...base, attempts: 1 }, 0);
+    expect(el.querySelector(".queue__item-status")?.textContent).toBe("Pending · 1 try");
+  });
+  // `lastReason` is stored data read back through a string-only guard, so a
+  // reason from a newer build can arrive here; it still says it couldn't save.
+  test("a reason this build has no label for still says it couldn't save", () => {
+    const el = renderQueueItem(
+      document,
+      { ...base, attempts: 2, lastReason: "teapot" as NonNullable<QueuedClipView["lastReason"]> },
+      0,
+    );
+    expect(el.querySelector(".queue__item-status")?.textContent).toBe("Couldn't save · 2 tries");
+  });
+  // A reason recorded before any counted attempt: the label alone, no count.
+  test("a recorded reason with zero attempts shows the label without a count", () => {
+    const el = renderQueueItem(document, { ...base, lastReason: "not_paired" }, 0);
+    expect(el.querySelector(".queue__item-status")?.textContent).toBe("Not paired");
+  });
+  test("a fresh entry with no attempts and no reason has no status line", () => {
+    const el = renderQueueItem(document, base, 0);
+    expect(el.querySelector(".queue__item-status")).toBeNull();
+  });
 });
 
 describe("renderQueueList", () => {

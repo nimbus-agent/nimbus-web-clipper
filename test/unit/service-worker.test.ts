@@ -968,6 +968,28 @@ describe("quick clip — context menu + shortcut routes", () => {
     );
   });
 
+  // The keyboard twin of the menu entry above: the hotkey has no clicked tab,
+  // so it captures the ACTIVE one — in selection mode, never as an article.
+  test("the clip-selection command posts a selection clip from the active tab", async () => {
+    await load();
+    seedQuickClip(harness, "selection");
+    globalThis.fetch = vi.fn(async () => jsonRes(200, { id: "1", status: "created" }));
+
+    harness.emitCommand("clip-selection");
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenCalledWith(
+      expect.objectContaining({ target: { tabId: 5 }, args: ["selection"] }),
+    );
+    const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(JSON.parse(String(call[1]?.body))).toEqual(
+      expect.objectContaining({ mode: "selection" }),
+    );
+  });
+
   test("a restricted page flashes the badge instead of injecting a toast", async () => {
     await load();
     harness.storage.set(CONNECTION_KEY, conn);
@@ -1767,6 +1789,194 @@ describe("agent run polling — survives eviction", () => {
     // the stale brief instead of staying absent.
     expect(await seededRun()).toBeNull();
   });
+
+  // The ENTRY check, which the test above cannot reach (its poll was already
+  // past it). A SCHEDULED tick fires after the pairing changed — and after the
+  // run's own TTL, so a tick that skipped the entry check would fall into the
+  // expiry give-up and write a terminal `stale` state into the store unpair
+  // just emptied. That write is exactly what the check exists to prevent.
+  test("a scheduled tick whose pairing moved on while it waited writes nothing, even past expiry", async () => {
+    await loadPairedThenFakeTimers();
+    await seedRunningRun({ expiresAtMs: NOW + 600 });
+    const polls: string[] = [];
+    stubFetch((url) => {
+      polls.push(url);
+      return jsonRes(200, { status: "running" });
+    });
+
+    harness.emitAlarm(AGENT_POLL_ALARM);
+    await vi.advanceTimersByTimeAsync(0); // first tick: still running, 750ms tick scheduled
+    expect(polls).toHaveLength(1);
+
+    await harness.emitMessage({ kind: "unpair" });
+    expect(await seededRun()).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(750); // the scheduled tick, past the run's TTL
+    expect(polls).toHaveLength(1);
+    expect(await seededRun()).toBeNull();
+  });
+
+  // The check AFTER the connection read. The read is parked on a gate while the
+  // user unpairs; once it resumes it finds no connection, and a tick that went
+  // on would write a terminal `not_paired` state into the emptied store.
+  test("a pairing change while the poll reads its connection writes nothing", async () => {
+    await loadPairedAtNow();
+    await seedRunningRun();
+    const fetchMock = stubFetch(() => jsonRes(200, { status: "done", brief: "stale" }));
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let gatedOnce = false;
+    harness.storageGet.mockImplementation(async (key: string) => {
+      if (key === CONNECTION_KEY && !gatedOnce) {
+        gatedOnce = true;
+        await gate;
+      }
+      return { [key]: harness.storage.get(key) };
+    });
+
+    await fireAlarm(AGENT_POLL_ALARM); // the resumed tick is now parked in getConnection
+    expect(gatedOnce).toBe(true);
+    await harness.emitMessage({ kind: "unpair" });
+    expect(await seededRun()).toBeNull();
+
+    release?.();
+    await settle();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await seededRun()).toBeNull();
+  });
+
+  // A tick that REJECTS (here: its connection read fails) must give up its slot
+  // in the active set. Holding it would make every later alarm skip the run as
+  // "already being polled" by a loop that no longer exists.
+  test("a scheduled tick that rejects frees the run for the next alarm to resume", async () => {
+    await loadPairedThenFakeTimers();
+    await seedRunningRun({ expiresAtMs: NOW + 600_000 });
+    const polls: string[] = [];
+    stubFetch((url) => {
+      polls.push(url);
+      return jsonRes(200, { status: "running" });
+    });
+
+    harness.emitAlarm(AGENT_POLL_ALARM);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(polls).toHaveLength(1);
+
+    harness.storageGet.mockRejectedValueOnce(new Error("storage unavailable"));
+    await vi.advanceTimersByTimeAsync(750); // the scheduled tick fails on its read
+    expect(polls).toHaveLength(1);
+
+    harness.emitAlarm(AGENT_POLL_ALARM);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(polls).toHaveLength(2);
+  });
+
+  test("a resumed tick that rejects frees the run too, and keeps the alarm armed", async () => {
+    await loadPairedThenFakeTimers();
+    await seedRunningRun({ expiresAtMs: NOW + 600_000 });
+    const polls: string[] = [];
+    stubFetch((url) => {
+      polls.push(url);
+      return jsonRes(200, { status: "running" });
+    });
+    let failedOnce = false;
+    harness.storageGet.mockImplementation(async (key: string) => {
+      if (key === CONNECTION_KEY && !failedOnce) {
+        failedOnce = true;
+        throw new Error("storage unavailable");
+      }
+      return { [key]: harness.storage.get(key) };
+    });
+    harness.alarmsClear.mockClear();
+
+    harness.emitAlarm(AGENT_POLL_ALARM);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(failedOnce).toBe(true);
+    expect(polls).toHaveLength(0);
+    // Still running in the store, so the eviction net stays armed.
+    expect(harness.alarmsClear).not.toHaveBeenCalledWith(AGENT_POLL_ALARM);
+
+    harness.emitAlarm(AGENT_POLL_ALARM);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(polls).toHaveLength(1);
+  });
+
+  // "Nothing to link" is a NORMAL answer from resolve-ids, not a failure: the
+  // map is not written at all rather than written empty.
+  test("a resolve-ids answer with no rows attaches no itemUrls at all", async () => {
+    await loadPairedAtNow();
+    const { putRun, getRun } = await import("../../src/background/agent-run-store.ts");
+    await putRun(
+      {
+        subject: { kind: "item", id: "gh-1" },
+        lane: "expert",
+        runId: "r1",
+        state: { kind: "running", runId: "r1" },
+        expiresAtMs: NOW + 60_000,
+      },
+      NOW,
+    );
+    const resolveIdsCalls: string[] = [];
+    stubFetch((url) => {
+      if (url.includes("/v1/agents/runs/")) {
+        return jsonRes(200, {
+          status: "done",
+          brief: "answered",
+          findings: {
+            kind: "expert",
+            gaps: [],
+            ranked: [
+              {
+                personId: "person:1",
+                displayName: "Ada",
+                score: 0.9,
+                confidence: "high",
+                evidence: [
+                  {
+                    itemId: "github:acme/web#1",
+                    type: "pr_authored",
+                    serviceId: "github",
+                    title: "t1",
+                    modifiedAt: 1,
+                    weight: 0.5,
+                  },
+                ],
+              },
+            ],
+          },
+        });
+      }
+      resolveIdsCalls.push(url);
+      return jsonRes(200, { items: [] });
+    });
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    expect(resolveIdsCalls.some((u) => u.includes("/v1/items/resolve-ids"))).toBe(true);
+    const found = await getRun({ kind: "item", id: "gh-1" }, "expert", NOW);
+    expect(found?.state).toMatchObject({ kind: "done", brief: "answered" });
+    expect(found?.state.kind === "done" && "itemUrls" in found.state).toBe(false);
+  });
+
+  // A terminal 403 carries the scope the owner must grant; the stored state
+  // names the device too, so the panel can print the exact command.
+  test("a terminal insufficient_scope poll result stores the gap with the device label", async () => {
+    await loadPairedAtNow();
+    await seedRunningRun();
+    stubFetch(() =>
+      jsonRes(403, { error: "insufficient_scope", required: "agents", granted: ["clip"] }),
+    );
+
+    await fireAlarm(AGENT_POLL_ALARM);
+
+    expect((await seededRun())?.state).toEqual({
+      kind: "failed",
+      reason: "insufficient_scope",
+      scopeGap: { label: "chrome", required: "agents", granted: ["clip"] },
+    });
+  });
 });
 
 describe("ambient surfacing", () => {
@@ -2023,6 +2233,46 @@ describe("ambient surfacing", () => {
       (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
     );
     expect(cued).toHaveLength(1);
+  });
+
+  // SPA URL rewrites arrive in bursts. Two navigations inside the 600ms window
+  // must cost ONE resolve — the second clears the first's pending timer — and
+  // the cue that results is the LATER page's.
+  test("a burst of navigations in one tab costs one resolve, for the last page", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await vi.advanceTimersByTimeAsync(300);
+    harness.emitTabUpdated(7, { url: OTHER_PR_URL }, { active: true });
+    await settleAmbient();
+
+    // Only the item-resolve calls: a resolve also reads the agent roster
+    // alongside, which is not what the debounce is about.
+    const resolves = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => String(c[0]))
+      .filter((u) => u.includes("/v1/items/resolve?"));
+    expect(resolves).toHaveLength(1);
+    expect(resolves[0]).toContain(encodeURIComponent(OTHER_PR_URL));
+    const cued = harness.executeScript.mock.calls.filter(
+      (c) => (c[0] as { files?: string[] }).files?.[0] === "cue.js",
+    );
+    expect(cued).toHaveLength(1);
+  });
+
+  // A tab closed inside the debounce window must not resolve at all: its timer
+  // is cancelled with the rest of the tab's ambient state.
+  test("closing a tab before its debounce fires cancels the pending resolve", async () => {
+    harness.storage.set("ambient-hosts", ["https://github.com/*"]);
+    harness.grantedOrigins.add("https://github.com/*");
+    await loadWorker();
+    harness.emitTabUpdated(7, { url: PR_URL }, { active: true });
+    await vi.advanceTimersByTimeAsync(300);
+    harness.emitTabRemoved(7);
+    await settleAmbient();
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(harness.executeScript).not.toHaveBeenCalled();
   });
 
   test("an injection failure on a restricted page is swallowed, not thrown", async () => {
@@ -2331,4 +2581,263 @@ describe("C10 routing", () => {
     });
     expect(res).toEqual({ kind: "service-bind", ok: true });
   });
+
+  test("routes service-bindings-check, which needs a pairing", async () => {
+    await load();
+    const res = await harness.emitMessage({ kind: "service-bindings-check" });
+    expect(res).toEqual({ kind: "service-bindings-check", ok: false, reason: "not_paired" });
+  });
+
+  // Each route's first await is a storage read; a failing one must come back as
+  // that route's own closed `server_error`, never an unhandled rejection that
+  // leaves the panel waiting on a reply that never arrives.
+  test.each([
+    [
+      "deploy-preflight",
+      {
+        kind: "deploy-preflight",
+        product: "github",
+        origin: "https://github.com",
+        scope: "acme/web",
+      },
+      { kind: "deploy-preflight", ok: false, reason: "server_error" },
+    ],
+    [
+      "service-bind",
+      {
+        kind: "service-bind",
+        binding: {
+          product: "github",
+          origin: "https://github.com",
+          scope: "acme/web",
+          serviceId: "svc-1",
+        },
+      },
+      { kind: "service-bind", ok: false, reason: "server_error" },
+    ],
+    [
+      "service-unbind",
+      {
+        kind: "service-unbind",
+        product: "github",
+        origin: "https://github.com",
+        scope: "acme/web",
+      },
+      { kind: "service-bind", ok: false, reason: "server_error" },
+    ],
+    [
+      "service-bindings-check",
+      { kind: "service-bindings-check" },
+      { kind: "service-bindings-check", ok: false, reason: "server_error" },
+    ],
+  ])("%s: a storage read failure → server_error", async (_kind, message, expected) => {
+    await load();
+    harness.storageGet.mockRejectedValueOnce(new Error("boom"));
+    expect(await harness.emitMessage(message)).toEqual(expected);
+  });
+});
+
+describe("egress routing", () => {
+  test.each(["egress-window", "egress-verify", "egress-prove"])(
+    "%s: not paired answers not_paired under its own kind, without a request",
+    async (kind) => {
+      await load();
+      globalThis.fetch = vi.fn();
+      expect(await harness.emitMessage({ kind })).toEqual({
+        kind,
+        ok: false,
+        reason: "not_paired",
+      });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    },
+  );
+
+  test("egress-verify: a paired read returns the gateway's verdict, broken chain included", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn(async () =>
+      jsonRes(200, { ok: false, verifiedRows: 40, brokenAt: 41, reason: "hash mismatch" }),
+    );
+    const res = await harness.emitMessage({ kind: "egress-verify" });
+    expect(res).toEqual({
+      kind: "egress-verify",
+      ok: true,
+      verdict: { intact: false, brokenAt: 41, verifiedRows: 40, reason: "hash mismatch" },
+    });
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(url).toBe("http://127.0.0.1:8765/v1/egress/verify");
+  });
+
+  test("egress-prove: a paired read passes the window through and returns the proof", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const proof = {
+      digest: "abc",
+      sigB64: "c2ln",
+      pubkeyB64: "cHVi",
+      rowsTotal: 3,
+      rowsTruncated: false,
+    };
+    globalThis.fetch = vi.fn(async () => jsonRes(200, proof));
+    const res = await harness.emitMessage({ kind: "egress-prove", since: 3, until: 9 });
+    expect(res).toEqual({ kind: "egress-prove", ok: true, proof });
+    const [url] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(url).toContain("/v1/egress/prove?");
+    expect(url).toContain("since=3");
+    expect(url).toContain("until=9");
+  });
+
+  test("egress-window: a gateway without the route answers unsupported", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn(async () => jsonRes(404, { error: "not_found" }));
+    expect(await harness.emitMessage({ kind: "egress-window" })).toEqual({
+      kind: "egress-window",
+      ok: false,
+      reason: "unsupported",
+    });
+  });
+
+  // The prefix branch hands every `egress-*` kind to the fan-out; the real
+  // guards inside it decide. A kind none of them accepts — or a well-known kind
+  // whose payload fails its guard — is answered under the REQUEST'S own kind,
+  // and never reaches the gateway.
+  test("an egress-* message no guard accepts answers server_error under its own kind", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    globalThis.fetch = vi.fn();
+    expect(await harness.emitMessage({ kind: "egress-nonsense" })).toEqual({
+      kind: "egress-nonsense",
+      ok: false,
+      reason: "server_error",
+    });
+    expect(await harness.emitMessage({ kind: "egress-window", before: -1 })).toEqual({
+      kind: "egress-window",
+      ok: false,
+      reason: "server_error",
+    });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  test("a storage failure answers server_error under the request's own kind", async () => {
+    await load();
+    harness.storageGet.mockRejectedValueOnce(new Error("boom"));
+    expect(await harness.emitMessage({ kind: "egress-verify" })).toEqual({
+      kind: "egress-verify",
+      ok: false,
+      reason: "server_error",
+    });
+  });
+
+  test("a message that is not an object reaches no route at all", async () => {
+    await load();
+    globalThis.fetch = vi.fn();
+    for (const message of [null, "egress-window", 42]) {
+      expect(await harness.emitMessage(message)).toBeUndefined();
+    }
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("capture route", () => {
+  const PAGE = "https://wiki.example.com/runbook";
+  const captured = {
+    url: PAGE,
+    title: "Runbook",
+    mode: "article",
+    body: "the body text",
+    readableFound: true,
+  };
+
+  /** capture.js inject, then the capture func whose result is read. */
+  function seedCapture(h: ChromeHarness): void {
+    h.tabsGet.mockResolvedValue({ url: PAGE });
+    h.executeScript
+      .mockResolvedValueOnce([{ result: undefined }])
+      .mockResolvedValueOnce([{ result: captured }]);
+  }
+
+  test("a capture from a tab injects into THAT tab and answers with the capture and a preview", async () => {
+    await load();
+    seedCapture(harness);
+    const res = await harness.emitMessageFromTab({ kind: "capture", pageUrl: PAGE }, 9);
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 9 },
+      files: ["capture.js"],
+    });
+    expect(res).toMatchObject({ kind: "capture", ok: true, capture: captured });
+    expect((res as { preview: unknown }).preview).not.toBeNull();
+  });
+
+  // No sender tab means no page to capture. Fail closed with the vocabulary the
+  // panel already renders, before anything is injected anywhere.
+  test("a capture with no sender tab answers injection-failed and injects nothing", async () => {
+    await load();
+    harness.executeScript.mockClear();
+    const res = await harness.emitMessage({ kind: "capture", pageUrl: PAGE });
+    expect(res).toEqual({ kind: "capture", ok: false, reason: "injection-failed" });
+    expect(harness.executeScript).not.toHaveBeenCalled();
+  });
+
+  test("a capture whose handler rejects answers injection-failed rather than hanging", async () => {
+    await load();
+    seedCapture(harness);
+    // The preview preference read is the one await after the capture that is
+    // not caught on its own.
+    harness.storageGet.mockImplementation(async (key: string) => {
+      if (key === "preview-enabled") {
+        throw new Error("storage unavailable");
+      }
+      return { [key]: harness.storage.get(key) };
+    });
+    const res = await harness.emitMessageFromTab({ kind: "capture", pageUrl: PAGE }, 9);
+    expect(res).toEqual({ kind: "capture", ok: false, reason: "injection-failed" });
+  });
+});
+
+describe("resolve and fetch routes — the remaining arms", () => {
+  // The worker binds the connector-health store to its own clock and to the
+  // public `/v1/connectors` read; a dashboard is the one surface that reads it.
+  test("resolve: a dashboard reports its connector's health from /v1/connectors", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    const seen: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      seen.push(u);
+      if (u.includes("/v1/connectors")) {
+        return jsonRes(200, { data: [{ connectorId: "github", state: "degraded" }] });
+      }
+      return jsonRes(404, {});
+    });
+
+    const res = await harness.emitMessage({ kind: "resolve", pageUrl: "https://github.com/" });
+
+    expect(seen.some((u) => u.startsWith("http://127.0.0.1:8765/v1/connectors"))).toBe(true);
+    expect(res).toMatchObject({
+      kind: "resolve",
+      ok: true,
+      recognition: { ok: true, kind: "home", product: "github" },
+      connector: { state: "degraded" },
+    });
+  });
+
+  // `handleResolve`/`handleFetch` reject only when a storage read underneath
+  // them fails. The reply must still be a well-formed failure — the panel waits
+  // on it — carrying the synthesised unknown-host recognition.
+  test.each(["resolve", "fetch"] as const)(
+    "%s: a storage read failure answers server_error, never silence",
+    async (kind) => {
+      await load();
+      harness.storageGet.mockRejectedValueOnce(new Error("storage unavailable"));
+      expect(
+        await harness.emitMessage({ kind, pageUrl: "https://github.com/acme/web/pull/1" }),
+      ).toEqual({
+        kind,
+        ok: false,
+        recognition: { ok: false, reason: "unknown-host" },
+        reason: "server_error",
+      });
+    },
+  );
 });

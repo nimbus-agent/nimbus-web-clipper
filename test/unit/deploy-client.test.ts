@@ -5,6 +5,7 @@ import {
   fetchPreflight,
   fetchServiceResolution,
 } from "../../src/background/deploy-client.ts";
+import { MAX_BRANCH_LEN } from "../../src/shared/services.ts";
 
 const ORIGIN = "http://127.0.0.1:7474";
 
@@ -85,6 +86,26 @@ describe("fetchPreflight", () => {
     expect(r).toEqual({ ok: false, reason: "malformed" });
     expect(doFetch).not.toHaveBeenCalled();
   });
+
+  test("refuses an empty or over-long target ref before sending it", async () => {
+    for (const ref of ["", "r".repeat(MAX_BRANCH_LEN + 1)]) {
+      const doFetch = vi.fn(async () => jsonRes(okEnvelope));
+      const r = await fetchPreflight(ORIGIN, "web", ref, doFetch as unknown as typeof fetch);
+      expect(r).toEqual({ ok: false, reason: "malformed" });
+      expect(doFetch).not.toHaveBeenCalled();
+    }
+    // The longest LEGAL ref is sent: the refusal above is the bound, not an
+    // off-by-one that would also refuse a real branch name.
+    const doFetch = vi.fn(async () => jsonRes(okEnvelope));
+    const r = await fetchPreflight(
+      ORIGIN,
+      "web",
+      "r".repeat(MAX_BRANCH_LEN),
+      doFetch as unknown as typeof fetch,
+    );
+    expect(r.ok).toBe(true);
+    expect(doFetch).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("fetchItemBranch", () => {
@@ -121,6 +142,33 @@ describe("fetchItemBranch", () => {
     await fetchItemBranch(ORIGIN, "a/b", doFetch as unknown as typeof fetch);
     const [url] = doFetch.mock.calls[0] as unknown as [string];
     expect(url).toBe(`${ORIGIN}/v1/items/a%2Fb`);
+  });
+
+  test("a 200 whose body is not an object is malformed — the item route did not answer", async () => {
+    for (const body of ["i1", 42, null]) {
+      const doFetch = vi.fn(async () => jsonRes(body));
+      const r = await fetchItemBranch(ORIGIN, "i1", doFetch as unknown as typeof fetch);
+      expect(r).toEqual({ ok: false, reason: "malformed" });
+    }
+  });
+
+  // `metadata` is a JSON TEXT column upstream. A string that does not parse,
+  // or parses to something other than an object, has no branch to offer: the
+  // ladder falls through to the binding's default branch, it does not fail.
+  test.each([
+    ["a metadata string that is not JSON", "{branch: main"],
+    ["a metadata string that parses to a number", "42"],
+    ["metadata that is an array", ["main"]],
+  ])("%s is a null value, not a failure", async (_why, metadata) => {
+    const doFetch = vi.fn(async () => jsonRes({ data: { id: "i1", metadata } }));
+    const r = await fetchItemBranch(ORIGIN, "i1", doFetch as unknown as typeof fetch);
+    expect(r).toEqual({ ok: true, value: null });
+  });
+
+  test("an empty-string branch is no branch at all", async () => {
+    const doFetch = vi.fn(async () => jsonRes({ data: { id: "i1", metadata: { branch: "" } } }));
+    const r = await fetchItemBranch(ORIGIN, "i1", doFetch as unknown as typeof fetch);
+    expect(r).toEqual({ ok: true, value: null });
   });
 });
 

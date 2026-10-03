@@ -97,6 +97,31 @@ describe("renderGlossaryFindings", () => {
     expect(el.textContent).toContain("0.82");
   });
 
+  // One mention, one service: the singulars, not "1 mentions across 1 services".
+  test("speaks of a single mention and a single service in the singular", () => {
+    const el = renderGlossaryFindings(
+      document,
+      findings({ entries: [entry({ docFreq: 1, serviceSpread: 1 })] }),
+      NOW,
+    );
+    expect(el.querySelector(".nimbus-findings__item-when")?.textContent).toMatch(
+      /^1 mention across 1 service · /,
+    );
+  });
+
+  // A definition a human wrote in `[glossary.terms]` is badged as such — the
+  // one source nobody has to second-guess — never by its raw source code.
+  test("badges a manual definition as authored", () => {
+    const el = renderGlossaryFindings(
+      document,
+      findings({ entries: [entry({ definitionSource: "manual" })] }),
+      NOW,
+    );
+    const badges = [...el.querySelectorAll(".nimbus-findings__badge")].map((b) => b.textContent);
+    expect(badges).toContain("authored");
+    expect(badges).not.toContain("manual");
+  });
+
   test("a synonym match badges the term heading", () => {
     const el = renderGlossaryFindings(document, findings({ matchedVia: "synonym" }), NOW);
     expect(el.textContent?.toLowerCase()).toContain("matched via synonym");

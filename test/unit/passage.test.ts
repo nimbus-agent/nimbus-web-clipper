@@ -223,6 +223,15 @@ describe("removePassage / removeGroup", () => {
     const all = [p("http://h/a#x", "one", 1), p("http://h/b", "two", 2)];
     expect(removeGroup(all, "http://h/a").map((x) => x.text)).toEqual(["two"]);
   });
+
+  // A drop naming a passage that is not held — already removed by another
+  // surface, or never there — changes nothing, and hands back the SAME list so
+  // the store can tell nothing moved.
+  test("removePassage of a passage that is not held returns the list untouched", () => {
+    const all = [p("http://h/a", "one", 1), p("http://h/b", "two", 2)];
+    expect(removePassage(all, "http://h/a", 99)).toBe(all);
+    expect(removePassage(all, "http://h/c", 1)).toBe(all);
+  });
 });
 
 describe("isPassage", () => {

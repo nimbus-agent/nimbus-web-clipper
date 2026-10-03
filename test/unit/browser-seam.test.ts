@@ -36,6 +36,15 @@ describe("activeTab", () => {
     installChromeStub({ tab: { id: 7, url: "https://ex.com/p", title: "Page" } });
     expect(await activeTab()).toEqual({ id: 7, url: "https://ex.com/p", title: "Page" });
   });
+
+  // Without host permission the browser strips `url` and `title`; the tab is
+  // still the one to act on, so they read as empty strings, never undefined.
+  test("a tab whose url and title are withheld still resolves, with both empty", async () => {
+    (globalThis as unknown as { chrome: unknown }).chrome = {
+      tabs: { query: async () => [{ id: 7 }] },
+    };
+    expect(await activeTab()).toEqual({ id: 7, url: "", title: "" });
+  });
 });
 
 describe("runCapture", () => {
@@ -77,6 +86,33 @@ describe("runCapture", () => {
     };
     installChromeStub({ executeResults: [{ result: capture }] });
     await expect(runCapture(7, "article")).rejects.toThrow();
+  });
+
+  const SELECTION = {
+    url: "https://ex.com/p",
+    title: "P",
+    mode: "selection",
+    body: "picked words",
+    readableFound: true,
+  };
+
+  test("carries a resolved canonical and a canonical refusal across the boundary", async () => {
+    const resolved = { ...SELECTION, canonicalUrl: "https://ex.com/canonical" };
+    installChromeStub({ executeResults: [{ result: resolved }] });
+    expect((await runCapture(7, "selection")).canonicalUrl).toBe("https://ex.com/canonical");
+
+    const refused = { ...SELECTION, canonicalRejected: "cross-origin" };
+    installChromeStub({ executeResults: [{ result: refused }] });
+    expect((await runCapture(7, "selection")).canonicalRejected).toBe("cross-origin");
+  });
+
+  // The page wrote these values; anything off-shape is refused, not coerced.
+  test.each([
+    ["a non-string canonicalUrl", { ...SELECTION, canonicalUrl: 7 }],
+    ["a refusal reason outside the closed set", { ...SELECTION, canonicalRejected: "vibes" }],
+  ])("throws on %s", async (_why, result) => {
+    installChromeStub({ executeResults: [{ result }] });
+    await expect(runCapture(7, "selection")).rejects.toThrow("capture failed");
   });
 });
 

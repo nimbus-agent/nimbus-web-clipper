@@ -255,4 +255,31 @@ describe("renderBindingsTable status (C10.3 slice 2)", () => {
     expect(table.textContent).not.toMatch(/Status/);
     expect(table.querySelectorAll("thead th")).toHaveLength(6);
   });
+
+  // Neither of these is a disagreement the user can fix with one click, so
+  // neither offers a correction — they state what the gateway could and could
+  // not say, and nothing else.
+  test.each([
+    [
+      "unclaimed",
+      { state: "unclaimed" } as const,
+      "No Nimbus service names this repository by this coordinate",
+    ],
+    [
+      "ambiguous",
+      { state: "ambiguous", candidates: ["web", "web-api", "storefront"] } as const,
+      "3 services name this repository",
+    ],
+  ])("a %s row says so and offers no correction", (_state, status, sentence) => {
+    const bindings = [
+      { product: "github" as const, origin: "https://github.com", scope: "acme/a", serviceId: "a" },
+    ];
+    const statuses = new Map<string, BindingCheckStatus>([
+      [bindingKey("https://github.com", "github", "acme/a"), status],
+    ]);
+    const table = renderBindingsTable(bindings, NOOP, statuses, NOOP);
+    const cells = [...table.querySelectorAll("tbody td")].map((td) => td.textContent);
+    expect(cells).toContain(sentence);
+    expect(table.querySelectorAll("button[data-proposed]")).toHaveLength(0);
+  });
 });

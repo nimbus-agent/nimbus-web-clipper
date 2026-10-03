@@ -227,6 +227,123 @@ describe("parseDeployPreflight", () => {
     // The COUNT is the gateway's, not the length of what we could parse.
     expect(r?.checks.active_p1_incidents.count).toBe(2);
   });
+
+  test.each([
+    ["service", { service: 7 }],
+    ["target_ref", { target_ref: null }],
+    ["computed_at", { computed_at: 1_725_926_400_000 }],
+  ])("rejects a non-string %s", (_field, over) => {
+    expect(parseDeployPreflight(envelope(over))).toBeNull();
+  });
+
+  test("rejects a checks member that is not an object", () => {
+    expect(parseDeployPreflight(envelope({ checks: [] }))).toBeNull();
+    expect(parseDeployPreflight(envelope({ checks: "all clear" }))).toBeNull();
+  });
+});
+
+// Each finding parser is exercised the same way: a well-formed finding sits
+// beside ONE broken sibling, so a parser that dropped too much (or kept the
+// broken one) changes the parsed list — a lone malformed finding would pass
+// whether or not the specific clause under test fired.
+describe("finding parsers", () => {
+  const incident = {
+    id: "pd1",
+    title: "checkout 5xx",
+    status: "acknowledged",
+    severity: "P1",
+    opened_at_ms: 1_000,
+    pagerduty_service_id: "PSVC1",
+    url: "https://pd.example/incidents/pd1",
+  };
+  const ci = {
+    id: "c1",
+    title: "build #9",
+    conclusion: "cancelled",
+    modified_at_ms: 2_000,
+    branch: "main",
+    head_sha: "abc123",
+    url: null,
+  };
+  const pr = {
+    id: "pr1",
+    title: "Fix checkout",
+    number: 482,
+    mergeable_state: "dirty",
+    modified_at_ms: 3_000,
+    url: "https://github.com/acme/web/pull/482",
+  };
+
+  const withFindings = (key: string, findings: unknown[]) =>
+    parseDeployPreflight(
+      envelope({
+        verdict: "warn",
+        checks: {
+          active_p1_incidents: check(),
+          failing_ci_runs: check(),
+          merge_conflicts: check(),
+          [key]: check({ count: findings.length, findings }),
+        },
+      }),
+    );
+
+  test("an incident keeps every field, triggered and acknowledged alike", () => {
+    const r = withFindings("active_p1_incidents", [incident, { ...incident, status: "triggered" }]);
+    expect(r?.checks.active_p1_incidents.findings).toEqual([
+      incident,
+      { ...incident, status: "triggered" },
+    ]);
+  });
+
+  test.each([
+    ["a non-object", "nope"],
+    ["a resolved status", { ...incident, status: "resolved" }],
+    ["a missing id", { ...incident, id: undefined }],
+    ["a non-string title", { ...incident, title: 7 }],
+    ["a missing severity", { ...incident, severity: undefined }],
+    ["a NaN opened_at_ms", { ...incident, opened_at_ms: Number.NaN }],
+    ["a non-string service id", { ...incident, pagerduty_service_id: 9 }],
+    ["a non-string url", { ...incident, url: 9 }],
+  ])("drops an incident with %s and keeps its sibling", (_why, broken) => {
+    const r = withFindings("active_p1_incidents", [broken, incident]);
+    expect(r?.checks.active_p1_incidents.findings).toEqual([incident]);
+    expect(r?.checks.active_p1_incidents.count).toBe(2);
+  });
+
+  test("a CI run keeps every field for each of the three failing conclusions", () => {
+    const runs = [{ ...ci, conclusion: "failure" }, ci, { ...ci, conclusion: "timed_out" }];
+    expect(withFindings("failing_ci_runs", runs)?.checks.failing_ci_runs.findings).toEqual(runs);
+  });
+
+  test.each([
+    ["a non-object", null],
+    ["a success conclusion", { ...ci, conclusion: "success" }],
+    ["a missing branch", { ...ci, branch: undefined }],
+    ["a non-string head_sha", { ...ci, head_sha: 1 }],
+    ["a non-string url", { ...ci, url: {} }],
+  ])("drops a CI run with %s and keeps its sibling", (_why, broken) => {
+    const r = withFindings("failing_ci_runs", [broken, ci]);
+    expect(r?.checks.failing_ci_runs.findings).toEqual([ci]);
+  });
+
+  test("a merge conflict keeps every field, with or without a url", () => {
+    const prs = [pr, { ...pr, id: "pr2", url: null }];
+    expect(withFindings("merge_conflicts", prs)?.checks.merge_conflicts.findings).toEqual(prs);
+  });
+
+  test.each([
+    ["a non-object", 42],
+    ["a missing id", { ...pr, id: undefined }],
+    ["a non-string title", { ...pr, title: false }],
+    ["a missing mergeable_state", { ...pr, mergeable_state: undefined }],
+    ["a negative number", { ...pr, number: -1 }],
+    ["a fractional number", { ...pr, number: 4.5 }],
+    ["an Infinity modified_at_ms", { ...pr, modified_at_ms: Number.POSITIVE_INFINITY }],
+    ["a non-string url", { ...pr, url: 3 }],
+  ])("drops a merge conflict with %s and keeps its sibling", (_why, broken) => {
+    const r = withFindings("merge_conflicts", [broken, pr]);
+    expect(r?.checks.merge_conflicts.findings).toEqual([pr]);
+  });
 });
 
 describe("isUnknownService", () => {

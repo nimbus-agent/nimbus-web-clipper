@@ -234,4 +234,37 @@ describe("the injected cue", () => {
     vi.advanceTimersByTime(600);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  // The steady state: nothing moved and no panel arrived, so each tick leaves
+  // the cue — and its own interval — exactly where they were.
+  test("a tick on an unchanged page with no panel leaves the cue up", async () => {
+    vi.useFakeTimers();
+    const show = await loadCue();
+    show(STATE);
+    vi.advanceTimersByTime(1_600);
+    expect(cueEl()?.textContent).toContain("acme/web #482");
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
+  // A trusted click inside the cue that names no action — on the cue's own
+  // frame, or on a node that is not an element at all — is neither Open nor
+  // Dismiss: nothing is sent and the cue stays.
+  test("a trusted click that names no action keeps the cue and sends nothing", async () => {
+    const show = await loadCue();
+    show(STATE);
+    const root = cueEl();
+    if (root === null) {
+      throw new Error("cue not mounted");
+    }
+    trustedClick(root);
+    const entry = [...clickListeners].reverse().find((c) => c.target === root);
+    entry?.listener({
+      isTrusted: true,
+      target: document.createTextNode("x"),
+    } as unknown as MouseEvent);
+    await Promise.resolve();
+
+    expect(harness.sendMessage).not.toHaveBeenCalled();
+    expect(document.getElementById("nimbus-cue-host")).not.toBeNull();
+  });
 });

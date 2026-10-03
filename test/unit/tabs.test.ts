@@ -57,6 +57,18 @@ describe("listCandidateTabs", () => {
     expect(out.hiddenCount).toBe(0);
   });
 
+  // A url the parser cannot read is treated like a restricted one — fail
+  // closed: not offered as a source, and not counted as merely ungranted.
+  it("excludes a tab whose url does not parse from BOTH counts", async () => {
+    installTabs([
+      { id: 1, url: "https://example.com/a", title: "A" },
+      { id: 2, url: "not a url", title: "Mystery" },
+    ]);
+    const out = await listCandidateTabs();
+    expect(out.named.map((t) => t.id)).toEqual([1]);
+    expect(out.hiddenCount).toBe(0);
+  });
+
   it("skips tabs with no id, which cannot be injected into", async () => {
     installTabs([{ url: "https://example.com/a", title: "A" }]);
     const out = await listCandidateTabs();

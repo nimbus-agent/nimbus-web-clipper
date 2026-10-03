@@ -73,6 +73,13 @@ describe("parseConnectorHealth", () => {
     expect(map?.get("github")?.state).toBe("healthy");
   });
 
+  it("skips a row that is not an object at all", () => {
+    const map = parseConnectorHealth({
+      data: [null, "github", { connectorId: "jira", state: "paused" }],
+    });
+    expect([...(map ?? new Map()).keys()]).toEqual(["jira"]);
+  });
+
   it("ignores a lastSuccessfulSync that is not a parseable date", () => {
     const map = parseConnectorHealth({
       data: [{ connectorId: "github", state: "healthy", lastSuccessfulSync: "soon" }],

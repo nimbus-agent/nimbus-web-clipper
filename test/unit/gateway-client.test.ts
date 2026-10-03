@@ -64,6 +64,18 @@ describe("confirmPair", () => {
       reason: "server_error",
     });
   });
+  // A 200 is not a pairing on its own: a body without BOTH strings mints no
+  // token, rather than storing `undefined` as one.
+  test.each([
+    ["no label", { token: "tok-abc" }],
+    ["a non-string token", { token: 7, label: "chrome" }],
+    ["a non-object body", "tok-abc"],
+  ])("200 with %s → server_error, never a half-formed connection", async (_why, body) => {
+    expect(await confirmPair(ORIGIN, "x", async () => jsonRes(200, body))).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
 });
 
 describe("postClip", () => {
@@ -155,6 +167,20 @@ describe("postClip", () => {
       reason: "rate_limited",
       retryAfterMs: 60_000,
     });
+  });
+
+  test("200 whose status is neither created nor updated → server_error", async () => {
+    expect(
+      await postClip(ORIGIN, "t", payload, async () => jsonRes(200, { id: "x", status: "queued" })),
+    ).toEqual({ ok: false, reason: "server_error" });
+  });
+
+  test("an unmapped status (500, 503) → server_error, not one of the mapped reasons", async () => {
+    for (const status of [500, 503]) {
+      expect(
+        await postClip(ORIGIN, "t", payload, async () => jsonRes(status, { error: "boom" })),
+      ).toEqual({ ok: false, reason: "server_error" });
+    }
   });
 });
 
@@ -264,6 +290,14 @@ describe("postRelated", () => {
         }),
     );
     expect(out).toEqual({ ok: false, reason: "server_error" });
+  });
+  test("200 whose items is not an array → server_error, never an empty success", async () => {
+    for (const body of [{ items: { 0: hit } }, {}, null]) {
+      const out = await postRelated("http://127.0.0.1:8765", "t", query, async () =>
+        jsonRes(200, body),
+      );
+      expect(out).toEqual({ ok: false, reason: "server_error" });
+    }
   });
   test("401 → unauthorized", async () => {
     expect(
@@ -586,6 +620,40 @@ describe("resolveItem", () => {
       });
     }
   });
+
+  // Each body is well-formed up to ONE clause of the ambiguous arm, so every
+  // case can only be refused by the rung it names — `fetchable` is a boolean
+  // throughout, which the `{found:false, reason:"nope"}` case above never was.
+  test.each([
+    ["an unknown miss reason", { found: false, fetchable: false, reason: "nope" }],
+    [
+      "an ambiguous answer with no truncated flag",
+      { found: false, fetchable: false, reason: "ambiguous", candidates: [] },
+    ],
+    [
+      "an ambiguous answer whose candidates is not an array",
+      { found: false, fetchable: true, reason: "ambiguous", truncated: false, candidates: {} },
+    ],
+    [
+      "an ambiguous answer with ONE malformed candidate among good ones",
+      {
+        found: false,
+        fetchable: false,
+        reason: "ambiguous",
+        truncated: false,
+        candidates: [
+          { id: "a", service: "jira", type: "issue", title: "One", url: null },
+          { id: "b", service: "jira", type: "issue", title: 2, url: null },
+        ],
+      },
+    ],
+  ])("refuses %s as server_error rather than a partial list", async (_why, body) => {
+    const doFetch = async () => jsonRes(200, body);
+    expect(await resolveItem("http://127.0.0.1:8765", "t", "https://x.test/", doFetch)).toEqual({
+      ok: false,
+      reason: "server_error",
+    });
+  });
 });
 
 describe("resolveFile", () => {
@@ -652,6 +720,29 @@ describe("resolveFile", () => {
       reason: "insufficient_scope",
       scopeGap: { required: "resolve", granted: ["clip"] },
     });
+  });
+
+  // A 200 the client cannot read is a server error, never a confident "found"
+  // or "not indexed" — the panel would otherwise render a sentence the gateway
+  // never said.
+  it.each([
+    ["a non-object body", "src/a.ts"],
+    ["a hit with no path", { ok: true }],
+    ["a hit whose path is not a string", { ok: true, path: 7 }],
+    ["an `ok` that is neither true nor false", { ok: "yes", path: "src/a.ts" }],
+    ["a miss with no repo", { ok: false, reason: "file_not_indexed" }],
+    ["a miss with a non-string reason", { ok: false, reason: 1, repo: "acme/web" }],
+  ])("refuses %s as server_error", async (_why, body) => {
+    expect(await call(200, body)).toEqual({ ok: false, reason: "server_error" });
+  });
+
+  it("maps a transport failure to unreachable, before any status is read", async () => {
+    const boom = async () => {
+      throw new Error("ECONNREFUSED");
+    };
+    expect(
+      await resolveFile("http://127.0.0.1:7474", "tok", "github", "acme/web", "main/a.ts", boom),
+    ).toEqual({ ok: false, reason: "unreachable" });
   });
 });
 
@@ -1039,6 +1130,16 @@ describe("invokeAgent", () => {
       ok: false,
       reason: "insufficient_scope",
       scopeGap: { required: "agents", granted: ["clip"] },
+    });
+  });
+
+  it("maps a transport failure to unreachable, not to busy or server_error", async () => {
+    const boom = async () => {
+      throw new Error("ECONNREFUSED");
+    };
+    expect(await invokeAgent("http://127.0.0.1:8765", "t", "impact", {}, boom)).toEqual({
+      ok: false,
+      reason: "unreachable",
     });
   });
 });

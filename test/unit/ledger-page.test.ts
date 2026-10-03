@@ -455,3 +455,43 @@ describe("Older with nothing on screen", () => {
     expect(harness.sendMessage.mock.calls[0]?.[0]).toEqual({ kind: "egress-window" });
   });
 });
+
+describe("partial markup", () => {
+  // The page reads its window even with no body to paint into — it must not
+  // throw at the slot that is missing, and the controls that ARE present stay
+  // wired.
+  test("a page with no ledger body still reads, and verifies on request", async () => {
+    document.body.innerHTML = `<button id="verify" type="button">Verify chain</button>`;
+    vi.resetModules();
+    await import("../../src/ledger/ledger.ts");
+    await vi.waitFor(() => expect(sentKinds()).toEqual(["egress-window"]));
+
+    click("verify");
+
+    await vi.waitFor(() => expect(sentKinds()).toEqual(["egress-window", "egress-verify"]));
+  });
+
+  // With a body but no Older control, a TRUNCATED window still renders its
+  // rows; there is simply no control to un-hide.
+  test("a truncated window renders without an Older control on the page", async () => {
+    harness.sendMessage.mockImplementation(
+      replies({
+        "egress-window": {
+          kind: "egress-window",
+          ok: true,
+          partition: { ours: [OURS], others: [], unattributable: [] },
+          ourLabel: "Mock Device",
+          outcomes: {},
+          rowsTotal: 40,
+          rowsTruncated: true,
+        },
+      }),
+    );
+    document.body.innerHTML = `<section id="ledger-body"></section>`;
+    vi.resetModules();
+    await import("../../src/ledger/ledger.ts");
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll("#ledger-body .ledger__row")).toHaveLength(1),
+    );
+  });
+});

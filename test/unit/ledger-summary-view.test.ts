@@ -84,6 +84,15 @@ describe("renderLedgerSummary", () => {
     expect(text).toContain("nimbus clip status");
   });
 
+  // A 403 that carried no scope detail at all: the same generic guidance, and
+  // no half-built command.
+  it("falls back to generic guidance when the 403 carried no scope detail", () => {
+    renderLedgerSummary(root, model({ state: "error", reason: "insufficient_scope" }));
+    const text = root.textContent ?? "";
+    expect(text).toContain("Run nimbus clip status on your gateway to grant it.");
+    expect(text).not.toContain("--set");
+  });
+
   it("has a message for every other failure reason", () => {
     for (const reason of [
       "unreachable",

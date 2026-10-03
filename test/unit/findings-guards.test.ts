@@ -216,6 +216,45 @@ describe("synthesisFrom", () => {
     expect(synthesisFrom({ attempted: true, used: false, reason: "guardrail" })).toBeUndefined();
     expect(synthesisFrom({ attempted: true, used: true, model: "m" })).toBeUndefined();
   });
+
+  test("rejects a not-attempted arm whose reason it cannot label", () => {
+    expect(synthesisFrom({ attempted: false, reason: "bored" })).toBeUndefined();
+    expect(synthesisFrom({ attempted: false, reason: 3 })).toBeUndefined();
+    expect(synthesisFrom({ attempted: false })).toBeUndefined();
+  });
+
+  test("a discarded arm with no violations and no detail keeps both keys ABSENT", () => {
+    const out = synthesisFrom({ attempted: true, used: false, reason: "contract_violation" });
+    // toEqual cannot see the difference between an absent key and an explicit
+    // `undefined` one; the projection promises absence, so assert the key set.
+    expect(out).toEqual({ attempted: true, used: false, reason: "contract_violation" });
+    expect(Object.keys(out ?? {}).sort()).toEqual(["attempted", "reason", "used"]);
+  });
+
+  test("rejects a discarded arm whose violations are not all strings", () => {
+    const base = { attempted: true, used: false, reason: "contract_violation" };
+    expect(synthesisFrom({ ...base, violations: ["ok", 7] })).toBeUndefined();
+    expect(synthesisFrom({ ...base, violations: "one" })).toBeUndefined();
+  });
+
+  test("rejects a discarded arm whose detail is present but not a string", () => {
+    expect(
+      synthesisFrom({ attempted: true, used: false, reason: "contract_violation", detail: 404 }),
+    ).toBeUndefined();
+  });
+
+  test("rejects an `attempted` or `used` flag that is not a boolean", () => {
+    expect(
+      synthesisFrom({ attempted: "yes", used: true, model: "m", remote: false }),
+    ).toBeUndefined();
+    expect(synthesisFrom({ attempted: true, used: 1, model: "m", remote: false })).toBeUndefined();
+    expect(synthesisFrom({ attempted: true, reason: "contract_violation" })).toBeUndefined();
+  });
+
+  test("returns undefined for anything that is not an object", () => {
+    expect(synthesisFrom(null)).toBeUndefined();
+    expect(synthesisFrom("synthesis")).toBeUndefined();
+  });
 });
 
 describe("laneFindingsFrom", () => {
@@ -297,6 +336,65 @@ describe("laneFindingsFrom", () => {
           service: "jira",
           // `type` missing entirely — isWhyItemSubject requires it.
         },
+      }),
+    ).toBeUndefined();
+  });
+
+  // The FILE subject — `nimbus why` asked about a line of a file. Kept as the
+  // object the gateway sent; every other subject arm normalises absent to null.
+  const fileSubject = {
+    repoRoot: "/home/u/src/web",
+    filePath: "src/app.ts",
+    lineNo: 42,
+    symbol: "boot",
+  };
+
+  test("keeps a well-formed file subject, with or without a line and symbol", () => {
+    expect(laneFindingsFrom("why", { ...validWhy, subject: fileSubject })).toMatchObject({
+      kind: "why",
+      subject: fileSubject,
+    });
+    const bare = { ...fileSubject, lineNo: null, symbol: null };
+    expect(laneFindingsFrom("why", { ...validWhy, subject: bare })).toMatchObject({
+      subject: bare,
+    });
+  });
+
+  test.each([
+    ["a non-string repoRoot", { repoRoot: 1 }],
+    ["a missing filePath", { filePath: undefined }],
+    ["a string lineNo", { lineNo: "42" }],
+    ["a non-string symbol", { symbol: 7 }],
+  ])("rejects a file subject with %s rather than rendering it", (_why, over) => {
+    expect(
+      laneFindingsFrom("why", { ...validWhy, subject: { ...fileSubject, ...over } }),
+    ).toBeUndefined();
+  });
+
+  const changeSubject = {
+    itemId: "github:acme/web#1",
+    entityId: "e1",
+    repo: "acme/web",
+    number: 1,
+    url: "https://github.com/acme/web/pull/1",
+    title: "Auth rewrite",
+    modifiedAt: 1_700_000_000_000,
+  };
+
+  test("keeps a well-formed change subject", () => {
+    expect(laneFindingsFrom("why", { ...validWhy, changeSubject })).toMatchObject({
+      changeSubject,
+    });
+  });
+
+  test("rejects a change subject whose title or modifiedAt is malformed", () => {
+    expect(
+      laneFindingsFrom("why", { ...validWhy, changeSubject: { ...changeSubject, title: null } }),
+    ).toBeUndefined();
+    expect(
+      laneFindingsFrom("why", {
+        ...validWhy,
+        changeSubject: { ...changeSubject, modifiedAt: "2026-01-01" },
       }),
     ).toBeUndefined();
   });
@@ -757,6 +855,11 @@ describe("catchupFindingsFrom", () => {
     const without = { ...validCatchup } as Record<string, unknown>;
     delete without["involvement"];
     expect(catchupFindingsFrom(without)).toBeUndefined();
+  });
+
+  test("rejects a selfPersonId that is neither a string nor null", () => {
+    expect(catchupFindingsFrom({ ...validCatchup, selfPersonId: 7 })).toBeUndefined();
+    expect(catchupFindingsFrom({ ...validCatchup, selfPersonId: undefined })).toBeUndefined();
   });
 
   test("rejects an involvement field that is not a string array", () => {

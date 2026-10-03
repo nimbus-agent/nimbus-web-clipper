@@ -102,6 +102,44 @@ describe("getEgressHead", () => {
     );
     expect(res).toEqual({ ok: true, value: { head: "ff00", count: 12 } });
   });
+
+  it("asks the head route with no query string at all", async () => {
+    let seenUrl = "";
+    await getEgressHead(ORIGIN, TOKEN, async (url) => {
+      seenUrl = String(url);
+      return jsonResponse(200, { head: "ff00", count: 12 });
+    });
+    expect(seenUrl).toBe(`${ORIGIN}/v1/egress/head`);
+  });
+
+  it.each([
+    ["no count", { head: "ff00" }],
+    ["a non-string head", { head: 255, count: 12 }],
+    ["a non-object body", "ff00"],
+  ])("maps a 200 with %s to server_error", async (_why, body) => {
+    const res = await getEgressHead(ORIGIN, TOKEN, async () => jsonResponse(200, body));
+    expect(res).toEqual({ ok: false, reason: "server_error" });
+  });
+});
+
+describe("listEgress query building", () => {
+  // An absent option must not become the string "undefined" in the query. The
+  // type forbids an explicit `undefined`, so only an untyped caller can send
+  // one — the cast is how this test plays that caller.
+  it("drops an option passed as undefined rather than sending it", async () => {
+    let seenUrl = "";
+    const opts = { since: 10, until: undefined, limit: 5 } as unknown as Parameters<
+      typeof listEgress
+    >[2];
+    await listEgress(ORIGIN, TOKEN, opts, async (url) => {
+      seenUrl = String(url);
+      return jsonResponse(200, { rows: [], rowsTotal: 0, rowsTruncated: false });
+    });
+    expect(seenUrl).toContain("since=10");
+    expect(seenUrl).toContain("limit=5");
+    expect(seenUrl).not.toContain("until");
+    expect(seenUrl).not.toContain("undefined");
+  });
 });
 
 describe("verifyEgress", () => {
@@ -130,6 +168,16 @@ describe("verifyEgress", () => {
     // page may never make without evidence.
     const res = await verifyEgress(ORIGIN, TOKEN, async () => jsonResponse(200, {}));
     expect(res).toEqual({ ok: false, reason: "server_error" });
+  });
+
+  it("reads a non-integer row count as 0 and a non-integer brokenAt as null", async () => {
+    const res = await verifyEgress(ORIGIN, TOKEN, async () =>
+      jsonResponse(200, { ok: false, verifiedRows: 4.5, brokenAt: "41", reason: 7 }),
+    );
+    expect(res).toEqual({
+      ok: true,
+      value: { intact: false, brokenAt: null, verifiedRows: 0, reason: null },
+    });
   });
 });
 
@@ -165,5 +213,30 @@ describe("proveEgressWindow", () => {
       jsonResponse(429, { error: "rate_limited" }),
     );
     expect(res).toEqual({ ok: false, reason: "rate_limited" });
+  });
+
+  // Each body drops exactly ONE of the five fields the client reads, so each
+  // can only be refused by its own clause.
+  const proof = {
+    digest: "abc",
+    sigB64: "c2ln",
+    pubkeyB64: "cHVi",
+    rowsTotal: 3,
+    rowsTruncated: false,
+  };
+  it.each([
+    ["digest", { ...proof, digest: 1 }],
+    ["sigB64", { ...proof, sigB64: null }],
+    ["pubkeyB64", { ...proof, pubkeyB64: undefined }],
+    ["rowsTotal", { ...proof, rowsTotal: "3" }],
+    ["rowsTruncated", { ...proof, rowsTruncated: "false" }],
+  ])("maps a 200 whose %s is malformed to server_error", async (_field, body) => {
+    const res = await proveEgressWindow(ORIGIN, TOKEN, {}, async () => jsonResponse(200, body));
+    expect(res).toEqual({ ok: false, reason: "server_error" });
+  });
+
+  it("maps a 200 whose body is not an object to server_error", async () => {
+    const res = await proveEgressWindow(ORIGIN, TOKEN, {}, async () => jsonResponse(200, null));
+    expect(res).toEqual({ ok: false, reason: "server_error" });
   });
 });

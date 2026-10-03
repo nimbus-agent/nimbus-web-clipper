@@ -317,6 +317,30 @@ describe("panel-in-page readContext()", () => {
       selection: "",
     });
   });
+
+  // `getSelection()` answers null in a document with no browsing context (a
+  // display:none frame in Firefox). Neither read of it may throw: the panel
+  // still mounts, takes no term, and asks Related with an empty selection.
+  test("a page whose getSelection() is null still mounts and asks with an empty selection", async () => {
+    document.title = "Framed";
+    const getSelection = vi.spyOn(window, "getSelection").mockReturnValue(null);
+    try {
+      harness.sendMessage.mockResolvedValue({ kind: "related", ok: true, items: [] });
+
+      await loadPanel();
+
+      await vi.waitFor(() => {
+        expect(harness.sendMessage).toHaveBeenCalledWith({
+          kind: "related",
+          title: "Framed",
+          selection: "",
+        });
+      });
+      expect(shadow()?.querySelector('details[data-lane="glossary"]')).toBeNull();
+    } finally {
+      getSelection.mockRestore();
+    }
+  });
 });
 
 describe("panel-in-page query()", () => {
@@ -487,6 +511,26 @@ describe("panel-in-page teardown / self-toggle", () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
 
     expect(host()).toBeNull();
+  });
+
+  // The listener runs in the capture phase on the whole document, so it must
+  // swallow ONLY Escape: any other key belongs to the page and passes through.
+  test("any other key leaves the panel open and reaches the page untouched", async () => {
+    harness.sendMessage.mockResolvedValue({ kind: "related", ok: true, items: [] });
+    await loadPanel();
+    const pageSaw: string[] = [];
+    const pageListener = (e: KeyboardEvent): void => {
+      pageSaw.push(e.key);
+    };
+    document.addEventListener("keydown", pageListener);
+
+    const event = new KeyboardEvent("keydown", { key: "k", bubbles: true, cancelable: true });
+    document.dispatchEvent(event);
+    document.removeEventListener("keydown", pageListener);
+
+    expect(host()).not.toBeNull();
+    expect(event.defaultPrevented).toBe(false);
+    expect(pageSaw).toEqual(["k"]);
   });
 
   test("re-injection while a panel is open closes it instead of mounting a second one", async () => {
@@ -697,6 +741,27 @@ describe("panel-in-page resolve outcomes", () => {
       scopeGap: { label: "chrome", required: "resolve", granted: ["clip", "briefs"] },
     });
     expect(panel.textContent).toContain("nimbus clip scopes chrome --set clip,briefs,resolve");
+  });
+
+  // A failure reason this panel has no sentence of its own for still gets an
+  // honest one — never a blank header, and never another reason's wording.
+  it("renders the generic resolve sentence for a reason with no copy of its own", async () => {
+    const panel = await mountPanelWithResolve({
+      kind: "resolve",
+      ok: false,
+      reason: "rate_limited",
+      recognition: {
+        ok: true,
+        product: "github",
+        kind: "pr",
+        label: "GitHub PR",
+        ref: "a/b #1",
+        resolveUrl: "https://github.com/a/b/pull/1",
+      },
+    });
+    expect(panel.textContent).toContain("GitHub PR · a/b #1");
+    expect(panel.textContent).toContain("Couldn't resolve this page.");
+    expect(panel.textContent).not.toContain("Nimbus had an error resolving this page.");
   });
 
   it("renders the chooser for an ambiguous outcome and settles on the clicked candidate", async () => {
@@ -1070,6 +1135,146 @@ describe("panel-in-page fetch state machine", () => {
     expect(panel.textContent).toContain("GitHub PR · acme/web #1");
     expect(panel.textContent).toContain("Nimbus had an error fetching this page.");
     expect(panel.textContent).not.toContain("Not a recognised Nimbus surface");
+  });
+
+  // The Send control is replaced on the repaint its own click triggers, but a
+  // second click can still land on the element the user is holding. The latch,
+  // not the DOM, is what keeps that to one outbound request.
+  it("a double click on Send still sends exactly one fetch", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss, found()],
+      fetch: [indexed],
+    });
+
+    clickFetch(panel);
+    await flush();
+    const send = panel.querySelector<HTMLButtonElement>("button.nimbus-related__fetch-send");
+    send?.click();
+    send?.click();
+    await flush();
+
+    expect(sent.filter((k) => k === "fetch")).toHaveLength(1);
+  });
+
+  /** Opens the fetch preview and confirms it, letting the fetch settle. */
+  async function confirmOneFetch(panel: HTMLElement): Promise<void> {
+    clickFetch(panel);
+    await flush();
+    clickPreviewSend(panel);
+    await flush();
+  }
+
+  it("a fetch the worker cannot deliver says so, keeping the surface line", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, { resolve: [miss] });
+    harness.sendMessage.mockRejectedValueOnce(new Error("Extension context invalidated."));
+
+    await confirmOneFetch(panel);
+
+    expect(panel.textContent).toContain("GitHub PR · acme/web #1");
+    expect(panel.textContent).toContain("Couldn't connect to Nimbus.");
+    // Still latched: the send may have reached the worker before it failed.
+    expect(panel.querySelector("button.nimbus-related__fetch")).toBeNull();
+  });
+
+  it("an unreadable fetch answer is reported as such, not as a miss", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [{ kind: "fetch", ok: true }],
+    });
+
+    await confirmOneFetch(panel);
+
+    expect(panel.textContent).toContain("GitHub PR · acme/web #1");
+    expect(panel.textContent).toContain("Couldn't read Nimbus's answer.");
+  });
+
+  it("a fetch refused for scope names the fetch scope and the exact command", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [
+        {
+          kind: "fetch",
+          ok: false,
+          recognition,
+          reason: "insufficient_scope",
+          scopeGap: { label: "chrome", required: "fetch", granted: ["clip", "resolve"] },
+        },
+      ],
+    });
+
+    await confirmOneFetch(panel);
+
+    expect(panel.textContent).toContain("This pairing can't fetch pages yet.");
+    expect(panel.textContent).toContain(
+      "Grant it on the gateway: nimbus clip scopes chrome --set clip,resolve,fetch",
+    );
+  });
+
+  it("a fetch refused for scope WITHOUT detail falls back to naming the tool only", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [{ kind: "fetch", ok: false, recognition, reason: "insufficient_scope" }],
+    });
+
+    await confirmOneFetch(panel);
+
+    expect(panel.textContent).toContain("This pairing can't fetch pages yet.");
+    expect(panel.textContent).toContain(
+      "Grant it on the gateway: run nimbus clip status to find this device, then nimbus clip scopes.",
+    );
+    expect(panel.textContent).not.toContain("--set");
+  });
+
+  it("a fetch failure with a reason this panel has no sentence for gets the generic one", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [{ kind: "fetch", ok: false, recognition, reason: "payload_too_large" }],
+    });
+
+    await confirmOneFetch(panel);
+
+    expect(panel.textContent).toContain("Couldn't fetch this page.");
+    expect(panel.textContent).not.toContain("Nimbus had an error fetching this page.");
+  });
+
+  it("a successful fetch answer that no longer recognises the page renders unrecognised", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [
+        {
+          kind: "fetch",
+          ok: true,
+          recognition: { ok: false, reason: "unknown-host" },
+          outcome: { kind: "unfetchable" },
+        },
+      ],
+    });
+
+    await confirmOneFetch(panel);
+
+    expect(panel.textContent).toContain("Not a recognised Nimbus surface");
+  });
+
+  it("an unfetchable outcome says Nimbus can't fetch this page, with no retry", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [{ kind: "fetch", ok: true, recognition, outcome: { kind: "unfetchable" } }],
+    });
+
+    await confirmOneFetch(panel);
+
+    expect(panel.textContent).toContain("Nimbus can't fetch this page.");
+    const labels = Array.from(panel.querySelectorAll("button")).map((b) => b.textContent);
+    expect(labels).not.toContain("Try again");
+    expect(labels).not.toContain("Check again");
   });
 });
 
@@ -1447,6 +1652,169 @@ describe("panel-in-page capture state machine", () => {
     resolveCapture({ kind: "capture", ok: false, reason: "empty" });
     await flush();
   });
+
+  // `capturing` latches for the whole round trip, the capture twin of the
+  // fetch double-click test: the offer clicked again while its capture is
+  // still out (a double-click on the same control) starts no second capture.
+  it("a second click on the offer while its capture is out sends one capture", async () => {
+    let resolveCapture: (value: unknown) => void = () => {};
+    const sent: string[] = [];
+    harness.sendMessage.mockImplementation((message: unknown) => {
+      const kind = (message as { kind?: string }).kind;
+      sent.push(String(kind));
+      if (kind === "resolve") {
+        return Promise.resolve(UNFETCHABLE_MISS);
+      }
+      if (kind === "capture") {
+        return new Promise((resolve) => {
+          resolveCapture = resolve;
+        });
+      }
+      return Promise.resolve({ kind: "related", ok: true, items: [] });
+    });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    const offer = shadow()?.querySelector<HTMLButtonElement>("button.nimbus-related__capture");
+    if (offer === null || offer === undefined) {
+      throw new Error("capture offer not rendered");
+    }
+
+    offer.click();
+    await flush();
+    offer.click();
+    await flush();
+
+    expect(sent.filter((kind) => kind === "capture")).toEqual(["capture"]);
+    expect(headerText()).toContain("Capturing this page");
+    resolveCapture({ kind: "capture", ok: false, reason: "empty" });
+    await flush();
+  });
+
+  /** The refusal line rendered BENEATH the header — never in place of it. */
+  function refusal(panel: HTMLElement): string | null | undefined {
+    return panel.querySelector(".nimbus-related__capture-refusal")?.textContent;
+  }
+
+  it("a capture the worker cannot deliver refuses, and the offer stays live", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, { resolve: [UNFETCHABLE_MISS] });
+    harness.sendMessage.mockRejectedValueOnce(new Error("Extension context invalidated."));
+
+    clickCapture(panel);
+    await flush();
+
+    expect(refusal(panel)).toContain("Couldn't connect to Nimbus.");
+    expect(panel.querySelector("button.nimbus-related__capture")).not.toBeNull();
+    expect(sent).not.toContain("clip");
+  });
+
+  it("an unreadable capture answer refuses as such", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: true }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    expect(refusal(panel)).toContain("Couldn't read Nimbus's answer.");
+    expect(sent).not.toContain("clip");
+  });
+
+  // Declining is not an attempt: the offer must be exactly as usable as before.
+  it("Cancel on the capture preview sends nothing and re-arms the offer", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: PREVIEW }],
+    });
+
+    clickCapture(panel);
+    await flush();
+    clickPreviewCancel(panel);
+    await flush();
+
+    expect(sent).not.toContain("clip");
+    expect(panel.querySelector("button.nimbus-related__fetch-send")).toBeNull();
+    // Not latched: a second offer click captures again.
+    clickCapture(panel);
+    await flush();
+    expect(sent.filter((k) => k === "capture")).toHaveLength(2);
+  });
+
+  // The Send control the user was holding outlives the Cancel that removed it
+  // from the panel; a click on it then has nothing pending to send.
+  it("a stale Send clicked after Cancel sends no clip", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: PREVIEW }],
+    });
+
+    clickCapture(panel);
+    await flush();
+    const send = panel.querySelector<HTMLButtonElement>("button.nimbus-related__fetch-send");
+    clickPreviewCancel(panel);
+    await flush();
+    send?.click();
+    await flush();
+
+    expect(send).not.toBeNull();
+    expect(sent).not.toContain("clip");
+  });
+
+  it("a clip the worker cannot deliver refuses, and the offer stays live", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: PREVIEW }],
+    });
+
+    clickCapture(panel);
+    await flush();
+    harness.sendMessage.mockRejectedValueOnce(new Error("Extension context invalidated."));
+    clickPreviewSend(panel);
+    await flush();
+
+    expect(refusal(panel)).toContain("Couldn't connect to Nimbus.");
+    expect(panel.querySelector("button.nimbus-related__capture")).not.toBeNull();
+  });
+
+  it("an unreadable clip answer refuses as such", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "related", ok: true, items: [] }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    expect(sent).toContain("clip");
+    expect(refusal(panel)).toContain("Couldn't read Nimbus's answer.");
+  });
+
+  // A NON-queued failure is a real refusal — the clip was dropped — so it gets
+  // the refusal line (not the queued status line) and the offer stays live.
+  it("a clip failure that was not queued refuses with its own sentence", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [UNFETCHABLE_MISS],
+      capture: [{ kind: "capture", ok: true, capture: CAPTURE, preview: null }],
+      clip: [{ kind: "clip", ok: false, reason: "payload_too_large" }],
+    });
+
+    clickCapture(panel);
+    await flush();
+
+    expect(refusal(panel)).toContain("Couldn't save this copy to Nimbus.");
+    expect(headerText()).not.toContain("queued");
+    expect(panel.querySelector("button.nimbus-related__capture")).not.toBeNull();
+  });
 });
 
 describe("panel-in-page agent lanes", () => {
@@ -1780,6 +2148,33 @@ describe("panel-in-page agent lanes", () => {
     await flush();
   });
 
+  // The send itself failing (the worker is gone) is a lane failure the user can
+  // act on — `unreachable`, with a Re-run — and it must release the in-flight
+  // latch, or that Re-run would be a dead control.
+  it("an agent-run the worker cannot deliver fails the lane as unreachable, and Re-run works", async () => {
+    const sent: string[] = [];
+    const panel = await mountResolvedPanel(sent);
+    harness.sendMessage.mockRejectedValueOnce(new Error("Extension context invalidated."));
+
+    (panel.querySelector('details[data-lane="impact"] summary') as HTMLElement).click();
+    await flush();
+
+    const lane = panel.querySelector('details[data-lane="impact"]');
+    expect(lane?.textContent).toContain("Couldn't connect to Nimbus.");
+    const rerun = Array.from(lane?.querySelectorAll("button") ?? []).find(
+      (b) => b.textContent === "Re-run",
+    );
+    expect(rerun).toBeDefined();
+
+    (rerun as HTMLButtonElement).click();
+    await flush();
+    // The rejected send was never recorded; this is the Re-run's own agent-run.
+    expect(sent.filter((k) => k === "agent-run")).toHaveLength(1);
+    const after = panel.querySelector('details[data-lane="impact"]')?.textContent;
+    expect(after).not.toContain("Couldn't connect to Nimbus.");
+    expect(after).toContain("ok");
+  });
+
   // The other half of the panel's two documented dead-control bugs (see the
   // rate-limited "Try again" button and the related panel's single unreachable
   // entry point): `renderLaneBody`'s onRerun is OPTIONAL so it stays testable
@@ -1915,6 +2310,70 @@ describe("panel-in-page agent lanes", () => {
       // Settled: the panel must stop asking. A poll that never stops is a battery bug
       // and keeps the worker alive for no reason.
       expect(sent.filter((k) => k === "agent-state")).toHaveLength(before);
+    });
+
+    /** A resolved panel whose impact lane is running, with every agent-state
+     *  poll answered by `poll` — recorded into `sent` either way. */
+    async function mountRunningLane(sent: string[], poll: () => unknown): Promise<HTMLElement> {
+      harness.sendMessage.mockImplementation(async (message: unknown) => {
+        const kind = (message as { kind?: string }).kind;
+        if (kind === "resolve") {
+          return resolvedResponse;
+        }
+        if (kind === "related") {
+          return { kind: "related", ok: true, items: [] };
+        }
+        sent.push(String(kind));
+        if (kind === "agent-run") {
+          return { kind: "agent-state", lane: "impact", state: { kind: "running", runId: "r1" } };
+        }
+        return poll();
+      });
+      await loadPanel();
+      await vi.waitFor(() => {
+        expect(headerText()).not.toContain("Checking Nimbus");
+      });
+      const body = shadow()?.querySelector<HTMLElement>(".nimbus-related__body");
+      if (body === null || body === undefined) {
+        throw new Error("panel body not found");
+      }
+      (body.querySelector('details[data-lane="impact"] summary') as HTMLElement).click();
+      await advanceTimers(0);
+      return body;
+    }
+
+    // The poll has no button of its own to recover with, and the worker being
+    // gone says nothing about the run: the lane keeps what it last knew rather
+    // than inventing a failure, and the loop stops instead of hammering a dead
+    // worker every second.
+    it("a poll the worker cannot answer keeps the lane as it was and stops asking", async () => {
+      const sent: string[] = [];
+      const panel = await mountRunningLane(sent, () => {
+        throw new Error("Extension context invalidated.");
+      });
+
+      await advanceTimers(1_000);
+      expect(sent).toEqual(["agent-run", "agent-state"]);
+      expect(panel.querySelector('details[data-lane="impact"]')?.textContent).toContain("Working…");
+
+      await advanceTimers(5_000);
+      expect(sent).toEqual(["agent-run", "agent-state"]);
+    });
+
+    // A `done` with no brief fails the response guard. Storing it would paint a
+    // finished lane with nothing in it; the panel keeps the last good state.
+    it("an unreadable poll answer is not stored, and the loop stops", async () => {
+      const sent: string[] = [];
+      const panel = await mountRunningLane(sent, () => ({
+        kind: "agent-state",
+        lane: "impact",
+        state: { kind: "done" },
+      }));
+
+      await advanceTimers(1_000);
+      expect(panel.querySelector('details[data-lane="impact"]')?.textContent).toContain("Working…");
+      await advanceTimers(5_000);
+      expect(sent).toEqual(["agent-run", "agent-state"]);
     });
 
     // This is an END-TO-END regression test for a USER-VISIBLE property, NOT
@@ -2442,6 +2901,167 @@ describe("lanes appear only where they can answer", () => {
     expect(root.querySelector('[data-lane="expert"]')).toBeNull();
     expect(root.querySelector('[data-lane="ownership"]')).toBeNull();
   });
+
+  // Each miss reason names its own fix: one says the repo is untracked, the
+  // other that the file is unindexed — never one generic "not indexed".
+  it("names the untracked repository when the gateway has no checkout of it", async () => {
+    await mountPanelWithResolve(
+      fileResolve("github", "acme/web main/src/index.ts", {
+        kind: "miss",
+        reason: "remote_not_tracked",
+        repo: "acme/web",
+      }),
+    );
+    expect(headerText()).toContain(
+      "Nimbus has no local checkout of `acme/web`, so it cannot answer about its files.",
+    );
+    expect(headerText()).not.toContain("this file is not in its index");
+  });
+
+  it("names the unindexed file when the checkout exists", async () => {
+    await mountPanelWithResolve(
+      fileResolve("github", "acme/web main/src/index.ts", {
+        kind: "miss",
+        reason: "file_not_indexed",
+        repo: "acme/web",
+      }),
+    );
+    expect(headerText()).toContain(
+      "Nimbus has a checkout of `acme/web`, but this file is not in its index.",
+    );
+    expect(headerText()).not.toContain("no local checkout");
+  });
+});
+
+describe("the deploy-readiness section", () => {
+  const PR = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #482",
+    resolveUrl: "https://github.com/acme/web/pull/482",
+    scope: "acme/web",
+    origin: "https://github.com",
+  } as const;
+
+  const ITEM = {
+    id: "github:acme/web#482",
+    service: "github",
+    type: "pr",
+    title: "Add retry budget",
+    url: "https://github.com/acme/web/pull/482",
+    modifiedAt: 1_700_000_000_000,
+  };
+
+  /** Mounts with `resolveResponse`, recording every deploy-preflight message
+   *  and answering each with a refusal the section renders as a sentence. */
+  async function mountWithDeploy(
+    resolveResponse: unknown,
+    asked: Array<Record<string, unknown>>,
+  ): Promise<ShadowRoot> {
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as Record<string, unknown>;
+      if (m["kind"] === "resolve") {
+        return resolveResponse;
+      }
+      if (m["kind"] === "deploy-preflight") {
+        asked.push(m);
+        return { kind: "deploy-preflight", ok: false, reason: "unreachable" };
+      }
+      return { kind: "related", ok: true, items: [] };
+    });
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    const root = shadow();
+    if (root === null) {
+      throw new Error("panel shadow root not found");
+    }
+    return root;
+  }
+
+  it("mounts under a recognised PR and asks about the item the header names", async () => {
+    const asked: Array<Record<string, unknown>> = [];
+    const root = await mountWithDeploy(
+      {
+        kind: "resolve",
+        ok: true,
+        recognition: PR,
+        outcome: { kind: "found", matchKind: "exact", item: ITEM },
+      },
+      asked,
+    );
+    await vi.waitFor(() => {
+      expect(root.querySelector(".nimbus-deploy-section")?.textContent).toContain(
+        "Nimbus could not reach the deploy checks for this service.",
+      );
+    });
+    // Asked once, however many repaints the mount went through.
+    expect(asked).toEqual([
+      {
+        kind: "deploy-preflight",
+        product: "github",
+        origin: "https://github.com",
+        scope: "acme/web",
+        itemId: "github:acme/web#482",
+      },
+    ]);
+  });
+
+  it("asks with no item id at all when the page is not indexed", async () => {
+    const asked: Array<Record<string, unknown>> = [];
+    await mountWithDeploy(
+      {
+        kind: "resolve",
+        ok: true,
+        recognition: PR,
+        outcome: { kind: "not-indexed", fetchable: false },
+      },
+      asked,
+    );
+    await vi.waitFor(() => {
+      expect(asked).toHaveLength(1);
+    });
+    expect(asked[0]).toEqual({
+      kind: "deploy-preflight",
+      product: "github",
+      origin: "https://github.com",
+      scope: "acme/web",
+    });
+  });
+
+  it.each([
+    ["a PR recognition carrying no scope", { ...PR, scope: undefined }],
+    [
+      "an issue, which no binding can be keyed by",
+      {
+        ok: true,
+        product: "jira",
+        kind: "issue",
+        label: "Jira issue",
+        ref: "PLAT-91",
+        resolveUrl: "https://acme.atlassian.net/browse/PLAT-91",
+        scope: "PLAT",
+        origin: "https://acme.atlassian.net",
+      },
+    ],
+  ])("does not mount for %s", async (_why, recognition) => {
+    const asked: Array<Record<string, unknown>> = [];
+    const root = await mountWithDeploy(
+      {
+        kind: "resolve",
+        ok: true,
+        recognition,
+        outcome: { kind: "not-indexed", fetchable: false },
+      },
+      asked,
+    );
+    await flush();
+    expect(asked).toEqual([]);
+    expect(root.querySelector(".nimbus-deploy-section")).toBeNull();
+  });
 });
 
 describe("the offered-lanes gate", () => {
@@ -2613,6 +3233,44 @@ describe("following a client-side navigation", () => {
     expect(notice(root)).not.toBeNull();
   });
 
+  // Back/forward fires popstate, which the panel answers AT ONCE rather than up
+  // to one interval later. No time passes here at all, so only the listener
+  // can have raised the notice.
+  it("checks immediately on popstate, without waiting for the interval", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await advanceTimers(0);
+    expect(notice(root)?.textContent).toContain("acme/web #482");
+  });
+
+  // A host removed by the self-toggle's fallback (no `__nimbusClose` to call)
+  // skips `stopAgentPolls`, so the 2 Hz interval must notice the detached body
+  // and stop ITSELF rather than ticking forever with nothing to paint into.
+  it("a host removed without its own teardown stops its navigation interval", async () => {
+    await mountWatching({ "/pull/482": PR482 });
+    const el = host() as (HTMLElement & { __nimbusClose?: (() => void) | undefined }) | null;
+    if (el === null) throw new Error("panel host not found");
+    el.__nimbusClose = undefined;
+    harness.sendMessage.mockClear();
+
+    await loadPanel(); // re-injection: the fallback removes the stale host
+    expect(host()).toBeNull();
+    expect(vi.getTimerCount()).toBe(1); // the orphaned panel's interval, still armed
+
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(harness.sendMessage).not.toHaveBeenCalled();
+
+    // Nothing aborted the orphan's popstate listener, so a back/forward still
+    // reaches its check — which must find the body gone and ask nothing.
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    await advanceTimers(0);
+    expect(harness.sendMessage).not.toHaveBeenCalled();
+  });
+
   // Property 1: `paint()` is response-driven, never tick-driven. A tick whose
   // `recognise` answer leaves `navAway` unchanged (same item, only the sub-tab
   // differs) must not repaint at all — only an actual flip may.
@@ -2669,6 +3327,42 @@ describe("following a client-side navigation", () => {
     expect(notice(root)).not.toBeNull();
     releaseStale();
     await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+    expect(notice(root)).not.toBeNull();
+  });
+
+  // The failure twin of the ordering guard: a check that REJECTS after a newer
+  // one already took the marker must not roll the marker back to the url it
+  // replaced — the next tick would then re-ask about a url already settled.
+  it("a stale check that fails after a newer one leaves the newer marker in place", async () => {
+    const root = await mountWatching({ "/pull/482": PR482, "/pull/517": PR517 });
+    // No-op initial value — see the identical note on `releaseStale` above.
+    let failStale: (error: Error) => void = () => {};
+    let staleBranchEntered = false;
+    const asked: string[] = [];
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as { kind?: string; pageUrl?: string };
+      if (m.kind !== "recognise") return { kind: "related", ok: true, items: [] };
+      asked.push(m.pageUrl ?? "");
+      if ((m.pageUrl ?? "").includes("/files")) {
+        staleBranchEntered = true;
+        return await new Promise((_resolve, reject) => {
+          failStale = reject;
+        });
+      }
+      return { kind: "recognition", ok: true, recognition: PR517 };
+    });
+    window.history.pushState({}, "", "/acme/web/pull/482/files");
+    await advanceTimers(600);
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    await advanceTimers(600);
+    expect(staleBranchEntered).toBe(true);
+    expect(notice(root)).not.toBeNull();
+    const askedBefore = asked.length;
+
+    failStale(new Error("worker unreachable"));
+    await advanceTimers(600);
+
+    expect(asked.slice(askedBefore)).toEqual([]);
     expect(notice(root)).not.toBeNull();
   });
 
@@ -3028,6 +3722,316 @@ describe("following a client-side navigation", () => {
       root.querySelector<HTMLButtonElement>(".nimbus-related__header-state button")?.textContent,
     ).toBe("Fetch this from GitHub");
   });
+
+  // Every async step in the panel re-checks `generation` after its await, so an
+  // answer — or a failure — for the page the panel has LEFT is dropped rather
+  // than painted over the page it moved on to. Each test parks one request,
+  // re-reads to #517 while it is still out, then lets the stale outcome land.
+  describe("answers that land after a re-read", () => {
+    type Outcome = { readonly value: unknown } | { readonly error: Error };
+
+    const unreachable: Outcome = { error: new Error("Extension context invalidated.") };
+
+    function missOn482(fetchable: boolean): unknown {
+      return {
+        kind: "resolve",
+        ok: true,
+        recognition: PR482,
+        outcome: { kind: "not-indexed", fetchable },
+      };
+    }
+
+    const CAPTURE = {
+      url: "https://github.com/acme/web/pull/482",
+      title: "Add retry budget",
+      mode: "article" as const,
+      body: "Some readable body text.",
+      readableFound: true,
+    };
+
+    const PREVIEW = {
+      fields: [{ label: "Title", value: "Add retry budget" }],
+      excerpt: "Some readable body text.",
+      bodyLength: 24,
+      truncated: false,
+    };
+
+    interface Route {
+      /** Every message sent, in order: its kind, and its page where it names one. */
+      readonly sent: readonly { readonly kind: string; readonly pageUrl: string | undefined }[];
+      /** Lands the parked request's outcome. */
+      settle(outcome: Outcome): void;
+      /** Whether the parked request has actually gone out. */
+      parked(): boolean;
+    }
+
+    /**
+     * Routes the panel's traffic: `recognise` follows the url, #517 always
+     * resolves as found, #482's resolves answer from `pinned` in order (the
+     * last one repeating), and the `nth` (0-based) request of `hold.kind` is
+     * parked until the test settles it. Anything else answers from `answers`,
+     * or as an empty related list.
+     */
+    function route(opts: {
+      readonly pinned: readonly unknown[];
+      readonly hold: { readonly kind: string; readonly nth?: number };
+      readonly answers?: Readonly<Record<string, unknown>>;
+    }): Route {
+      const sent: { kind: string; pageUrl: string | undefined }[] = [];
+      const seen: Record<string, number> = {};
+      let pinnedCalls = 0;
+      let isParked = false;
+      // No-op initial value — see the identical note on `releaseStale` above.
+      let release: (outcome: Outcome) => void = () => {};
+      harness.sendMessage.mockImplementation(async (message: unknown) => {
+        const m = message as { kind?: string; pageUrl?: string };
+        const kind = m.kind ?? "";
+        sent.push({ kind, pageUrl: m.pageUrl });
+        const nth = seen[kind] ?? 0;
+        seen[kind] = nth + 1;
+        if (kind === opts.hold.kind && nth === (opts.hold.nth ?? 0)) {
+          isParked = true;
+          return await new Promise((resolve, reject) => {
+            release = (outcome) => {
+              if ("error" in outcome) {
+                reject(outcome.error);
+              } else {
+                resolve(outcome.value);
+              }
+            };
+          });
+        }
+        const on517 = (m.pageUrl ?? "").includes("/pull/517");
+        if (kind === "recognise") {
+          return { kind: "recognition", ok: true, recognition: on517 ? PR517 : PR482 };
+        }
+        if (kind === "resolve") {
+          if (on517) {
+            return resolvedFor(PR517);
+          }
+          const answer = opts.pinned[Math.min(pinnedCalls, opts.pinned.length - 1)];
+          pinnedCalls += 1;
+          return answer;
+        }
+        return opts.answers?.[kind] ?? { kind: "related", ok: true, items: [] };
+      });
+      return { sent, settle: (outcome) => release(outcome), parked: () => isParked };
+    }
+
+    async function mountOn482(): Promise<ShadowRoot> {
+      window.history.pushState({}, "", "/acme/web/pull/482");
+      await loadPanel();
+      await vi.waitFor(() => expect(headerText()).not.toContain("Checking Nimbus"));
+      const root = shadow();
+      if (root === null) throw new Error("panel shadow root not found");
+      return root;
+    }
+
+    /** Moves the tab to #517 and clicks the notice's Re-read: from here on the
+     *  panel describes #517, and whatever is still out belongs to #482. */
+    async function rereadTo517(root: ShadowRoot): Promise<void> {
+      window.history.pushState({}, "", "/acme/web/pull/517");
+      await advanceTimers(600);
+      const reread = root.querySelector<HTMLButtonElement>(".nimbus-related__navaway button");
+      if (reread === null) throw new Error("the navigation notice never appeared");
+      reread.click();
+      await advanceTimers(0); // not flush() -- fake timers are active here, same reasoning as above
+      expect(headerText()).toContain("acme/web #517");
+    }
+
+    function kindsSince(r: Route, from: number): string[] {
+      return r.sent.slice(from).map((m) => m.kind);
+    }
+
+    const fetchOutcomes: [string, Outcome, string][] = [
+      [
+        "an answer",
+        { value: { kind: "fetch", ok: false, recognition: PR482, reason: "timeout" } },
+        "Still working",
+      ],
+      ["a failure", unreachable, "Couldn't connect to Nimbus."],
+    ];
+
+    it.each(fetchOutcomes)(
+      "%s for a fetch of the page it left is dropped",
+      async (_label, outcome, stale) => {
+        const r = route({ pinned: [missOn482(true)], hold: { kind: "fetch" } });
+        const root = await mountOn482();
+        clickFetch(root);
+        await advanceTimers(0);
+        clickPreviewSend(root);
+        await advanceTimers(0);
+        expect(r.parked()).toBe(true);
+        expect(headerText()).toContain("Fetching from GitHub");
+
+        await rereadTo517(root);
+        r.settle(outcome);
+        await advanceTimers(0);
+
+        expect(headerText()).toContain("acme/web #517");
+        expect(headerText()).not.toContain(stale);
+      },
+    );
+
+    // An answer that WOULD have gone on to send the clip (the preview is off) is
+    // the costly one: it would save the page the panel already left.
+    const captureOutcomes: [string, Outcome][] = [
+      ["an answer", { value: { kind: "capture", ok: true, capture: CAPTURE, preview: null } }],
+      ["a failure", unreachable],
+    ];
+
+    it.each(captureOutcomes)(
+      "%s for a capture of the page it left is dropped",
+      async (_label, outcome) => {
+        const r = route({ pinned: [missOn482(false)], hold: { kind: "capture" } });
+        const root = await mountOn482();
+        clickCapture(root);
+        await advanceTimers(0);
+        expect(r.parked()).toBe(true);
+        expect(headerText()).toContain("Capturing this page");
+
+        await rereadTo517(root);
+        const before = r.sent.length;
+        r.settle(outcome);
+        await advanceTimers(0);
+
+        expect(kindsSince(r, before)).toEqual([]);
+        expect(headerText()).toContain("acme/web #517");
+        expect(root.querySelector(".nimbus-related__capture-refusal")).toBeNull();
+      },
+    );
+
+    const clipOutcomes: [string, Outcome][] = [
+      ["a refusal", { value: { kind: "clip", ok: false, reason: "payload_too_large" } }],
+      ["a failure", unreachable],
+    ];
+
+    it.each(clipOutcomes)(
+      "%s for a clip of the page it left is dropped",
+      async (_label, outcome) => {
+        const r = route({
+          pinned: [missOn482(false)],
+          hold: { kind: "clip" },
+          answers: { capture: { kind: "capture", ok: true, capture: CAPTURE, preview: PREVIEW } },
+        });
+        const root = await mountOn482();
+        clickCapture(root);
+        await advanceTimers(0);
+        clickPreviewSend(root);
+        await advanceTimers(0);
+        expect(r.parked()).toBe(true);
+        expect(headerText()).toContain("Saving to Nimbus");
+
+        await rereadTo517(root);
+        const before = r.sent.length;
+        r.settle(outcome);
+        await advanceTimers(0);
+
+        expect(kindsSince(r, before)).toEqual([]);
+        expect(headerText()).toContain("acme/web #517");
+        expect(root.querySelector(".nimbus-related__capture-refusal")).toBeNull();
+      },
+    );
+
+    const relatedOutcomes: [string, Outcome][] = [
+      ["an answer", { value: { kind: "related", ok: true, items: [hit] } }],
+      ["a failure", unreachable],
+    ];
+
+    it.each(relatedOutcomes)(
+      "%s for Related on the page it left is dropped",
+      async (_label, outcome) => {
+        const r = route({ pinned: [resolvedFor(PR482)], hold: { kind: "related" } });
+        const root = await mountOn482();
+        await advanceTimers(0);
+        expect(r.parked()).toBe(true);
+
+        await rereadTo517(root);
+        await vi.waitFor(() => expect(status()).toBe("No related items found."));
+        r.settle(outcome);
+        await advanceTimers(0);
+
+        expect(status()).toBe("No related items found.");
+        expect(root.querySelector('details[data-lane="related"]')?.textContent).not.toContain(
+          "Doc",
+        );
+      },
+    );
+
+    // "Check again" re-resolves the pinned page; a re-read landing while that
+    // resolve is out must keep the header on the page it moved to.
+    const recheckOutcomes: [string, Outcome, string][] = [
+      ["an answer", { value: resolvedFor(PR482) }, "acme/web #482"],
+      ["a failure", unreachable, "Couldn't connect to Nimbus."],
+    ];
+
+    it.each(recheckOutcomes)(
+      "%s for a re-check of the page it left is dropped",
+      async (_label, outcome, stale) => {
+        const r = route({
+          pinned: [missOn482(true)],
+          hold: { kind: "resolve", nth: 1 },
+          answers: { fetch: { kind: "fetch", ok: false, recognition: PR482, reason: "timeout" } },
+        });
+        const root = await mountOn482();
+        clickFetch(root);
+        await advanceTimers(0);
+        clickPreviewSend(root);
+        await advanceTimers(0);
+        const checkAgain = [...root.querySelectorAll<HTMLButtonElement>("button")].find(
+          (button) => button.textContent === "Check again",
+        );
+        if (checkAgain === undefined) throw new Error("no Check again control");
+        checkAgain.click();
+        await advanceTimers(0);
+        expect(r.parked()).toBe(true);
+
+        await rereadTo517(root);
+        r.settle(outcome);
+        await advanceTimers(0);
+
+        expect(headerText()).toContain("acme/web #517");
+        expect(headerText()).not.toContain(stale);
+      },
+    );
+
+    // A failed run for the OLD item must neither paint its failure into the new
+    // item's lane nor leave that lane marked as failed — a lane that is not
+    // `collapsed` never starts a run on expand, so the new item could not run.
+    it("a failed agent run of the page it left leaves the new page's lane runnable", async () => {
+      const r = route({
+        pinned: [resolvedFor(PR482)],
+        hold: { kind: "agent-run" },
+        answers: {
+          "agent-run": { kind: "agent-state", lane: "impact", state: { kind: "done", brief: "b" } },
+        },
+      });
+      const root = await mountOn482();
+      const impact = (): HTMLDetailsElement | null =>
+        root.querySelector<HTMLDetailsElement>('[data-lane="impact"]');
+      const expandImpact = async (): Promise<void> => {
+        const lane = impact();
+        if (lane === null) throw new Error("impact lane not rendered");
+        // `open = true` BEFORE dispatching — see the identical note above.
+        lane.open = true;
+        lane.dispatchEvent(new Event("toggle"));
+        await advanceTimers(0);
+      };
+      await expandImpact();
+      expect(r.parked()).toBe(true);
+
+      await rereadTo517(root);
+      r.settle(unreachable);
+      await advanceTimers(0);
+      expect(impact()?.textContent).not.toContain("Couldn't connect to Nimbus.");
+
+      await expandImpact();
+      expect(r.sent.filter((m) => m.kind === "agent-run").map((m) => m.pageUrl)).toEqual([
+        expect.stringContaining("/pull/482"),
+        expect.stringContaining("/pull/517"),
+      ]);
+    });
+  });
 });
 
 describe("the dashboard panel", () => {
@@ -3323,6 +4327,56 @@ describe("the glossary lane", () => {
     expect(root.textContent).toContain("That's a passage, not a term");
     // No term to name, so the lane falls back to its generic title.
     expect(lane(root)?.querySelector("summary")?.textContent).toContain("Definition");
+  });
+
+  // The same fallback with NO recognised surface at all: there is no surface
+  // to look an override title up under, and the lane still renders its refusal.
+  it("titles a refused passage 'Definition' on a page the recogniser rejects", async () => {
+    const sent: string[] = [];
+    const root = await mountWith((msg) => {
+      const kind = String(msg["kind"]);
+      sent.push(kind);
+      return kind === "resolve" ? UNRECOGNISED_RESOLVE : { kind: "related", ok: true, items: [] };
+    });
+    deliver("y".repeat(400), "define");
+    await flush();
+
+    expect(sent).not.toContain("agent-run");
+    expect(lane(root)?.querySelector("summary")?.textContent).toContain("Definition");
+    expect(lane(root)?.textContent).toContain("That's a passage, not a term");
+  });
+
+  // Two Define gestures in quick succession are one question: the in-flight
+  // latch drops the second until the first has answered.
+  it("a second Define while the first is still in flight sends one agent-run", async () => {
+    const runs: Array<Record<string, unknown>> = [];
+    let answer: (value: unknown) => void = () => {};
+    const root = await mountWith((msg) => {
+      const kind = String(msg["kind"]);
+      if (kind === "resolve") {
+        return PR_RESOLVE;
+      }
+      if (kind === "related") {
+        return { kind: "related", ok: true, items: [] };
+      }
+      if (kind === "agent-run") {
+        runs.push(msg);
+        return new Promise((resolve) => {
+          answer = resolve;
+        });
+      }
+      return { kind: "agent-state", lane: msg["lane"], state: { kind: "collapsed" } };
+    });
+
+    deliver("idempotency key", "define");
+    await flush();
+    deliver("idempotency key", "define");
+    await flush();
+    expect(runs).toHaveLength(1);
+
+    answer({ kind: "agent-state", lane: "glossary", state: { kind: "done", brief: "A token…" } });
+    await flush();
+    expect(root.textContent).toContain("A token…");
   });
 
   // The decision this slice turns on: glossary's input is not the page, so no

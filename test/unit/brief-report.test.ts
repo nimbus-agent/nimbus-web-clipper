@@ -104,6 +104,33 @@ describe("isBriefReport", () => {
     expect(isBriefReport("report")).toBe(false);
     expect(isBriefReport(undefined)).toBe(false);
   });
+
+  it("rejects a citation that is not an object at all", () => {
+    expect(isBriefReport(reportWithCitation(null))).toBe(false);
+    expect(isBriefReport(reportWithCitation("One"))).toBe(false);
+  });
+
+  // Every optional string field is accepted when present and a string, and
+  // refuses the whole report when present and anything else.
+  const full = {
+    kind: "source",
+    title: "One",
+    url: "https://example.com/one",
+    clipId: "nimbus:clip:1",
+    quote: "the exact words",
+  };
+
+  it("accepts a citation carrying every optional string field", () => {
+    expect(isBriefReport(reportWithCitation(full))).toBe(true);
+  });
+
+  it.each([
+    ["url", { ...full, url: 1 }],
+    ["clipId", { ...full, clipId: {} }],
+    ["quote", { ...full, quote: ["the exact words"] }],
+  ])("rejects a citation whose %s is present but not a string", (_field, citation) => {
+    expect(isBriefReport(reportWithCitation(citation))).toBe(false);
+  });
 });
 
 describe("visibleGaps", () => {

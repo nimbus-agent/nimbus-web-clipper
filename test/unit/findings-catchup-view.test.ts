@@ -82,6 +82,24 @@ describe("renderCatchupFindings", () => {
     expect(note?.textContent).toContain("acme/web");
   });
 
+  test("speaks of a single collaborator in the singular", () => {
+    const el = renderCatchupFindings(
+      document,
+      findings({
+        involvement: {
+          ownedServices: [],
+          activeRepos: [],
+          incidentServices: [],
+          collaboratorPersonIds: ["person:2"],
+        },
+      }),
+      NOW,
+    );
+    const note = el.querySelector(".nimbus-findings__provenance")?.textContent ?? "";
+    expect(note).toContain("1 collaborator");
+    expect(note).not.toContain("collaborators");
+  });
+
   test("renders a collaborator count when collaboratorPersonIds is non-empty", () => {
     const el = renderCatchupFindings(
       document,
