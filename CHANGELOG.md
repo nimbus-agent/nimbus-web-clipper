@@ -8,6 +8,14 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Changed
+
+- **The privacy policy names the two things it still left out.** Since 0.6.0
+  the extension has kept a one-minute copy of your gateway's report on which of
+  its connectors are working, and since 0.9.0 the repositories you bind to a
+  Nimbus service for deploy readiness. Both stay on your machine like everything
+  else the policy lists, and both are now named in it.
+
 ## [0.10.0] - 2026-09-21
 
 ### Changed

@@ -1,6 +1,6 @@
 # Privacy Policy — Nimbus Companion
 
-_Last updated: 2026-08-24_
+_Last updated: 2026-10-03_
 
 Nimbus Companion is a local-first browser extension. It does not collect,
 transmit, sell, or share any personal data, and it contains no analytics or
@@ -9,7 +9,8 @@ telemetry.
 ## What the extension does
 
 When you clip a page, open the related-items panel, run one of the panel's
-agent lanes, or ask a research brief, the extension sends what you asked about —
+agent lanes, check whether a change is safe to deploy, or ask a research brief,
+the extension sends what you asked about —
 the page content, your selection, or the address, title and readable text of
 each tab you picked for a brief — to a Nimbus gateway running on your own
 machine at `127.0.0.1` (loopback). **That is
@@ -45,12 +46,15 @@ shared.
   use it in a brief or clear it.
 - **Answers the gateway sent back.** Agent-lane briefs and research-brief
   reports are cached so reopening the panel does not re-ask; they expire, and
-  unpairing clears them.
+  unpairing clears them. The gateway's report of which of its connectors are
+  working is kept for one minute, for the same reason.
 - **A local disclosure log.** One row per research brief you ran — when, the
   question, how many sources, and which model answered — so you can see what was
   asked on your behalf. You can clear it from the Options page.
 - **Your settings.** The sites you configured for recognition, which of them may
-  show the ambient cue, and your preview / index-search preferences.
+  show the ambient cue, your preview / index-search preferences, and the
+  repositories you have bound to a Nimbus service for the deploy-readiness
+  check.
 
 Uninstalling the extension removes all of it.
 
