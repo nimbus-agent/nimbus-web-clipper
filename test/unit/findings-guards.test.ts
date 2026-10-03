@@ -495,6 +495,17 @@ describe("decisionsFindingsFrom", () => {
     expect(decisionsFindingsFrom({ ...validDecisions, stats: s })).toBeUndefined();
     expect(decisionsFindingsFrom({ ...validDecisions, stats: {} })).toBeUndefined();
   });
+
+  test("a present but non-object stats is rejected, not bypassed by a flat count", () => {
+    // `stats` being present is what selects the wire shape; a malformed one must not
+    // fall back to the projection's flat `truncatedSources` sitting beside it.
+    expect(
+      decisionsFindingsFrom({ ...validDecisions, stats: null, truncatedSources: 2 }),
+    ).toBeUndefined();
+    expect(
+      decisionsFindingsFrom({ ...validDecisions, stats: 2, truncatedSources: 2 }),
+    ).toBeUndefined();
+  });
 });
 
 describe("DecisionsFindings pins the fields we read", () => {

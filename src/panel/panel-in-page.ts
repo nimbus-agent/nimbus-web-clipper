@@ -15,6 +15,7 @@ import {
   isRecognitionResponse,
   isRelatedResponse,
   isResolveResponse,
+  type ResolveResponse,
 } from "../shared/messages.ts";
 import { PANEL_HOST_ID, type PanelSelection } from "../shared/panel-host.ts";
 import type { ClipPreview } from "../shared/preview.ts";
@@ -442,6 +443,63 @@ function readContext(): { title: string; canonicalUrl?: string; selection: strin
   };
 }
 
+/**
+ * The last phase of {@link headerFrom}: a recognised page whose answer is about ONE
+ * indexed item — found (connector data or a captured copy), ambiguous, or not
+ * indexed. `headerFrom` reaches this only after its refusal, unrecognised, `home` and
+ * `file` arms, so `res.outcome` here is the real answer, never the inert placeholder
+ * those two surfaces carry. Extracted to bring `headerFrom` under the
+ * cognitive-complexity gate (Sonar `S3776`); the header states are unchanged.
+ */
+function itemOutcomeHeader(
+  res: Extract<ResolveResponse, { ok: true }>,
+  surface: string,
+  nowMs: number,
+  fetchSent: boolean,
+): HeaderState {
+  const outcome = res.outcome;
+  if (outcome.kind === "found") {
+    // A captured copy is keyed on the ITEM, never on "we just captured it" —
+    // see `isCapturedCopy`'s own doc comment. Without this branch, a COLD
+    // panel open on a page captured last week would present the copy as
+    // ordinary connector data, which is exactly the dishonesty the `captured`
+    // header arm exists to prevent — capturing IN this session is not the
+    // only way to reach it.
+    if (isCapturedCopy(outcome.item)) {
+      return { kind: "captured", item: outcome.item, ageNowMs: nowMs };
+    }
+    return { kind: "resolved", surface, item: outcome.item, matchKind: outcome.matchKind, nowMs };
+  }
+  if (outcome.kind === "ambiguous") {
+    return {
+      kind: "ambiguous",
+      surface,
+      candidates: outcome.candidates,
+      truncated: outcome.truncated,
+    };
+  }
+  // `unresolvable` means the gateway could not parse the URL we sent — a client
+  // bug, not a user-facing distinction. It reads as "not indexed" either way.
+  //
+  // `res.recognition.ok` is guaranteed true whenever `surface` is non-null (see
+  // `surfaceLine`), and `headerFrom` passes a non-null one, so this guard is
+  // unreachable in practice; it exists only so TS can narrow `product` off
+  // `res.recognition` without a non-null assertion.
+  if (!res.recognition.ok) {
+    return { kind: "unrecognised" };
+  }
+  return {
+    kind: "not-indexed",
+    surface,
+    product: res.recognition.product,
+    // Once a fetch has been sent for this panel, `fetchable` is forced false on
+    // every subsequent resolve — including a recovery re-resolve that comes back
+    // as another miss. See the `fetchSent` doc comment in `createPanel` for why
+    // the button must not return.
+    fetchable: outcome.fetchable && !fetchSent,
+  };
+}
+
 function headerFrom(res: unknown, nowMs: number, fetchSent: boolean): HeaderState {
   if (!isResolveResponse(res)) {
     return { kind: "error", surface: null, message: "Couldn't read Nimbus's answer." };
@@ -493,46 +551,7 @@ function headerFrom(res: unknown, nowMs: number, fetchSent: boolean): HeaderStat
     }
     return { kind: "file", surface, banner: FILE_MISS_SENTENCES[file.reason](file.repo) };
   }
-  const outcome = res.outcome;
-  if (outcome.kind === "found") {
-    // A captured copy is keyed on the ITEM, never on "we just captured it" —
-    // see `isCapturedCopy`'s own doc comment. Without this branch, a COLD
-    // panel open on a page captured last week would present the copy as
-    // ordinary connector data, which is exactly the dishonesty the `captured`
-    // header arm exists to prevent — capturing IN this session is not the
-    // only way to reach it.
-    if (isCapturedCopy(outcome.item)) {
-      return { kind: "captured", item: outcome.item, ageNowMs: nowMs };
-    }
-    return { kind: "resolved", surface, item: outcome.item, matchKind: outcome.matchKind, nowMs };
-  }
-  if (outcome.kind === "ambiguous") {
-    return {
-      kind: "ambiguous",
-      surface,
-      candidates: outcome.candidates,
-      truncated: outcome.truncated,
-    };
-  }
-  // `unresolvable` means the gateway could not parse the URL we sent — a client
-  // bug, not a user-facing distinction. It reads as "not indexed" either way.
-  //
-  // `res.recognition.ok` is guaranteed true whenever `surface` is non-null (see
-  // `surfaceLine`), so this guard is unreachable in practice; it exists only so
-  // TS can narrow `product` off `res.recognition` without a non-null assertion.
-  if (!res.recognition.ok) {
-    return { kind: "unrecognised" };
-  }
-  return {
-    kind: "not-indexed",
-    surface,
-    product: res.recognition.product,
-    // Once a fetch has been sent for this panel, `fetchable` is forced false on
-    // every subsequent resolve — including a recovery re-resolve that comes back
-    // as another miss. See the `fetchSent` doc comment in `createPanel` for why
-    // the button must not return.
-    fetchable: outcome.fetchable && !fetchSent,
-  };
+  return itemOutcomeHeader(res, surface, nowMs, fetchSent);
 }
 
 /**
@@ -1422,6 +1441,39 @@ function createPanel(body: HTMLElement): {
     }
   }
 
+  /** `paint`'s last step: the deploy-readiness section, below the shell, on a
+   *  surface it belongs on — re-appended into the panel's one `deployHost` (see
+   *  that element's doc comment for why it is never re-created). `shown` is the
+   *  header this repaint rendered, read for the item id it names. Extracted to
+   *  bring `paint` under the cognitive-complexity gate (Sonar `S3776`); what
+   *  renders is unchanged. */
+  function appendDeploySection(shown: HeaderState): void {
+    if (
+      pinnedRecognition?.ok === true &&
+      pinnedRecognition.scope !== undefined &&
+      // `origin` is set unconditionally by `recognise()` alongside `scope` —
+      // see `Recognition.origin`'s doc comment — so this check never actually
+      // fails once the `scope` one above passed. It stays here anyway because
+      // TS narrows only the property it was asked about: without this,
+      // `pinnedRecognition.origin` below is still `string | undefined`.
+      pinnedRecognition.origin !== undefined &&
+      deployBelongsOnSurface(pinnedRecognition.kind)
+    ) {
+      const itemId = shownItemId(shown);
+      body.append(deployHost);
+      mountDeploySection(
+        deployHost,
+        {
+          product: pinnedRecognition.product,
+          origin: pinnedRecognition.origin,
+          scope: pinnedRecognition.scope,
+          ...(itemId === undefined ? {} : { itemId }),
+        },
+        sendToWorker,
+      );
+    }
+  }
+
   function paint(): void {
     readOpenState();
     // One timestamp for this whole repaint, not a different one per lane —
@@ -1540,30 +1592,7 @@ function createPanel(body: HTMLElement): {
       ),
     );
     attachLaneToggles();
-    if (
-      pinnedRecognition?.ok === true &&
-      pinnedRecognition.scope !== undefined &&
-      // `origin` is set unconditionally by `recognise()` alongside `scope` —
-      // see `Recognition.origin`'s doc comment — so this check never actually
-      // fails once the `scope` one above passed. It stays here anyway because
-      // TS narrows only the property it was asked about: without this,
-      // `pinnedRecognition.origin` below is still `string | undefined`.
-      pinnedRecognition.origin !== undefined &&
-      deployBelongsOnSurface(pinnedRecognition.kind)
-    ) {
-      const itemId = shownItemId(shown);
-      body.append(deployHost);
-      mountDeploySection(
-        deployHost,
-        {
-          product: pinnedRecognition.product,
-          origin: pinnedRecognition.origin,
-          scope: pinnedRecognition.scope,
-          ...(itemId === undefined ? {} : { itemId }),
-        },
-        sendToWorker,
-      );
-    }
+    appendDeploySection(shown);
   }
 
   async function loadHeader(): Promise<void> {

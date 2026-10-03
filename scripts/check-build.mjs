@@ -54,10 +54,11 @@ for (const target of TARGETS) {
     }
   }
 
-  // `@nimbus-dev/sdk` must stay `import type`-only (see src/shared/findings.ts's
-  // header comment): a value import would put SDK runtime code into the shipped
-  // bundle. Nothing else enforces this — Biome's `useImportType` is not
-  // configured here, and esbuild does not typecheck.
+  // `@nimbus-dev/sdk` must stay type-only — `import type`, and `export type … from`
+  // for a re-export (see src/shared/findings.ts's header comment): a value import
+  // or re-export would put SDK runtime code into the shipped bundle. Nothing else
+  // enforces this — Biome's `useImportType` is not configured here, and esbuild
+  // does not typecheck.
   //
   // This reads esbuild's own metafile (`metafile: true` in esbuild.mjs, written
   // to `dist/<target>/meta.json`) and asserts none of its `inputs` resolved to a
@@ -83,7 +84,7 @@ for (const target of TARGETS) {
       );
       if (sdkInputs.length > 0) {
         failures.push(
-          `${target}: bundle pulled in @nimbus-dev/sdk at runtime (${sdkInputs.join(", ")}) — it must stay import-type-only`,
+          `${target}: bundle pulled in @nimbus-dev/sdk at runtime (${sdkInputs.join(", ")}) — it must stay type-only`,
         );
       }
     }

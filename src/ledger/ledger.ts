@@ -209,4 +209,9 @@ verifyButton?.addEventListener("click", () => void runVerify());
 proveButton?.addEventListener("click", () => void runProve());
 olderButton?.addEventListener("click", () => void loadWindow(oldestShownId()));
 
-void loadWindow();
+// Not a top-level `await` (S7785), and it cannot be one: esbuild bundles this page
+// with `format: "iife"` (esbuild.mjs), and that format rejects top-level await as a
+// build error ("Top-level await is currently not supported with the "iife" output
+// format"). The marker must stay a TRAILING comment on the reported line: Sonar
+// anchors NOSONAR to the issue's own line, and ignores one written above it.
+void loadWindow(); // NOSONAR S7785: the "iife" build rejects top-level await

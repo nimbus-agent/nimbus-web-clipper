@@ -8,6 +8,7 @@ import {
   type ClipPostResult,
   type FetchError,
   type FetchOutcome,
+  FILE_MISS_REASONS,
   type FileMissReason,
   type FileResolution,
   type PairError,
@@ -436,8 +437,6 @@ export async function resolveItem(
   return { ok: false, reason: "server_error" };
 }
 
-const FILE_MISS_REASONS: readonly FileMissReason[] = ["remote_not_tracked", "file_not_indexed"];
-
 function parseFileResolution(v: unknown): FileResolution | null {
   if (!isObject(v)) {
     return null;
@@ -453,7 +452,7 @@ function parseFileResolution(v: unknown): FileResolution | null {
   if (typeof reason !== "string" || typeof repo !== "string") {
     return null;
   }
-  return FILE_MISS_REASONS.includes(reason as FileMissReason)
+  return FILE_MISS_REASONS.has(reason)
     ? { kind: "miss", reason: reason as FileMissReason, repo }
     : null;
 }

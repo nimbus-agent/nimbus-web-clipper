@@ -36,6 +36,7 @@ import {
   type ClipError,
   type FetchError,
   type FetchOutcome,
+  FILE_MISS_REASONS,
   type FileResolution,
   type LaneState,
   type PairError,
@@ -827,8 +828,6 @@ function isAgentLaneList(v: unknown): v is readonly AgentLane[] {
   return Array.isArray(v) && v.every((x) => (AGENT_LANES as readonly string[]).includes(x));
 }
 
-const FILE_MISS_REASONS: readonly string[] = ["remote_not_tracked", "file_not_indexed"];
-
 function isFileResolution(v: unknown): v is FileResolution {
   if (!isObject(v)) {
     return false;
@@ -842,7 +841,7 @@ function isFileResolution(v: unknown): v is FileResolution {
     // and a reason it did not send is a bug, not an upstream variation.
     return (
       typeof v["reason"] === "string" &&
-      FILE_MISS_REASONS.includes(v["reason"]) &&
+      FILE_MISS_REASONS.has(v["reason"]) &&
       typeof v["repo"] === "string"
     );
   }

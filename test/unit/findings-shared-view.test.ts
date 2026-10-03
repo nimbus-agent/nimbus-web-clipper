@@ -17,38 +17,22 @@ describe("findingLink", () => {
     expect(el.textContent).toBe("Title");
   });
 
-  test("renders text, not a link, for a javascript: url", () => {
-    const el = findingLink(document, "Title", "javascript:alert(1)");
+  test.each([
+    ["a javascript: url", "javascript:alert(1)"],
+    ["a data: url", "data:text/plain,hello"],
+    ["a relative url (findingLink passes no base)", "/relative/path"],
+    ["an unparseable url string", "not a url at all"],
+  ])("renders text, not a link, for %s", (_case, url) => {
+    const el = findingLink(document, "Title", url);
     expect(el.tagName).toBe("SPAN");
     expect(el.querySelector("a")).toBeNull();
-    // The claim is still shown - safeHttpUrl's own rule.
+    // The claim is still shown: safeHttpUrl's contract is that a rejected URL is
+    // shown as text, never hidden.
     expect(el.textContent).toBe("Title");
   });
 
   test("renders text for a null url", () => {
     expect(findingLink(document, "Title", null).tagName).toBe("SPAN");
-  });
-
-  test("renders text, not a link, for a data: url", () => {
-    const el = findingLink(document, "Title", "data:text/plain,hello");
-    expect(el.tagName).toBe("SPAN");
-    expect(el.querySelector("a")).toBeNull();
-    // safeHttpUrl's contract: a rejected URL is shown as text, never hidden.
-    expect(el.textContent).toBe("Title");
-  });
-
-  test("renders text, not a link, for a relative url (findingLink passes no base)", () => {
-    const el = findingLink(document, "Title", "/relative/path");
-    expect(el.tagName).toBe("SPAN");
-    expect(el.querySelector("a")).toBeNull();
-    expect(el.textContent).toBe("Title");
-  });
-
-  test("renders text, not a link, for an unparseable url string", () => {
-    const el = findingLink(document, "Title", "not a url at all");
-    expect(el.tagName).toBe("SPAN");
-    expect(el.querySelector("a")).toBeNull();
-    expect(el.textContent).toBe("Title");
   });
 });
 

@@ -140,7 +140,7 @@ describe("renderBindingsTable status (C10.3 slice 2)", () => {
     const table = renderBindingsTable(bindings, NOOP, statuses, NOOP);
     const text = table.textContent ?? "";
     expect(text).toMatch(/new/);
-    expect(table.querySelectorAll("button[data-proposed]").length).toBe(1);
+    expect(table.querySelectorAll("button[data-proposed]")).toHaveLength(1);
   });
 
   test("the correction button reports the binding and the proposed id", () => {
@@ -248,7 +248,7 @@ describe("renderBindingsTable status (C10.3 slice 2)", () => {
       { product: "github" as const, origin: "https://github.com", scope: "acme/a", serviceId: "a" },
     ];
     const table = renderBindingsTable(bindings, NOOP);
-    expect(table.querySelectorAll("button[data-proposed]").length).toBe(0);
+    expect(table.querySelectorAll("button[data-proposed]")).toHaveLength(0);
     // Not just "no correction button" — no Status COLUMN at all. A regression
     // that always rendered the header (with empty, button-less cells) would
     // still pass the assertion above, so the header itself has to be checked.

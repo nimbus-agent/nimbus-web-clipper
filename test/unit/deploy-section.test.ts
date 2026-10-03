@@ -144,11 +144,11 @@ describe("mountDeploySection", () => {
       .mockResolvedValueOnce({ kind: "service-bind", ok: false, reason: "unknown_service" });
     mountDeploySection(host, ctx, send);
     await flush();
-    expect(host.querySelectorAll('[role="group"] button').length).toBe(2);
+    expect(host.querySelectorAll('[role="group"] button')).toHaveLength(2);
 
     host.querySelector("form")?.dispatchEvent(new Event("submit", { cancelable: true }));
     await flush();
-    expect(host.querySelectorAll('[role="group"] button').length).toBe(2);
+    expect(host.querySelectorAll('[role="group"] button')).toHaveLength(2);
     expect(host.textContent).toContain("[metrics.dora.");
   });
 

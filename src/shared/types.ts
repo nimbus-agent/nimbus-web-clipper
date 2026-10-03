@@ -359,6 +359,17 @@ export type ResolveError =
 export type FileMissReason = "remote_not_tracked" | "file_not_indexed";
 
 /**
+ * Every `FileMissReason`, for the two guards that check a raw string against the
+ * closed set: the gateway wire parser in `gateway-client.ts` and the message guard in
+ * `messages.ts`. Built from `FileMissReason` literals, so a misspelt reason is a
+ * compile error; typed `ReadonlySet<string>` so `has` accepts the raw string.
+ */
+export const FILE_MISS_REASONS: ReadonlySet<string> = new Set<FileMissReason>([
+  "remote_not_tracked",
+  "file_not_indexed",
+]);
+
+/**
  * What the file probe learned. `miss` has a sentence, `unsupported` is a gateway older
  * than the route and says nothing, and `found` is the only arm that offers lanes.
  *

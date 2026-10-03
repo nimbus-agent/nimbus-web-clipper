@@ -1625,8 +1625,9 @@ without ever widening what a malformed payload could break.
 more of the seven lanes' own types) is a **type-only devDependency** — unlike
 `@mozilla/readability`, which the "bundled, no runtime deps" rule (above)
 inlines as real running code into `capture.js`, the SDK contributes no code to
-any bundle at all. Every import from it, across `src/`, is `import type` —
-never a value import: a value import would pull SDK code into the shipped
+any bundle at all. Every import from it, across `src/`, is `import type`, and
+`src/shared/findings.ts` re-exports its vocabulary with `export type … from` —
+never a value import or re-export: either would pull SDK code into the shipped
 bundle, and this extension ships with no `node_modules` for it to come from at
 runtime instead. The SDK exists to give this client (and `nimbus-vscode`, and
 eventually every other consumer) one shared, versioned vocabulary for the

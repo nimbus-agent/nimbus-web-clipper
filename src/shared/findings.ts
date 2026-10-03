@@ -7,40 +7,34 @@
 // typed lane answer: projection, guard, renderer" — the phase's design spec
 // was pruned once C8 shipped and lives on in git history.
 //
-// Types come from @nimbus-dev/sdk. Every import from the SDK is
-// `import type`: a value import would put SDK code into the shipped bundle,
-// which the "bundled, no runtime deps" rule forbids — see `docs/architecture.md`
-// for how `scripts/check-build.mjs` enforces that at build time. The one
+// Types come from @nimbus-dev/sdk. Every import from the SDK is `import type`,
+// and the re-export below is `export type … from`: a value import or re-export
+// would put SDK code into the shipped bundle, which the "bundled, no runtime
+// deps" rule forbids — see `docs/architecture.md` for how
+// `scripts/check-build.mjs` enforces that at build time. The one
 // hand-declared type below, `DecisionsEntry`, is not a mirror standing in for
 // something the SDK does not publish (it publishes a wider `DecisionsEntry`
 // of its own) — it is a deliberate narrowing of that wider shape; see its own
 // comment for why.
 import type {
-  CatchupItem,
   CatchupSection,
   DecisionEvidence,
-  Evidence,
-  EvidenceKind,
   ExpertFinding,
   ExtractionSource,
-  GapNote,
-  GlossaryDefinitionSource,
   GlossaryEntry,
   GlossaryMatchedVia,
-  GlossarySourceRef,
   ImpactFinding,
   OwnershipCoverage,
-  OwnershipOwner,
   OwnershipTargetView,
-  SynthesisDiscardReason,
-  SynthesisProvenance,
   WhyChangeSubject,
   WhyFinding,
   WhyItemSubject,
-  WhyLane,
   WhySubject,
 } from "@nimbus-dev/sdk";
 
+// The SDK vocabulary the rest of `src/` reads through this module. Re-exported
+// straight from the SDK rather than through the import above, which names only
+// what this file uses itself.
 export type {
   CatchupItem,
   CatchupSection,
@@ -65,7 +59,7 @@ export type {
   WhyItemSubject,
   WhyLane,
   WhySubject,
-};
+} from "@nimbus-dev/sdk";
 
 /**
  * The `why` lane's payload, as a CLIENT PROJECTION of `WhyBrief`.

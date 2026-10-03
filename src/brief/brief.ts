@@ -391,4 +391,9 @@ async function start(): Promise<void> {
   await loadTabs();
 }
 
-void start().catch(() => undefined);
+// Not a top-level `await` (S7785), and it cannot be one: esbuild bundles this page
+// with `format: "iife"` (esbuild.mjs), and that format rejects top-level await as a
+// build error ("Top-level await is currently not supported with the "iife" output
+// format"). The marker must stay a TRAILING comment on the reported line: Sonar
+// anchors NOSONAR to the issue's own line, and ignores one written above it.
+void start().catch(() => undefined); // NOSONAR S7785: the "iife" build rejects top-level await

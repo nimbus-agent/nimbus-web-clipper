@@ -836,6 +836,20 @@ describe("handleResolve", () => {
       });
     });
 
+    it("reports a 403 with no scope detail with no scopeGap, never a fabricated one", async () => {
+      const res = await handleResolve(
+        {
+          ...fileDeps({ kind: "unsupported" }),
+          resolveFile: async () => ({ ok: false as const, reason: "insufficient_scope" as const }),
+        },
+        { kind: "resolve", pageUrl: FILE },
+      );
+      expect(res.ok).toBe(false);
+      if (res.ok) return;
+      expect(res.reason).toBe("insufficient_scope");
+      expect("scopeGap" in res).toBe(false);
+    });
+
     it("degrades every other probe failure to unsupported, silently", async () => {
       // A gateway that is down is not a gateway that refused. The page stays recognised,
       // the header renders, and nothing is claimed about the file.
@@ -2219,6 +2233,20 @@ describe("handleAgentState", () => {
       reason: "insufficient_scope",
       scopeGap: { label: "chrome", required: "resolve", granted: [] },
     });
+  });
+
+  it("a resolve 403 with no scope detail fails with no scopeGap, never a fabricated one", async () => {
+    const res = await handleAgentState(
+      {
+        getOrigins: async () => [],
+        getConnection: async () => conn,
+        resolveItem: async () => ({ ok: false as const, reason: "insufficient_scope" as const }),
+        getRun: async () => null,
+      },
+      { kind: "agent-state", lane: "impact", pageUrl: "https://github.com/a/b/pull/1" },
+    );
+    expect(res.state).toEqual({ kind: "failed", reason: "insufficient_scope" });
+    expect("scopeGap" in res.state).toBe(false);
   });
 });
 

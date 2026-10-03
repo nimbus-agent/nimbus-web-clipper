@@ -327,7 +327,7 @@ describe("renderBindForm", () => {
     expect(text).toMatch(/no \[metrics\.dora\.checkout\] block/);
     // Never both: the mapping sentence above the refusal reads as a contradiction.
     expect(text).not.toMatch(/Nimbus maps this repository/);
-    expect(form.querySelectorAll('[role="group"] button').length).toBe(2);
+    expect(form.querySelectorAll('[role="group"] button')).toHaveLength(2);
   });
 
   // LOAD-BEARING: a `noteOverride` is only ever a bind REFUSAL, and `seed` is
