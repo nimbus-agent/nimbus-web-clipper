@@ -808,10 +808,10 @@ function isBriefMessage(v: unknown): v is BriefMessage {
  * Fan-out for the six brief message kinds.
  *
  * A separate function, not six branches in the router: the router already carries
- * nineteen branches, and has since been split into four order-preserving slices
+ * twenty-four branches, and has since been split into five order-preserving slices
  * (`routeCapturePair` / `routeIndexReads` / `routeQueueAndConnection` /
- * `routeSubRouters`) to stay under Sonar's cognitive-complexity cap (S3776, 15) —
- * having earlier needed `openPanelForCue` extracted for the same reason.
+ * `routeDeploy` / `routeSubRouters`) to stay under Sonar's cognitive-complexity cap
+ * (S3776, 15) — having earlier needed `openPanelForCue` extracted for the same reason.
  */
 async function routeBriefMessage(message: BriefMessage): Promise<unknown> {
   if (message.kind === "brief-tabs") {
@@ -1059,7 +1059,7 @@ addMenuClickListener((menuItemId, tabId, selectionText) => {
  * act on.
  *
  * Lives outside the message listener rather than inline: the listener is a flat
- * router (now four order-preserving slices carrying nineteen branches between
+ * router (now five order-preserving slices carrying twenty-four branches between
  * them), and a nested `if` inside one of them costs more cognitive complexity
  * than the branch itself (SonarCloud S3776, which this pushed to 16 against a
  * threshold of 15). The router routes; this decides.
@@ -1165,7 +1165,7 @@ function replyAfterQueueSync(mutation: Promise<QueueResponse>, respond: Respond)
 }
 
 /**
- * The router is split into four in ORDER-PRESERVING slices, not for tidiness:
+ * The router is split into five in ORDER-PRESERVING slices, not for tidiness:
  * one function carrying every branch is past S3776's cognitive-complexity cap,
  * and a message must still meet the same guards in the same sequence, because
  * the guards are not disjoint by construction — only by the order they run in.
@@ -1348,8 +1348,8 @@ function routeQueueAndConnection(message: unknown, respond: Respond): Routed {
 }
 
 /**
- * The four deploy-readiness kinds (C10). A dedicated slice, not folded into one
- * of the four above: each arm here is guard-narrowed before the handler ever
+ * The five deploy-readiness kinds (C10). A dedicated slice, not folded into one
+ * of the other four: each arm here is guard-narrowed before the handler ever
  * sees the payload — `handleServiceBind` reads `req.binding.defaultBranch`
  * unguarded, trusting that `isServiceBindRequest` has already rejected a
  * malformed one.

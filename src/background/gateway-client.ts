@@ -146,12 +146,14 @@ export async function confirmPair(
 /**
  * Is a Nimbus gateway answering on this origin?
  *
- * The only tokenless call this client makes. That is exactly why the loopback
- * check is repeated here rather than assumed: every other route carries a bearer
- * token and inherits the origin discipline of the stored connection, so this must
- * not become the one place I6 is enforced more loosely. Today `DISCOVERY_CANDIDATES`
- * is a frozen constant and the check cannot fail — it is asserted anyway, for
- * whoever makes that list configurable.
+ * Discovery's probe, sent before any connection exists, to candidate origins
+ * nothing else has checked. That is exactly why the loopback check is repeated
+ * here rather than assumed: every other route goes to an origin that already
+ * passed it — the pairing request to one `handlePair` has just checked, and
+ * everything after pairing to the stored connection's, bearer or not — so this
+ * must not become the one place I6 is enforced more loosely. Today
+ * `DISCOVERY_CANDIDATES` is a frozen constant and the check cannot fail — it is
+ * asserted anyway, for whoever makes that list configurable.
  *
  * Returns a plain boolean: a probe has exactly two outcomes the caller can act
  * on, and any richer result would tempt a caller into treating "the gateway said

@@ -2477,7 +2477,7 @@ describe("discover route", () => {
     const res = await harness.emitMessage({ kind: "discover" });
 
     expect(res).toEqual({ kind: "discover", origin: "http://127.0.0.1:7474" });
-    // No Authorization header on the only tokenless route in the client.
+    // No Authorization header: discovery runs before there is any token to send.
     const init = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock
       .calls[0]?.[1];
     expect(JSON.stringify(init)).not.toContain("Authorization");
