@@ -169,12 +169,20 @@ rather than leaving the caller hanging:
 
 ```ts
 if (isClipRequest(message)) {
-  handleClip(clipDeps, message)
-    .then(async (res) => { await syncQueueState(); respond(res); })
-    .catch(() => respond({ kind: "clip", ok: false, reason: "server_error" }));
+  clipThenReply(message, respond).catch(() => {
+    respond({ kind: "clip", ok: false, reason: "server_error" });
+  });
   return true;
 }
 ```
+
+Failing closed covers the clip's OWN failure, not the bookkeeping after it.
+`clipThenReply` answers with the clip's real outcome even when the badge +
+flush-alarm reconcile that follows it fails — by then a saved clip is saved and
+a queued one is persisted, so `server_error` would misreport both — and a clip
+that queued falls back to arming the plain periodic flush alarm, since the
+failed reconcile may never have reached its alarm step (`reconcileAfterClip`,
+which the quick-clip route shares).
 
 ## Discovery, connection health, and the trust panel
 
@@ -279,7 +287,8 @@ silent failure this ordering exists to end.
 
 One pipeline serves **both** entry points — the popup's `clip` message and the
 quick-clip route (context menu / `Alt+Shift+C` hotkey). Both build the same
-`clipDeps` and call the same `handleClip`, so their behavior can never drift.
+`clipDeps`, call the same `handleClip` and reconcile through the same
+`reconcileAfterClip`, so their behavior can never drift.
 
 ```
 gesture (popup button │ context menu │ hotkey)
@@ -295,7 +304,8 @@ handleClip(deps)  ──►  clip.ts builds ClipPayload  ──►  postClip →
       └─ terminal       → respond { ok:false, queued:false }            (400 invalid / 413 too-large)
       │
       ▼
-syncQueueState()  → repaint toolbar badge; arm/clear the flush alarm
+reconcileAfterClip()  → syncQueueState(): repaint toolbar badge; arm/clear the flush alarm
+                        (never fails the clip; if it breaks, a queued clip still gets the alarm)
 ```
 
 `canonicalUrl` is present only when the page declared a `<link rel="canonical">`

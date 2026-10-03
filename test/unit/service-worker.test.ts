@@ -621,6 +621,44 @@ describe("message routing — fail-closed on a thrown/rejected handler", () => {
     expect(res).toEqual({ kind: "clip", ok: false, reason: "server_error" });
   });
 
+  // The other side of the test above: once the clip itself has settled, a failure in
+  // the badge + alarm reconcile after it is NOT the clip failing. Answered as
+  // `server_error`, a saved clip would read as lost and a refused one would hide WHY.
+  test.each([
+    [
+      "a saved clip",
+      200,
+      { id: "1", status: "created" },
+      { kind: "clip", ok: true, status: "created", bookmarked: false },
+    ],
+    [
+      "a refused clip",
+      413,
+      { error: "payload_too_large" },
+      { kind: "clip", ok: false, reason: "payload_too_large" },
+    ],
+  ])(
+    "clip: %s whose badge reconcile fails keeps its own answer and arms no alarm",
+    async (_label, status, body, expected) => {
+      await load();
+      harness.storage.set(CONNECTION_KEY, conn);
+      harness.alarmsCreate.mockClear();
+      harness.setBadgeText.mockClear();
+      harness.setBadgeText.mockRejectedValueOnce(new Error("badge boom"));
+      globalThis.fetch = vi.fn().mockResolvedValue(jsonRes(status, body));
+
+      const res = await harness.emitMessage({ kind: "clip", capture, tags: [] });
+      await settle();
+
+      expect(res).toEqual(expected);
+      // The failing badge write really was made — the reconcile ran and broke.
+      expect(harness.setBadgeText).toHaveBeenCalledWith({ text: "" });
+      // Nothing was queued, so there is no fallback: the flush alarm exists only
+      // while the queue has work in it.
+      expect(harness.alarmsCreate).not.toHaveBeenCalled();
+    },
+  );
+
   test("related: a storage read failure → server_error", async () => {
     await load();
     harness.storageGet.mockRejectedValueOnce(new Error("boom"));
@@ -876,6 +914,33 @@ describe("quick clip — context menu + shortcut routes", () => {
     );
   });
 
+  // One clip pipeline serves both entry points, and so does its reconcile: a quick
+  // clip that QUEUED (the gateway is down) and whose badge sync then fails must still
+  // leave the queue a wakeup — otherwise the "will sync" toast it shows would wait
+  // for the next worker start instead.
+  test("a queued quick clip whose badge sync fails still arms the flush alarm", async () => {
+    await load();
+    seedQuickClip(harness);
+    harness.alarmsCreate.mockClear();
+    harness.setBadgeText.mockRejectedValueOnce(new Error("badge boom"));
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+
+    harness.emitCommand("clip-page");
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        args: [{ variant: "offline", text: "Saved offline — will sync when Nimbus is back." }],
+      }),
+    );
+    expect(harness.storage.get(QUEUE_KEY)).toHaveLength(1);
+    // The failing badge write really was made — the startup paint wrote "", not "1".
+    expect(harness.setBadgeText).toHaveBeenCalledWith({ text: "1" });
+    expect(harness.alarmsCreate.mock.calls).toEqual([[FLUSH_ALARM, { periodInMinutes: 1 }]]);
+  });
+
   test("a rejecting clip pipeline still confirms with an error toast", async () => {
     await load();
     seedQuickClip(harness);
@@ -1125,6 +1190,69 @@ describe("rate-limit pacing", () => {
       delayInMinutes: 0.5,
       periodInMinutes: 1,
     });
+  });
+
+  /** Send a clip and settle it, collecting any unhandled rejection raised meanwhile. */
+  async function clipCollectingUnhandled(): Promise<{ res: unknown; unhandled: unknown[] }> {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const res = await harness.emitMessage({ kind: "clip", capture, tags: [] });
+      await settle();
+      return { res, unhandled };
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  }
+
+  // By the time the badge + alarm are reconciled the clip is already persisted and
+  // the pause armed, so a reconcile failure must not replace the queued answer with
+  // `server_error` — the user would be told the save failed while the popup's own
+  // queue list shows it waiting. And since the reconcile died before its alarm
+  // step, the queue would be left with no wakeup at all but for the fallback.
+  test("a 429 clip whose reconcile fails still answers queued, and falls back to the periodic flush alarm", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.alarmsCreate.mockClear();
+    // syncQueueState()'s badge write fails, so it never reaches the delayed re-arm.
+    harness.setBadgeText.mockRejectedValueOnce(new Error("badge boom"));
+    globalThis.fetch = vi.fn().mockResolvedValue(rateLimitedRes("45"));
+
+    const { res, unhandled } = await clipCollectingUnhandled();
+
+    expect(res).toEqual({ kind: "clip", ok: false, reason: "rate_limited", queued: true });
+    expect(harness.storage.get(QUEUE_KEY)).toHaveLength(1);
+    // The failing badge write really was made — the startup paint wrote "", not "1".
+    expect(harness.setBadgeText).toHaveBeenCalledWith({ text: "1" });
+    // Exactly one alarm write, and it is the fallback's plain periodic alarm, not the
+    // delayed re-arm. Firing before the pause ends is harmless: the pause gate in
+    // flushQueue is the authority (see "an alarm flush during an active pause").
+    expect(harness.alarmsCreate.mock.calls).toEqual([[FLUSH_ALARM, { periodInMinutes: 1 }]]);
+    expect(unhandled).toEqual([]);
+  });
+
+  // Best-effort means exactly that: when the fallback's own alarm write fails as
+  // well, the answer is STILL the queued one, and nothing escapes the worker. The
+  // clip stays persisted for the next worker start's drain to pick up.
+  test("a 429 clip whose reconcile and fallback alarm both fail still answers queued", async () => {
+    await load();
+    harness.storage.set(CONNECTION_KEY, conn);
+    harness.setBadgeText.mockRejectedValueOnce(new Error("badge boom"));
+    harness.alarmsGet.mockClear();
+    harness.alarmsGet.mockRejectedValueOnce(new Error("alarms boom"));
+    globalThis.fetch = vi.fn().mockResolvedValue(rateLimitedRes("45"));
+
+    const { res, unhandled } = await clipCollectingUnhandled();
+
+    expect(res).toEqual({ kind: "clip", ok: false, reason: "rate_limited", queued: true });
+    expect(harness.storage.get(QUEUE_KEY)).toHaveLength(1);
+    // The fallback really ran and really failed: its alarm lookup is the only one
+    // this clip makes, since the failed reconcile never reached its own.
+    expect(harness.alarmsGet.mock.calls).toEqual([[FLUSH_ALARM]]);
+    expect(unhandled).toEqual([]);
   });
 
   test("a successful clip clears an existing pause", async () => {

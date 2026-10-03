@@ -29,6 +29,7 @@ import { gapsOfBrief, laneFindingsFrom, synthesisFrom } from "../shared/findings
 import {
   type AgentStateResponse,
   type ClipRequest,
+  type ClipResponse,
   isAgentRunRequest,
   isAgentStateRequest,
   isBriefStartRequest,
@@ -246,6 +247,38 @@ async function syncQueueState(): Promise<void> {
 // One clip pipeline for both entry points: the popup's `clip` message and the
 // quick-clip (context menu / hotkey) route go through the same handler deps.
 const clipDeps = { getConnection, postClip: postClipPaced, updateQueue, nowMs: () => Date.now() };
+
+/**
+ * The reconcile that follows a clip, shared by both entry points for the reason
+ * `clipDeps` is. It never rejects, because by the time it runs the clip has
+ * SETTLED: a saved clip is saved, and a queued one is persisted with any
+ * rate-limit pause already armed. Letting a failed badge or alarm write stand in
+ * for that outcome would report a saved clip as lost, or a queued one as failed
+ * while the popup's own queue list shows it waiting.
+ *
+ * A failure anywhere in `syncQueueState` can leave its alarm step unrun — the
+ * queue read, the badge write and the pause read all come first. For a clip that
+ * just queued, the queue then has work and may have no wakeup, so this arms the
+ * plain periodic alarm: not the delayed one a pause wants, which needs the very
+ * reads that may have failed. Early is harmless — the pause gate in `flushQueue`
+ * is the authority. A clip that queued nothing gets no fallback, since the alarm
+ * exists only while the queue has work.
+ *
+ * Not logged — `noConsole` bans console.* in src/, as `registerMenus` notes — so
+ * nothing the failure leaves undone may depend on being noticed: the answer is
+ * the clip's own outcome, a clip that queued still gets its wakeup, and whatever
+ * the fallback cannot cover, the next worker start does (`runStartupSequence`
+ * reconciles and drains the queue again).
+ */
+async function reconcileAfterClip(res: ClipResponse | undefined): Promise<void> {
+  try {
+    await syncQueueState();
+  } catch {
+    if (res?.ok === false && res.queued === true) {
+      await ensureAlarm(FLUSH_ALARM, 1).catch(() => undefined);
+    }
+  }
+}
 
 // The pure handlers work with a domain-shaped run (no `expiresAtMs`); this is the
 // one place "now" is read and the TTL applied, mirroring how postClipPaced wraps
@@ -907,13 +940,20 @@ const quickClipDeps: QuickClipDeps = {
   runCapture,
   // The badge sync runs AFTER the response is settled, never gating it: the clip may
   // have enqueued (keep the count fresh), but a storage failure while syncing must
-  // not turn a successful clip into a silent no-toast. It is still awaited (a
-  // returned thenable settles `finally`) so the queue count repaints BEFORE any
-  // badge flash — otherwise a late sync would erase the flash.
-  clip: (req) =>
-    handleClip(clipDeps, req).finally(async () => {
-      await syncQueueState().catch(() => undefined);
-    }),
+  // not turn a successful clip into a silent no-toast — `reconcileAfterClip` never
+  // rejects. It is still awaited (the `finally` holds this promise until it is
+  // done) so the queue count repaints BEFORE any badge flash — otherwise a late
+  // sync would erase the flash. A rejected clip still syncs, with no outcome to
+  // act on.
+  clip: async (req) => {
+    let res: ClipResponse | undefined;
+    try {
+      res = await handleClip(clipDeps, req);
+      return res;
+    } finally {
+      await reconcileAfterClip(res);
+    }
+  },
   showFeedback: (tabId, state, restricted) =>
     showFeedback(
       { showToast, setBadgeText, restoreBadge: syncQueueState },
@@ -1231,8 +1271,9 @@ function routeCapturePair(message: unknown, respond: Respond, sender: SenderInfo
 
 /**
  * The `clip` route, as one flat sequence: clip, note a success, reconcile the
- * toolbar badge and the flush alarm, then answer. Its caller answers
- * `server_error` if any of it rejects — the clip's own failure or the reconcile's.
+ * toolbar badge and the flush alarm, then answer with the clip's own outcome. Its
+ * caller answers `server_error` only when the clip itself rejects — the reconcile
+ * never does, see `reconcileAfterClip`.
  *
  * Noting the success is fire-and-forget, as `wrapRespond`'s `markStale` is: the
  * answer must not wait on that storage write, and its `.catch` is what keeps a
@@ -1243,7 +1284,7 @@ async function clipThenReply(message: ClipRequest, respond: Respond): Promise<vo
   if (res.ok) {
     markClipSuccess(Date.now()).catch(() => undefined);
   }
-  await syncQueueState();
+  await reconcileAfterClip(res);
   respond(res);
 }
 
