@@ -72,7 +72,8 @@ without `git`, and Biome's `vcs.useIgnoreFile: true` needs it or the run scans
   thresholds. The *only* coverage gate is SonarCloud's "Sonar way" 80%-on-new-code, applied
   to the lcov that script emits. A green local `test:coverage` says nothing about coverage.
 - **The mock gateway validates nothing.** `scripts/screenshots/mock-gateway.ts` forwards a
-  POST body only so a scenario can record what the client sent (brief creation, clip ingest);
+  POST body only so a scenario can record what the client sent (brief creation, each fed
+  brief source, clip ingest);
   `handleRequest` checks none of it and returns a fixture for every route. It reads a bearer
   token on exactly one route, `services/resolve`, and only to answer a 403 for the sentinel
   `Bearer no-resolve-scope` — it never rejects an unknown token. Pairing against it succeeds
