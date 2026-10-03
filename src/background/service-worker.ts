@@ -615,8 +615,11 @@ const briefDeps: BriefDeps = {
   // while the run was still feeding, which never left — see `FedPassages`.
   //
   // Every page in ONE read-modify-write, not one write per page: each removal is
-  // by identity, so applying them all in one pass leaves the collection exactly
-  // as one write per page did, and the store is written once, not once per page.
+  // by identity, so a write that lands leaves the collection exactly as one write
+  // per page did, and the store is written once, not once per page. A refusal
+  // (`updatePassages` resolves `storage-full` for a failed read or write; it does
+  // not reject) now keeps EVERY fed page's passages, where one write per page kept
+  // only the refused page's. `forgetFed` keeps the run alive either way.
   forgetPassages: async (fed) => {
     await updatePassages((all) => {
       let kept = all;
