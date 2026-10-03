@@ -74,9 +74,13 @@ pick up a rebuild.
   users, so there are no stray `console.*` calls in `src/`.
 - The HTTP wire contract is owned by the Nimbus gateway repo — treat it as fixed
   here. Every route this client calls is listed once, in `GATEWAY_PATHS`
-  (`src/shared/gateway.ts`): the three clip routes plus `/v1/items/resolve`,
-  `/v1/items/fetch`, `/v1/agents/*`, `/v1/briefs*`, `/v1/egress*` and
-  `/v1/health`. Each of the later ones sits behind its own gateway token scope.
+  (`src/shared/gateway.ts`): the three clip routes plus the `/v1/items/*` reads
+  and targeted fetch, `/v1/agents/*`, `/v1/briefs*`, `/v1/egress*`,
+  `/v1/services/resolve`, `/v1/preflight/deploy`, `/v1/connectors` and
+  `/v1/health` — and `/v1/metrics/dora`, declared ahead of the unbuilt DORA
+  page. Most sit behind their own gateway token scope; `/v1/health`,
+  `/v1/connectors`, `/v1/preflight/deploy` and `GET /v1/items/{id}` are on the
+  gateway's public read-only table and carry no token.
 
 ## Pull requests
 

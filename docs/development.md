@@ -41,7 +41,7 @@ bun run build          # → dist/chrome and dist/firefox
 
 Reload the extension from the browser's extensions page after each `bun run build`.
 
-## Manual verification (the parts not unit-tested)
+## Manual verification — Slice 1 (pair and clip)
 
 Prereq: a Nimbus gateway running with `NIMBUS_HTTP_PORT` set; run `nimbus clip pair`
 to get a code.
@@ -545,8 +545,9 @@ page and a CircleCI pipeline, also indexed.
    subject is entirely the gateway's business. Read each of the three briefs
    from step 2 and confirm the text names the issue it answered about. If one
    does not, that is an upstream defect (the Nimbus design spec's F6 rule, one
-   surface over) and it gets its own upstream issue — do not paper over it
-   client-side.
+   surface over — that spec has since been pruned from the gateway repo and
+   lives in its git history) and it gets its own upstream issue — do not paper
+   over it client-side.
 4. **An ambiguous page, and expect it to disappoint** (needs a Jira issue
    whose URL resolves to more than one indexed row — optional if you cannot
    produce one). Pick a candidate from the chooser and run the three lanes. →
@@ -658,9 +659,12 @@ client half. What it cannot prove is a real `GET /v1/preflight/deploy` answer
 preflight computation over a real index.
 
 Prereq: paired, gateway running, page access granted on a repo you have bound
-or want to bind. Both routes this section calls (`preflight/deploy`,
-`items/{id}`) are on the gateway's public read-only table — no scope, no
-re-pairing, no `nimbus clip scopes`.
+or want to bind. The verdict's two routes (`preflight/deploy`, `items/{id}`)
+are on the gateway's public read-only table — no scope, no re-pairing, no
+`nimbus clip scopes`. Step 3's seeding is the exception: `services/resolve` is
+a bearer read under the `resolve` scope, so a browser paired before scopes
+existed gets the pasteable `nimbus clip scopes` line there, and the bind form
+keeps its guess until the owner grants it.
 
 1. <!-- e2e:deploy-bind --> On a pull request or a build page whose repo has no
    service binding yet, the deploy-readiness section — headed **Deploy
@@ -702,7 +706,7 @@ re-pairing, no `nimbus clip scopes`.
 
 Prereq: a Nimbus gateway available to start/stop on demand. Step 1 needs a
 fresh, never-paired profile; steps 2–6 need to be able to stop and restart the
-gateway. Step 8 folds in the Service lanes (C2.3) manual pass below — its
+gateway. Step 8 folds in the Service lanes (C2.3) manual pass above — its
 steps 1–4 now run on every PR (see that section), so this is a quick human
 sanity check alongside the suite, not the thing that proves the slice works.
 
@@ -719,7 +723,7 @@ sanity check alongside the suite, not the thing that proves the slice works.
 8. **C2.3 backlog:** on a GitHub/GitLab/Bitbucket/Jira/Jenkins dashboard,
    confirm the three service lanes render and answer, and that the ambient cue
    stays silent there. See "Manual verification — Service lanes (C2.3)" above
-   for the fuller six-step version of this pass.
+   for the fuller version of this pass.
 
 ## Manual verification — Show what leaves (1.3 / C4.2)
 
@@ -871,7 +875,9 @@ Prereq: paired, gateway running, a resolved GitHub pull request available.
    the PR you are on must not appear among them.
 8. **(human — a design judgement, not an assertion).** Note whether the groups
    are mostly one row each: if they are, the headings are noise and grouping
-   should be dropped from the lane (see the spec's "Not in this slice").
+   should be dropped from the lane rather than tuned (see "Grouping by service
+   never reorders relevance" under "What the related lane asks about" in
+   [`architecture.md`](./architecture.md)).
 
 ## Manual verification — Capture as the last resort (C3.2)
 

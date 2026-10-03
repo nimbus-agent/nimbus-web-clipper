@@ -11,15 +11,16 @@ zip names and the Firefox gecko id keep the old `nimbus-web-clipper` /
 `nimbus-web-clipper` is a Chrome + Firefox **MV3 browser extension** that clips
 web pages (readable article or selection) into the user's local-first
 [Nimbus](https://github.com/nimbus-agent/Nimbus) index, and surfaces related
-indexed items in an on-demand panel. Phases C1–C7 grew it past clipping: it
-recognises the page you are on (PR / build / issue / incident / source file),
-runs the
-gateway's agents against it as panel lanes — offering only the lanes the paired
-gateway publishes, whenever it can say what those are — asks research briefs across your open tabs, and
-reads the gateway's egress ledger back as an activity page. It is a **thin client**:
-it talks only to a
-Nimbus gateway on `127.0.0.1` over a locked HTTP contract. No cloud calls, no
-telemetry.
+indexed items in an on-demand panel. Phases C1–C10 grew it past clipping: it
+recognises the page you are on (PR / build / issue / incident / source file /
+Confluence page / product dashboard), runs the gateway's agents against it as
+panel lanes — offering only the lanes the paired gateway publishes, whenever it
+can say what those are, and rendering each answer's typed findings, with links
+where they carry one — asks research briefs across your open tabs, reads the
+gateway's egress ledger back as an activity page, and on a PR or build page asks
+the gateway whether the change is safe to deploy. It is a **thin client**: it
+talks only to a Nimbus gateway on `127.0.0.1` over a locked HTTP contract. No
+cloud calls, no telemetry.
 
 It mirrors the `nimbus-vscode` satellite-repo template (own CI, Biome, esbuild,
 Sonar, MIT) and is the browser-side **Plan B** of the web clipper; the gateway
@@ -44,17 +45,26 @@ shape here.
 - `POST /v1/clips/related` — bearer-authed read; related indexed items for the
   current page. Body `{ title?, canonicalUrl?, selection?, limit? }`.
 
-Those three are the original surface. Phases C1–C7 added more, each behind its
-own token scope: `GET /v1/items/resolve` (`resolve`),
+Those three are the original surface. Phases C1–C10 added more. Most sit behind
+their own token scope: `GET /v1/items/resolve` (`resolve`),
 `GET /v1/items/resolve-file` (`resolve` too — it maps a forge file coordinate
 `{service, repo, refAndPath}` to a path in the reader's own checkout. Landed
 upstream in Nimbus#1447, ships after gateway 7.9.0, and its **presence is the
-capability signal** — do NOT add a version floor for it), `POST /v1/items/fetch`
+capability signal** — do NOT add a version floor for it),
+`GET /v1/items/resolve-ids` (`resolve`, C9 — item ids back to the URLs the index
+holds; its presence is the capability signal too), `GET /v1/services/resolve`
+(`resolve`, C10.3 — which Nimbus service claims a repo), `POST /v1/items/fetch`
 (`fetch` — an I13 **write**, it causes an outbound provider request),
 `POST /v1/agents/{agent}` + `GET /v1/agents/runs/{id}` + the `GET /v1/agents`
 roster C6 reads to decide which lanes to offer (`agents`), the five
-`/v1/briefs` routes (`briefs`), the four `/v1/egress` reads (`egress`), and the
-tokenless `GET /v1/health`. **`src/shared/gateway.ts`'s `GATEWAY_PATHS` is the
+`/v1/briefs` routes (`briefs`) and the four `/v1/egress` reads (`egress`).
+Tokenless, on the gateway's public read-only table: `GET /v1/health`,
+`GET /v1/connectors` (per-connector health), and C10's `GET /v1/preflight/deploy`
+and `GET /v1/items/{id}` (the full row, body included — read only in the
+worker, and only its branch crosses into a page). `GET /v1/metrics/dora` sits on
+that table too and is declared ahead of the unbuilt C10.2 DORA page; nothing
+calls it yet.
+**`src/shared/gateway.ts`'s `GATEWAY_PATHS` is the
 single list — read it rather than an enumeration in a doc.** Upstream,
 `clips/api-scopes.ts` sets `LEGACY_SCOPES = ["clip", "briefs"]`, so a browser
 paired before scopes existed lacks `resolve` / `fetch` / `agents` / `egress` and
@@ -91,7 +101,9 @@ monorepo's git history.)
   `brief`, `ledger` — `ENTRIES` there is the list) into `dist/<target>/` as
   fully-inlined IIFE. `@mozilla/readability` is a devDependency inlined into
   `capture.js`. The shipped extension has no `node_modules`. A new entry must
-  also be added to `REQUIRED_FILES` in `scripts/check-build.mjs`.
+  also be added to `REQUIRED_FILES` in `scripts/check-build.mjs` — and a new
+  page's HTML/CSS to both `HTML_CSS` in `esbuild.mjs` and `REQUIRED_FILES`
+  (`build-artifacts.test.ts` compares the lists).
 - **One manifest, two targets.** `src/manifest/manifest.ts` composes the MV3
   manifest per browser. Chrome → `background.service_worker`; Firefox →
   `background.scripts` + `browser_specific_settings.gecko.id`. Everything else is
@@ -107,10 +119,15 @@ monorepo's git history.)
   routing), plus the offline + quick-clip machinery: `clip-queue-store.ts`,
   `queue-flush.ts`, `rate-limit-pause.ts`, `single-flight.ts`, `quick-clip.ts`,
   `feedback.ts`; and the later surfaces — `brief-client.ts`/`brief-handlers.ts`,
-  `egress-client.ts`/`egress-handlers.ts`, the `*-store.ts` persistence set
-  (`agent-run`, `brief-run`, `brief-log`, `passage`, `origin`, of which the two
-  run stores share `keyed-store.ts` and the rest deliberately do not — see that
-  file's header), `http-json.ts` (what the gateway clients share: the request
+  `passage-collect.ts` (the "Add to brief" gesture),
+  `egress-client.ts`/`egress-handlers.ts`, `deploy-client.ts`/`deploy-handlers.ts`
+  (C10), `agents-capability.ts` (the C6 roster gate), `item-urls.ts` (C9's item
+  id → URL resolution), the `*-store.ts` persistence set (`agent-run`,
+  `brief-run`, `brief-log`, `passage`, `origin`, `connector-health`,
+  `service-binding`; `keyed-store.ts` holds the shared read guard and write chain
+  — the two run stores use both, `service-binding-store.ts` only the chain, and
+  that file's header says why the array-backed stores keep their own), the three
+  `*-pref(s).ts` toggles, `http-json.ts` (what the gateway clients share: the request
   timeout, the body read, the scope-gap parse and the scoped-route status
   ladder, plus the `withLabel` step the handlers apply to that gap),
   `ambient.ts`, `capture-tab.ts`, `menus.ts`
@@ -118,11 +135,14 @@ monorepo's git history.)
   `scripting`, `runtime`, `action`, `alarms`, `context-menus`, `commands`,
   `permissions`); the only place WebExtension APIs are touched directly
 - `src/capture/` — page capture: `capture-in-page.ts` (injected `capture.js`,
-  Mozilla Readability / selection → `CaptureResult`) + pure `fallback.ts`, plus the
-  injected result toast (`toast-in-page.ts` → `toast.js`, pure `toast-view.ts`)
+  Mozilla Readability / selection → `CaptureResult`) + pure `fallback.ts` and
+  `page-meta.ts` (the page's own author/date/site metadata), plus the injected
+  result toast (`toast-in-page.ts` → `toast.js`, pure `toast-view.ts`)
 - `src/panel/` — the injected related-items + agent-lane panel (`panel-in-page.ts`
-  → `panel.js`, pure `panel-view.ts`), plus the ambient cue (`cue-in-page.ts` →
-  `cue.js`, pure `cue-view.ts`) and `lane-input.ts` / `related-groups.ts`
+  → `panel.js`, pure `panel-view.ts`), its per-lane typed-answer renderers in
+  `findings/` (C8) and the deploy-readiness section in `deploy/` (C10), plus the
+  ambient cue (`cue-in-page.ts` → `cue.js`, pure `cue-view.ts`) and
+  `lane-input.ts` / `related-groups.ts`
 - `src/brief/` — the research-briefs page (`brief.ts` → `brief.js` +
   `brief.html`/`brief.css`, pure `brief-view.ts`)
 - `src/ledger/` — the activity page over the gateway's egress ledger (`ledger.ts`
@@ -132,7 +152,8 @@ monorepo's git history.)
 - `src/options/` — options page (gateway URL + 6-digit code → pairing form) plus the
   pure views it composes: `connection-view.ts` (pairing status + unpair),
   `setup-view.ts`, `surfaces-view.ts`, `shortcuts-view.ts`,
-  `brief-log-view.ts`, `ledger-summary-view.ts`
+  `brief-log-view.ts`, `ledger-summary-view.ts`, `bindings-view.ts` (the C10
+  service-bindings table)
 - `src/shared/` — pure modules shared across entries (`types.ts` cross-module
   types, `clip.ts` tag parsing + payload builder, `gateway.ts` endpoints +
   loopback origin validation, `messages.ts` typed message envelope + guards,
@@ -145,7 +166,8 @@ monorepo's git history.)
   `ci.yml`; `test/unit/e2e-coverage.test.ts` keeps their `COVERS` ids and
   `development.md`'s `<!-- e2e:<id> -->` markers in step
 - `esbuild.mjs` — build (run via `bun`, imports the TS manifest module)
-- `scripts/` — `clean.mjs`, `check-build.mjs` (guards per-target completeness),
+- `scripts/` — `clean.mjs`, `check-build.mjs` (guards per-target completeness,
+  and that no bundle pulls `@nimbus-dev/sdk` in at runtime),
   `package.mjs` (zips each target), `gen-icons.py` (reproducible extension icons),
   `gen-promo.ts` (store promo tiles), `verify-setup.ts` (drives steps 1–6 of
   `development.md`'s "Setup that works"), `e2e/launch.ts` (the Playwright
@@ -157,10 +179,12 @@ monorepo's git history.)
   workspace for work in flight — specs, plans and review notes are all **pruned
   once the feature ships** and live on in git history, so anything still true
   after delivery must be written into `architecture.md` (or this file) BEFORE
-  its spec is deleted, never left only in the spec; `development.md` is the
-  dev-load + manual-verification checklist
-  for the surfaces that aren't unit-tested (capture-in-page, popup/options DOM, SW
-  glue); `store/` holds the store listing + publishing docs
+  its spec is deleted, never left only in the spec (today it holds only the C10
+  design and its review, kept until the C10.2 DORA page ships);
+  `development.md` is the dev-load guide plus the per-feature
+  manual-verification checklists, whose steps are labelled — as each is
+  triaged — covered by an e2e suite, human-only, or not yet automated;
+  `store/` holds the store listing + publishing docs
 - `ROADMAP.md` (repo root) — the vision-first roadmap: north star, the four
   pillars, and contributor-ready phases (each feature a brief with touches +
   done-when) ordered client-buildable-first → needs-gateway → ecosystem
@@ -169,14 +193,17 @@ monorepo's git history.)
 
 The gateway client, pairing orchestration, token store, and 429/413/offline
 handling in `src/background/` are currently hand-rolled here — and duplicated in
-`nimbus-vscode`. The proposed **Nimbus SDK** (roadmapped in the SDK repo, not
-here) extracts that into one spec-driven, multi-language package that every
-surface consumes via small per-runtime adapters. This repo is a Phase 1 consumer
+`nimbus-vscode`. A proposed **Nimbus SDK** client spine would extract that into
+one spec-driven, multi-language package that every surface consumes via small
+per-runtime adapters. It is still only a proposal: `@nimbus-dev/sdk` itself
+ships today — it is the connector/extension authoring contract, and this repo
+takes the agents' answer types from it, type-only — but the SDK repo's own
+roadmap carries no gateway client yet. This repo would be its first consumer
 and proof surface:
-once the SDK lands, `gateway-client.ts` / `handlers.ts` / `connection-store.ts`
+once such a client lands, `gateway-client.ts` / `handlers.ts` / `connection-store.ts`
 get replaced by SDK calls, keeping identical behavior and invariants. Until then,
-this repo's local implementation is the reference the SDK generalizes from — so
-treat changes to it as potential contributions upstream.
+this repo's local implementation is the reference such a client would
+generalize from — so treat changes to it as potential contributions upstream.
 
 ## Commands
 
@@ -235,7 +262,8 @@ manual and it says so on screen.
   changing: `workflow-hygiene.test.ts` (every `.github/workflows/*.yml`),
   `publish-workflow.test.ts`, `build-artifacts.test.ts` (esbuild `ENTRIES` ↔
   check-build `REQUIRED_FILES`), `store-listing.test.ts`,
-  `store-publishing-doc.test.ts`, `doc-references.test.ts` and
+  `store-publishing-doc.test.ts`, `store-tooling.test.ts` (the store CLIs must
+  stay devDependencies in `package.json`), `doc-references.test.ts` and
   `e2e-coverage.test.ts`. Run the suite after a docs-only change too.
 - **When you change a shape, grep the sentence that described the old one.**
   Nothing gates prose. A complexity refactor once left three comments in two
@@ -254,5 +282,6 @@ is cut, the workflow's `store-chrome` / `store-firefox` jobs upload the same bui
 to the Chrome Web Store and Firefox AMO and submit each for review — gated on the
 store credentials being configured, so a tag still cuts a Release when they are
 absent. The one-time store bootstrap (accounts, first manual submission, and the
-seven repository secrets) is documented in `store/publishing.md` — and is done, so
-the next tag uploads to both stores.
+seven secrets of the `release` environment — environment-scoped, not
+repository-wide) is documented in `store/publishing.md` — and is done, so the
+next tag uploads to both stores.

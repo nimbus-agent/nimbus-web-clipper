@@ -1,19 +1,22 @@
 # Architecture
 
 How the Nimbus Companion is built today. This is a reference for *what is* —
-the roadmap ([`../ROADMAP.md`](../ROADMAP.md)) is *what's next*, and the
-per-feature design specs under [`superpowers/specs/`](./superpowers/specs/) are
-the record of how each slice was reasoned through. When code and this document
-disagree, the code wins — fix the document.
+the roadmap ([`../ROADMAP.md`](../ROADMAP.md)) is *what's next*. It is also
+where a shipped slice's reasoning lives: each per-feature design spec under
+[`superpowers/specs/`](./superpowers/specs/) is pruned once its feature ships,
+after what still holds has moved here, so a spec survives there only while its
+work is in flight. When code and this document disagree, the code wins — fix
+the document.
 
 ## What it is
 
 A Chrome + Firefox **Manifest V3** extension that clips the readable article or
 the current selection of a web page into the user's local-first
 [Nimbus](https://github.com/nimbus-agent/Nimbus) index, and surfaces related
-indexed items in an on-demand panel. Phases C1–C6 added the rest of what is
+indexed items in an on-demand panel. Phases C1–C10 added the rest of what is
 documented below: page recognition, the agent lanes, targeted fetch, research
-briefs, the activity page over the gateway's egress ledger, and the item lanes.
+briefs, the activity page over the gateway's egress ledger, the item and file
+lanes, typed lane answers with links, and deploy readiness.
 
 It is a **thin client** over a locked HTTP contract. It talks to exactly one
 place — a Nimbus gateway on `127.0.0.1` — and holds exactly one secret, the
@@ -46,9 +49,9 @@ token is the *only* secret, revocation is simple — unpair locally, or
 ### 3. Bundled, no runtime dependencies
 
 [`esbuild.mjs`](../esbuild.mjs) bundles each entry point (`background`, `popup`,
-`options`, `capture`, and the injected panel/toast/cue) into `dist/<target>/` as a
-fully-inlined IIFE. `@mozilla/readability` is a *devDependency* inlined into the
-capture bundle. The shipped extension has **no `node_modules`** — which keeps it
+`options`, `capture`, the injected panel/toast/cue, and the `brief` and `ledger`
+pages) into `dist/<target>/` as a fully-inlined IIFE. `@mozilla/readability` is
+a *devDependency* inlined into the capture bundle. The shipped extension has **no `node_modules`** — which keeps it
 bundle-size-honest and auditable, the same discipline the proposed Nimbus SDK is
 expected to inherit.
 
@@ -94,17 +97,19 @@ in a node environment.
 │                    │  storage tabs ...   │  chrome.* is touched    │
 │                    └─────────┬──────────┘                          │
 └──────────────────────────────┼───────────────────────────────────┘
-                               │ HTTP (bearer)
+                               │ HTTP (bearer on every scoped route)
                     ┌──────────▼───────────┐
                     │  Nimbus gateway       │  127.0.0.1 only
                     │  POST /v1/clips        │
-                    │  POST /v1/clips/pair/confirm
+                    │  POST /v1/clips/pair/confirm  ← redeems a code, no token yet
                     │  POST /v1/clips/related
-                    │  GET  /v1/items/resolve
+                    │  GET  /v1/items/resolve · resolve-file · resolve-ids
                     │  POST /v1/items/fetch  ← WRITE, see below
-                    │  POST /v1/agents/{agent} · GET /v1/agents/runs/{id}
+                    │  POST /v1/agents/{agent} · GET /v1/agents/runs/{id} · GET /v1/agents
                     │  /v1/briefs (5 routes) · /v1/egress (4 reads)
-                    │  GET  /v1/health       ← the one tokenless call
+                    │  GET  /v1/services/resolve
+                    │  GET  /v1/health · /v1/connectors              ← public, no token
+                    │  GET  /v1/preflight/deploy · /v1/items/{id}    ← public, no token
                     └───────────────────────┘
 ```
 
@@ -119,15 +124,17 @@ check that constant rather than this diagram when the two could disagree.
   `permissions`). The only module layer that imports WebExtension APIs.
 - **`src/capture/`** — page capture injected into the tab: `capture-in-page.ts`
   (Readability / selection → `CaptureResult`) with a pure `fallback.ts`
-  (meta-description/URL bookmark when no readable content is found), plus the
-  injected `toast` (result feedback) view.
+  (meta-description/URL bookmark when no readable content is found) and
+  `page-meta.ts` (the page's own author/date/site metadata), plus the injected
+  `toast` (result feedback) view.
 - **`src/panel/`** — the other injected surfaces: the related-items + agent-lane
-  panel (`panel-in-page.ts`, pure `panel-view.ts`) and the ambient cue
-  (`cue-in-page.ts`, pure `cue-view.ts`).
+  panel (`panel-in-page.ts`, pure `panel-view.ts`) with its per-lane findings
+  renderers (`findings/`, Phase C8) and its deploy-readiness section (`deploy/`,
+  Phase C10), and the ambient cue (`cue-in-page.ts`, pure `cue-view.ts`).
 - **`src/popup/`**, **`src/options/`** — the toolbar popup (clip / clip-selection
   + tags + status + queue view) and the options page (gateway URL + 6-digit
   pairing form + connection management, plus the surfaces / shortcuts /
-  disclosure-log / activity-summary views it composes).
+  disclosure-log / activity-summary / service-bindings views it composes).
 - **`src/brief/`**, **`src/ledger/`** — the two full-tab extension pages: the
   research-briefs composer + report, and the activity page over the gateway's
   egress ledger. Each is an HTML/CSS pair copied verbatim by `esbuild.mjs` plus a
@@ -150,7 +157,10 @@ that boundary is **`unknown` until a type guard narrows it** — never `any`.
 [`src/shared/messages.ts`](../src/shared/messages.ts) defines the request/response
 unions (`ExtensionRequest` / `ExtensionResponse`) and a guard per request kind
 (`isClipRequest`, `isPairRequest`, `isRelatedRequest`, the queue trio,
-`isConnectionStatusRequest`, `isUnpairRequest`).
+`isConnectionStatusRequest`, `isUnpairRequest`, and their later siblings) —
+with one exception: five of the six `brief-*` kinds carry at most an `id`, and
+`isBriefMessage` in `service-worker.ts` narrows them together; the sixth,
+`brief-start`, gets `isBriefStartRequest`.
 
 `service-worker.ts` is a dispatcher: each guard gates a call to a **pure handler**
 with its dependencies injected, and every branch returns `true` (async response)
@@ -193,13 +203,19 @@ so one candidate's rejection can never cost the next one its turn.
 `pickReachable` returning `null` is not a failure state — it means "ask the
 user," and the manual URL field never goes away.
 
-### The health probe is the one tokenless call, and repeats the loopback check
+### The health probe runs before there is a connection, and repeats the loopback check
 
 `probeHealth` (`src/background/gateway-client.ts`) — `GET /v1/health`, an
-800ms timeout — is the only route in the gateway client that carries no bearer
-token. Every other route inherits the origin discipline of a stored
-`Connection`; this one has no connection to inherit it from, which is exactly
-why it re-asserts `isLoopbackOrigin` itself rather than trusting its caller.
+800ms timeout — runs during discovery, before any connection exists. It is not
+the only call without a bearer: pairing's own `POST /v1/clips/pair/confirm`
+cannot carry one, and `GET /v1/connectors` and C10's `GET /v1/preflight/deploy`
+and `GET /v1/items/{id}` carry none either, because upstream serves them on its
+public read-only table. But the pairing request goes to an origin `handlePair`
+has just checked with `isLoopbackOrigin`, and the other three go to the paired
+connection's origin, which passed that same check before it was ever stored.
+The health probe has no connection to inherit that discipline from,
+which is exactly why it re-asserts `isLoopbackOrigin` itself rather than
+trusting its caller.
 Today `DISCOVERY_CANDIDATES` is a frozen constant, so the check can never
 actually fail — it is asserted anyway, for whoever makes that list
 configurable later, so **I6** stays enforced at the one place nothing else is
@@ -219,9 +235,9 @@ the check cannot drift, and a future route inherits the behavior for free
 just by calling `respond`.
 
 The write this triggers — `markStale()` — and every other writer of the
-connection record (`setConnection`, `clearConnection`, `markClipSuccess`,
-`clearStale`) go through **one serialised write chain** in
-[`connection-store.ts`](../src/background/connection-store.ts) rather than
+connection record (`setConnection`, `clearConnection`, and `markClipSuccess`,
+whose working clip clears the flag again) go through **one serialised write
+chain** in [`connection-store.ts`](../src/background/connection-store.ts) rather than
 writing `chrome.storage.local` directly. The obvious reason is the usual
 lost-update guard: a clip success and a 401 arriving together would both read
 the pre-change record, and the second write would drop the first one's edit.
@@ -495,9 +511,9 @@ recognition, which Phase C2 is the first to need.
 
 An injected panel captures `window.location.href` at mount, and re-pins it only
 on an explicit re-read — the notice's own **Re-read page** button, described
-below. The pinned URL is sent with the four messages that carry a page URL:
-resolve, fetch, `agent-run` and `agent-state`. Two messages deliberately do not
-carry it: `related` carries no URL at all, and `recognise` — the watcher's own
+below. The pinned URL is sent with the five messages that carry it: resolve,
+fetch, `capture` (C3.2), `agent-run` and `agent-state`. Two messages
+deliberately do not carry it: `related` carries no URL at all, and `recognise` — the watcher's own
 probe, described next — deliberately carries the LIVE `window.location.href`,
 because its whole job is comparing the pin against where the tab actually is.
 
@@ -549,6 +565,21 @@ gateway with an empty query, which it answers with zero hits. `canonicalUrl` is
 the one field withheld once an id exists — the gateway uses it to exclude the
 whole *host*, which on a working surface throws away exactly the items worth
 showing.
+
+**Grouping by service never reorders relevance.** The wire carries rank order
+and no score, so `groupHits` (`src/panel/related-groups.ts`) orders the groups
+by the position of each service's best hit and keeps hits in ranked order
+inside a group. Per-service quotas — over-fetching and keeping the top few per
+service, so one service cannot fill the list — were declined rather than
+deferred: upstream clamps `limit` to 25, so the over-fetch would rest on a
+number the server never honours, and swapping one service's fourth-best hit for
+another's weaker one buys variety at the cost of the relevance this lane exists
+for. `RELATED_LIMIT` stays 10, and each heading carries its count
+(`service · n`), so a list that is all one service reads as that, not as a
+truncation. Grouping itself is still on trial: if real data shows the hits
+routinely landing one per group, the headings are noise and grouping should be
+dropped rather than tuned — the related-lane manual pass in
+[`development.md`](./development.md) is where that gets decided.
 
 ## The targeted-fetch path
 
@@ -712,15 +743,18 @@ decideAmbient (src/background/ambient.ts) — PURE, the whole decision
   first lock is enforced by the platform and the second is enforced by this
   code, only the second is a property this repo can assert in a test — which
   is exactly what keeps the first from silently becoming a coincidence rather
-  than a guarantee (see the design spec's framing of the same point).
+  than a guarantee.
 
 - **Why the dedupe map is in memory, keyed by item rather than URL.**
   `lastCuedByTab` (`service-worker.ts`, a module-scope `Map<tabId,
   Recognition>`) is cleared on `chrome.tabs.onRemoved` and never written to
   `chrome.storage.local`. Not persisting it is deliberate: a service-worker
   eviction re-cues the same item once, and that is a better failure than a
-  suppression that outlives the reason for it — the same reasoning decision 4
-  in the design spec applies to permanent dismissal. It is keyed by `sameItem`
+  suppression that outlives the reason for it. Dismissal rides on the same map
+  and the same reasoning: it quiets that item in that tab until the tab moves
+  to a different item, and nothing more. Permanent per-item suppression was
+  rejected — it would need a capped, evictable store and give no way back
+  short of a reset. The map is keyed by `sameItem`
   (`product` + `kind` + `ref`, from `shared/recognise/index.ts`) rather than by
   URL because `resolveUrl` deliberately keeps sub-tab path segments and the
   query string (see "the recognition pipeline" above) — a pull request's *Files
@@ -735,9 +769,8 @@ decideAmbient (src/background/ambient.ts) — PURE, the whole decision
   `ambientGeneration` counter increments on every navigation; after the
   `resolve` await returns, `runAmbient` checks its own generation is still
   current and drops the result if a newer navigation has since started. This
-  is deliberately not an `AbortController` — see the design spec's
-  "Deferred, with reasons" — because caller-side cancellation would mean
-  threading a signal through `resolveItem`/`handleResolve`, a seam the panel
+  is deliberately not an `AbortController`, because caller-side cancellation
+  would mean threading a signal through `resolveItem`/`handleResolve`, a seam the panel
   shares, to save a request whose work the gateway may have already begun.
   What actually matters is correctness, and the generation check plus the
   post-resolve re-check of the tab's URL buys that without the plumbing.
@@ -877,11 +910,12 @@ so the first expand does send `agent-run` — and the handler's own cache decide
 below).
 
 A `chosen` header — a candidate the user picked out of an ambiguous answer —
-gets **no** lanes. `agent-run` carries only `{lane, pageUrl}`, so the handler
-re-resolves the page and gets the same ambiguous answer back, which
-`resolveForAgent` refuses as `not_resolved`; a lane there would contradict its
-own header with a refusal it could never retry past. Deferred as ROADMAP
-**C2.5**, which is where the picked id gets carried through the message.
+gets its lanes too, since **C2.5**. Before that it got none: `agent-run`
+carried only `{lane, pageUrl}`, so the handler re-resolved the page, got the
+same ambiguous answer back, and `resolveForAgent` refused it as
+`not_resolved` — a lane there would have contradicted its own header with a
+refusal it could never retry past. `agent-run` now carries the picked id; see
+"Lanes that take an input" below for how it is checked before it is trusted.
 
 `impact` receives `recognition.resolveUrl` as
 `fileOrPrUrl`; `expert` receives the resolved item's `title` as `topicOrFile`;
@@ -898,15 +932,16 @@ exactly the shape each agent's own scope expects, no more.
   (`gateway-client.ts`) folds both statuses into it before the client ever sees
   a difference. `renderLaneBody` gives `stale` a working Re-run button — as it
   does four other reasons: `not_paired`, `unreachable`, `server_error` and
-  `agent_failed`, five of the nine `AGENT_ERRORS` in all. The rule is whether a
+  `agent_failed`, five of the ten `AGENT_ERRORS` in all. The rule is whether a
   retry *from this panel* can succeed, not whether the fix is local:
   `unreachable`/`server_error`/`stale` are transport blips, `agent_failed`
   reached the agent and may answer differently next time, and `not_paired` is
   fixed in Options but retried here — its copy names pairing first, so the
-  button is never the whole instruction. The remaining four (`unauthorized`,
-  `insufficient_scope`, `unsupported`, `not_resolved`) get guidance and no
-  button: each needs re-authentication, a scope grant, a different gateway or a
-  different page before any retry could do anything but fail identically.
+  button is never the whole instruction. The remaining five (`unauthorized`,
+  `insufficient_scope`, `unsupported`, `not_resolved`, `no_term`) get guidance
+  and no button: each needs re-authentication, a scope grant, a different
+  gateway, a different page or a selected term before any retry could do
+  anything but fail identically.
 - **`chrome.alarms` is the EVICTION NET, not the poll cadence.** The real
   cadence is an in-worker `setTimeout` loop (`tickAgentPoll`/`scheduleAgentPoll`
   in `service-worker.ts`) that backs off from 500ms toward a 2s ceiling while
@@ -1249,10 +1284,11 @@ page mints `PV31RQ5`), and only the matcher's narrowness stands between that
 page and a wrong header.
 
 **The run store keys on scope, not just on an item.** `StoredRun`'s subject is
-a `RunSubject` — `{kind:"item", id}` or `{kind:"service", service}` — and
-`agent-run-store.ts`'s `makeKey` encodes the kind alongside the value, so an
-item id and a service id can never collide even if they happened to share a
-string. One consequence is deliberate: **two self-hosted instances of one
+a `RunSubject` — `{kind:"item", id}` or `{kind:"service", service}`, joined
+since by `{kind:"term", term}` (C2.5) and `{kind:"file", repo, refAndPath}`
+(C7) — and `agent-run-store.ts`'s `makeKey` encodes the kind alongside the
+value, so an item id and a service id can never collide even if they happened
+to share a string. One consequence is deliberate: **two self-hosted instances of one
 product share a single cached answer.** `jenkins.dev.local` and
 `jenkins.prod.local` both recognise as `product: "jenkins"`, so
 `catchup { service: "jenkins" }` is one scope and one cache entry — navigating
@@ -1274,8 +1310,8 @@ scope — and carries no item link, no freshness line, no fetch button and no
 candidate chooser. The related lane is suppressed there too: `/v1/clips/related`
 keyed on a dashboard's own title and URL would return noise dressed as recall.
 The related *request* still fires in parallel with resolve, before recognition
-is known, and its answer is simply discarded — a deliberate, documented
-trade-off (see the design spec) rather than an oversight, because both fixes
+is known, and its answer is simply discarded — a deliberate trade-off rather
+than an oversight, because both fixes
 considered cost more than the one wasted loopback call: short-circuiting
 `handleRelated` would tax every item-page related request to save a call on the
 dashboard path, and checking the URL from the panel would work for the
@@ -1479,9 +1515,9 @@ function — `gatePolicy`, applied by the panel — decide what the panel does w
 answer before it ever offers the service lanes.
 
 **The read.** `readConnectorHealth` (`src/background/connector-health-store.ts`)
-wraps `getConnectors` (`gateway-client.ts`), a second tokenless call alongside the
-health probe (see "The health probe is the one tokenless call" above) that reads
-`GET /v1/connectors` and returns a `connectorId → ConnectorHealth` map — or `null`
+wraps `getConnectors` (`gateway-client.ts`), a call that carries no bearer,
+like the health probe (see "The health probe runs before there is a
+connection" above), and reads `GET /v1/connectors` and returns a `connectorId → ConnectorHealth` map — or `null`
 on anything short of a clean 200: a 404 (a gateway that does not serve the route
 yet), an unreachable origin, a timeout, or a body `parseConnectorHealth` cannot
 parse. `resolveForAgent` treats `null` and a map with no row for this connector
@@ -1720,9 +1756,9 @@ end: `resolveAndPersistItemUrls` (`service-worker.ts`) fires once a
 poll lands `done` on either lane, `resolveItemUrls` (`item-urls.ts`) chunks
 the ids against both of the route's bounds and tolerates a chunk — or every
 chunk — failing, and the resulting `ItemUrlMap` is persisted as `itemUrls`,
-a sibling of `findings` on the stored `done` state (same byte budget, see
-"Findings, bounded" above). `renderExpertFindings` and `renderCatchupFindings`
-take that map as a fourth, optional argument and pass each id's looked-up URL
+a sibling of `findings` on the stored `done` state (same byte budget, see the
+"Runs outlive the panel" bullet under "The agent lanes" above).
+`renderExpertFindings` and `renderCatchupFindings` take that map as a fourth, optional argument and pass each id's looked-up URL
 straight into `findingLink` — a map miss (unresolved id, or no map at all on
 an older/un-scoped gateway) needs no branch of its own, because `findingLink`
 already renders plain text when its URL argument is absent or unsafe. The
@@ -1808,7 +1844,8 @@ read over the local index. Since C6, the panel offers only the lanes the
 roster publishes (`src/background/agents-capability.ts`) — and this section
 never asks that gate anything. A lane registered as `preflight` would be
 withheld on every gateway forever while looking correct in review, which is
-why §4 below never made this a lane at all. Naming rule, enforced by
+why this was never made a lane at all (see "Deploy readiness is a section, not
+a lane" below). Naming rule, enforced by
 convention rather than a type: `deploy-preflight` in code (the message `kind`,
 `deploy-client.ts`, `deploy-handlers.ts`), "Deploy readiness" in the UI, never
 bare `preflight`.
@@ -2180,8 +2217,13 @@ side, each column labelled as a window ending now — still directional, and
 still honest, without implying a trend the contract cannot back. `until` is
 proposed upstream precisely to make a real series expressible; until it
 lands, this constraint is a property of the route, not of any one client, and
-binds every future consumer of it, including the DORA page slice 2 has not
-built yet.
+binds every future consumer of it.
+
+It no longer has to bind the DORA page slice 2 has not built yet, though:
+`GET /v1/metrics/stats` (Nimbus#1493, gateway v7.19.0) now serves a genuine
+bucketed series over a wider metric set, so that page can draw the trend this
+route cannot. ROADMAP's C10.2 entry carries the correction; whoever builds the
+page should choose between the two routes there.
 
 ## Research briefs
 
@@ -2252,8 +2294,11 @@ committed to sending; a passage is text held before that moment ever arrives.
 
 A right-click **Add to brief** on a selection stores the text immediately,
 under its own `passages` key in `chrome.storage.local` — separate from the run
-record above, because a passage outlives any single run and is not cleared by
-one. One pure module, [`src/shared/passage.ts`](../src/shared/passage.ts),
+record above, because a passage exists before any run and is not cleared with
+the run records (unpairing keeps it). A run drops only the passages it actually
+sent, and only once `/run` is accepted — the moment the text left — so a run
+that fails before then keeps everything (`forgetFed`, `brief-handlers.ts`).
+One pure module, [`src/shared/passage.ts`](../src/shared/passage.ts),
 owns every rule (grouping by fragment-stripped URL, stitching with
 `PASSAGE_SEPARATOR`, every cap); [`passage-store.ts`](../src/background/passage-store.ts)
 only persists what that module returns, so it cannot drift from the rules.
@@ -2267,17 +2312,28 @@ a silently short excerpt.
 
 ### Why there is a local disclosure log
 
-The gateway's egress ledger does **not** cover a brief's model call.
-`THIS_BINARY_COVERAGE.model` is `none` (`egress/egress-coverage.ts`) — the `model`
-source type is declared but its appender has not landed — and
+When the log was built, the gateway's egress ledger did **not** cover a brief's
+model call. `THIS_BINARY_COVERAGE.model` was `none` (`egress/egress-coverage.ts`)
+— the `model` source type was declared but its appender had not landed — and
 `agent-brief-egress.ts` covers `agents.*` briefs, which is a different route from
-`/v1/briefs`. So `nimbus prove` shows nothing for a brief's synthesis, and without
-a local record the only disclosure (`Report.synthesis`) dies with the run's
-30-minute TTL.
+`/v1/briefs`. So `nimbus prove` showed nothing for a brief's synthesis, and
+without a local record the only disclosure (`Report.synthesis`) died with the
+run's 30-minute TTL.
 
 C4.1's caution — read the gateway's record rather than keep a private one that
 could quietly disagree — binds wherever a gateway record exists. For this class
-none does, and a local record cannot disagree with one that was never written.
+none did, and a local record cannot disagree with one that was never written.
+
+**Upstream has since closed half of that gap.** `THIS_BINARY_COVERAGE.model` is
+now `per-call`: a decorator on every provider in the gateway's route table
+(`egress/model-egress.ts`) appends one `model` row before each non-local
+generate call, and that includes a `/v1/briefs` synthesis — so on a current
+gateway `nimbus prove` does show a remote synthesis. That row names the vendor,
+the model and the task, and nothing else: no question, no source list, nothing
+tying it to this run. A local synthesis appends nothing, correctly, because
+nothing left the machine. So the log still earns its place — it is the only
+record of which question and how many sources a run sent, and the only record
+of any kind against a gateway older than that change.
 
 The log is written when `/run` is **accepted** — the moment of egress — not when
 the report arrives, so a run that fails during synthesis still gets an entry: the
@@ -2355,11 +2411,15 @@ actually happened, and the model is named on its own line — because on a remot
 run the banner is the gateway's `disclosure` string verbatim, and that string is
 not guaranteed to name the model.
 
-A gateway-side proposal to close this is written up **in the Nimbus repo**, not
-this one — `2026-08-17-brief-synthesis-destination-design` on the
-`dev/asafgolombek/briefs-prerun-disclosure` branch: a synthesis policy echoed at
-create, a request-side `requireLocal` that may only tighten it, and the `model`
-egress class raised behind a router chokepoint.
+A gateway-side proposal to close this was written up **in the Nimbus repo**, not
+this one — `2026-08-17-brief-synthesis-destination-design`, on a
+`dev/asafgolombek/briefs-prerun-disclosure` branch that no longer exists: a
+synthesis policy echoed at create, a request-side `requireLocal` that may only
+tighten it, and the `model` egress class raised behind a router chokepoint. Only
+the third has landed, and as a decorator on every non-local provider in the
+gateway's route table rather than a chokepoint (see "Why there is a local
+disclosure log" above). That records a remote synthesis after the fact; nothing
+signals the destination before a run, so this section's limit still stands.
 
 ## The activity ledger (Phase C4.1)
 
@@ -2477,9 +2537,14 @@ split is why `test/unit/` (Vitest, node env; DOM tests opt into jsdom via a
 docblock) can exercise the real decision logic without a browser — the seam is the
 test seam.
 
-The surfaces that *can't* be unit-tested this way — the injected capture/panel/
-toast scripts, the popup/options DOM, and the service-worker glue itself — are
-covered by the manual checklist in [`development.md`](./development.md).
+The injected capture/panel/toast/cue scripts, the popup/options DOM and the
+service-worker glue are unit-tested too — the DOM surfaces under jsdom, and
+whatever registers listeners against the full `chrome.*` mock in
+`test/unit/helpers/chrome-mock.ts`. What no unit test can reach — the
+built extension in a real Chromium against a mock gateway — is the Playwright
+suite in `test/e2e/`, and what only a human in a real browser against a real
+gateway can prove is the checklist in [`development.md`](./development.md),
+whose steps say which of the three covers them.
 
 ## An MV3 subtlety: synchronous listener registration
 
@@ -2496,17 +2561,22 @@ marked `// NOSONAR` on that exact line). This is intentional, not a forgotten
 
 The gateway client, pairing orchestration, token store, and 429/413/offline
 handling in `src/background/` are hand-rolled here — and duplicated in
-`nimbus-vscode`. The proposed **Nimbus SDK** (roadmapped in the SDK repo, not
-here) extracts that into one spec-driven package that every surface consumes via
-small per-runtime adapters.
+`nimbus-vscode`. A proposed **Nimbus SDK** client spine would extract that into
+one spec-driven package that every surface consumes via small per-runtime
+adapters. It is still only a proposal: `@nimbus-dev/sdk` ships today as the
+connector/extension authoring contract — this repo takes the agents' answer
+types from it, type-only (see "The SDK seam is type-only, and it is enforced,
+not just conventional" above) — and the SDK repo's own roadmap carries no
+gateway client yet.
 
-This repo is a **Phase 1 consumer and proof surface**. The architecture above is
-already shaped for that migration: `gateway-client.ts`, `handlers.ts`, and
-`connection-store.ts` are exactly the units the SDK generalizes, and the
-dependency-injection seam means they can be swapped for SDK calls **without
-touching** the message routing, the capture pipeline, or the state machines. Until
-the SDK lands, this local implementation is the reference it generalizes from — so
-changes here are potential upstream contributions.
+This repo would be that client's **first consumer and proof surface**. The
+architecture above is already shaped for that migration: `gateway-client.ts`,
+`handlers.ts`, and `connection-store.ts` are exactly the units such a client
+would generalize, and the dependency-injection seam means they can be swapped
+for SDK calls **without touching** the message routing, the capture pipeline,
+or the state machines. Until one lands, this local implementation is the
+reference it would generalize from — so changes here are potential upstream
+contributions.
 
 ## Invariants, in one place
 
@@ -2518,7 +2588,7 @@ changes here are potential upstream contributions.
 | **I13** | A targeted fetch is a WRITE (outbound provider request), gated by an explicit click and its own `fetch` scope — never fired on panel open | `src/panel/panel-in-page.ts`'s `sendFetch` (button click only) + the gateway's `fetch` token scope; see [the targeted-fetch path](#the-targeted-fetch-path) |
 | — | The bearer token / pairing code is never logged, never in a page DOM, never serialized into the offline queue, and absent from every response type the panel or popup can see | `noConsole` in `src/` (Biome); token held only in the SW + storage; `ConnectionResponse` has no `token` field and `flushQueue` reads it at send time |
 | — | **No declared `content_scripts`.** Every in-page surface — capture, panel, toast, cue — is injected on demand via `chrome.scripting`, so the extension runs on no page until something asks it to | `src/manifest/manifest.ts` declares none; `src/browser/scripting.ts` is the only injection path |
-| — | **Gateway- and page-supplied strings are rendered with `textContent`, never `innerHTML`, and never through a markdown-to-HTML pass.** The 15 mentions of `innerHTML` in `src/` are all comments saying why it is not used; there is not one assignment | `src/shared/dom.ts` is the shared builder every view goes through |
+| — | **Gateway- and page-supplied strings are rendered with `textContent`, never `innerHTML`, and never through a markdown-to-HTML pass.** Every mention of `innerHTML` in `src/` is a comment saying why it is not used; there is not one assignment | `src/shared/dom.ts` is the shared builder every view goes through |
 | — | An outbound link carries `rel="noopener noreferrer"`, and a URL becomes a link at all only after it parses | `src/panel/panel-view.ts`, `src/shared/dom.ts` |
 | — | Resolution is **at-most-one**. A non-exact match is labelled a closest match, never presented as the page you are on | `resolveItemByUrl` upstream returns one item or none; the panel prints "Closest match — this page's exact URL isn't indexed" rather than silently substituting it |
 | — | No `console.*` in `src/`; strict TypeScript, no `any` | `biome.json` (`noConsole`, `noExplicitAny`) + `tsc --noEmit` |
