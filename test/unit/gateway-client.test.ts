@@ -243,6 +243,27 @@ describe("timeout", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(await p).toEqual({ ok: false, reason: "unreachable" });
   });
+
+  // The GET core's half of the same rule: every bearer read the panel waits on
+  // (resolve, resolve-file, a run poll) goes through it. Checked as "settled by
+  // then", not by awaiting, so a read that ignored its signal fails here rather
+  // than hanging until the test runner's own timeout.
+  test("resolveItem aborts after its timeout → unreachable", async () => {
+    const doFetch = (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+      });
+    const p = resolveItem(ORIGIN, "tok", "https://github.com/a/b/pull/1", doFetch);
+    let settled = false;
+    void p.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(7_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+    expect(await p).toEqual({ ok: false, reason: "unreachable" });
+  });
 });
 
 describe("postRelated", () => {

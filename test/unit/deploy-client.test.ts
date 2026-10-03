@@ -108,6 +108,62 @@ describe("fetchPreflight", () => {
   });
 });
 
+/**
+ * The public reads are bounded like the scoped ones: a wedged gateway must not
+ * hold the deploy section open. Both doubles end only when the request's own
+ * signal aborts, the way a real `fetch` does, and each read is checked as
+ * "settled by then" rather than awaited, so one that ignored its signal fails
+ * here instead of hanging. 10s is `DEPLOY_TIMEOUT_MS` in `deploy-client.ts`.
+ */
+describe("the public reads' timeout", () => {
+  async function settleAfterTimeout(doFetch: typeof fetch): Promise<unknown> {
+    vi.useFakeTimers();
+    try {
+      const p = fetchPreflight(ORIGIN, "web", "main", doFetch);
+      let settled = false;
+      void p.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+      return await p;
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  test("gives up on a gateway whose headers never arrive", async () => {
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      })) as unknown as typeof fetch;
+    expect(await settleAfterTimeout(hanging)).toEqual({ ok: false, reason: "unreachable" });
+  });
+
+  // The timer stays armed across the body read, as the comment on `getJson`
+  // says. A body cut off mid-object reads as no body, which the envelope parser
+  // rejects — the same outcome as any 200 it cannot read.
+  test("gives up on a 200 whose body never finishes", async () => {
+    const hangingBody = (async (_url: string, init?: RequestInit) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"service":'));
+            init?.signal?.addEventListener("abort", () => {
+              controller.error(new DOMException("aborted", "AbortError"));
+            });
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as unknown as typeof fetch;
+    expect(await settleAfterTimeout(hangingBody)).toEqual({ ok: false, reason: "malformed" });
+  });
+});
+
 describe("fetchItemBranch", () => {
   test("reads metadata.branch and returns ONLY the branch", async () => {
     const doFetch = vi.fn(async () =>
