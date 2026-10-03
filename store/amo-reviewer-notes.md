@@ -25,7 +25,8 @@ into the submitted zip).
 - `background.js` — the MV3 background event page (`src/background/service-worker.ts`).
 - `popup.js` — the toolbar popup (`src/popup/popup.ts`).
 - `options.js` — the options / pairing page (`src/options/options.ts`).
-- `capture.js` — the page-capture script injected on a Clip action
+- `capture.js` — the page-capture script injected on a Clip action, and into
+  the tabs the user picks as sources for a research brief
   (`src/capture/capture-in-page.ts`); `@mozilla/readability` is inlined here.
 - `panel.js` — the related-items and agent-lane panel injected on demand
   (`src/panel/panel-in-page.ts`).
