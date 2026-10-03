@@ -1401,9 +1401,6 @@ function routeDeploy(message: unknown, respond: Respond): Routed {
 }
 
 function routeSubRouters(message: unknown, respond: Respond, sender: SenderInfo): Routed {
-  // ONE branch for six kinds — the fan-out lives in `routeBriefMessage` so this
-  // router stays under S3776's cap. Placed before the narrower guards below only
-  // because its own guard is exact (a `brief-` prefix plus an optional string id).
   // ONE branch for the three ledger reads, same shape and same reason as the
   // brief branch below.
   if (isEgressMessage(message)) {
@@ -1417,6 +1414,9 @@ function routeSubRouters(message: unknown, respond: Respond, sender: SenderInfo)
       });
     return true;
   }
+  // ONE branch for six kinds — the fan-out lives in `routeBriefMessage` so this
+  // router stays under S3776's cap. Placed before the narrower guards below only
+  // because its own guard is exact (a `brief-` prefix plus an optional string id).
   if (isBriefMessage(message)) {
     routeBriefMessage(message)
       .then(respond)
