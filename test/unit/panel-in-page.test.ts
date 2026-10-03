@@ -1046,6 +1046,28 @@ describe("panel-in-page fetch state machine", () => {
     expect(sent.filter((k) => k === "fetch")).toHaveLength(1);
   });
 
+  // The other guard behind the same rule. An `indexed` answer clears `fetchState`
+  // before it re-resolves, so the test above's guard is gone by then: if the index
+  // has not caught up and that resolve is still a miss, only the `fetchSent` latch
+  // `headerFrom` passes down keeps the button away — a button `sendFetch` would
+  // then ignore, since the latch is still set.
+  it("does not re-offer the Fetch button when an indexed fetch's re-resolve is still a miss", async () => {
+    const sent: string[] = [];
+    const panel = await mountPanelWithScript(sent, {
+      resolve: [miss],
+      fetch: [indexed],
+    });
+
+    clickFetch(panel);
+    await flush();
+    clickPreviewSend(panel);
+    await flush();
+
+    expect(sent).toEqual(["resolve", "fetch", "resolve"]);
+    expect(panel.textContent).toContain("Not indexed");
+    expect(panel.querySelector(".nimbus-related__fetch")).toBeNull();
+  });
+
   it("a rate-limited outcome renders Try again", async () => {
     const sent: string[] = [];
     const panel = await mountPanelWithScript(sent, {
