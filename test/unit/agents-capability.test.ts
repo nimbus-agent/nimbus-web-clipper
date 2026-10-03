@@ -1,5 +1,5 @@
 // test/unit/agents-capability.test.ts
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AgentRoster,
   fetchAgentRoster,
@@ -55,6 +55,62 @@ describe("fetchAgentRoster", () => {
   it("treats an unreachable gateway as unavailable", async () => {
     const throwing = (() => Promise.reject(new Error("boom"))) as unknown as typeof fetch;
     expect(await fetchAgentRoster(deps(throwing))).toEqual({ unavailable: true });
+  });
+});
+
+/**
+ * The roster read is bounded: a wedged gateway must not hold the panel's lane
+ * decision open forever. Both doubles below end only when the request's own
+ * signal aborts, the way a real `fetch` does — so each test fails if the read
+ * stops passing that signal, or stops waiting on it. 10s is
+ * `ROSTER_TIMEOUT_MS` in `agents-capability.ts`.
+ */
+describe("fetchAgentRoster — the timeout", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Settles the roster read under fake timers and reports when it settled. */
+  async function settleAfterTimeout(doFetch: typeof fetch): Promise<AgentRoster> {
+    vi.useFakeTimers();
+    const pending = fetchAgentRoster(deps(doFetch));
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const out = await pending;
+    expect(vi.getTimerCount()).toBe(0);
+    return out;
+  }
+
+  it("gives up on a gateway whose headers never arrive", async () => {
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      })) as unknown as typeof fetch;
+    expect(await settleAfterTimeout(hanging)).toEqual({ unavailable: true });
+  });
+
+  // The timer stays armed across the body read, not only the wait for headers.
+  it("gives up on a 200 whose body never finishes", async () => {
+    const hangingBody = (async (_url: string, init?: RequestInit) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"agents":'));
+            init?.signal?.addEventListener("abort", () => {
+              controller.error(new DOMException("aborted", "AbortError"));
+            });
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as unknown as typeof fetch;
+    expect(await settleAfterTimeout(hangingBody)).toEqual({ unavailable: true });
   });
 });
 

@@ -795,6 +795,30 @@ describe("panel-in-page resolve outcomes", () => {
     expect(panel.querySelectorAll("button.nimbus-related__candidate")).toHaveLength(0);
   });
 
+  // `headerFrom` must carry the truncation flag through, not only the list.
+  // Upstream sends an EMPTY candidate list when it would have to truncate, so a
+  // dropped flag would put an empty chooser under "Several indexed items match"
+  // instead of saying the answer is on no list the panel could show.
+  it("says so, and offers no chooser, when an ambiguous answer was truncated", async () => {
+    const panel = await mountPanelWithResolve({
+      kind: "resolve",
+      ok: true,
+      recognition: {
+        ok: true,
+        product: "jira",
+        kind: "issue",
+        label: "Jira issue",
+        ref: "ABC-1",
+        resolveUrl: "https://acme.atlassian.net/browse/ABC-1",
+      },
+      outcome: { kind: "ambiguous", fetchable: false, truncated: true, candidates: [] },
+    });
+
+    expect(panel.textContent).toContain("Too many matches to choose from");
+    expect(panel.textContent).not.toContain("Several indexed items match this page");
+    expect(panel.querySelectorAll("button.nimbus-related__candidate")).toHaveLength(0);
+  });
+
   // The gap `headerFrom` closes: nothing else makes a COLD panel open (no
   // capture performed in this session) show the captured-copy header.
   // Without this branch, a page captured last week would present as ordinary
