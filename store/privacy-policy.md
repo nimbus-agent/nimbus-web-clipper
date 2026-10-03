@@ -46,8 +46,10 @@ shared.
   use it in a brief or clear it.
 - **Answers the gateway sent back.** Agent-lane briefs and research-brief
   reports are cached so reopening the panel does not re-ask; they expire, and
-  unpairing clears them. The gateway's report of which of its connectors are
-  working is kept for one minute, for the same reason.
+  unpairing clears them. The gateway's latest report of which of its connectors
+  are working (each one's state and when it last synced) is cached too, and
+  reused for one minute; it stays stored until the next report replaces it, and
+  unpairing does not remove it.
 - **A local disclosure log.** One row per research brief you ran — when, the
   question, how many sources, and which model answered — so you can see what was
   asked on your behalf. You can clear it from the Options page.
