@@ -106,6 +106,16 @@ checks — the five commands under [Pull requests](#pull-requests) plus
   been raised while `bun audit` reported dozens of advisories against the same
   lockfile. That every package here is a devDependency does not make an advisory
   moot — `publish.yml` runs `web-ext` with the AMO credentials in its environment.
+- **A transitive fix needs a fresh lockfile.** `bun install` with `bun.lock`
+  present keeps each transitive version the lockfile pins for as long as it
+  satisfies its range, even after a newer release inside that range fixes an
+  advisory, and the `bun update` that `bun audit` suggests does not move it
+  either. So when `bun audit` still names a transitive package and
+  `bun why <package>` shows a range that already admits the patched release,
+  delete `bun.lock`, run `bun install` to resolve the whole tree afresh, and run
+  `bun audit` again. That moves every transitive package to the newest release
+  its range admits, not only the flagged one, so expect a large `bun.lock` diff
+  and run the full checks on it.
 - **Held advisories** — ones `bun audit` still reports after a bulk update, each
   with the date it was last checked. Delete an entry once `bun audit` drops it.
   - **`node-forge` GHSA-86w9-cpqp-85rv (high). Checked 2026-10-04; re-check at
@@ -119,11 +129,22 @@ checks — the five commands under [Pull requests](#pull-requests) plus
     `node-forge`. Only `web-ext run --target firefox-android` loads them, and
     even that uses `adbkit` as an ADB client; the forgeable RSA signature check
     is in adbkit's TCP-USB bridge server, which `web-ext` never starts. Re-examine
-    this if anything here starts running `web-ext run`. The fix is open as
-    [digitalbazaar/forge#1152](https://github.com/digitalbazaar/forge/pull/1152),
-    aimed at 1.4.1. `adbkit`'s range admits that, so no `overrides` entry should
-    be needed, but an incremental `bun install` keeps the locked 1.4.0, so
-    regenerate `bun.lock` from a fresh resolution and confirm with `bun audit`.
+    this if anything here starts running `web-ext run`. Re-check it against the
+    advisory and the registry, not a pull request:
+    `gh api advisories/GHSA-86w9-cpqp-85rv` gives the `first_patched_version`
+    (still `null`) and the affected range (`<= 1.4.0`), and
+    `npm view node-forge dist-tags` the newest release (still 1.4.0). Upstream
+    tracks the bug in
+    [digitalbazaar/forge#1149](https://github.com/digitalbazaar/forge/issues/1149).
+    The candidate fixes are
+    [#1152](https://github.com/digitalbazaar/forge/pull/1152), aimed at 1.4.1,
+    and [#1157](https://github.com/digitalbazaar/forge/pull/1157), which builds on
+    it. Either may be closed in favor of the other — the earlier
+    [#1151](https://github.com/digitalbazaar/forge/pull/1151) was closed in favor
+    of #1152 — so a closed PR does not mean the fix was dropped. A 1.x release
+    falls inside `adbkit`'s `^1.3.1`, so no `overrides` entry should be needed,
+    but the locked 1.4.0 will not move by itself: follow the fresh-lockfile rule
+    above, then confirm with `bun audit`.
 - **Read `bun outdated`'s Latest column, not just Update.** Update stays inside
   your range, and a caret range on a `0.x` package stops at the next minor
   (`^0.3.4` never reaches `0.4.0`). For those packages the minor *is* the breaking
