@@ -19,8 +19,9 @@ reviews:
     - path: "src/**/*.ts"
       instructions: >-
         This is a Chrome + Firefox MV3 browser extension that talks ONLY to a
-        local Nimbus gateway on 127.0.0.1 over the locked HTTP contract
-        (/v1/clips, /v1/clips/pair/confirm, /v1/clips/related). Flag: any network
+        local Nimbus gateway on 127.0.0.1 over the locked HTTP contract (every
+        route it calls is listed once, in GATEWAY_PATHS in
+        src/shared/gateway.ts). Flag: any network
         call to a non-loopback origin; any use of `any` (prefer `unknown`); any
         `console.*` in src (it ships to users); any logging of the bearer token or
         the pairing code; and any host_permissions beyond 127.0.0.1/localhost. The

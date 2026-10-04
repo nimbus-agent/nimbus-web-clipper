@@ -253,6 +253,69 @@ describe("handleBriefStart", () => {
     expect(d.client.feedBriefSource).not.toHaveBeenCalled();
   });
 
+  it("a refused create with no hint carries NO hint key, not an undefined one", async () => {
+    const d = deps({
+      client: client({
+        createBrief: vi.fn(() => Promise.resolve({ ok: false, reason: "disabled" })) as never,
+      }),
+    });
+    const state = await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
+    expect(state).toEqual({ kind: "failed", reason: "disabled" });
+    expect("hint" in state).toBe(false);
+  });
+
+  // Only `refused` + `run_capacity` stops the feed loop. Any OTHER feed failure
+  // skips that one source, names it, and carries on — the next source is still
+  // fed and the run still starts.
+  it("skips a source whose feed fails for any other reason, naming the reason", async () => {
+    const feed = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, reason: "unreachable" })
+      .mockResolvedValueOnce({ ok: true, received: 1, expected: 2 });
+    const d = deps({ client: client({ feedBriefSource: feed as never }) });
+    const state = await handleBriefStart(d, start);
+    expect(feed).toHaveBeenCalledTimes(2);
+    expect(d.client.runBrief).toHaveBeenCalledTimes(1);
+    expect(state.kind === "done" && state.skipped).toEqual([{ title: "A", reason: "unreachable" }]);
+  });
+
+  it("a `refused` feed that is not run_capacity skips, it does not stop", async () => {
+    const feed = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, reason: "refused", detail: "too_large" })
+      .mockResolvedValueOnce({ ok: true, received: 1, expected: 2 });
+    const d = deps({ client: client({ feedBriefSource: feed as never }) });
+    const state = await handleBriefStart(d, start);
+    expect(feed).toHaveBeenCalledTimes(2);
+    expect(state.kind === "done" && state.skipped).toEqual([{ title: "A", reason: "refused" }]);
+  });
+
+  it("a poll that fails records the failure on the stored run and emits it", async () => {
+    const d = deps({
+      client: client({
+        getBrief: vi.fn(() => Promise.resolve({ ok: false, reason: "unreachable" })) as never,
+      }),
+    });
+    const state = await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
+    expect(state).toEqual({ kind: "failed", id: "b1", reason: "unreachable" });
+    expect(d.onState).toHaveBeenLastCalledWith({ kind: "failed", id: "b1", reason: "unreachable" });
+    const put = d.store.put as ReturnType<typeof vi.fn>;
+    expect(put.mock.calls.at(-1)?.[0]).toMatchObject({
+      id: "b1",
+      phase: { kind: "failed", reason: "unreachable" },
+    });
+  });
+
+  it("a synthesis failure with no reason of its own reads as synthesis_failed", async () => {
+    const d = deps({
+      client: client({
+        getBrief: vi.fn(() => Promise.resolve({ ok: true, status: "failed" })) as never,
+      }),
+    });
+    const state = await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });
+    expect(state).toEqual({ kind: "failed", id: "b1", reason: "synthesis_failed" });
+  });
+
   it("fails closed with no connection, without touching the client", async () => {
     const d = deps({ connection: () => Promise.resolve(null) });
     const state = await handleBriefStart(d, { ...start, picks: [{ kind: "tab", id: 1 }] });

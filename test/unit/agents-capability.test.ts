@@ -1,5 +1,5 @@
 // test/unit/agents-capability.test.ts
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AgentRoster,
   fetchAgentRoster,
@@ -58,6 +58,62 @@ describe("fetchAgentRoster", () => {
   });
 });
 
+/**
+ * The roster read is bounded: a wedged gateway must not hold the panel's lane
+ * decision open forever. Both doubles below end only when the request's own
+ * signal aborts, the way a real `fetch` does — so each test fails if the read
+ * stops passing that signal, or stops waiting on it. 10s is
+ * `ROSTER_TIMEOUT_MS` in `agents-capability.ts`.
+ */
+describe("fetchAgentRoster — the timeout", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Settles the roster read under fake timers and reports when it settled. */
+  async function settleAfterTimeout(doFetch: typeof fetch): Promise<AgentRoster> {
+    vi.useFakeTimers();
+    const pending = fetchAgentRoster(deps(doFetch));
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const out = await pending;
+    expect(vi.getTimerCount()).toBe(0);
+    return out;
+  }
+
+  it("gives up on a gateway whose headers never arrive", async () => {
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      })) as unknown as typeof fetch;
+    expect(await settleAfterTimeout(hanging)).toEqual({ unavailable: true });
+  });
+
+  // The timer stays armed across the body read, not only the wait for headers.
+  it("gives up on a 200 whose body never finishes", async () => {
+    const hangingBody = (async (_url: string, init?: RequestInit) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"agents":'));
+            init?.signal?.addEventListener("abort", () => {
+              controller.error(new DOMException("aborted", "AbortError"));
+            });
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as unknown as typeof fetch;
+    expect(await settleAfterTimeout(hangingBody)).toEqual({ unavailable: true });
+  });
+});
+
 describe("meetsFloor", () => {
   it("accepts a released gateway at or above the floor", () => {
     expect(meetsFloor("2.19.0", "2.19.0")).toBe(true);
@@ -97,6 +153,19 @@ describe("meetsFloor", () => {
 
   it("names a floor that is a real semver", () => {
     expect(meetsFloor(ITEM_ARM_FLOOR, ITEM_ARM_FLOOR)).toBe(true);
+  });
+
+  // Every case above differs from the floor in its major or minor part, so the
+  // patch comparison — the last rung before "exactly the floor" — never ran.
+  it("compares the patch when major and minor agree", () => {
+    expect(meetsFloor("2.19.1", "2.19.0")).toBe(true);
+    expect(meetsFloor("2.19.0", "2.19.1")).toBe(false);
+    expect(meetsFloor("2.19.0-rc.1", "2.19.1")).toBe(false);
+  });
+
+  it("fails closed on an unparseable FLOOR, not just an unparseable version", () => {
+    expect(meetsFloor("2.19.0", "2.19")).toBe(false);
+    expect(meetsFloor("9.9.9", "latest")).toBe(false);
   });
 });
 

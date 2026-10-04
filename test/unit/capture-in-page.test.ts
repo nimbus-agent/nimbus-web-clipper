@@ -438,4 +438,46 @@ describe("source metadata", () => {
 
     expect(getCapture()("article").source).toBeUndefined();
   });
+
+  // The page's own meta tags carry no date here — only Readability's JSON-LD
+  // reading does — so a publishedAt on the result can only have come through
+  // the Readability arm of the merge.
+  test("the article path takes its publish date from Readability's JSON-LD reading", () => {
+    setArticleDocument();
+    addJsonLd({
+      "@context": "https://schema.org",
+      "@type": "Article",
+      headline: "How Nimbus Captures Pages",
+      datePublished: "2024-03-01T09:30:00Z",
+    });
+
+    expect(getCapture()("article").source?.publishedAt).toBe(Date.parse("2024-03-01T09:30:00Z"));
+  });
+
+  test("the article path carries the page's language", () => {
+    setArticleDocument();
+    document.documentElement.setAttribute("lang", "en-GB");
+    try {
+      expect(getCapture()("article").source?.lang).toBe("en-GB");
+    } finally {
+      document.documentElement.removeAttribute("lang");
+    }
+  });
+});
+
+describe("selection mode without a selection object", () => {
+  // Some frames hand back `null` from getSelection(); that is an empty
+  // selection, never a crash.
+  test("a null selection is an empty, unreadable body", () => {
+    setArticleDocument();
+    const original = window.getSelection;
+    window.getSelection = () => null;
+    try {
+      const result = getCapture()("selection");
+      expect(result.body).toBe("");
+      expect(result.readableFound).toBe(false);
+    } finally {
+      window.getSelection = original;
+    }
+  });
 });

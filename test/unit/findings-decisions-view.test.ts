@@ -93,6 +93,26 @@ describe("renderDecisionsFindings", () => {
     expect(without.textContent?.toLowerCase()).not.toContain("truncated");
   });
 
+  test("speaks of a single truncated source in the singular", () => {
+    const el = renderDecisionsFindings(document, findings({ truncatedSources: 1 }), NOW);
+    expect(el.querySelector(".nimbus-findings__provenance")?.textContent).toBe(
+      "1 source in this window was indexed with a truncated body.",
+    );
+  });
+
+  // Evidence with no known time says nothing about when — never "just now".
+  test("evidence with no occurredAt carries no age", () => {
+    const el = renderDecisionsFindings(
+      document,
+      findings({ entries: [entry({ evidence: [evidence({ occurredAt: null })] })] }),
+      NOW,
+    );
+    expect(el.textContent).toContain("Adopt SQLite WAL");
+    expect(el.querySelectorAll(".nimbus-findings__item .nimbus-findings__item-when")).toHaveLength(
+      0,
+    );
+  });
+
   test("renders an empty line when there are no decisions", () => {
     const el = renderDecisionsFindings(document, findings({ entries: [] }), NOW);
     expect(el.querySelector(".nimbus-findings__empty")).not.toBeNull();

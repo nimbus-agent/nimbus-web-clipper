@@ -432,7 +432,13 @@ describe("a path that ALMOST matches is a miss, never a guess", () => {
       NONE,
     ],
     ["Jenkins /job with no job name after it", "https://corp.example/jenkins/job", SELF_HOSTED],
+    ["Jenkins page that names no job at all", "https://corp.example/jenkins/manage", SELF_HOSTED],
     ["Jenkins job page with no build number", "https://corp.example/jenkins/job/web", SELF_HOSTED],
+    [
+      "GitLab blob naming a ref but no file (a tree listing)",
+      "https://gitlab.com/g/p/-/blob/main",
+      NONE,
+    ],
     [
       "Jenkins lastBuild alias, which is not a build number",
       "https://corp.example/jenkins/job/web/lastBuild",

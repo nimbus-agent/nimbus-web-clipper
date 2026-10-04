@@ -333,6 +333,71 @@ describe("handleDeployPreflight", () => {
     const out = await handleDeployPreflight(req, deps({ getConnection: async () => null }));
     expect(out).toEqual({ kind: "deploy-preflight", ok: false, reason: "unreachable" });
   });
+
+  // A 403 whose body carried no parseable scope detail is still `forbidden` —
+  // the user can still be told to grant a scope — but with no invented gap.
+  test("a 403 with no scope detail is forbidden with NO scopeGap key", async () => {
+    const out = await handleDeployPreflight(
+      req,
+      deps({ resolveService: async () => ({ ok: false, reason: "insufficient_scope" }) }),
+    );
+    expect(out).toMatchObject({ reason: "unbound", resolution: { kind: "forbidden" } });
+    const resolution = (out as { resolution?: Record<string, unknown> }).resolution;
+    expect(resolution).toEqual({ kind: "forbidden" });
+  });
+
+  const bound = [
+    { product: "github", origin: ORIGIN, scope: "acme/web", serviceId: "web" },
+  ] as const;
+
+  test("an explicit targetRef wins over the whole ladder — no item read at all", async () => {
+    const doFetch = vi.fn(async (url: string) =>
+      url.includes("/v1/items/")
+        ? jsonRes({ data: { id: "i1", metadata: { branch: "feat/x" } } })
+        : jsonRes(envelope()),
+    );
+    await handleDeployPreflight(
+      { ...req, itemId: "i1", targetRef: "hotfix/1" },
+      deps({
+        getBindings: async () => [...bound],
+        doFetch: doFetch as unknown as typeof fetch,
+      }),
+    );
+    const urls = doFetch.mock.calls.map((c) => c[0] as string);
+    expect(urls.some((u) => u.includes("/v1/items/"))).toBe(false);
+    expect(urls.find((u) => u.includes("/v1/preflight/deploy"))).toContain("target_ref=hotfix%2F1");
+  });
+
+  test("an EMPTY targetRef is no ref at all — the ladder still runs", async () => {
+    const doFetch = vi.fn(async (url: string) =>
+      url.includes("/v1/items/")
+        ? jsonRes({ data: { id: "i1", metadata: { branch: "feat/x" } } })
+        : jsonRes(envelope()),
+    );
+    await handleDeployPreflight(
+      { ...req, itemId: "i1", targetRef: "" },
+      deps({
+        getBindings: async () => [...bound],
+        doFetch: doFetch as unknown as typeof fetch,
+      }),
+    );
+    const preflight = doFetch.mock.calls
+      .map((c) => c[0] as string)
+      .find((u) => u.includes("/v1/preflight/deploy"));
+    expect(preflight).toContain("target_ref=feat%2Fx");
+  });
+
+  test("a bound scope whose preflight read fails reports THAT reason", async () => {
+    const doFetch = vi.fn(async () => jsonRes({ error: "boom" }, 500));
+    const out = await handleDeployPreflight(
+      req,
+      deps({
+        getBindings: async () => [...bound],
+        doFetch: doFetch as unknown as typeof fetch,
+      }),
+    );
+    expect(out).toEqual({ kind: "deploy-preflight", ok: false, reason: "server_error" });
+  });
 });
 
 describe("handleServiceBind", () => {

@@ -61,6 +61,16 @@ describe("readPageMeta", () => {
     expect(readPageMeta(document, PAGE)).toEqual({});
   });
 
+  // A tag with no content ATTRIBUTE at all is skipped like a blank one, and
+  // the next selector in line still gets its turn.
+  test("a meta tag with no content attribute falls through to the next selector", () => {
+    const bare = document.createElement("meta");
+    bare.setAttribute("name", "author");
+    document.head.appendChild(bare);
+    addMeta("property", "article:author", "Grace Hopper");
+    expect(readPageMeta(document, PAGE).author).toBe("Grace Hopper");
+  });
+
   test("values are trimmed", () => {
     addMeta("name", "author", "  Ada Lovelace  ");
     expect(readPageMeta(document, PAGE).author).toBe("Ada Lovelace");

@@ -44,6 +44,7 @@ import {
   type LaneState,
   laneBelongsOnSurface,
   type PairError,
+  type Recognition,
   type RelatedError,
   type RelatedHit,
   type ResolveCandidate,
@@ -61,6 +62,7 @@ import {
   offeredLanes,
 } from "./agents-capability.ts";
 import type { CaptureOutcome } from "./capture-tab.ts";
+import { type RawScopeGap, withLabel } from "./http-json.ts";
 
 export interface CaptureDeps {
   readonly captureTab: (tabId: number, expectedUrl: string) => Promise<CaptureOutcome>;
@@ -220,6 +222,10 @@ export async function handleRecognise(
  */
 type GetConnection = () => Promise<{ origin: string; token: string; label: string } | null>;
 
+/** What {@link GetConnection} yields once a caller has ruled out `null`: the pairing a
+ *  gateway-touching step is handed, derived rather than spelled a second time. */
+type PairedConnection = NonNullable<Awaited<ReturnType<GetConnection>>>;
+
 /**
  * Resolve a page URL to an indexed item.
  *
@@ -277,13 +283,6 @@ export interface ResolveDeps {
 }
 
 /**
- * Recognise the page, then resolve it to at most one indexed item.
- *
- * The recognition rides on BOTH arms of the response on purpose: a gateway
- * failure must not erase the fact that we know what page this is, or the panel
- * would drop back to "unrecognised" the moment the gateway hiccups.
- */
-/**
  * One connector's health, from a read that may have failed.
  *
  * The two arms are NOT the same answer, and conflating them cost this gate its most
@@ -333,6 +332,78 @@ async function offeredFor(
   return offered === null ? {} : { offeredLanes: offered };
 }
 
+/** A recognition that succeeded — the arm every surface-specific step works on. */
+type RecognisedPage = Extract<Recognition, { readonly ok: true }>;
+
+/**
+ * The `file` arm of {@link handleResolve}: a source file on a forge. Extracted to bring
+ * `handleResolve` under the cognitive-complexity gate (Sonar `S3776`); the behaviour
+ * and the response shapes are unchanged.
+ *
+ * Takes the pairing `handleResolve` has already null-checked rather than reading one
+ * itself, so neither read below can run unpaired: both carry the bearer token.
+ */
+async function resolveFileSurface(
+  deps: ResolveDeps,
+  conn: PairedConnection,
+  recognition: RecognisedPage,
+): Promise<ResolveResponse> {
+  // No resolve call, and none is possible: a source file is not a connector item.
+  // The gateway maps the coordinate to the reader's own checkout instead — see
+  // `resolveForAgent`'s own `file` branch for the fuller version of this reasoning
+  // (a different function answering a different question: what a LANE is about,
+  // not what the PANEL shows).
+  //
+  // CONCURRENT with the roster read for the same reason as `handleResolve`'s home
+  // branch: `offeredFor` reads nothing the probe produces, and serialising them would
+  // put the roster's 10s bound behind the probe's 8s one before a header can render.
+  const coordinate = recognition.forgeFile;
+  const [probe, offered] = await Promise.all([
+    coordinate === undefined
+      ? // A `file` recognition without its coordinate is a recogniser bug, not a
+        // page condition — nothing to probe and nothing to claim. Guarding on
+        // `forgeFile !== undefined` at `handleResolve`'s `recognition.kind` check
+        // instead would let this case fall through to its `deps.resolveItem` call,
+        // sending a forge blob URL to the item resolver — the exact trap Task 3 closed.
+        Promise.resolve({ ok: true as const, resolution: { kind: "unsupported" as const } })
+      : deps.resolveFile(
+          conn.origin,
+          conn.token,
+          PRODUCT_SERVICE_ID[recognition.product],
+          coordinate.repo,
+          coordinate.refAndPath,
+        ),
+    offeredFor(deps, conn.origin, conn.token, recognition.kind),
+  ]);
+  // A refused SCOPE travels the same path `resolveItem`'s 403 already does at the end
+  // of `handleResolve` — that is what reaches the panel's `needs-scope` header and the
+  // `nimbus clip scopes` command it prints. The label comes from the connection, which
+  // only this layer holds.
+  if (!probe.ok && probe.reason === "insufficient_scope") {
+    const scopeGap = withLabel(conn.label, probe.scopeGap);
+    return scopeGap === undefined
+      ? { kind: "resolve", ok: false, recognition, reason: probe.reason }
+      : { kind: "resolve", ok: false, recognition, reason: probe.reason, scopeGap };
+  }
+  // Every OTHER refusal is silent: the page is still recognised, the header still
+  // renders, and we claim nothing about a file we could not ask about.
+  return {
+    kind: "resolve",
+    ok: true,
+    recognition,
+    outcome: { kind: "not-indexed", fetchable: false },
+    file: probe.ok ? probe.resolution : { kind: "unsupported" },
+    ...offered,
+  };
+}
+
+/**
+ * Recognise the page, then resolve it to at most one indexed item.
+ *
+ * The recognition rides on BOTH arms of the response on purpose: a gateway
+ * failure must not erase the fact that we know what page this is, or the panel
+ * would drop back to "unrecognised" the moment the gateway hiccups.
+ */
 export async function handleResolve(
   deps: ResolveDeps,
   req: ResolveRequest,
@@ -395,60 +466,7 @@ export async function handleResolve(
     };
   }
   if (recognition.kind === "file") {
-    // No resolve call, and none is possible: a source file is not a connector item.
-    // The gateway maps the coordinate to the reader's own checkout instead — see
-    // `resolveForAgent`'s own `file` branch for the fuller version of this reasoning
-    // (a different function answering a different question: what a LANE is about,
-    // not what the PANEL shows).
-    //
-    // CONCURRENT with the roster read for the same reason as the home branch above:
-    // `offeredFor` reads nothing the probe produces, and serialising them would put
-    // the roster's 10s bound behind the probe's 8s one before a header can render.
-    // Neither read may move above the `getConnection()` check above: both carry the
-    // bearer token.
-    const coordinate = recognition.forgeFile;
-    const [probe, offered] = await Promise.all([
-      coordinate === undefined
-        ? // A `file` recognition without its coordinate is a recogniser bug, not a
-          // page condition — nothing to probe and nothing to claim. Guarding on
-          // `forgeFile !== undefined` at the `recognition.kind` check instead would
-          // let this case fall through to `deps.resolveItem` below, sending a forge
-          // blob URL to the item resolver — the exact trap Task 3 closed.
-          Promise.resolve({ ok: true as const, resolution: { kind: "unsupported" as const } })
-        : deps.resolveFile(
-            conn.origin,
-            conn.token,
-            PRODUCT_SERVICE_ID[recognition.product],
-            coordinate.repo,
-            coordinate.refAndPath,
-          ),
-      offeredFor(deps, conn.origin, conn.token, recognition.kind),
-    ]);
-    // A refused SCOPE travels the same path `resolveItem`'s 403 already does, below —
-    // that is what reaches the panel's `needs-scope` header and the `nimbus clip
-    // scopes` command it prints. The label comes from the connection, which only
-    // this layer holds.
-    if (!probe.ok && probe.reason === "insufficient_scope") {
-      return probe.scopeGap === undefined
-        ? { kind: "resolve", ok: false, recognition, reason: probe.reason }
-        : {
-            kind: "resolve",
-            ok: false,
-            recognition,
-            reason: probe.reason,
-            scopeGap: { label: conn.label, ...probe.scopeGap },
-          };
-    }
-    // Every OTHER refusal is silent: the page is still recognised, the header still
-    // renders, and we claim nothing about a file we could not ask about.
-    return {
-      kind: "resolve",
-      ok: true,
-      recognition,
-      outcome: { kind: "not-indexed", fetchable: false },
-      file: probe.ok ? probe.resolution : { kind: "unsupported" },
-      ...offered,
-    };
+    return await resolveFileSurface(deps, conn, recognition);
   }
   // Concurrent for the same reason as the home branch above: `offeredFor` reads
   // nothing the resolve produces, and serialising them would put the roster's 10s
@@ -462,15 +480,10 @@ export async function handleResolve(
     offeredFor(deps, conn.origin, conn.token, recognition.kind),
   ]);
   if (!r.ok) {
-    return r.scopeGap === undefined
+    const scopeGap = withLabel(conn.label, r.scopeGap);
+    return scopeGap === undefined
       ? { kind: "resolve", ok: false, recognition, reason: r.reason }
-      : {
-          kind: "resolve",
-          ok: false,
-          recognition,
-          reason: r.reason,
-          scopeGap: { label: conn.label, ...r.scopeGap },
-        };
+      : { kind: "resolve", ok: false, recognition, reason: r.reason, scopeGap };
   }
   return {
     kind: "resolve",
@@ -489,8 +502,7 @@ export interface FetchDeps {
     token: string,
     pageUrl: string,
   ) => Promise<
-    | { ok: true; outcome: FetchOutcome }
-    | { ok: false; reason: FetchError; scopeGap?: { required: string; granted: string[] } }
+    { ok: true; outcome: FetchOutcome } | { ok: false; reason: FetchError; scopeGap?: RawScopeGap }
   >;
 }
 
@@ -525,22 +537,13 @@ export async function handleFetch(deps: FetchDeps, req: FetchRequest): Promise<F
   }
   const r = await deps.fetchItem(conn.origin, conn.token, recognition.resolveUrl);
   if (!r.ok) {
-    return r.scopeGap === undefined
+    const scopeGap = withLabel(conn.label, r.scopeGap);
+    return scopeGap === undefined
       ? { kind: "fetch", ok: false, recognition, reason: r.reason }
-      : {
-          kind: "fetch",
-          ok: false,
-          recognition,
-          reason: r.reason,
-          scopeGap: { label: conn.label, ...r.scopeGap },
-        };
+      : { kind: "fetch", ok: false, recognition, reason: r.reason, scopeGap };
   }
   return { kind: "fetch", ok: true, recognition, outcome: r.outcome };
 }
-
-/** A scope gap as the gateway's 403 body carries it — before the device label
- *  (only `handlers.ts` holds a `Connection`) is attached. */
-type RawScopeGap = { readonly required: string; readonly granted: string[] };
 
 /** The result of a call to `invokeAgent`, without the wire's `busy` reason — the
  *  retry loop below absorbs `busy` and never lets it escape as a lane state. */
@@ -701,16 +704,6 @@ type ResolveForAgent =
 type LaneInvocation = Pick<AgentRunRequest, "lane" | "pageUrl" | "itemId" | "term">;
 
 /**
- * Work out what a lane is about — exactly the shared prefix `handleAgentRun` and
- * `handleAgentState` both need: for a page lane, the recogniser gate (no gateway
- * call for a page we cannot classify) and the item id a lane is cached under;
- * for a term lane, neither.
- *
- * `not_resolved` is a condition of the PAGE — unrecognised, or a resolve
- * miss/ambiguous answer — never of the gateway; it must not be confused with
- * `unsupported`, which means the gateway itself has no agents surface.
- */
-/**
  * The term-lane half of {@link resolveForAgent}, which shares no step with the page
  * half — no recogniser gate, no resolve call, no `Recognition` — so it reads better as
  * its own function than as a 35-line early branch. Extracted to bring
@@ -753,6 +746,85 @@ async function resolveTermLane(
   };
 }
 
+/** The `item` scope {@link resolveItemLane} answers with once it holds its one item —
+ *  the item the resolve found, or the candidate the user picked. */
+function itemLaneScope(
+  conn: PairedConnection,
+  recognition: RecognisedPage,
+  item: ResolveCandidate,
+): ResolveForAgent {
+  return {
+    ok: true,
+    scope: "item",
+    origin: conn.origin,
+    token: conn.token,
+    label: conn.label,
+    resolveUrl: recognition.resolveUrl,
+    item,
+    surface: recognition.kind,
+  };
+}
+
+/**
+ * The item-lane end of {@link resolveForAgent}'s page path: a surface whose lanes ask
+ * about ONE indexed item, which only a resolve call can name. Extracted to bring
+ * `resolveForAgent` back under the cognitive-complexity gate (Sonar `S3776`); the
+ * behaviour and the return shapes are unchanged.
+ *
+ * Reached only past `resolveForAgent`'s `home` and `file` arms, neither of which has an
+ * item to resolve, and handed the pairing it has already null-checked: the resolve
+ * carries the bearer token.
+ */
+async function resolveItemLane(
+  deps: Pick<AgentStateDeps, "resolveItem">,
+  conn: PairedConnection,
+  recognition: RecognisedPage,
+  req: LaneInvocation,
+): Promise<ResolveForAgent> {
+  const resolved = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
+  if (!resolved.ok) {
+    const scopeGap = withLabel(conn.label, resolved.scopeGap);
+    return scopeGap === undefined
+      ? { ok: false, reason: resolved.reason }
+      : { ok: false, reason: resolved.reason, scopeGap };
+  }
+  // The picked-candidate path (C2.5). An ambiguous page is the one case where the
+  // user has told the panel something it could not work out for itself, and
+  // before this the answer was thrown away one control later: the panel would
+  // send `agent-run`, this function would re-resolve, get `ambiguous` a second
+  // time, and refuse — putting "couldn't pin this page to one indexed item" under
+  // a header naming the item the user had just picked.
+  //
+  // The id is honoured ONLY if it appears in the candidate set THIS resolve
+  // produced. It arrives from a content script, so an id the gateway never
+  // offered is refused exactly like any other unverified cross-boundary value —
+  // and re-checking against a fresh resolve costs nothing here, because the
+  // resolve had to happen anyway to reach this line.
+  if (resolved.outcome.kind === "ambiguous" && req.itemId !== undefined) {
+    const picked = resolved.outcome.candidates.find((c) => c.id === req.itemId);
+    if (picked === undefined) {
+      return { ok: false, reason: "not_resolved" };
+    }
+    return itemLaneScope(conn, recognition, picked);
+  }
+  if (resolved.outcome.kind !== "found") {
+    // A miss (not-indexed / unresolvable / ambiguous with nothing picked) means
+    // there is no single item to ask about — refuse rather than guess.
+    return { ok: false, reason: "not_resolved" };
+  }
+  return itemLaneScope(conn, recognition, resolved.outcome.item);
+}
+
+/**
+ * Work out what a lane is about — exactly the shared prefix `handleAgentRun` and
+ * `handleAgentState` both need: for a page lane, the recogniser gate (no gateway
+ * call for a page we cannot classify) and the item id a lane is cached under;
+ * for a term lane, neither.
+ *
+ * `not_resolved` is a condition of the PAGE — unrecognised, or a resolve
+ * miss/ambiguous answer — never of the gateway; it must not be confused with
+ * `unsupported`, which means the gateway itself has no agents surface.
+ */
 async function resolveForAgent(
   deps: Pick<AgentStateDeps, "getOrigins" | "getConnection" | "resolveItem">,
   req: LaneInvocation,
@@ -806,7 +878,7 @@ async function resolveForAgent(
     // The gateway maps the coordinate to the reader's own checkout — this client does
     // not know their filesystem and must not guess at it.
     //
-    // Placed BEFORE the resolveItem call below rather than beside it. Without this
+    // Placed BEFORE the `resolveItemLane` call below rather than beside it. Without this
     // branch a file page falls through and sends a forge blob URL to the ITEM resolver,
     // which typechecks, returns a miss, and is silently wrong.
     if (recognition.forgeFile === undefined) {
@@ -825,59 +897,7 @@ async function resolveForAgent(
       refAndPath: recognition.forgeFile.refAndPath,
     };
   }
-  const resolved = await deps.resolveItem(conn.origin, conn.token, recognition.resolveUrl);
-  if (!resolved.ok) {
-    return resolved.scopeGap === undefined
-      ? { ok: false, reason: resolved.reason }
-      : {
-          ok: false,
-          reason: resolved.reason,
-          scopeGap: { label: conn.label, ...resolved.scopeGap },
-        };
-  }
-  // The picked-candidate path (C2.5). An ambiguous page is the one case where the
-  // user has told the panel something it could not work out for itself, and
-  // before this the answer was thrown away one control later: the panel would
-  // send `agent-run`, this function would re-resolve, get `ambiguous` a second
-  // time, and refuse — putting "couldn't pin this page to one indexed item" under
-  // a header naming the item the user had just picked.
-  //
-  // The id is honoured ONLY if it appears in the candidate set THIS resolve
-  // produced. It arrives from a content script, so an id the gateway never
-  // offered is refused exactly like any other unverified cross-boundary value —
-  // and re-checking against a fresh resolve costs nothing here, because the
-  // resolve had to happen anyway to reach this line.
-  if (resolved.outcome.kind === "ambiguous" && req.itemId !== undefined) {
-    const picked = resolved.outcome.candidates.find((c) => c.id === req.itemId);
-    if (picked === undefined) {
-      return { ok: false, reason: "not_resolved" };
-    }
-    return {
-      ok: true,
-      scope: "item",
-      origin: conn.origin,
-      token: conn.token,
-      label: conn.label,
-      resolveUrl: recognition.resolveUrl,
-      item: picked,
-      surface: recognition.kind,
-    };
-  }
-  if (resolved.outcome.kind !== "found") {
-    // A miss (not-indexed / unresolvable / ambiguous with nothing picked) means
-    // there is no single item to ask about — refuse rather than guess.
-    return { ok: false, reason: "not_resolved" };
-  }
-  return {
-    ok: true,
-    scope: "item",
-    origin: conn.origin,
-    token: conn.token,
-    label: conn.label,
-    resolveUrl: recognition.resolveUrl,
-    item: resolved.outcome.item,
-    surface: recognition.kind,
-  };
+  return await resolveItemLane(deps, conn, recognition, req);
 }
 
 /**
@@ -1077,9 +1097,7 @@ export async function handleAgentRun(
   const params = agentParams(req.lane, resolved, rosterVersion);
   const invoked = await invokeWithRetry(deps, resolved.origin, resolved.token, req.lane, params);
   if (!invoked.ok) {
-    const scopeGap =
-      invoked.scopeGap === undefined ? undefined : { label: resolved.label, ...invoked.scopeGap };
-    return failedResponse(req.lane, invoked.reason, scopeGap);
+    return failedResponse(req.lane, invoked.reason, withLabel(resolved.label, invoked.scopeGap));
   }
   const state = { kind: "running" as const, runId: invoked.runId };
   await deps.putRun({ subject, lane: req.lane, runId: invoked.runId, state });

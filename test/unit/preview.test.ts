@@ -365,6 +365,17 @@ describe("buildClipPreview — the source metadata rows", () => {
     expect(labels).not.toContain("Lead image");
   });
 
+  // The other direction: a page that named its site but no author gets the
+  // Site row and no Author row — never an "Author: undefined".
+  test("a source with no author gets no Author row", () => {
+    const labels = buildClipPreview({
+      ...payload,
+      source: { siteName: "Example Journal" },
+    }).fields.map((f) => f.label);
+    expect(labels).toContain("Site");
+    expect(labels).not.toContain("Author");
+  });
+
   test("a payload with no source renders exactly the rows it always did", () => {
     expect(buildClipPreview(payload).fields.map((f) => f.label)).toEqual([
       "Title",

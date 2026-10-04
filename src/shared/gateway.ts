@@ -45,11 +45,13 @@ export const GATEWAY_PATHS = {
   resolveIds: "/v1/items/resolve-ids",
   itemsFetch: "/v1/items/fetch",
   /**
-   * Unauthenticated liveness — the ONLY route this client calls without a bearer
-   * token. Served by the same server as the clip routes
-   * (packages/gateway/src/ipc/http-server.ts, dispatchReadOnlyDataGet), so an
-   * answer here means the gateway that ingests clips is up, not merely that
-   * something is listening on the port.
+   * Unauthenticated liveness, probed during discovery before any connection
+   * exists. No bearer token: like `connectors`, `preflightDeploy` and `items`
+   * below, it sits on the gateway's public read-only table (and `pairConfirm`,
+   * which mints the token, cannot carry one). Served by the same server as the
+   * clip routes (packages/gateway/src/ipc/http-server.ts,
+   * dispatchReadOnlyDataGet), so an answer here means the gateway that ingests
+   * clips is up, not merely that something is listening on the port.
    */
   health: "/v1/health",
   /**
@@ -93,8 +95,7 @@ export const GATEWAY_PATHS = {
   egressProve: "/v1/egress/prove",
   /**
    * Per-connector health — `{ kind: "public" }` upstream (`ipc/http-route-auth.ts`),
-   * so this is the second route (after `health`) this client calls without a
-   * bearer token.
+   * so, like `health`, this client calls it without a bearer token.
    */
   connectors: "/v1/connectors",
   /**

@@ -13,7 +13,8 @@
 import type { BriefSourceBody, BriefSourceDecl } from "../shared/brief.ts";
 import { type BriefReport, isBriefReport } from "../shared/brief-report.ts";
 import { endpointUrl } from "../shared/gateway.ts";
-import { isObject, parseScopeGap, readJson } from "./http-json.ts";
+import { isObject } from "../shared/is-object.ts";
+import { type RawScopeGap, readJson, scopeRefusal, withTimeout } from "./http-json.ts";
 
 /** Create/run/save share the gateway's `brief` bucket; feeding has its own. */
 const BRIEF_TIMEOUT_MS = 10_000;
@@ -37,8 +38,6 @@ export type BriefError =
  */
 export type FeedRefusal = "source_too_large" | "run_capacity";
 
-export type ScopeGap = { required: string; granted: string[] };
-
 type FetchLike = typeof fetch;
 
 function briefUrl(origin: string, id?: string, action?: string): string {
@@ -50,6 +49,7 @@ function briefUrl(origin: string, id?: string, action?: string): string {
   return `${base}/${encodeURIComponent(id)}${tail}`;
 }
 
+/** The timeout bounds the wait for HEADERS; each route then reads a small body. */
 async function send(
   doFetch: FetchLike,
   url: string,
@@ -58,21 +58,17 @@ async function send(
   timeoutMs: number,
   method: "GET" | "POST",
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await doFetch(url, {
+  return await withTimeout(timeoutMs, (signal) =>
+    doFetch(url, {
       method,
       headers:
         body === undefined
           ? { authorization: `Bearer ${token}` }
           : { authorization: `Bearer ${token}`, "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+      signal,
+    }),
+  );
 }
 
 /** The status→reason mapping shared by every route here. Callers handle 200/403/404 themselves. */
@@ -118,7 +114,7 @@ export async function createBrief(
   doFetch: FetchLike = fetch,
 ): Promise<
   | { ok: true; id: string; expected: number }
-  | { ok: false; reason: BriefError; scopeGap?: ScopeGap }
+  | { ok: false; reason: BriefError; scopeGap?: RawScopeGap }
   | { ok: false; reason: "disabled"; hint?: string }
 > {
   let res: Response;
@@ -134,10 +130,7 @@ export async function createBrief(
       : { ok: false, reason: "server_error" };
   }
   if (res.status === 403) {
-    const gap = parseScopeGap(await readJson(res));
-    return gap === null
-      ? { ok: false, reason: "insufficient_scope" }
-      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
+    return await scopeRefusal(res);
   }
   // 404 on CREATE is the seam being off, not a missing run — there is no id yet
   // to be missing. Carry the gateway's own hint rather than inventing copy.

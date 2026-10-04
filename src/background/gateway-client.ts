@@ -1,6 +1,7 @@
 import type { ClipPayload } from "../shared/clip.ts";
 import { type ConnectorHealth, parseConnectorHealth } from "../shared/connector-health.ts";
 import { endpointUrl, type GatewayEndpoint, isLoopbackOrigin } from "../shared/gateway.ts";
+import { isObject } from "../shared/is-object.ts";
 import { parseRelatedHit, type RelatedQuery } from "../shared/related.ts";
 import {
   type AgentError,
@@ -8,6 +9,7 @@ import {
   type ClipPostResult,
   type FetchError,
   type FetchOutcome,
+  FILE_MISS_REASONS,
   type FileMissReason,
   type FileResolution,
   type PairError,
@@ -20,7 +22,7 @@ import {
   type ResolveMatchKind,
   type ResolveOutcome,
 } from "../shared/types.ts";
-import { isObject, parseScopeGap, readJson } from "./http-json.ts";
+import { type RawScopeGap, readJson, scopedRouteFailure, withTimeout } from "./http-json.ts";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -57,6 +59,9 @@ export function parseRetryAfterMs(header: string | null): number {
  * (`/v1/agents/{agent}`) can supply a caller-built URL while everything else
  * keeps going through `postJson`'s `GatewayEndpoint` lookup — one timeout/abort
  * implementation, not a parallel one for agents.
+ *
+ * The timeout bounds the wait for HEADERS: it is cleared once the `Response`
+ * arrives, before any route reads its (small) body.
  */
 async function postJsonAt(
   doFetch: FetchLike,
@@ -65,18 +70,14 @@ async function postJsonAt(
   headers: Record<string, string>,
   timeoutMs: number,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await doFetch(url, {
+  return await withTimeout(timeoutMs, (signal) =>
+    doFetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+      signal,
+    }),
+  );
 }
 
 async function postJson(
@@ -97,17 +98,13 @@ async function getJsonAt(
   headers: Record<string, string>,
   timeoutMs: number,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await doFetch(url, {
+  return await withTimeout(timeoutMs, (signal) =>
+    doFetch(url, {
       method: "GET",
       headers,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+      signal,
+    }),
+  );
 }
 
 async function getJson(
@@ -149,12 +146,14 @@ export async function confirmPair(
 /**
  * Is a Nimbus gateway answering on this origin?
  *
- * The only tokenless call this client makes. That is exactly why the loopback
- * check is repeated here rather than assumed: every other route carries a bearer
- * token and inherits the origin discipline of the stored connection, so this must
- * not become the one place I6 is enforced more loosely. Today `DISCOVERY_CANDIDATES`
- * is a frozen constant and the check cannot fail — it is asserted anyway, for
- * whoever makes that list configurable.
+ * Discovery's probe, sent before any connection exists, to candidate origins
+ * nothing else has checked. That is exactly why the loopback check is repeated
+ * here rather than assumed: every other route goes to an origin that already
+ * passed it — the pairing request to one `handlePair` has just checked, and
+ * everything after pairing to the stored connection's, bearer or not — so this
+ * must not become the one place I6 is enforced more loosely. Today
+ * `DISCOVERY_CANDIDATES` is a frozen constant and the check cannot fail — it is
+ * asserted anyway, for whoever makes that list configurable.
  *
  * Returns a plain boolean: a probe has exactly two outcomes the caller can act
  * on, and any richer result would tempt a caller into treating "the gateway said
@@ -177,10 +176,10 @@ export async function probeHealth(origin: string, doFetch: FetchLike = fetch): P
   // Shape-check the body: something else listening on 7474 can return 200.
   //
   // `readJson` is deliberately OUTSIDE the try above, and that is safe: it is
-  // total — it catches its own `res.json()` rejection and returns null
-  // (gateway-client.ts:119-125), so a non-JSON body from whatever else is on
-  // this port yields `null` here, not a throw. Do not widen the try to cover it;
-  // a catch that can never fire reads as a real failure mode to the next person.
+  // total — it catches its own `res.json()` rejection and returns null (see
+  // http-json.ts), so a non-JSON body from whatever else is on this port yields
+  // `null` here, not a throw. Do not widen the try to cover it; a catch that can
+  // never fire reads as a real failure mode to the next person.
   const data = await readJson(res);
   return isObject(data) && data["status"] === "ok";
 }
@@ -401,7 +400,7 @@ export async function resolveItem(
   doFetch: FetchLike = fetch,
 ): Promise<
   | { ok: true; outcome: ResolveOutcome }
-  | { ok: false; reason: ResolveError; scopeGap?: { required: string; granted: string[] } }
+  | { ok: false; reason: ResolveError; scopeGap?: RawScopeGap }
 > {
   let res: Response;
   try {
@@ -420,23 +419,8 @@ export async function resolveItem(
     const outcome = parseResolveBody(await readJson(res));
     return outcome === null ? { ok: false, reason: "server_error" } : { ok: true, outcome };
   }
-  if (res.status === 401) {
-    return { ok: false, reason: "unauthorized" };
-  }
-  if (res.status === 403) {
-    const body = await readJson(res);
-    const gap = parseScopeGap(body);
-    return gap === null
-      ? { ok: false, reason: "insufficient_scope" }
-      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
-  }
-  if (res.status === 404) {
-    return { ok: false, reason: "unsupported" };
-  }
-  return { ok: false, reason: "server_error" };
+  return await scopedRouteFailure(res);
 }
-
-const FILE_MISS_REASONS: readonly FileMissReason[] = ["remote_not_tracked", "file_not_indexed"];
 
 function parseFileResolution(v: unknown): FileResolution | null {
   if (!isObject(v)) {
@@ -453,7 +437,7 @@ function parseFileResolution(v: unknown): FileResolution | null {
   if (typeof reason !== "string" || typeof repo !== "string") {
     return null;
   }
-  return FILE_MISS_REASONS.includes(reason as FileMissReason)
+  return FILE_MISS_REASONS.has(reason)
     ? { kind: "miss", reason: reason as FileMissReason, repo }
     : null;
 }
@@ -479,7 +463,7 @@ export async function resolveFile(
   doFetch: FetchLike = fetch,
 ): Promise<
   | { ok: true; resolution: FileResolution }
-  | { ok: false; reason: ResolveError; scopeGap?: { required: string; granted: string[] } }
+  | { ok: false; reason: ResolveError; scopeGap?: RawScopeGap }
 > {
   let res: Response;
   try {
@@ -498,19 +482,12 @@ export async function resolveFile(
     const resolution = parseFileResolution(await readJson(res));
     return resolution === null ? { ok: false, reason: "server_error" } : { ok: true, resolution };
   }
+  // An ANSWER, not a failure — so it is checked before the shared ladder, whose
+  // generic 404 arm it would otherwise fall into.
   if (res.status === 404) {
     return { ok: true, resolution: { kind: "unsupported" } };
   }
-  if (res.status === 401) {
-    return { ok: false, reason: "unauthorized" };
-  }
-  if (res.status === 403) {
-    const gap = parseScopeGap(await readJson(res));
-    return gap === null
-      ? { ok: false, reason: "insufficient_scope" }
-      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
-  }
-  return { ok: false, reason: "server_error" };
+  return await scopedRouteFailure(res);
 }
 
 /** The route's own cap: more than 100 raw `?id=` params gets `400 too_many_ids`,
@@ -617,8 +594,6 @@ export async function resolveItemIds(
   return { ok: false, reason: "failed" };
 }
 
-/** The 403 body's scope detail. Absent or malformed => omit it; the panel then
- *  falls back to generic guidance rather than inventing a command. */
 /**
  * True for the abort our own timeout raises. Kept narrow deliberately: anything
  * else — DNS, connection refused, a killed service worker — is `unreachable`,
@@ -660,8 +635,7 @@ export async function fetchItem(
   pageUrl: string,
   doFetch: FetchLike = fetch,
 ): Promise<
-  | { ok: true; outcome: FetchOutcome }
-  | { ok: false; reason: FetchError; scopeGap?: { required: string; granted: string[] } }
+  { ok: true; outcome: FetchOutcome } | { ok: false; reason: FetchError; scopeGap?: RawScopeGap }
 > {
   let res: Response;
   try {
@@ -680,19 +654,7 @@ export async function fetchItem(
     const outcome = parseFetchBody(await readJson(res));
     return outcome === null ? { ok: false, reason: "server_error" } : { ok: true, outcome };
   }
-  if (res.status === 401) {
-    return { ok: false, reason: "unauthorized" };
-  }
-  if (res.status === 403) {
-    const gap = parseScopeGap(await readJson(res));
-    return gap === null
-      ? { ok: false, reason: "insufficient_scope" }
-      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
-  }
-  if (res.status === 404) {
-    return { ok: false, reason: "unsupported" };
-  }
-  return { ok: false, reason: "server_error" };
+  return await scopedRouteFailure(res);
 }
 
 /** `POST /v1/agents/{agent}` — invoke, returning a run id to poll. */
@@ -704,7 +666,7 @@ export async function invokeAgent(
   doFetch: FetchLike = fetch,
 ): Promise<
   | { ok: true; runId: string }
-  | { ok: false; reason: AgentError; scopeGap?: { required: string; granted: string[] } }
+  | { ok: false; reason: AgentError; scopeGap?: RawScopeGap }
   | { ok: false; reason: "busy"; retryAfterMs: number }
 > {
   let res: Response;
@@ -732,19 +694,7 @@ export async function invokeAgent(
       retryAfterMs: parseRetryAfterMs(res.headers.get("retry-after")),
     };
   }
-  if (res.status === 401) {
-    return { ok: false, reason: "unauthorized" };
-  }
-  if (res.status === 403) {
-    const gap = parseScopeGap(await readJson(res));
-    return gap === null
-      ? { ok: false, reason: "insufficient_scope" }
-      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
-  }
-  if (res.status === 404) {
-    return { ok: false, reason: "unsupported" };
-  }
-  return { ok: false, reason: "server_error" };
+  return await scopedRouteFailure(res);
 }
 
 /** The terminal answer a 200 body can carry, or a `server_error` when it is malformed. */
@@ -831,7 +781,7 @@ export async function getAgentRun(
   // explanation given" — not a malformed response. Only a PRESENT-but-non-string
   // value is malformed (falls through to `server_error` below).
   | { ok: true; status: "failed"; failureReason?: string }
-  | { ok: false; reason: AgentError; scopeGap?: { required: string; granted: string[] } }
+  | { ok: false; reason: AgentError; scopeGap?: RawScopeGap }
 > {
   let res: Response;
   try {
@@ -847,17 +797,10 @@ export async function getAgentRun(
   if (res.status === 200) {
     return parseAgentRunBody(await readJson(res));
   }
-  if (res.status === 401) {
-    return { ok: false, reason: "unauthorized" };
-  }
-  if (res.status === 403) {
-    const gap = parseScopeGap(await readJson(res));
-    return gap === null
-      ? { ok: false, reason: "insufficient_scope" }
-      : { ok: false, reason: "insufficient_scope", scopeGap: gap };
-  }
+  // Checked before the shared ladder, whose generic 404 arm would otherwise
+  // report a lost run as `unsupported` — a gateway with no agents surface.
   if (res.status === 404 || res.status === 410) {
     return { ok: false, reason: "stale" };
   }
-  return { ok: false, reason: "server_error" };
+  return await scopedRouteFailure(res);
 }

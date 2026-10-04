@@ -76,10 +76,10 @@ The clipper is a decent clipper. It is also in a fight it cannot win:
   connectors and an MCP server. Execution and the local-first guarantee are the
   difference, not the idea.
 
-What is *not* commodity is what sits behind the gateway: thirteen working
-agents over an index that already spans your pull requests, builds, issues and
-docs. No clipper has that. Reaching it from the page you are already on is the
-product.
+What is *not* commodity is what sits behind the gateway: more than a dozen
+working agents over an index that already spans your pull requests, builds,
+issues and docs. No clipper has that. Reaching it from the page you are
+already on is the product.
 
 ### The name — decided: Nimbus Companion
 
@@ -198,9 +198,9 @@ scope.
 
 ### 1. AI-native retrieval — the moat
 
-The Nimbus index is a semantic engine, not a bookmark list — and thirteen
-agents already run on top of it. The client's job is to make that power feel
-like magic *where you already are*: recognise the page, resolve it to the
+The Nimbus index is a semantic engine, not a bookmark list — and more than a
+dozen agents already run on top of it. The client's job is to make that power
+feel like magic *where you already are*: recognise the page, resolve it to the
 indexed item, and put the agent lanes (why · impact · expert) one glance away.
 Related-items, never-save-twice detection, asking questions of your own
 reading, and auto-understanding every clip on arrival are the shallow end of
@@ -279,7 +279,7 @@ Every item carries three tags so you can pick work that fits:
 
 | Tag | Meaning |
 | --- | --- |
-| 🟢 **client-only** | Buildable today against the existing locked contract — the three original clip routes, plus everything the C-phases have since landed upstream (`/v1/items/resolve`, `/v1/items/fetch`, `/v1/agents/*`, `/v1/briefs*`, `/v1/egress*`, `/v1/health`), each behind its own token scope. `GATEWAY_PATHS` in `src/shared/gateway.ts` is the current list. No other repo needed. |
+| 🟢 **client-only** | Buildable today against the existing locked contract — the three original clip routes, plus everything the C-phases have since landed upstream (the `/v1/items/*` reads and targeted fetch, `/v1/agents/*`, `/v1/briefs*`, `/v1/egress*`, `/v1/services/resolve`, `/v1/preflight/deploy`, `/v1/connectors`, `/v1/health`), most behind their own token scope and the rest on the gateway's public read-only table. `GATEWAY_PATHS` in `src/shared/gateway.ts` is the current list. No other repo needed. |
 | 🟡 **needs-gateway** | Client UI is ready; blocked on a **new gateway surface** proposed in the [Nimbus gateway repo](https://github.com/nimbus-agent/Nimbus). The brief names the surface it needs. |
 | 🔵 **ecosystem** | Depends on a sibling repo landing (the Nimbus SDK, the engine's plugin story). |
 
@@ -298,8 +298,9 @@ Each brief follows the same shape:
 
 The base you're building on is real, not a promise. This is what is on `main`
 today and works end-to-end in both Chrome and Firefox. (The last cut release is
-**v0.2.0**; everything below the clip core landed after it and ships with the
-next tag — `CHANGELOG.md`'s `[Unreleased]` is the honest boundary.)
+**v0.10.0**, and everything below has shipped in a tagged release —
+`CHANGELOG.md` says which; its `[Unreleased]` heading is the honest boundary
+for anything newer.)
 
 - **Pairing** — redeem a 6-digit gateway code → long-lived bearer token
   (`/v1/clips/pair/confirm`), stored in `chrome.storage.local`, held by the SW.
@@ -319,16 +320,29 @@ next tag — `CHANGELOG.md`'s `[Unreleased]` is the honest boundary.)
   self-hosted instances are configured per origin, with optional path prefixes);
   a lane-based panel shell that leads with the recognised surface and the
   resolved item; opt-in page access, granted per host. The resolve read is
-  shipped against the gateway's real contract — see C1.1.
+  shipped against the gateway's real contract — see C1.1. Since widened to
+  Linear, Confluence, PagerDuty and CircleCI, and to incidents, docs, product
+  dashboards and source files.
 - **Agent lanes (Phase C2)** — the seven lanes in `AGENT_LANES`
   (`src/shared/types.ts`) run the gateway's own agents against the recognised
   item, with MV3-safe polling and per-surface lane rules.
 - **Targeted fetch + capture fallback (Phase C3)** — a confirmed single-item
   sync on a resolve miss, and page capture only as the last resort.
-- **Activity (Phase C4.1, partial)** — `src/ledger/` reads the gateway's egress
-  ledger back; see the C4.1 row for the two promises it does not yet meet.
+- **Activity (Phase C4.1)** — `src/ledger/` reads the gateway's egress ledger
+  back: what was fetched, when, for which page, and how it ended.
 - **Research briefs (Phase C5)** — a question across the tabs you pick, over
   passages you collected and over the index, with a local disclosure log.
+- **Item and file lanes (Phases C6, C7)** — an issue or an incident gets *why*,
+  *expert* and *ownership*; a source file gets *impact*, *expert* and
+  *ownership*, answered against the reader's own checkout; and the panel offers
+  only the lanes the paired gateway publishes.
+- **Structured answers and links (Phases C8, C9)** — every lane renders its
+  typed findings, gaps and provenance rather than a paragraph, and evidence
+  titles link to the item they name wherever the answer can carry one.
+- **Deploy readiness (Phases C10.1, C10.3)** — on a pull request or a build, a
+  verdict over active P1 incidents, failing CI runs and merge conflicts, keyed
+  by a repo-to-service binding the gateway helps seed. The C10.2 DORA page is
+  not built.
 - **Release** — tag-driven build/package + Chrome Web Store / Firefox AMO publish
   automation.
 
@@ -548,7 +562,7 @@ that already exist, without leaving the tab.*
 > instead of invoking the agent a second time. A lane left `failed`
 > deliberately does re-invoke on that expand (a failure is not an answer, and
 > the expand is an explicit user action) — see
-> [`docs/architecture.md`](./docs/architecture.md#the-agent-lanes-phase-c21).
+> [`docs/architecture.md`](./docs/architecture.md#the-agent-lanes-phase-c21--c23).
 > **Abort is deferred, not shipped** — this roadmap item originally claimed
 > it. There is no upstream cancellation to hook into: `agents.*` has no
 > `AbortController` and runs are not tracked in any registry a cancel could
@@ -598,7 +612,8 @@ that already exist, without leaving the tab.*
 > The **"thirteen agents" figure used elsewhere in this roadmap** (the north
 > star, pillar 1) is itself stale as of this same upstream read — there are more
 > than thirteen now, `agents.negotiate` among them. Not corrected globally here;
-> flagged where this slice's own research surfaced it.
+> flagged where this slice's own research surfaced it. (Since corrected: see
+> the C5.2 update below.)
 > And the **framing above undersold what `catchup`, `decisions` and `ownership`
 > needed**: "map the other agents onto the pages they belong on" implied an
 > existing surface would do. It would not — those three answer about the whole
@@ -946,10 +961,13 @@ the editor structurally cannot.*
 > `createBriefLlm` falls back to a remote provider when no local one is
 > available, and no pre-run signal exists. So the confirmation names every source
 > and states the uncertainty; the report says what actually happened. The
-> upstream fix is proposed **in the gateway repo, not this one** — the
-> `dev/asafgolombek/briefs-prerun-disclosure` branch's
-> `2026-08-17-brief-synthesis-destination-design` spec: a synthesis policy echoed
-> at create, a tighten-only `requireLocal`, and the `model` egress class raised.
+> upstream fix was proposed **in the gateway repo, not this one** — the
+> `2026-08-17-brief-synthesis-destination-design` spec, on a
+> `dev/asafgolombek/briefs-prerun-disclosure` branch that no longer exists: a
+> synthesis policy echoed at create, a tighten-only `requireLocal`, and the
+> `model` egress class raised. Only the last has landed (upstream's `model`
+> coverage is `per-call` now), so a remote synthesis is recorded after the
+> fact, but nothing signals it before a run and the gap stands.
 > **Done when** A set of open tabs becomes one cited brief, a page that cannot be
 > read is named rather than silently dropped, and nothing claims a destination it
 > cannot know. ✅ Full reasoning:
@@ -974,6 +992,10 @@ the editor structurally cannot.*
 > `THIS_BINARY_COVERAGE.model` is `none` and there is no record to read at all.
 > C5.1's local disclosure log is that half; reading the gateway's own record for
 > the other half is still blocked on a read surface that does not exist.
+> **Update (2026-10-03):** both halves have moved. C4.1's done-when is met (see
+> its row), and upstream's `model` coverage is now `per-call`, so a remote
+> synthesis does reach the gateway's record — as vendor, model and task only, so
+> the local log is still the one record of the question and the source count.
 > **C1.4's status line is stale.** It says the per-host grant "buys only
 > gesture-free recognition, which **C2** is the first to need". C1.3's ambient
 > half already dated that, and C5.1 is the first consumer needing the grant on
@@ -981,6 +1003,8 @@ the editor structurally cannot.*
 > **The "thirteen agents" figure is still stale**, as the 2026-08-13 correction
 > flagged without fixing globally. Not fixed here either — this phase consumes no
 > agent — but noted again so the next reader does not treat it as verified.
+> **Update (2026-10-03):** fixed — the north star and pillar 1 no longer state a
+> count. Upstream serves seventeen agents as of gateway v7.32.2.
 
 ### C5.3 Passages as brief sources · 🟢 · M — ✅ shipped
 > **What** Right-click a selection anywhere → **Add to brief**. Passages
@@ -1548,7 +1572,7 @@ to; that gap is what this phase closes.*
 > that is now false), `src/shared/deploy.ts`, `src/background/deploy-client.ts`
 > (`fetchServiceResolution` — the deploy family's first *bearer* read),
 > `src/background/deploy-handlers.ts`, `src/shared/messages.ts`,
-> `src/panel/deploy/`, `src/options/`, `scripts/mock-gateway.ts`.
+> `src/panel/deploy/`, `src/options/`, `scripts/screenshots/mock-gateway.ts`.
 > **Approach** Asked in the worker, inside `handleDeployPreflight`'s existing
 > `unbound` arm — the token never enters a page, and that arm already carries a
 > seed and an optional note, so the seeding half needs no new message. Bearer
@@ -1564,10 +1588,11 @@ to; that gap is what this phase closes.*
 > Full design: see [`docs/architecture.md`](./docs/architecture.md) under
 > "Deploy readiness (Phase C10)" — "`services/resolve` seeds the bind form
 > from the worker, never the panel", "The exact-comparison limitation", and
-> "Checking a stored binding for staleness: two messages, not one". The
-> phase's design spec was pruned once C10.3 shipped, per the convention in
-> `CLAUDE.md`; it is in this repo's git history if the slicing rationale is
-> ever wanted.
+> "Checking a stored binding for staleness: two messages, not one". C10.3 had
+> no design spec of its own. The phase's spec
+> ([`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`](./docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md))
+> stays in the tree until C10.2 ships, because its §5 is still that slice's
+> design, and is pruned then, per the convention in `CLAUDE.md`.
 
 ## Phase 1 — Trust you can see 🟢
 
@@ -1936,7 +1961,8 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 
 ## Phase 8 — Adopt the Nimbus SDK 🔵
 
-*Theme: delete the duplication. This repo is the SDK's Phase 1 proof surface.*
+*Theme: delete the duplication. This repo would be the first consumer and proof
+surface of an SDK gateway client.*
 
 ### 8.1 Migrate onto the Nimbus SDK · 🔵 · L
 > **What** Replace hand-rolled `gateway-client.ts`, `handlers.ts`, and
@@ -1946,7 +1972,9 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 > **Touches** `src/background/*`; the message routing, capture pipeline, and state
 > machines are untouched by design (see
 > [architecture: the SDK seam](./docs/architecture.md#the-sdk-seam-where-this-goes-next)).
-> **Depends** the Nimbus SDK reaching its Phase 1 (roadmapped in the SDK repo).
+> **Depends** a gateway-client spine in the Nimbus SDK — proposed only. The SDK
+> repo's own roadmap covers the authoring contract and its language bindings
+> and carries no gateway client yet.
 > **Done when** The bespoke gateway code is gone, the test suite is green against
 > the SDK's `MockNimbusGateway`, and behavior is unchanged.
 > **Reframe** Higher priority. Once the browser and the editor are both clients
@@ -1958,8 +1986,8 @@ your machine. The client is straightforward; the retrieval surface is the work.*
 ### 9.1 Register as a first-class capture source · 🔵 · L
 > **What** The clipper registers with Nimbus as a capture source rather than only
 > calling it.
-> **Depends** the engine's plugin/registration story (SDK Phase 3). **Propose /
-> track in the gateway + SDK repos.**
+> **Depends** the engine's plugin/registration story. **Propose / track in the
+> gateway + SDK repos.**
 > **Reframe** Broadened: the interesting registration is as a *surface* — a
 > client the engine can address and notify — with capture as one of the things
 > it can offer. Unbuilt and unspecified on either side; this is a bet, not a plan.
@@ -1988,8 +2016,9 @@ another repo — ideal first contributions:
   and its self-hosted-picker eligibility (`selfHostable`), so nothing derives
   from a separate table anymore. For an `origin`-kind host (a SaaS product
   recognised on a fixed hostname — every shipped product except Jira,
-  Confluence and PagerDuty, which are `suffix`-kind), that is not the whole
-  cost: it also forces a conscious edit to **seven literal test lists**, pinned
+  Confluence and PagerDuty, which are `suffix`-kind, and Jenkins, which has no
+  built-in host at all), that is not the whole cost: it also forces a
+  conscious edit to **seven literal test lists**, pinned
   on purpose so a product cannot land silently under-tested:
   `BUILT_IN_ORIGINS`, `BUILT_IN_SURFACES`, its
   built-in-row count, and `PRODUCT_SERVICE_ID` (all in
@@ -2001,7 +2030,6 @@ another repo — ideal first contributions:
 - **2.4 Full-page vs. readable toggle** — one setting, one capture branch.
 - **3.2 One-press undo** — a toast affordance + a short window (mind the gateway
   note).
-- **4.2 Related-on-selection** — the selection payload is already supported.
 
 Each maps to the codebase via its **Touches** line. Read
 [`docs/architecture.md`](./docs/architecture.md) and
@@ -2031,7 +2059,8 @@ of these will not be accepted, no matter how good the feature.
 - **Strict TypeScript, no `any`.** Cross-boundary data is `unknown`, narrowed by a
   guard in `src/shared/messages.ts`.
 
-Every PR runs `typecheck`, `lint`, `test`, `build`, and `check-build` (see
+Every PR runs `typecheck`, `lint`, `test`, `build`, and `check-build`, and the
+Playwright suite (`test:e2e`) in a second job (see
 [`CLAUDE.md`](./CLAUDE.md#commands)). Green is the bar.
 
 ## Proposing a gateway-dependent feature

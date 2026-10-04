@@ -48,6 +48,13 @@ describe("isBriefLogEntry", () => {
   it("rejects a non-boolean usedIndex", () => {
     expect(isBriefLogEntry(entry({ usedIndex: "yes" } as never))).toBe(false);
   });
+
+  // A run that failed during synthesis still sent its source text, so its
+  // entry carries `failed` — and must stay readable as the record of that.
+  it("accepts an entry marked failed, and rejects a non-boolean failed", () => {
+    expect(isBriefLogEntry(entry({ failed: true }))).toBe(true);
+    expect(isBriefLogEntry(entry({ failed: "yes" } as never))).toBe(false);
+  });
 });
 
 describe("evictLog", () => {

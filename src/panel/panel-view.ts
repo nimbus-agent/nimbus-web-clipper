@@ -706,6 +706,21 @@ function appendNotIndexed(
   }
 }
 
+/**
+ * The `file` arm of {@link renderHeader}: the miss sentence when there is one, and
+ * nothing at all on a hit or an older gateway (see the arm's own doc comment on
+ * `HeaderState`). Same reason for existing as {@link appendFetchBlocked}.
+ */
+function appendFileHeader(
+  doc: Document,
+  box: HTMLElement,
+  state: Extract<HeaderState, { kind: "file" }>,
+): void {
+  if (state.banner !== undefined) {
+    box.append(line(doc, "nimbus-related__status", state.banner));
+  }
+}
+
 export function renderHeader(
   doc: Document,
   state: HeaderState,
@@ -750,9 +765,7 @@ export function renderHeader(
   }
 
   if (state.kind === "file") {
-    if (state.banner !== undefined) {
-      box.append(line(doc, "nimbus-related__status", state.banner));
-    }
+    appendFileHeader(doc, box, state);
     return box;
   }
 

@@ -2,6 +2,7 @@
 // QueuedClip[] -> QueuedClip[] transform so it composes as a mutator passed to the
 // serialized updateQueue in clip-queue-store (each write applies to fresh state).
 import { type ClipPayload, isSourceShape } from "./clip.ts";
+import { isObject } from "./is-object.ts";
 import type { ClipError } from "./types.ts";
 
 export interface QueuedClip {
@@ -48,10 +49,6 @@ export function toView(entry: QueuedClip): QueuedClipView {
     attempts: entry.attempts,
     ...(entry.lastReason !== undefined ? { lastReason: entry.lastReason } : {}),
   };
-}
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
 }
 
 function isClipPayload(v: unknown): v is ClipPayload {

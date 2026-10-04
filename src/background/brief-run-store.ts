@@ -13,6 +13,7 @@
 // chose, the question they asked, and the phase.
 import { storageSet } from "../browser/storage.ts";
 import { type BriefReport, isBriefReport } from "../shared/brief-report.ts";
+import { isObject } from "../shared/is-object.ts";
 import { createWriteChain, readGuarded } from "./keyed-store.ts";
 
 const STORE_KEY = "briefRuns";
@@ -40,10 +41,6 @@ export type StoredBrief = {
   readonly phase: BriefPhase;
   readonly expiresAtMs: number;
 };
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
 
 function isDeclared(v: unknown): v is { url: string; title: string } {
   return isObject(v) && typeof v["url"] === "string" && typeof v["title"] === "string";

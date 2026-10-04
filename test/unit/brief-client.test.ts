@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createBrief,
   feedBriefSource,
@@ -251,6 +251,36 @@ describe("every route survives a gateway that is not there", () => {
       ok: false,
       reason: "unreachable",
     });
+  });
+});
+
+describe("a gateway that never answers is cut off by the timeout", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // The rejecting double above lands in the same catch, but proves nothing about
+  // the TIMER: this one never settles unless `send()`'s own signal aborts it, so
+  // the route reports `unreachable` only because the bound held. 10s is
+  // `BRIEF_TIMEOUT_MS` in `brief-client.ts`.
+  it("createBrief gives up once its timeout elapses", async () => {
+    vi.useFakeTimers();
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      })) as unknown as typeof fetch;
+    const p = createBrief(ORIGIN, TOKEN, { brief: "q", sources: [], useIndex: true }, hanging);
+    let settled = false;
+    void p.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+    expect(await p).toEqual({ ok: false, reason: "unreachable" });
   });
 });
 

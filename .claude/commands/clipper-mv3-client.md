@@ -23,8 +23,9 @@ reason to open.
 
 ## The gate set
 
-CI (`.github/workflows/ci.yml`, `ubuntu-24.04`) has **two** jobs. `build-test` runs exactly
-five steps, in order:
+CI (`.github/workflows/ci.yml`, `ubuntu-24.04`) has **two** jobs. `build-test` runs five
+checks, in order, after `bun install --frozen-lockfile` (so a `package.json` change without
+its `bun.lock` fails before any of them):
 
 ```bash
 bun run typecheck   # tsc --noEmit, strict
@@ -34,7 +35,7 @@ bun run build       # bun esbuild.mjs → dist/chrome + dist/firefox
 bun run check-build # scripts/check-build.mjs
 ```
 
-The whole suite runs in about fifteen seconds. `bun run lint` is a real gate for behaviour,
+The whole unit suite runs in about twenty seconds. `bun run lint` is a real gate for behaviour,
 not style: `noConsole` is `"error"` inside `src/` (`biome.json`), so a debug `console.log`
 left in an extension source file fails CI.
 
@@ -70,13 +71,16 @@ without `git`, and Biome's `vcs.useIgnoreFile: true` needs it or the run scans
 - **`bun run test:coverage` enforces no floor.** `vitest.config.ts` deliberately sets no
   thresholds. The *only* coverage gate is SonarCloud's "Sonar way" 80%-on-new-code, applied
   to the lcov that script emits. A green local `test:coverage` says nothing about coverage.
-- **The mock gateway validates nothing.** `scripts/screenshots/mock-gateway.ts`'s `serve()`
-  builds its `Request` from method + headers only — **the POST body is dropped** — and
-  `handleRequest` returns a fixture for every route without reading a bearer token. Pairing
-  against it succeeds with any six digits (`scripts/verify-setup.ts` literally types
-  `429173`). A manual pass against the mock exercises **no** part of I30, scopes, 401/403
-  mapping, the rate limit, or the 1 MiB cap. Use it for panel/options rendering; use a real
-  gateway for anything about auth.
+- **The mock gateway validates nothing.** `scripts/screenshots/mock-gateway.ts` forwards a
+  POST body only so a scenario can record what the client sent (brief creation, each fed
+  brief source, clip ingest);
+  `handleRequest` checks none of it and returns a fixture for every route. It reads a bearer
+  token on exactly one route, `services/resolve`, and only to answer a 403 for the sentinel
+  `Bearer no-resolve-scope` — it never rejects an unknown token. Pairing against it succeeds
+  with any six digits (`scripts/verify-setup.ts` literally types `429173`). A manual pass
+  against the mock exercises **no** part of I30, real scopes, 401 mapping, the rate limit,
+  or the 1 MiB cap. Use it for panel/options rendering; use a real gateway for anything
+  about auth.
 - **`mock-gateway.test.ts` is self-consistency, not contract verification.** It asserts the
   fixtures match *this client's own types*. A fixture built from our assumptions cannot
   catch a mismatch with the real gateway — see below.
@@ -113,7 +117,7 @@ Fixed upstream, not negotiable here (invariant **I30**, `clips/pairing-window.ts
 
 The mapping that will bite you: `clips/api-scopes.ts` sets
 `LEGACY_SCOPES = ["clip", "briefs"]`, so **every browser paired before scopes existed lacks
-`resolve`, `fetch` and `agents`** and hits 403 first. `gateway-client.ts` therefore parses
+`resolve`, `fetch`, `agents` and `egress`** and hits 403 first. `gateway-client.ts` therefore parses
 the 403 body into a `scopeGap` (`{ required, granted }`) and surfaces a pasteable
 `nimbus clip scopes …` line. Folding a 403 into `server_error` blames the gateway for a
 grant the owner simply has not made.
@@ -127,9 +131,11 @@ cap × rate. This client never truncates (`buildClipPayload` sends the whole bod
 
 One more hand-maintained coupling: `AGENT_LANES` in `src/shared/types.ts` **is** the wire
 agent name — `invokeAgent` passes a member straight into `POST /v1/agents/{agent}`.
-Upstream derives `HTTP_AGENT_NAMES` from its handler map minus `HTTP_EXCLUDED_AGENT_METHODS`
-(`ipc/agents-rpc.ts`). A rename or a new exclusion there 404s a lane here, and no gate in
-either repo notices.
+Upstream derives `EXTERNAL_AGENT_NAMES` from its handler map minus
+`EXTERNAL_EXCLUDED_AGENT_METHODS` (`ipc/agents-rpc.ts`), and `GET /v1/agents` publishes that
+set. Since C6 the panel offers only the lanes that roster names
+(`src/background/agents-capability.ts`), so a rename or a new exclusion there makes the
+lane quietly disappear here rather than fail, and no gate in either repo notices.
 
 ## MV3 mechanics that actually bite
 
@@ -195,7 +201,8 @@ either repo notices.
 - **The manifest is TypeScript.** `esbuild.mjs` imports `composeManifest` directly, which is
   why the build runs `bun esbuild.mjs` and never `node esbuild.mjs`.
 - **`keyed-store.ts` is the single-writer lock's named home, not its only copy.** The two
-  run stores import `createWriteChain` / `readGuarded`; `brief-log-store`,
+  run stores import `createWriteChain` / `readGuarded`, and `service-binding-store` imports
+  `createWriteChain` alone; `brief-log-store`,
   `clip-queue-store` and `passage-store` keep their own chain on purpose, because each has
   a different write-failure policy (evict / drop-oldest / refuse) and persists an array
   rather than a keyed record. So grepping `createWriteChain` does **not** enumerate every
@@ -230,8 +237,8 @@ either repo notices.
 
 ## The three Playwright scripts
 
-`screenshots`, `verify:setup` and `promo` are the only scripts in `package.json` that run
-under **`node`, not `bun`** — Playwright drives Chromium over `--remote-debugging-pipe`,
+`screenshots`, `verify:setup` and `promo` are the only scripts in `package.json` that invoke
+**`node`, not `bun`** — Playwright drives Chromium over `--remote-debugging-pipe`,
 which needs stdio fds 3/4, and Bun on Windows does not wire them up, so every launch hangs
 until timeout. Do not "fix" them to `bun`.
 
@@ -254,20 +261,33 @@ prove the popup button).
 
 - **`// NOSONAR` must be a trailing comment on the reported line.** Sonar anchors it to the
   issue's own line; a block comment above is ignored — learned twice (issue #20, and again
-  on `void runStartupSequence();`). The two live markers are `src/manifest/manifest.ts`
-  (`optional_host_permissions`, S5332) and the last line of
-  `src/background/service-worker.ts` (S7785).
+  on `void runStartupSequence();`). The four live markers are `src/manifest/manifest.ts`
+  (`optional_host_permissions`, S5332) and three S7785 fire-and-forget entry calls: the last
+  line of `src/background/service-worker.ts`, `void start()` in `src/brief/brief.ts` and
+  `void loadWindow()` in `src/ledger/ledger.ts`. None of the three can become a top-level
+  `await`: `esbuild.mjs` bundles every entry with `format: "iife"`, which rejects one at
+  build time — and the worker's has an MV3 reason besides, stated in its own comment.
 - **Cognitive complexity S3776 caps at 15** and has forced extractions repeatedly:
   `parseAgentRunBody` out of `getAgentRun`, `openPanelForCue` out of the message router,
-  and then the router itself into four order-preserving slices (`routeCapturePair` /
-  `routeIndexReads` / `routeQueueAndConnection` / `routeSubRouters`, nineteen branches
-  between them). Order is load-bearing there: the guards are not disjoint by construction,
-  only by the sequence they run in, so a new branch goes in its slice — not at the top.
+  and then the router itself into five order-preserving slices (`routeCapturePair` /
+  `routeIndexReads` / `routeQueueAndConnection` / `routeDeploy` / `routeSubRouters`,
+  twenty-four branches between them). Order is load-bearing there: the guards are not
+  disjoint by construction, only by the sequence they run in, so a new branch goes in its
+  slice — not at the top.
 - **A complexity refactor strands the comments that described the old shape.** The router
   split left three comments in two files still calling it "a fourteen-branch function",
   including one sitting directly above the code that says it is now four. Sonar does not
   read prose and no gate does either. After changing a shape, grep the phrase you just
   falsified — repo-wide, not in the file you edited.
+- **The promise rules switched on 2026-09-29 are SonarJS-decorated, not the bare ESLint
+  rules** (`packages/analysis/src/jsts/rules/<key>/decorator.ts` in SonarSource/SonarJS).
+  S9382 (await in a loop) stays silent when the loop body has a `break` or `return` after
+  the `await` — so `feedAll`, `handleDiscover`, `resolveItemUrls` and `flushQueue`,
+  sequential on purpose and each stopping early, need no marker, although a local
+  `no-await-in-loop` run reports all four. S9381 (nested promise) fires only when the
+  inner `.then`/`.catch` sits directly in a `.then`/`.catch` callback. S9383 (floating
+  promise) is typescript-eslint's `no-floating-promises`, which accepts `void`, and S3735
+  exempts a promise operand, so the pages' `void refresh…()` calls raise neither.
 
 ## What only a human in a real browser can prove
 

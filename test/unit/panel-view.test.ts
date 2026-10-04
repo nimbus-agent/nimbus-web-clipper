@@ -26,6 +26,34 @@ const base: RelatedHit = {
 
 const HIT_NOW = 1_700_000_000_000;
 
+/**
+ * Clicks `button` and returns whatever its listeners threw.
+ *
+ * jsdom never rethrows a listener's exception from `click()` — it reports it as
+ * a window `error` event — so `expect(() => button.click()).not.toThrow()`
+ * cannot fail: the throw only surfaces afterwards, outside the test, as one of
+ * vitest's unhandled errors. Listening for that event is what lets an "inert
+ * control" test itself go red when the control is not inert.
+ * `preventDefault()` keeps a caught error out of jsdom's own console report.
+ */
+function errorsFromClicking(button: HTMLButtonElement | null | undefined): unknown[] {
+  if (button === null || button === undefined) {
+    throw new Error("no button to click");
+  }
+  const errors: unknown[] = [];
+  const onError = (event: ErrorEvent): void => {
+    event.preventDefault();
+    errors.push(event.error);
+  };
+  window.addEventListener("error", onError);
+  try {
+    button.click();
+  } finally {
+    window.removeEventListener("error", onError);
+  }
+  return errors;
+}
+
 describe("renderHit", () => {
   test("a url hit renders an anchor with safe target/rel and the title as text", () => {
     const el = renderHit(document, base, HIT_NOW);
@@ -437,6 +465,20 @@ describe("renderHeader — ambiguous", () => {
     });
     expect(el.querySelectorAll("button")).toHaveLength(0);
     expect(el.textContent).toContain("Too many matches");
+  });
+
+  // A caller that only wants the picture (no handler) still gets every
+  // candidate, and a click on one is inert rather than a throw.
+  it("renders an inert chooser when no handler is supplied", () => {
+    const el = renderHeader(document, {
+      kind: "ambiguous",
+      surface: "Jira issue · ABC-1",
+      candidates,
+      truncated: false,
+    });
+    const buttons = el.querySelectorAll<HTMLButtonElement>("button.nimbus-related__candidate");
+    expect(buttons).toHaveLength(2);
+    expect(errorsFromClicking(buttons[0])).toEqual([]);
   });
 });
 
@@ -901,6 +943,214 @@ describe("renderLaneBody", () => {
     );
     expect(el.querySelector("pre.nimbus-related__brief")).toBeNull();
     expect(el.querySelector(".nimbus-findings__empty")).not.toBeNull();
+  });
+
+  // The four structured arms the cases above do not reach. Each fixture names
+  // something only its OWN renderer prints, so a dispatch to the wrong renderer
+  // (or back to the prose fallback) fails here rather than passing on a shared
+  // container class.
+  test.each([
+    [
+      "expert",
+      {
+        kind: "expert",
+        ranked: [
+          {
+            personId: "person:1",
+            displayName: "Ada Lovelace",
+            evidence: [],
+            score: 0.91,
+            confidence: "high",
+          },
+        ],
+      },
+      "Ada Lovelace",
+    ],
+    [
+      "impact",
+      {
+        kind: "impact",
+        startEntityId: "entity:123",
+        affected: [
+          {
+            category: "service",
+            affectedItemId: "entity:456",
+            affectedTitle: "Checkout API",
+            serviceId: "pay-svc-9",
+            hops: 1,
+            pathSummary: "Checkout API depends directly on payments-api",
+          },
+        ],
+      },
+      "Checkout API",
+    ],
+    [
+      "catchup",
+      {
+        kind: "catchup",
+        selfPersonId: "person:1",
+        involvement: {
+          ownedServices: [],
+          activeRepos: [],
+          incidentServices: [],
+          collaboratorPersonIds: [],
+        },
+        sections: [
+          {
+            serviceId: "billing-service",
+            totalItemsInWindow: 1,
+            items: [
+              {
+                itemId: "github:acme/web#9",
+                title: "Cut the release branch",
+                modifiedAt: NOW - 3_600_000,
+                relevanceScore: 0.7,
+                relevanceReasons: [],
+              },
+            ],
+          },
+        ],
+      },
+      "Cut the release branch",
+    ],
+    [
+      "ownership",
+      {
+        kind: "ownership",
+        target: {
+          kind: "source_file",
+          displayPath: "src/index.ts",
+          owners: [{ externalId: "person:1", label: "Grace Hopper", share: 0.6, resolved: true }],
+          ownerCount: null,
+          ownersAboveFloor: null,
+          truncated: null,
+        },
+        parentDirectory: null,
+        coverage: {
+          lastPassAt: NOW - 3_600_000,
+          lastDurationMs: 4200,
+          rootsTotal: 3,
+          rootsCovered: 3,
+          rootsWithRemote: 2,
+          filesCovered: 120,
+          filesExcluded: 4,
+          servicesBound: 2,
+          ownersEmitted: 9,
+          entitiesReaped: 1,
+        },
+      },
+      "Grace Hopper",
+    ],
+  ] as const)(
+    "a done state with %s findings renders that lane's own view, not prose",
+    (_kind, findings, shows) => {
+      const state = { kind: "done", brief: "prose", findings } as unknown as Parameters<
+        typeof renderLaneBody
+      >[1];
+      const el = renderLaneBody(document, state, NOW);
+      expect(el.querySelector("pre.nimbus-related__brief")).toBeNull();
+      expect(el.textContent).toContain(shows);
+      expect(el.textContent).not.toContain("prose");
+    },
+  );
+
+  // `itemUrls` is threaded to the two lanes whose ids the worker resolves —
+  // a dispatch that dropped the map would render these titles as plain text.
+  test("the itemUrls map reaches the expert and catchup renderers as links", () => {
+    const expert = renderLaneBody(
+      document,
+      {
+        kind: "done",
+        brief: "prose",
+        findings: {
+          kind: "expert",
+          ranked: [
+            {
+              personId: "person:1",
+              displayName: "Ada Lovelace",
+              evidence: [
+                {
+                  itemId: "github:acme/web#7",
+                  type: "pr_authored",
+                  serviceId: "github",
+                  title: "Adopt SQLite WAL",
+                  modifiedAt: NOW - 86_400_000,
+                  weight: 0.6,
+                },
+              ],
+              score: 0.91,
+              confidence: "high",
+            },
+          ],
+        },
+        itemUrls: { "github:acme/web#7": "https://github.com/acme/web/pull/7" },
+      },
+      NOW,
+    );
+    expect(expert.querySelector<HTMLAnchorElement>("a")?.href).toBe(
+      "https://github.com/acme/web/pull/7",
+    );
+
+    const catchup = renderLaneBody(
+      document,
+      {
+        kind: "done",
+        brief: "prose",
+        findings: {
+          kind: "catchup",
+          selfPersonId: null,
+          involvement: {
+            ownedServices: [],
+            activeRepos: [],
+            incidentServices: [],
+            collaboratorPersonIds: [],
+          },
+          sections: [
+            {
+              serviceId: "billing-service",
+              totalItemsInWindow: 1,
+              items: [
+                {
+                  itemId: "github:acme/web#9",
+                  title: "Cut the release branch",
+                  modifiedAt: NOW - 3_600_000,
+                  relevanceScore: 0.7,
+                  relevanceReasons: [],
+                },
+              ],
+            },
+          ],
+        },
+        itemUrls: { "github:acme/web#9": "https://github.com/acme/web/pull/9" },
+      },
+      NOW,
+    );
+    expect(catchup.querySelector<HTMLAnchorElement>("a")?.href).toBe(
+      "https://github.com/acme/web/pull/9",
+    );
+  });
+
+  test("an EMPTY gaps list renders no gaps box at all", () => {
+    const el = renderLaneBody(document, { kind: "done", brief: "prose", gaps: [] }, NOW);
+    expect(el.querySelector(".nimbus-findings__gaps")).toBeNull();
+    expect(el.querySelector("pre.nimbus-related__brief")?.textContent).toBe("prose");
+  });
+
+  test.each(["server_error", "agent_failed"] as const)(
+    "Re-run on a %s lane reports its click",
+    (reason) => {
+      const seen: string[] = [];
+      const el = renderLaneBody(document, { kind: "failed", reason }, NOW, () => seen.push(reason));
+      (el.querySelector("button") as HTMLButtonElement).click();
+      expect(seen).toEqual([reason]);
+    },
+  );
+
+  test("a Re-run rendered without a handler is present and inert", () => {
+    const el = renderLaneBody(document, { kind: "failed", reason: "stale" }, NOW);
+    const rerun = el.querySelector<HTMLButtonElement>("button");
+    expect(rerun?.textContent).toBe("Re-run");
+    expect(errorsFromClicking(rerun)).toEqual([]);
   });
 });
 

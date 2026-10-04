@@ -12,6 +12,8 @@
 // could quietly disagree — is right wherever a gateway record exists. Here none
 // does, and a local record cannot disagree with a record that was never written.
 
+import { isObject } from "./is-object.ts";
+
 /**
  * Entries are ~200 bytes, so a cap in the hundreds costs well under a megabyte
  * and makes eviction a theoretical path rather than a routine one.
@@ -50,10 +52,6 @@ export type BriefLogEntry = {
    */
   readonly indexHits?: number;
 };
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
 
 export function isBriefLogEntry(v: unknown): v is BriefLogEntry {
   return (

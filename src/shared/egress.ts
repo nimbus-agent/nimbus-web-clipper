@@ -12,6 +12,8 @@
 // scope. An older gateway 404s and the client says so; it never renders an
 // empty list.
 
+import { isObject } from "./is-object.ts";
+
 const HITL_STATUSES = ["approved", "not_required", "rejected"] as const;
 const RESULT_STATUSES = ["authorized", "blocked"] as const;
 
@@ -110,10 +112,6 @@ export type EgressError =
   | "unsupported"
   | "rate_limited"
   | "server_error";
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
 
 function isMember<T extends string>(list: readonly T[], v: unknown): v is T {
   return typeof v === "string" && (list as readonly string[]).includes(v);

@@ -17,9 +17,10 @@ searchable alongside your Drive files, email, and bookmarks.
 - **Related items** — an on-demand panel surfaces related things already in your
   index, without leaving the tab.
 - **Know where you are** — the panel recognises a pull request, a build, an
-  issue, an incident, a product dashboard or a **source file** (GitHub / GitLab /
-  Bitbucket / Jenkins / Jira / Linear / Confluence / PagerDuty / CircleCI,
-  self-hosted included) and names the indexed item behind the page you are on.
+  issue, an incident, a Confluence page, a product dashboard or a **source
+  file** (GitHub / GitLab / Bitbucket / Jenkins / Jira / Linear / Confluence /
+  PagerDuty / CircleCI, self-hosted included) and names the indexed item behind
+  the page you are on.
 - **Run the agents from the page** — seven of the gateway's own agents answer
   about that item as panel lanes (impact, expert, why, catchup, decisions,
   ownership, glossary).
@@ -28,6 +29,9 @@ searchable alongside your Drive files, email, and bookmarks.
   checkout. Needs a gateway that serves the file-resolve route.
 - **Ask across your open tabs** — pick a set of tabs, ask one question, get a
   research brief with its sources named.
+- **Is it safe to ship?** — on a pull request or a build, a deploy-readiness
+  section shows the gateway's verdict over active P1 incidents, failing CI runs
+  and merge conflicts, once you bind the repo to a Nimbus service.
 - **See what was done for you** — an Activity page reads the gateway's
   append-only egress ledger back, so nothing happens on your behalf unseen.
 
@@ -45,11 +49,13 @@ no cloud calls.
 > by an in-page toast), and terminal-413 / rate-limited-429 handling are all
 > implemented — as are the later phases: page recognition and per-origin page
 > access (C1), the agent lanes (C2), targeted fetch and capture-as-last-resort
-> (C3), the Activity page over the gateway's egress ledger (C4.1, partial —
-> see the roadmap), research briefs over your open tabs and your index
-> (C5), item lanes on an issue or an incident (C6), and the source-file lanes
-> (C7 — these need a gateway carrying the file-resolve route; on an older one
-> the page simply renders without them). Tagging `vX.Y.Z` builds, signs and submits to both stores
+> (C3), the Activity page over the gateway's egress ledger (C4.1), research
+> briefs over your open tabs and your index (C5), item lanes on an issue or an
+> incident (C6), the source-file lanes (C7 — these need a gateway carrying the
+> file-resolve route; on an older one the page simply renders without them),
+> structured lane answers (C8), evidence titles that link to the item they name
+> (C9), and the deploy-readiness section (C10.1 and C10.3; the C10.2 DORA
+> metrics page is not built yet). Tagging `vX.Y.Z` builds, signs and submits to both stores
 > ([store/publishing.md](./store/publishing.md)); each store's own review then
 > gates the public rollout. See the
 > [changelog](./CHANGELOG.md) for the per-slice breakdown.
@@ -66,8 +72,10 @@ no cloud calls.
 ```
 
 Those three are the clip path. The later phases added more loopback routes —
-item resolve and targeted fetch, the agent runs, briefs and the egress-ledger
-reads — each behind its own gateway token scope. `GATEWAY_PATHS` in
+item resolve and targeted fetch, the agent runs, briefs, the egress-ledger
+reads and the deploy-readiness reads. Most sit behind their own gateway token
+scope; liveness, connector health and the deploy verdict are on the gateway's
+public read-only table and carry no token. `GATEWAY_PATHS` in
 [`src/shared/gateway.ts`](./src/shared/gateway.ts) is the complete list.
 
 Pairing is owner-consented: you run `nimbus clip pair` on the machine running the
@@ -119,8 +127,8 @@ git push origin v0.1.0
 per browser target, and attaches them to a GitHub Release. Once store credentials
 are configured it also uploads to the Chrome Web Store and Firefox AMO and submits
 each for review. See [store/publishing.md](./store/publishing.md) for the one-time
-store bootstrap (accounts, first manual submission, and the repository secrets the
-automated upload needs).
+store bootstrap (accounts, first manual submission, and the `release` environment
+secrets the automated upload needs).
 
 ## Contributing
 

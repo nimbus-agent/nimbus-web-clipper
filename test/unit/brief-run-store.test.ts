@@ -90,6 +90,45 @@ describe("brief-run-store", () => {
     expect(await getBriefRun("b1", NOW)).toBeNull();
   });
 
+  it("round-trips the running and failed phases, and a done run's savedItemId", async () => {
+    await putBriefRun(run({ id: "r", phase: { kind: "running" } }), NOW);
+    await putBriefRun(run({ id: "f", phase: { kind: "failed", reason: "unreachable" } }), NOW);
+    await putBriefRun(run({ id: "s", phase: { kind: "done", report, savedItemId: "i1" } }), NOW);
+    expect((await getBriefRun("r", NOW))?.phase).toEqual({ kind: "running" });
+    expect((await getBriefRun("f", NOW))?.phase).toEqual({ kind: "failed", reason: "unreachable" });
+    expect((await getBriefRun("s", NOW))?.phase).toEqual({
+      kind: "done",
+      report,
+      savedItemId: "i1",
+    });
+  });
+
+  // Every field but the PHASE is well-formed here, so only the phase guard can
+  // be what discards each one — the "fails the guard" case above is refused by
+  // its missing `question` long before the phase is ever looked at.
+  it.each([
+    ["a non-object phase", null],
+    ["a failed phase with no reason", { kind: "failed" }],
+    ["a failed phase with a non-string reason", { kind: "failed", reason: 500 }],
+    ["a done phase with a non-string savedItemId", { kind: "done", report, savedItemId: 7 }],
+    ["an unknown phase kind", { kind: "paused" }],
+  ])("discards an entry with %s, keeping its well-formed neighbour", async (_why, phase) => {
+    const entry = (id: string, p: unknown) => ({
+      id,
+      question: "q",
+      declared: [{ url: "https://example.com/a", title: "A" }],
+      phase: p,
+      expiresAtMs: NOW + 1000,
+      writtenAtMs: NOW,
+    });
+    harness.storage.set("briefRuns", {
+      bad: entry("bad", phase),
+      ok: entry("ok", { kind: "running" }),
+    });
+    expect(await getBriefRun("bad", NOW)).toBeNull();
+    expect((await listBriefRuns(NOW)).map((r) => r.id)).toEqual(["ok"]);
+  });
+
   it("serialises concurrent writes instead of clobbering", async () => {
     await Promise.all([
       putBriefRun(run({ id: "a" }), NOW),

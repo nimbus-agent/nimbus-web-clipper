@@ -9,7 +9,7 @@ import {
   putItemUrls,
   putRun,
 } from "../../src/background/agent-run-store.ts";
-import type { DecisionsFindings } from "../../src/shared/findings.ts";
+import type { DecisionsFindings, GapNote } from "../../src/shared/findings.ts";
 import { installChromeMock } from "./helpers/chrome-mock.ts";
 
 const NOW = 1_800_000_000_000;
@@ -233,6 +233,24 @@ describe("agent-run-store", () => {
           lane: "impact",
           runId: "r1",
           state: { kind: "failed", reason: "agent_failed", detail: 42 },
+          expiresAtMs: NOW + 1000,
+          writtenAtMs: NOW,
+        },
+      },
+    });
+    expect(await getRun({ kind: "item", id: "i1" }, "impact", NOW)).toBeNull();
+  });
+
+  // The store's OWN `done` rule — the one arm it does not share with the SW→panel
+  // boundary: `brief` is the only thing a stored `done` run must carry.
+  it("drops a done entry with no brief", async () => {
+    chrome.storage.local.set({
+      agentRuns: {
+        [realKey("item", "i1", "impact")]: {
+          subject: { kind: "item", id: "i1" },
+          lane: "impact",
+          runId: "r1",
+          state: { kind: "done" },
           expiresAtMs: NOW + 1000,
           writtenAtMs: NOW,
         },
@@ -598,6 +616,42 @@ describe("agent-run-store", () => {
           brief: "b",
           synthesis: { attempted: false, reason: "disabled" },
         });
+      });
+
+      // The opposite pairing to the case above: GAPS present, synthesis absent.
+      // The strip keeps `gaps` (they are the reader's account of what is
+      // missing) and must not invent a `synthesis` key the run never had.
+      it("an over-budget run keeps its gaps and gains no synthesis key", async () => {
+        const gaps: GapNote[] = [{ category: "empty_index", detail: "nothing indexed yet" }];
+        await putRun(
+          {
+            subject: { kind: "item", id: "i-big-gaps" },
+            lane: "expert",
+            runId: "r-gaps",
+            state: {
+              kind: "done",
+              brief: "b",
+              gaps,
+              findings: {
+                kind: "expert",
+                ranked: [
+                  {
+                    personId: "person:1",
+                    displayName: "x".repeat(20_000),
+                    score: 0.9,
+                    confidence: "high",
+                    evidence: [],
+                  },
+                ],
+              },
+            },
+            expiresAtMs: NOW + 60_000,
+          },
+          NOW,
+        );
+        const found = await getRun({ kind: "item", id: "i-big-gaps" }, "expert", NOW);
+        expect(found?.state).toEqual({ kind: "done", brief: "b", gaps });
+        expect(Object.keys(found?.state ?? {}).sort()).toEqual(["brief", "gaps", "kind"]);
       });
 
       it("valid decisions findings survive a put -> get round trip", async () => {

@@ -53,11 +53,8 @@ import type {
   WhyItemSubject,
   WhySubject,
 } from "./findings.ts";
+import { isObject } from "./is-object.ts";
 import type { AgentLane } from "./types.ts";
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
 
 function isNullableString(v: unknown): v is string | null {
   return v === null || typeof v === "string";
@@ -434,6 +431,20 @@ function isDecisionsEntry(v: unknown): v is DecisionsEntry {
   );
 }
 
+/**
+ * The `decisions` truncation count, from either shape `decisionsFindingsFrom`
+ * accepts: the wire's nested `stats.truncatedSources` when `stats` is present,
+ * else this module's own flat projection. A `stats` that is present but not an
+ * object yields nothing. Unchecked here — the caller tests the type.
+ */
+function truncatedSourcesOf(raw: Record<string, unknown>): unknown {
+  const stats = raw["stats"];
+  if (stats === undefined) {
+    return raw["truncatedSources"];
+  }
+  return isObject(stats) ? stats["truncatedSources"] : undefined;
+}
+
 export function decisionsFindingsFrom(raw: Record<string, unknown>): DecisionsFindings | undefined {
   // NOTE: `agentVersion` is deliberately NOT checked against the literal 1.
   // `DecisionsBrief` types it as `number`, unlike every other brief, so
@@ -445,13 +456,7 @@ export function decisionsFindingsFrom(raw: Record<string, unknown>): DecisionsFi
   // projection (a flat truncatedSources): sanitiseState re-runs this guard over
   // the STORED projection on every read, so a guard that cannot parse its own
   // output silently destroys the findings it just produced.
-  const stats = raw["stats"];
-  const truncated =
-    stats === undefined
-      ? raw["truncatedSources"]
-      : isObject(stats)
-        ? stats["truncatedSources"]
-        : undefined;
+  const truncated = truncatedSourcesOf(raw);
   if (typeof truncated !== "number") {
     return undefined;
   }

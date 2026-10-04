@@ -396,7 +396,8 @@ parameter opens the picker rather than erroring.
 ## 6. The clients
 
 `src/background/deploy-client.ts` holds both GETs, reusing `http-json.ts`'s
-`readJson` and `isObject`. `src/shared/deploy.ts` carries the pure envelope
+`readJson` and the shared `isObject` (since moved to `src/shared/is-object.ts`,
+which replaced every byte-identical copy). `src/shared/deploy.ts` carries the pure envelope
 types and guards; `src/shared/dora.ts` the same for the metrics envelope.
 
 **Neither client needs `parseScopeGap`.** These routes are unauthenticated, so

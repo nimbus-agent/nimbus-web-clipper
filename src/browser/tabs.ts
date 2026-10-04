@@ -55,6 +55,17 @@ export async function tabUrl(tabId: number): Promise<string | null> {
   }
 }
 
+/**
+ * Open one of the extension's own pages (`brief.html`, `ledger.html`) in a new tab.
+ * Each caller says why that page wants a tab of its own.
+ *
+ * Fire-and-forget: the click that asks for it has nothing to await, and a failed
+ * open is swallowed rather than left as an unhandled rejection.
+ */
+export function openExtensionPage(path: string): void {
+  void chrome.tabs.create({ url: chrome.runtime.getURL(path) }).catch(() => undefined);
+}
+
 /** One tab the brief composer may offer as a source. */
 export type CandidateTab = {
   readonly id: number;

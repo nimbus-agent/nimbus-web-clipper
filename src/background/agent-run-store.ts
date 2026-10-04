@@ -17,7 +17,8 @@ import {
   laneFindingsFrom,
   synthesisFrom,
 } from "../shared/findings-guards.ts";
-import { isAgentError, isScopeGap } from "../shared/messages.ts";
+import { isObject } from "../shared/is-object.ts";
+import { isLaneStateWith } from "../shared/messages.ts";
 import { AGENT_LANES, type AgentLane, type LaneState } from "../shared/types.ts";
 import { createWriteChain, readGuarded } from "./keyed-store.ts";
 
@@ -113,10 +114,6 @@ function makeKey(subject: RunSubject, lane: AgentLane): string {
   return `${subject.kind}${KEY_SEP}${subjectValue(subject)}${KEY_SEP}${lane}`;
 }
 
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
-
 function isRunSubject(v: unknown): v is RunSubject {
   if (!isObject(v)) {
     return false;
@@ -139,38 +136,21 @@ function isAgentLane(v: unknown): v is AgentLane {
   return typeof v === "string" && (AGENT_LANES as readonly string[]).includes(v);
 }
 
+/**
+ * Every arm but `done` is the SW→panel boundary's own (`isLaneStateWith`): a
+ * `failed` run's `reason` is required and its `scopeGap` and `detail` must be
+ * well-formed when present — storage is external input (a hand-edited or
+ * partially-written value), exactly like that boundary. One predicate, not a
+ * second hand-rolled copy: the predicate-vs-type drift class that already
+ * shipped once as `isResolvedItem`.
+ */
 function isLaneState(v: unknown): v is LaneState {
-  if (!isObject(v)) {
-    return false;
-  }
-  if (v["kind"] === "collapsed") {
-    return true;
-  }
-  if (v["kind"] === "running") {
-    return typeof v["runId"] === "string";
-  }
-  if (v["kind"] === "done") {
-    // Deliberately checks `brief` ONLY. `readGuarded` DISCARDS an entry whose
-    // guard returns false, so validating `findings` here would evict the whole
-    // run — brief included — because one optional field was malformed. That is
-    // the opposite of the degradation this phase promises. Validation moves to
-    // `sanitiseState` below, which is a projection rather than a gate.
-    return typeof v["brief"] === "string";
-  }
-  if (v["kind"] === "failed") {
-    // `reason` is required; `scopeGap` and `detail` are each optional and, when
-    // present, must be well-formed — storage is external input (a hand-edited
-    // or partially-written value), exactly like the SW→panel boundary this
-    // mirrors. Reuses `isScopeGap` rather than a second hand-rolled copy — the
-    // predicate-vs-type drift class that already shipped once as
-    // `isResolvedItem`.
-    return (
-      isAgentError(v["reason"]) &&
-      (v["scopeGap"] === undefined || isScopeGap(v["scopeGap"])) &&
-      (v["detail"] === undefined || typeof v["detail"] === "string")
-    );
-  }
-  return false;
+  // `done` deliberately checks `brief` ONLY. `readGuarded` DISCARDS an entry
+  // whose guard returns false, so validating `findings` here would evict the
+  // whole run — brief included — because one optional field was malformed. That
+  // is the opposite of the degradation this phase promises. Validation moves to
+  // `sanitiseState` below, which is a projection rather than a gate.
+  return isLaneStateWith(v, (done) => typeof done["brief"] === "string");
 }
 
 // Stored alongside each run so eviction can order by actual write time rather

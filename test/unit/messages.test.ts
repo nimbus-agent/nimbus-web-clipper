@@ -1,4 +1,4 @@
-import { describe, expect, it, test } from "vitest";
+import { describe, expect, it, test, vi } from "vitest";
 import { BRIEF_CAPS } from "../../src/shared/brief.ts";
 import type { CueOpenRequest } from "../../src/shared/messages.ts";
 import {
@@ -14,7 +14,12 @@ import {
   isCueOpenRequest,
   isDeployPreflightRequest,
   isDeployPreflightResponse,
+  isEgressProveRequest,
+  isEgressVerifyRequest,
+  isEgressWindowRequest,
+  isEgressWindowSuccess,
   isFetchResponse,
+  isLaneStateWith,
   isPairRequest,
   isPassageClearRequest,
   isPassageDropRequest,
@@ -818,8 +823,9 @@ describe("agent-lane guards", () => {
     // outside the union could pass validation, fall through every branch of
     // `renderLaneBody`'s `AgentError` if-chain, and hit its exhaustiveness
     // backstop, which returned the raw string where an `HTMLElement` was
-    // promised. `isAgentError` (also used by `agent-run-store.ts`'s own
-    // storage guard, so there is exactly one copy of this check) closes that.
+    // promised. `isAgentError` closes that — reached through
+    // `isLaneStateWith`, which `agent-run-store.ts`'s own storage guard calls
+    // too, so there is exactly one copy of this check.
     it("rejects a failed state whose reason is not a known AgentError", () => {
       expect(
         isAgentStateResponse({
@@ -828,6 +834,61 @@ describe("agent-lane guards", () => {
           state: { kind: "failed", reason: "not_a_real_reason" },
         }),
       ).toBe(false);
+    });
+  });
+
+  // The arms both lane-state guards share — this boundary's and the run store's —
+  // pinned directly, so a change to them is caught here and not as a mystery in
+  // whichever of the two callers happens to be tested first.
+  describe("isLaneStateWith", () => {
+    const anyDone = (): boolean => true;
+
+    it("hands ONLY the done arm to the caller's rule, with the state itself", () => {
+      const isDone = vi.fn(() => false);
+      const done = { kind: "done", brief: "b" };
+      expect(isLaneStateWith(done, isDone)).toBe(false);
+      expect(isDone).toHaveBeenCalledTimes(1);
+      expect(isDone).toHaveBeenCalledWith(done);
+
+      for (const state of [
+        { kind: "collapsed" },
+        { kind: "running", runId: "r1" },
+        { kind: "failed", reason: "stale" },
+      ]) {
+        expect(isLaneStateWith(state, isDone)).toBe(true);
+      }
+      expect(isDone).toHaveBeenCalledTimes(1);
+    });
+
+    it("accepts a failed state carrying a well-formed scopeGap or a string detail", () => {
+      expect(
+        isLaneStateWith(
+          {
+            kind: "failed",
+            reason: "insufficient_scope",
+            scopeGap: { label: "chrome", required: "agents", granted: ["clip"] },
+          },
+          anyDone,
+        ),
+      ).toBe(true);
+      expect(
+        isLaneStateWith({ kind: "failed", reason: "agent_failed", detail: "no LLM" }, anyDone),
+      ).toBe(true);
+    });
+
+    it.each([
+      ["a non-object", "failed"],
+      ["a running state without its runId", { kind: "running" }],
+      ["an unknown kind", { kind: "elsewhere" }],
+      ["an unknown reason", { kind: "failed", reason: "not_a_real_reason" }],
+      ["a missing reason", { kind: "failed" }],
+      [
+        "a scopeGap without its label",
+        { kind: "failed", reason: "insufficient_scope", scopeGap: { required: "a", granted: [] } },
+      ],
+      ["a non-string detail", { kind: "failed", reason: "agent_failed", detail: 42 }],
+    ])("rejects %s", (_name, state) => {
+      expect(isLaneStateWith(state, anyDone)).toBe(false);
     });
   });
 });
@@ -1615,5 +1676,232 @@ describe("isServiceBindingsCheckResponse", () => {
         reason: "server_error",
       }),
     ).toBe(true);
+  });
+});
+
+describe("egress ledger request guards", () => {
+  // `before`/`since`/`until` are ledger ids a PAGE script sends: absent, or a
+  // non-negative integer. Anything else must be refused at the boundary rather
+  // than reaching a gateway query string.
+  test("isEgressWindowRequest accepts no cursor and a non-negative integer cursor", () => {
+    expect(isEgressWindowRequest({ kind: "egress-window" })).toBe(true);
+    expect(isEgressWindowRequest({ kind: "egress-window", before: 0 })).toBe(true);
+    expect(isEgressWindowRequest({ kind: "egress-window", before: 55 })).toBe(true);
+  });
+
+  test("isEgressWindowRequest refuses a cursor that is negative, fractional or a string", () => {
+    expect(isEgressWindowRequest({ kind: "egress-window", before: -1 })).toBe(false);
+    expect(isEgressWindowRequest({ kind: "egress-window", before: 1.5 })).toBe(false);
+    expect(isEgressWindowRequest({ kind: "egress-window", before: "55" })).toBe(false);
+  });
+
+  test("isEgressWindowRequest refuses the sibling kinds and non-objects", () => {
+    expect(isEgressWindowRequest({ kind: "egress-verify" })).toBe(false);
+    expect(isEgressWindowRequest({ kind: "egress-prove" })).toBe(false);
+    expect(isEgressWindowRequest(null)).toBe(false);
+    expect(isEgressWindowRequest("egress-window")).toBe(false);
+  });
+
+  test("isEgressVerifyRequest accepts only its own kind", () => {
+    expect(isEgressVerifyRequest({ kind: "egress-verify" })).toBe(true);
+    expect(isEgressVerifyRequest({ kind: "egress-window" })).toBe(false);
+    expect(isEgressVerifyRequest({ kind: "egress-prove" })).toBe(false);
+    expect(isEgressVerifyRequest(null)).toBe(false);
+  });
+
+  test("isEgressProveRequest accepts an open window and a bounded one", () => {
+    expect(isEgressProveRequest({ kind: "egress-prove" })).toBe(true);
+    expect(isEgressProveRequest({ kind: "egress-prove", since: 0, until: 9 })).toBe(true);
+  });
+
+  test("isEgressProveRequest checks BOTH bounds independently", () => {
+    // One good bound beside one bad one isolates each clause: a guard that only
+    // looked at `since` would pass the second fixture, and vice versa.
+    expect(isEgressProveRequest({ kind: "egress-prove", since: -1, until: 9 })).toBe(false);
+    expect(isEgressProveRequest({ kind: "egress-prove", since: 0, until: 2.5 })).toBe(false);
+    expect(isEgressProveRequest({ kind: "egress-window", since: 0 })).toBe(false);
+    expect(isEgressProveRequest(undefined)).toBe(false);
+  });
+});
+
+describe("isEgressWindowSuccess", () => {
+  const ok = {
+    kind: "egress-window",
+    ok: true,
+    partition: { ours: [], others: [], unattributable: [] },
+    ourLabel: "chrome",
+    outcomes: {},
+    rowsTotal: 0,
+    rowsTruncated: false,
+  };
+
+  test("accepts a well-formed window", () => {
+    expect(isEgressWindowSuccess(ok)).toBe(true);
+  });
+
+  test("refuses null — typeof null is 'object', which once reached res.kind and threw", () => {
+    expect(isEgressWindowSuccess(null)).toBe(false);
+  });
+
+  test("refuses the failure arm and a success with no partition", () => {
+    expect(isEgressWindowSuccess({ kind: "egress-window", ok: false, reason: "unsupported" })).toBe(
+      false,
+    );
+    expect(isEgressWindowSuccess({ ...ok, partition: undefined })).toBe(false);
+  });
+
+  test.each(["ours", "others", "unattributable"])(
+    "refuses a partition whose %s bucket is not an array",
+    (bucket) => {
+      const partition: Record<string, unknown> = { ours: [], others: [], unattributable: [] };
+      partition[bucket] = {};
+      expect(isEgressWindowSuccess({ ...ok, partition })).toBe(false);
+    },
+  );
+
+  test("refuses a non-boolean rowsTruncated and a non-object outcomes", () => {
+    expect(isEgressWindowSuccess({ ...ok, rowsTruncated: "no" })).toBe(false);
+    expect(isEgressWindowSuccess({ ...ok, outcomes: null })).toBe(false);
+  });
+});
+
+describe("guard rungs the happy-path fixtures above never reach", () => {
+  const recognition = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "a/b #1",
+    resolveUrl: "https://github.com/a/b/pull/1",
+  };
+
+  test("isCaptureResponse refuses null and the wrong kind before reading `ok`", () => {
+    expect(isCaptureResponse(null)).toBe(false);
+    expect(isCaptureResponse({ kind: "clip", ok: false, reason: "empty" })).toBe(false);
+  });
+
+  test("a selection-mode capture round-trips the clip guard; an unknown mode does not", () => {
+    const capture = {
+      url: "https://x.test/a",
+      title: "T",
+      mode: "selection",
+      body: "b",
+      readableFound: false,
+    };
+    expect(isClipRequest({ kind: "clip", capture, tags: [] })).toBe(true);
+    expect(isClipRequest({ kind: "clip", capture: { ...capture, mode: "page" }, tags: [] })).toBe(
+      false,
+    );
+  });
+
+  test("isResolveRequest accepts a string title and refuses a non-string one", () => {
+    expect(isResolveRequest({ kind: "resolve", pageUrl: "https://x/y", title: "T" })).toBe(true);
+    expect(isResolveRequest({ kind: "resolve", pageUrl: "https://x/y", title: 7 })).toBe(false);
+  });
+
+  test("a recognition's optional scope must be a string when present", () => {
+    const wrap = (r: unknown) =>
+      isRecognitionResponse({ kind: "recognition", ok: true, recognition: r });
+    expect(wrap({ ...recognition, scope: "acme/web" })).toBe(true);
+    expect(wrap({ ...recognition, scope: 7 })).toBe(false);
+  });
+
+  test("a resolve answer whose file is not an object is refused, not narrowed", () => {
+    const base = {
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome: { kind: "not-indexed", fetchable: false },
+    };
+    expect(isResolveResponse({ ...base, file: { kind: "unsupported" } })).toBe(true);
+    expect(isResolveResponse({ ...base, file: "found" })).toBe(false);
+    expect(isResolveResponse({ ...base, file: null })).toBe(false);
+  });
+
+  test("isFetchResponse refuses a non-object, the wrong kind, a bad recognition and a null outcome", () => {
+    expect(isFetchResponse(null)).toBe(false);
+    expect(
+      isFetchResponse({ kind: "resolve", ok: true, recognition, outcome: { kind: "unfetchable" } }),
+    ).toBe(false);
+    expect(
+      isFetchResponse({
+        kind: "fetch",
+        ok: true,
+        recognition: { ok: true },
+        outcome: { kind: "unfetchable" },
+      }),
+    ).toBe(false);
+    expect(isFetchResponse({ kind: "fetch", ok: true, recognition, outcome: null })).toBe(false);
+  });
+
+  test("a brief pick that is not an object is refused", () => {
+    const base = { kind: "brief-start", question: "q", useIndex: false };
+    expect(isBriefStartRequest({ ...base, picks: [{ kind: "tab", id: 1 }] })).toBe(true);
+    expect(isBriefStartRequest({ ...base, picks: [null] })).toBe(false);
+    expect(isBriefStartRequest({ ...base, picks: [1] })).toBe(false);
+  });
+
+  test("a forbidden resolution carries an optional, well-formed scopeGap", () => {
+    const base = { kind: "deploy-preflight", ok: false, reason: "unbound", guessServiceId: "w" };
+    expect(isDeployPreflightResponse({ ...base, resolution: { kind: "forbidden" } })).toBe(true);
+    expect(
+      isDeployPreflightResponse({
+        ...base,
+        resolution: {
+          kind: "forbidden",
+          scopeGap: { label: "chrome", required: "resolve", granted: ["clip"] },
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isDeployPreflightResponse({
+        ...base,
+        resolution: { kind: "forbidden", scopeGap: { label: "chrome" } },
+      }),
+    ).toBe(false);
+  });
+
+  test("isDeployPreflightResponse refuses null, a missing ok and a non-string reason", () => {
+    expect(isDeployPreflightResponse(null)).toBe(false);
+    expect(isDeployPreflightResponse({ kind: "deploy-preflight", reason: "unreachable" })).toBe(
+      false,
+    );
+    expect(isDeployPreflightResponse({ kind: "deploy-preflight", ok: false, reason: 7 })).toBe(
+      false,
+    );
+  });
+
+  test("isServiceBindingsListResponse refuses a non-object and the wrong kind", () => {
+    expect(isServiceBindingsListResponse(null)).toBe(false);
+    expect(isServiceBindingsListResponse({ kind: "service-bind", ok: true, bindings: [] })).toBe(
+      false,
+    );
+  });
+
+  test("isServiceBindResponse accepts `malformed` — the fourth member of its closed set", () => {
+    expect(isServiceBindResponse({ kind: "service-bind", ok: false, reason: "malformed" })).toBe(
+      true,
+    );
+    expect(isServiceBindResponse({ kind: "service-bind", ok: false, reason: "rate_limited" })).toBe(
+      false,
+    );
+  });
+
+  test("a check row whose status is not an object is refused, and so is a non-object reply", () => {
+    const binding = {
+      product: "github",
+      origin: "https://github.com",
+      scope: "acme/web",
+      serviceId: "web",
+    };
+    expect(
+      isServiceBindingsCheckResponse({
+        kind: "service-bindings-check",
+        ok: true,
+        rows: [{ binding, status: null }],
+      }),
+    ).toBe(false);
+    expect(isServiceBindingsCheckResponse(null)).toBe(false);
+    expect(isServiceBindingsCheckResponse("service-bindings-check")).toBe(false);
   });
 });

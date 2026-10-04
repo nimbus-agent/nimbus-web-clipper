@@ -893,6 +893,25 @@ describe("shortcuts render into Options", () => {
     expect(el("shortcut-list").querySelectorAll(".shortcut")).toHaveLength(0);
     expect(el("shortcut-hint").textContent?.length).toBeGreaterThan(0);
   });
+
+  // A binding read that THROWS empties the list rather than leaving whatever
+  // it held, and the hint — the more useful half then — still renders.
+  test("a binding read that throws empties the list and still renders the hint", async () => {
+    harness = installChromeMock();
+    const chromeLike = globalThis as unknown as { chrome: { commands: Record<string, unknown> } };
+    chromeLike.chrome.commands["getAll"] = () => {
+      throw new Error("commands unavailable");
+    };
+    document.body.innerHTML = FIXTURE;
+    const stale = document.createElement("p");
+    stale.className = "shortcut";
+    el("shortcut-list").append(stale);
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    expect(el("shortcut-list").childElementCount).toBe(0);
+    expect(el("shortcut-hint").textContent?.toLowerCase()).toContain("paste");
+  });
 });
 
 describe("preview toggle", () => {
@@ -1468,6 +1487,79 @@ describe("service bindings check (#bindings-check)", () => {
     expect(el("bindings-status").textContent).toMatch(/couldn't reach the extension/i);
   });
 
+  // Two corrections in a row, the first one's re-check still out when the second
+  // lands its own refusal. That first re-check is now SUPERSEDED (the second
+  // correction bumped the generation), and the one thing it must not do on
+  // landing is write "your bindings changed": `keepStatus` means a refusal is on
+  // screen, and the newer refusal outranks anything a stale check has to say.
+  test("a superseded re-check lands without painting over the newer correction's refusal", async () => {
+    let releaseFirstRecheck = (): void => {};
+    const firstRecheckHeld = new Promise<void>((r) => {
+      releaseFirstRecheck = r;
+    });
+    let checks = 0;
+    let binds = 0;
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: [binding] };
+      }
+      if (m.kind === "service-bindings-check") {
+        checks += 1;
+        if (checks === 2) {
+          // The first correction's re-check: held, and answering differently from
+          // every other check so a render of it would be visible.
+          await firstRecheckHeld;
+          return {
+            kind: "service-bindings-check",
+            ok: true,
+            rows: [{ binding, status: { state: "agrees" } }],
+          };
+        }
+        return {
+          kind: "service-bindings-check",
+          ok: true,
+          rows: [{ binding, status: { state: "disagrees", proposedServiceId: "web-api" } }],
+        };
+      }
+      if (m.kind === "service-bind") {
+        binds += 1;
+        if (binds === 1) {
+          return { kind: "service-bind", ok: false, reason: "unknown_service" };
+        }
+        throw new Error("channel closed");
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = BINDINGS_FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    button("bindings-check").click();
+    await flush();
+    clickCorrection(); // refused; its re-check is now held
+    await flush();
+    expect(el("bindings-status").textContent).toBe(
+      "Couldn't update that binding — please try again.",
+    );
+    clickCorrection(); // the row is still live: a second correction, whose channel rejects
+    await flush();
+    expect(el("bindings-status").textContent).toBe(
+      "Couldn't reach the extension — please try again.",
+    );
+
+    releaseFirstRecheck();
+    await flush();
+
+    expect(checks).toBe(3);
+    expect(el("bindings-status").textContent).toBe(
+      "Couldn't reach the extension — please try again.",
+    );
+    // Discarded, not painted: the held check's "agrees" row never reached the table.
+    expect(el("bindings-list").textContent).not.toContain("Matches Nimbus");
+    expect(el("bindings-list").querySelector("button[data-proposed]")).not.toBeNull();
+  });
+
   test("an ACCEPTED correction reports nothing and re-reads the row from the worker", async () => {
     await bootCorrection({ kind: "service-bind", ok: true });
 
@@ -1488,5 +1580,329 @@ describe("service bindings check (#bindings-check)", () => {
         serviceId: "web-api",
       },
     });
+  });
+
+  test("an answer the page cannot read says so, and leaves the table as it was", async () => {
+    await bootCheck({ kind: "service-bindings-check", ok: true });
+
+    button("bindings-check").click();
+    await flush();
+
+    expect(el("bindings-status").textContent).toBe("Unexpected response.");
+    expect(el("bindings-list").querySelectorAll("tbody tr")).toHaveLength(1);
+    expect(el("bindings-list").textContent).not.toContain("Matches Nimbus");
+  });
+
+  test("a check the worker failed says to try again, not to pair", async () => {
+    await bootCheck({ kind: "service-bindings-check", ok: false, reason: "server_error" });
+
+    button("bindings-check").click();
+    await flush();
+
+    expect(el("bindings-status").textContent).toBe("Could not check your bindings — try again.");
+  });
+
+  // The table a CHECK renders is wired like the list's own: its Unbind is a
+  // live control, not a copy of the markup.
+  test("Unbind on a row the check rendered sends service-unbind for that binding", async () => {
+    await bootCheck({
+      kind: "service-bindings-check",
+      ok: true,
+      rows: [{ binding, status: { state: "agrees" } }],
+    });
+    button("bindings-check").click();
+    await flush();
+    expect(el("bindings-list").textContent).toContain("Matches Nimbus");
+
+    el("bindings-list").querySelector<HTMLButtonElement>('button[aria-label^="Unbind"]')?.click();
+    await flush();
+
+    expect(harness.sendMessage).toHaveBeenCalledWith({
+      kind: "service-unbind",
+      product: "github",
+      origin: "https://github.com",
+      scope: "acme/web",
+    });
+  });
+
+  // `exactOptionalPropertyTypes`: a binding WITH a default branch must carry it
+  // through the correction, or the re-bind would silently drop it.
+  test("a correction keeps the binding's default branch", async () => {
+    const withBranch = { ...binding, defaultBranch: "release" };
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        return { kind: "service-bindings-list", ok: true, bindings: [withBranch] };
+      }
+      if (m.kind === "service-bindings-check") {
+        return {
+          kind: "service-bindings-check",
+          ok: true,
+          rows: [
+            { binding: withBranch, status: { state: "disagrees", proposedServiceId: "web-api" } },
+          ],
+        };
+      }
+      if (m.kind === "service-bind") {
+        return { kind: "service-bind", ok: true };
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = BINDINGS_FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    button("bindings-check").click();
+    await flush();
+    clickCorrection();
+    await flush();
+
+    expect(harness.sendMessage).toHaveBeenCalledWith({
+      kind: "service-bind",
+      binding: {
+        product: "github",
+        origin: "https://github.com",
+        scope: "acme/web",
+        serviceId: "web-api",
+        defaultBranch: "release",
+      },
+    });
+  });
+});
+
+describe("service bindings — a failed unbind channel", () => {
+  test("an unbind the worker cannot be reached for says so, and still re-reads the list", async () => {
+    const binding = {
+      product: "github",
+      origin: "https://github.com",
+      scope: "acme/web",
+      serviceId: "web",
+    };
+    harness = installChromeMock();
+    let listReads = 0;
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "service-bindings-list") {
+        listReads += 1;
+        return { kind: "service-bindings-list", ok: true, bindings: [binding] };
+      }
+      if (m.kind === "service-unbind") {
+        throw new Error("channel closed");
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = `${FIXTURE}<output id="bindings-status"></output><div id="bindings-list"></div>`;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+    expect(listReads).toBe(1);
+
+    el("bindings-list").querySelector<HTMLButtonElement>("table tbody tr button")?.click();
+    await flush();
+
+    expect(el("bindings-status").textContent).toBe(
+      "Couldn't reach the extension — please try again.",
+    );
+    expect(listReads).toBe(2);
+    expect(el("bindings-list").textContent).toContain("acme/web");
+  });
+});
+
+describe("options: the arms the main flows above never reach", () => {
+  /** Every message kind the page sent, in order. */
+  function sentKinds(): string[] {
+    return harness.sendMessage.mock.calls.map((c) => String((c[0] as { kind?: string }).kind));
+  }
+
+  // A page missing a section's markup must still boot — and must not ask the
+  // worker for anything it has nowhere to show.
+  test("boots with no markup at all, asking only for the connection", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockResolvedValue(unpaired);
+    document.body.innerHTML = "";
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    expect(sentKinds()).toEqual(["connection-status"]);
+  });
+
+  // The status slots are separate elements from the controls that write them;
+  // a page that lacks a slot loses the message, never the action.
+  test("controls act even when their status slots are missing", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) => {
+      if (m.kind === "discover") {
+        return { kind: "discover", origin: "http://127.0.0.1:7474" };
+      }
+      if (m.kind === "pair") {
+        return { kind: "pair", ok: false, reason: "pairing_failed" };
+      }
+      return unpaired;
+    });
+    document.body.innerHTML = `
+      <input id="origin" type="text" />
+      <input id="code" type="text" />
+      <button id="discover" type="button">Find</button>
+      <button id="pair" type="button">Pair</button>
+      <input id="surface-origin" type="text" />
+      <select id="surface-product"></select>
+      <button id="surface-add" type="button">Add</button>
+      <div id="surface-list"></div>`;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    button("discover").click();
+    await flush();
+    expect(input("origin").value).toBe("http://127.0.0.1:7474");
+
+    input("code").value = "429173";
+    button("pair").click();
+    await flush();
+    expect(harness.sendMessage).toHaveBeenCalledWith({
+      kind: "pair",
+      origin: "http://127.0.0.1:7474",
+      code: "429173",
+    });
+
+    input("surface-origin").value = "https://corp.example/jenkins";
+    select("surface-product").value = "jenkins";
+    button("surface-add").click();
+    await flush();
+    expect(harness.storage.get("origins")).toEqual([
+      { origin: "https://corp.example/jenkins", product: "jenkins" },
+    ]);
+  });
+
+  test("a product value outside the registry is refused with the picker's guidance", async () => {
+    await boot();
+    const productSelect = select("surface-product");
+    const option = document.createElement("option");
+    option.value = "not-a-product";
+    productSelect.append(option);
+    productSelect.value = "not-a-product";
+    input("surface-origin").value = "https://corp.example/thing";
+
+    button("surface-add").click();
+    await flush();
+
+    expect(el("surface-status").textContent).toBe("Pick what this instance is running.");
+    expect(harness.storage.get("origins")).toBeUndefined();
+  });
+
+  // Neither click names a row action, so neither may touch permissions, the
+  // status line, or the list — the list is NOT re-rendered (the stray button
+  // survives), which a fall-through to the trailing refresh would have done.
+  test("a click in the surface list that is not a row action changes nothing", async () => {
+    await boot();
+    el("surface-status").textContent = "sentinel";
+    const stray = document.createElement("button");
+    stray.type = "button";
+    stray.textContent = "stray";
+    el("surface-list").append(stray);
+
+    el("surface-list").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    stray.click();
+    await flush();
+
+    expect(harness.permissionsRequest).not.toHaveBeenCalled();
+    expect(harness.permissionsRemove).not.toHaveBeenCalled();
+    expect(el("surface-status").textContent).toBe("sentinel");
+    expect(el("surface-list").contains(stray)).toBe(true);
+  });
+
+  test("a grant the user declines says page access was not granted", async () => {
+    await boot();
+    harness.permissionsRequest.mockResolvedValueOnce(false);
+
+    clickFor("grant", "github.com");
+    await flush();
+
+    expect(el("surface-status").textContent).toBe("Page access was not granted.");
+  });
+
+  // Only an `ambient` checkbox WITH a pattern may write the preference.
+  test("a change from a non-ambient control, or an ambient one with no pattern, stores nothing", async () => {
+    await boot();
+    const other = document.createElement("input");
+    other.type = "checkbox";
+    other.dataset["pattern"] = "https://github.com/*";
+    const patternless = document.createElement("input");
+    patternless.type = "checkbox";
+    patternless.dataset["action"] = "ambient";
+    el("surface-list").append(other, patternless);
+
+    for (const box of [other, patternless]) {
+      box.checked = true;
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    await flush();
+
+    expect(harness.storage.get("ambient-hosts")).toBeUndefined();
+    expect(harness.storageSet).not.toHaveBeenCalledWith(
+      expect.objectContaining({ "ambient-hosts": expect.anything() }),
+    );
+  });
+
+  // Fail SAFE: an unreadable preference shows the preview. The markup default
+  // is flipped off first, so only the failure path can have turned it on.
+  test("an unreadable preview preference shows the switch ON", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockResolvedValue(unpaired);
+    harness.storageGet.mockImplementation(async (key: string) => {
+      if (key === "preview-enabled") {
+        throw new Error("storage unavailable");
+      }
+      return { [key]: harness.storage.get(key) };
+    });
+    document.body.innerHTML = FIXTURE;
+    input("preview-toggle").checked = false;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    expect(input("preview-toggle").checked).toBe(true);
+  });
+
+  test("Open brief and Open Activity open the extension's own pages in new tabs", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockResolvedValue(unpaired);
+    const opened: string[] = [];
+    const chromeLike = globalThis as unknown as {
+      chrome: { tabs: Record<string, unknown>; runtime: Record<string, unknown> };
+    };
+    chromeLike.chrome.tabs["create"] = async (props: { url: string }) => {
+      opened.push(props.url);
+      return {};
+    };
+    chromeLike.chrome.runtime["getURL"] = (path: string) => `chrome-extension://abc/${path}`;
+    document.body.innerHTML = `${FIXTURE}<button id="open-brief" type="button">Open</button>`;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+
+    button("open-brief").click();
+    button("trust-ledger-open").click();
+    await flush();
+
+    expect(opened).toEqual([
+      "chrome-extension://abc/brief.html",
+      "chrome-extension://abc/ledger.html",
+    ]);
+  });
+
+  test("a click in the disclosure log that is not Clear sends no clear", async () => {
+    harness = installChromeMock();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) =>
+      m.kind === "brief-log" ? { entries: [] } : unpaired,
+    );
+    document.body.innerHTML = `${FIXTURE}<div id="brief-log"></div>`;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await flush();
+    const other = document.createElement("button");
+    other.type = "button";
+    other.id = "not-clear";
+    el("brief-log").append(other);
+
+    other.click();
+    el("brief-log").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flush();
+
+    expect(sentKinds()).not.toContain("brief-log-clear");
   });
 });

@@ -167,6 +167,25 @@ describe("renderWhyFindings", () => {
     expect(el.querySelector(".nimbus-findings__empty")).not.toBeNull();
   });
 
+  // A file-line question has no URL at all — the subject is a path on the
+  // reader's own disk — so the heading is the path, as text, never a link.
+  test("heads a file question with its path as plain text", () => {
+    const el = renderWhyFindings(
+      document,
+      findings({
+        subject: { repoRoot: "/home/u/src/web", filePath: "src/app.ts", lineNo: 42, symbol: null },
+      }),
+      NOW,
+    );
+    expect(el.querySelector(".nimbus-findings__subject")?.textContent).toBe("src/app.ts");
+    expect(el.querySelector("a")).toBeNull();
+  });
+
+  test("renders no heading at all when there is no subject of any kind", () => {
+    const el = renderWhyFindings(document, findings(), NOW);
+    expect(el.querySelector(".nimbus-findings__subject")).toBeNull();
+  });
+
   test("never parses a title as markup", () => {
     const el = renderWhyFindings(
       document,

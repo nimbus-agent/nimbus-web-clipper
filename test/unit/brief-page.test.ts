@@ -410,6 +410,58 @@ describe("save", () => {
     $("state").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(harness.sendMessage.mock.calls).toHaveLength(calls);
   });
+
+  // The save names the brief the page last saw FINISH. With none seen there is
+  // nothing to name, so a Save control that exists anyway sends nothing.
+  test("a Save click before any brief has finished sends nothing", async () => {
+    await loadPage();
+    const stray = document.createElement("button");
+    stray.id = "save-brief";
+    $("state").append(stray);
+    const calls = harness.sendMessage.mock.calls.length;
+
+    stray.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(harness.sendMessage.mock.calls).toHaveLength(calls);
+    expect(stray.disabled).toBe(false);
+  });
+
+  test("a save answer with no kind is not rendered as a state", async () => {
+    await reachDone();
+    harness.sendMessage.mockResolvedValueOnce("saved");
+
+    click("save-brief");
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenCalledWith({ kind: "brief-save", id: "b1" }),
+    );
+    await Promise.resolve();
+
+    expect($("state").textContent).toContain(REPORT.summary);
+    expect($("state").textContent).not.toContain("Saved to your index.");
+  });
+});
+
+describe("booting", () => {
+  // `root()` fails LOUDLY: a page missing its composer is a build error to see,
+  // not a blank page to stare at.
+  test("refuses to load without its composer", async () => {
+    document.body.innerHTML = "<main></main>";
+    vi.resetModules();
+    await expect(import("../../src/brief/brief.ts")).rejects.toThrow("missing #composer");
+  });
+
+  // The index preference read failing must not cost the user the composer: the
+  // page starts with the index off and still enumerates its sources.
+  test("an unreadable index preference still loads the composer", async () => {
+    harness.storageGet.mockImplementation(async (key: string) => {
+      if (key === "index-search-enabled") {
+        throw new Error("storage unavailable");
+      }
+      return { [key]: harness.storage.get(key) };
+    });
+    await loadPage();
+    expect(document.querySelector<HTMLInputElement>("#use-index")?.checked).toBe(false);
+  });
 });
 
 describe("collected passages", () => {
@@ -625,6 +677,50 @@ describe("collected passages", () => {
       ).not.toBeNull(),
     );
     expect($("composer").textContent).toContain("2 passages");
+  });
+
+  /** Appends a button to the composer and clicks it the way a user would. */
+  function clickInjected(attrs: Record<string, string>, className = ""): void {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = className;
+    for (const [key, value] of Object.entries(attrs)) {
+      button.dataset[key] = value;
+    }
+    $("composer").append(button);
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  // None of these is a passage action the composer can honour: a drop naming
+  // no passage instant, a control naming no page, a mode switch for a page with
+  // no open tab, and a click that lands on the composer itself. Each must send
+  // nothing — not a guess at what was meant.
+  test("controls that name no actionable passage send nothing", async () => {
+    await loadWithPassages();
+    const calls = harness.sendMessage.mock.calls.length;
+    const before = $("composer").querySelectorAll("input[type=checkbox]").length;
+
+    clickInjected({ url: "https://example.com/c", at: "first" }, "brief__drop");
+    clickInjected({}, "brief__drop");
+    clickInjected({ url: "https://example.com/nowhere" }, "brief__mode");
+    $("composer").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+
+    expect(harness.sendMessage.mock.calls).toHaveLength(calls);
+    expect($("composer").querySelectorAll("input[type=checkbox]")).toHaveLength(before);
+  });
+
+  // The counter is updated in place when present; a composer drawn without one
+  // still records the pick and still drives the preview.
+  test("a tick with no counter on the page still records the pick", async () => {
+    await loadWithPassages();
+    $("composer").querySelector(".brief__count")?.remove();
+
+    tick(pickBox("passages:https://example.com/c"), true);
+    pickQuestion();
+
+    await vi.waitFor(() => expect($("preview").hidden).toBe(false));
+    expect($("preview-body").textContent).toContain("first excerpt");
   });
 });
 

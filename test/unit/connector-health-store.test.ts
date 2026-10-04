@@ -160,6 +160,73 @@ describe("readConnectorHealth", () => {
     expect(result?.get("github")).toEqual({ state: "healthy" });
   });
 
+  // Each stored value is fresh, for the right origin, and malformed in exactly
+  // ONE place — so the fetch can only have happened because the guard named
+  // here refused it, never because the entry was simply stale or foreign.
+  it.each([
+    ["a null value", null],
+    ["a string value", "connectorHealth"],
+    ["a non-string origin", { origin: 7777, fetchedAtMs: 1_000, entries: [] }],
+    ["a non-finite fetchedAtMs", { origin: ORIGIN, fetchedAtMs: Number.NaN, entries: [] }],
+    ["entries that are not an array", { origin: ORIGIN, fetchedAtMs: 1_000, entries: {} }],
+    [
+      "an entry that is not a pair",
+      { origin: ORIGIN, fetchedAtMs: 1_000, entries: [["github", { state: "healthy" }, "x"]] },
+    ],
+    [
+      "an entry with a non-string connector id",
+      { origin: ORIGIN, fetchedAtMs: 1_000, entries: [[7, { state: "healthy" }]] },
+    ],
+    [
+      "an entry with a null health",
+      { origin: ORIGIN, fetchedAtMs: 1_000, entries: [["github", null]] },
+    ],
+    [
+      "an entry whose state is outside CONNECTOR_STATES",
+      { origin: ORIGIN, fetchedAtMs: 1_000, entries: [["github", { state: "vibes" }]] },
+    ],
+    [
+      "an infinite lastSuccessfulSyncMs",
+      {
+        origin: ORIGIN,
+        fetchedAtMs: 1_000,
+        entries: [["github", { state: "healthy", lastSuccessfulSyncMs: Number.POSITIVE_INFINITY }]],
+      },
+    ],
+  ])("treats a stored value with %s as a cache miss", async (_why, stored) => {
+    harness.storage.set("connectorHealth", stored);
+    let calls = 0;
+    const deps = {
+      getConnectors: async () => {
+        calls++;
+        return HEALTHY;
+      },
+    };
+    const result = await readConnectorHealth(deps, ORIGIN, 1_050);
+    expect(calls).toBe(1);
+    expect(result).toEqual(HEALTHY);
+  });
+
+  it("answers from a stored entry carrying a finite lastSuccessfulSyncMs, without a request", async () => {
+    harness.storage.set("connectorHealth", {
+      origin: ORIGIN,
+      fetchedAtMs: 1_000,
+      entries: [["jira", { state: "not_configured", lastSuccessfulSyncMs: 900 }]],
+    });
+    let calls = 0;
+    const deps = {
+      getConnectors: async () => {
+        calls++;
+        return HEALTHY;
+      },
+    };
+    const result = await readConnectorHealth(deps, ORIGIN, 1_050);
+    expect(calls).toBe(0);
+    expect(result).toEqual(
+      new Map([["jira", { state: "not_configured", lastSuccessfulSyncMs: 900 }]]),
+    );
+  });
+
   it("treats a future-dated fetchedAtMs as a cache miss", async () => {
     // `nowMs - fetchedAtMs < TTL` is also satisfied by a NEGATIVE elapsed value, so
     // an entry stamped in the future (clock skew, or a corrupted value) would stay

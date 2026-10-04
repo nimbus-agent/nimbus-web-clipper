@@ -93,4 +93,24 @@ describe("isQueuedClip", () => {
     const e = entry("a");
     expect(isQueuedClip({ ...e, payload: { ...e.payload, source: "Ada" } })).toBe(false);
   });
+  // A real offline clip: a selection, with a canonical address and tags. Every
+  // optional field present, and each one checked, not merely tolerated.
+  test("accepts a selection clip carrying a canonical url and tags", () => {
+    const e = entry("a");
+    const payload = {
+      ...e.payload,
+      mode: "selection",
+      canonicalUrl: "https://ex.com/canonical",
+      tags: ["research", "auth"],
+    };
+    expect(isQueuedClip({ ...e, payload })).toBe(true);
+  });
+  test.each([
+    ["a non-string canonicalUrl", { canonicalUrl: 7 }],
+    ["a non-string tag among strings", { tags: ["research", 7] }],
+    ["an unknown mode", { mode: "page" }],
+  ])("rejects a payload with %s", (_why, over) => {
+    const e = entry("a");
+    expect(isQueuedClip({ ...e, payload: { ...e.payload, ...over } })).toBe(false);
+  });
 });

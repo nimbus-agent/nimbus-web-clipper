@@ -5,6 +5,7 @@ import { isPreviewEnabled, setPreviewEnabled } from "../background/preview-pref.
 import { getAllCommands } from "../browser/commands.ts";
 import { hasOrigin, removeOrigin, requestOrigin } from "../browser/permissions.ts";
 import { isFirefoxRuntime, sendMessage } from "../browser/runtime.ts";
+import { openExtensionPage } from "../browser/tabs.ts";
 import { isBriefLogEntry } from "../shared/brief-log.ts";
 import {
   type BindingCheckStatus,
@@ -347,32 +348,39 @@ function mutateAmbient(pattern: string, on: boolean): Promise<void> {
  * row for github.com, gitlab.com, bitbucket.org or Jira Cloud — and since the
  * Grant button lives on a row, there was no way to grant page access to them at
  * all. See the design spec's "The prerequisite this slice discovered".
+ *
+ * The grant checks run together, not one row at a time: each is an independent,
+ * read-only question to the browser's permission set, and `Promise.all` keeps
+ * the rows in list order whatever order the answers arrive in.
  */
 async function surfaceRows(): Promise<SurfaceRow[]> {
   const ambient = await getAmbientHosts();
-  const rows: SurfaceRow[] = [];
-  for (const surface of BUILT_IN_SURFACES) {
-    rows.push({
-      origin: surface.label,
-      product: surface.product,
-      granted: await hasOrigin(surface.pattern),
-      builtIn: true,
-      pattern: surface.pattern,
-      ambient: ambient.includes(surface.pattern),
-    });
-  }
-  for (const entry of await getOrigins()) {
-    const pattern = hostPermissionPattern(entry.origin);
-    rows.push({
-      origin: entry.origin,
-      product: entry.product,
-      granted: pattern !== null && (await hasOrigin(pattern)),
-      builtIn: false,
-      pattern,
-      ambient: pattern !== null && ambient.includes(pattern),
-    });
-  }
-  return rows;
+  const builtIn = await Promise.all(
+    BUILT_IN_SURFACES.map(
+      async (surface): Promise<SurfaceRow> => ({
+        origin: surface.label,
+        product: surface.product,
+        granted: await hasOrigin(surface.pattern),
+        builtIn: true,
+        pattern: surface.pattern,
+        ambient: ambient.includes(surface.pattern),
+      }),
+    ),
+  );
+  const configured = await Promise.all(
+    (await getOrigins()).map(async (entry): Promise<SurfaceRow> => {
+      const pattern = hostPermissionPattern(entry.origin);
+      return {
+        origin: entry.origin,
+        product: entry.product,
+        granted: pattern !== null && (await hasOrigin(pattern)),
+        builtIn: false,
+        pattern,
+        ambient: pattern !== null && ambient.includes(pattern),
+      };
+    }),
+  );
+  return [...builtIn, ...configured];
 }
 
 async function refreshSurfaces(): Promise<void> {
@@ -847,7 +855,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Opens in a tab of its own — a brief run outlives this page too, and the
   // composer needs the room. Click-driven, deliberately not a `commands` entry.
   document.getElementById("open-brief")?.addEventListener("click", () => {
-    void chrome.tabs.create({ url: chrome.runtime.getURL("brief.html") }).catch(() => undefined);
+    openExtensionPage("brief.html");
   });
   document.getElementById("brief-log")?.addEventListener("click", (event) => {
     if (event.target instanceof HTMLButtonElement && event.target.id === "clear-brief-log") {
@@ -859,7 +867,7 @@ document.addEventListener("DOMContentLoaded", () => {
   void refreshSurfaces();
   void refreshBindings();
   document.getElementById("trust-ledger-open")?.addEventListener("click", () => {
-    void chrome.tabs.create({ url: chrome.runtime.getURL("ledger.html") }).catch(() => undefined);
+    openExtensionPage("ledger.html");
   });
   void refreshShortcuts();
   void refreshPreviewToggle();

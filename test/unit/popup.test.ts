@@ -583,4 +583,147 @@ describe("preview before sending", () => {
     const sent = harness.sendMessage.mock.calls[0]?.[0] as { tags?: string[] };
     expect(sent.tags).toEqual(["research"]);
   });
+
+  // Cancel clears what was pending; a Confirm that reaches the handler after
+  // that (a double click racing the hide) has nothing to send and sends nothing.
+  test("Confirm with nothing pending sends no clip", async () => {
+    click("preview-cancel");
+    harness.sendMessage.mockClear();
+
+    click("preview-confirm");
+    await Promise.resolve();
+
+    expect(clipKinds()).toEqual([]);
+  });
+});
+
+describe("popup with partial markup", () => {
+  /** Re-boots the popup against a different page, after the shared beforeEach. */
+  function rebootWith(markup: string): void {
+    document.body.innerHTML = markup;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+  }
+
+  // The preview is a confirmation, never a gate that can silently eat a clip:
+  // a page without its UI sends straight away. No tags field means no tags,
+  // and no queue section means the queue read paints nothing.
+  test("with no preview UI, a clip is sent rather than dropped", async () => {
+    // The reboot's own queue read went out synchronously, above, before this.
+    rebootWith(`<button id="clip-page" type="button">Clip</button><output id="status"></output>`);
+    stubCapture();
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "clip",
+      ok: true,
+      status: "created",
+      bookmarked: false,
+    });
+
+    click("clip-page");
+
+    await vi.waitFor(() => expect(statusText()).toBe("Saved to Nimbus."));
+    expect(harness.sendMessage).toHaveBeenCalledWith({
+      kind: "clip",
+      capture: ARTICLE_CAPTURE,
+      tags: [],
+    });
+  });
+
+  // Every control the composer lock would touch is missing here; the preview
+  // still shows, and Confirm still sends exactly what it showed.
+  test("a preview with no composer controls or status line still confirms and sends", async () => {
+    rebootWith(`
+      <button id="clip-page" type="button">Clip</button>
+      <section id="preview" hidden>
+        <div id="preview-body"></div>
+        <button id="preview-confirm" type="button">Send</button>
+        <button id="preview-cancel" type="button">Cancel</button>
+      </section>`);
+    stubCapture();
+
+    click("clip-page");
+    await vi.waitFor(() => expect(previewSection().hidden).toBe(false));
+    expect(clipKinds()).toEqual([]);
+
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "clip",
+      ok: true,
+      status: "created",
+      bookmarked: false,
+    });
+    click("preview-confirm");
+
+    await vi.waitFor(() => expect(clipKinds()).toEqual(["clip"]));
+    expect(previewSection().hidden).toBe(true);
+  });
+
+  // Cancel's confirmation must not depend on the section it hides: a page that
+  // kept the button but lost the preview section still says nothing was sent.
+  test("Cancel with no preview section still reports that nothing was sent", () => {
+    rebootWith(`
+      <button id="preview-cancel" type="button">Cancel</button>
+      <output id="status"></output>`);
+    harness.sendMessage.mockClear();
+
+    click("preview-cancel");
+
+    expect(statusText()).toBe("Cancelled — nothing was sent.");
+    expect(clipKinds()).toEqual([]);
+  });
+
+  test("Open brief opens the brief page in a tab of its own", async () => {
+    const opened: string[] = [];
+    const chromeLike = globalThis as unknown as {
+      chrome: { tabs: Record<string, unknown>; runtime: Record<string, unknown> };
+    };
+    chromeLike.chrome.tabs["create"] = async (props: { url: string }) => {
+      opened.push(props.url);
+      return {};
+    };
+    chromeLike.chrome.runtime["getURL"] = (path: string) => `chrome-extension://abc/${path}`;
+    rebootWith(`<button id="open-brief" type="button">Open brief</button>`);
+
+    click("open-brief");
+
+    expect(opened).toEqual(["chrome-extension://abc/brief.html"]);
+  });
+});
+
+describe("queue clicks that name no action", () => {
+  beforeEach(async () => {
+    harness.sendMessage.mockResolvedValueOnce({
+      kind: "queue",
+      items: [{ url: "https://ex.com/a", title: "A", queuedAt: 0, attempts: 0 }],
+    });
+    click("queue-retry-all");
+    await vi.waitFor(() =>
+      expect(document.querySelectorAll("#queue-list .queue__item")).toHaveLength(1),
+    );
+  });
+
+  // A button needs BOTH a url and one of the two action classes; one without
+  // either is not a queue action, and a click on it must send nothing.
+  test("a button with no url, or with neither action class, sends nothing", async () => {
+    const list = document.getElementById("queue-list");
+    const noUrl = document.createElement("button");
+    noUrl.className = "queue__retry";
+    const noAction = document.createElement("button");
+    noAction.dataset["url"] = "https://ex.com/a";
+    list?.append(noUrl, noAction);
+    const callsBefore = harness.sendMessage.mock.calls.length;
+
+    noUrl.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    noAction.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+
+    expect(harness.sendMessage.mock.calls).toHaveLength(callsBefore);
+  });
+
+  test("a synthetic non-mouse click on Retry is ignored", async () => {
+    const callsBefore = harness.sendMessage.mock.calls.length;
+
+    document.querySelector(".queue__retry")?.dispatchEvent(new Event("click", { bubbles: true }));
+    await Promise.resolve();
+
+    expect(harness.sendMessage.mock.calls).toHaveLength(callsBefore);
+  });
 });

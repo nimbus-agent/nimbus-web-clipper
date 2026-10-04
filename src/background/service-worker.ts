@@ -27,6 +27,9 @@ import {
 import type { ItemUrlMap, LaneFindings } from "../shared/findings.ts";
 import { gapsOfBrief, laneFindingsFrom, synthesisFrom } from "../shared/findings-guards.ts";
 import {
+  type AgentStateResponse,
+  type ClipRequest,
+  type ClipResponse,
   isAgentRunRequest,
   isAgentStateRequest,
   isBriefStartRequest,
@@ -54,6 +57,7 @@ import {
   isServiceBindRequest,
   isServiceUnbindRequest,
   isUnpairRequest,
+  type QueueResponse,
 } from "../shared/messages.ts";
 import { removeGroup, removePassage } from "../shared/passage.ts";
 import type { AgentError, AgentLane, LaneState, Recognition } from "../shared/types.ts";
@@ -138,6 +142,7 @@ import {
   handleResolve,
   handleUnpair,
 } from "./handlers.ts";
+import { type RawScopeGap, withLabel } from "./http-json.ts";
 import { itemIdsOf, resolveItemUrls } from "./item-urls.ts";
 import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
@@ -233,7 +238,7 @@ async function syncQueueState(): Promise<void> {
     // Chrome honours a 30s floor (values under 0.5 are ignored and warn), so a
     // shorter Retry-After rounds up. An early or late tick is harmless — the pause
     // gate in flushQueue no-ops it.
-    rearmAlarm(FLUSH_ALARM, Math.max(0.5, remainingMs / 60_000), 1);
+    await rearmAlarm(FLUSH_ALARM, Math.max(0.5, remainingMs / 60_000), 1);
     return;
   }
   await ensureAlarm(FLUSH_ALARM, 1);
@@ -242,6 +247,38 @@ async function syncQueueState(): Promise<void> {
 // One clip pipeline for both entry points: the popup's `clip` message and the
 // quick-clip (context menu / hotkey) route go through the same handler deps.
 const clipDeps = { getConnection, postClip: postClipPaced, updateQueue, nowMs: () => Date.now() };
+
+/**
+ * The reconcile that follows a clip, shared by both entry points for the reason
+ * `clipDeps` is. It never rejects, because by the time it runs the clip has
+ * SETTLED: a saved clip is saved, and a queued one is persisted with any
+ * rate-limit pause already armed. Letting a failed badge or alarm write stand in
+ * for that outcome would report a saved clip as lost, or a queued one as failed
+ * while the popup's own queue list shows it waiting.
+ *
+ * A failure anywhere in `syncQueueState` can leave its alarm step unrun — the
+ * queue read, the badge write and the pause read all come first. For a clip that
+ * just queued, the queue then has work and may have no wakeup, so this arms the
+ * plain periodic alarm: not the delayed one a pause wants, which needs the very
+ * reads that may have failed. Early is harmless — the pause gate in `flushQueue`
+ * is the authority. A clip that queued nothing gets no fallback, since the alarm
+ * exists only while the queue has work.
+ *
+ * Not logged — `noConsole` bans console.* in src/, as `registerMenus` notes — so
+ * nothing the failure leaves undone may depend on being noticed: the answer is
+ * the clip's own outcome, a clip that queued still gets its wakeup, and whatever
+ * the fallback cannot cover, the next worker start does (`runStartupSequence`
+ * reconciles and drains the queue again).
+ */
+async function reconcileAfterClip(res: ClipResponse | undefined): Promise<void> {
+  try {
+    await syncQueueState();
+  } catch {
+    if (res?.ok === false && res.queued === true) {
+      await ensureAlarm(FLUSH_ALARM, 1).catch(() => undefined);
+    }
+  }
+}
 
 // The pure handlers work with a domain-shaped run (no `expiresAtMs`); this is the
 // one place "now" is read and the TTL applied, mirroring how postClipPaced wraps
@@ -328,8 +365,8 @@ let pairingGeneration = 0;
  * omits the key entirely rather than sending an empty one); carried through as
  * `detail` when it is present and non-blank, omitted (never `detail:
  * undefined`) otherwise. `scopeGap`, when present, needs the device label
- * attached — only `service-worker.ts` holds a `Connection`, mirroring how
- * `handlers.ts` attaches it elsewhere.
+ * attached — only `service-worker.ts` holds a `Connection` here — through the
+ * same `withLabel` the handlers attach it with.
  */
 function terminalLaneState(
   result:
@@ -341,11 +378,7 @@ function terminalLaneState(
         readonly synthesis?: unknown;
       }
     | { readonly ok: true; readonly status: "failed"; readonly failureReason?: string }
-    | {
-        readonly ok: false;
-        readonly reason: AgentError;
-        readonly scopeGap?: { readonly required: string; readonly granted: string[] };
-      },
+    | { readonly ok: false; readonly reason: AgentError; readonly scopeGap?: RawScopeGap },
   label: string,
   lane: AgentLane,
 ): LaneState {
@@ -369,9 +402,10 @@ function terminalLaneState(
       ? { kind: "failed", reason: "agent_failed" }
       : { kind: "failed", reason: "agent_failed", detail: result.failureReason };
   }
-  return result.scopeGap === undefined
+  const scopeGap = withLabel(label, result.scopeGap);
+  return scopeGap === undefined
     ? { kind: "failed", reason: result.reason }
-    : { kind: "failed", reason: result.reason, scopeGap: { label, ...result.scopeGap } };
+    : { kind: "failed", reason: result.reason, scopeGap };
 }
 
 /** The reason the loop is STILL GOING as of the last tick — i.e. what it would
@@ -608,18 +642,27 @@ const briefDeps: BriefDeps = {
   capture: (tabId, expectedUrl) =>
     captureTab({ tabUrl, runCapture }, tabId, "article", expectedUrl),
   passages: getPassages,
-  // BY IDENTITY, page by page: each fed passage is dropped by the instant it was
-  // captured, through the same `removePassage` the composer's per-passage remove
-  // uses. Dropping the whole group would also destroy anything the user
-  // collected while the run was still feeding, which never left — see
-  // `FedPassages`.
+  // BY IDENTITY: each fed passage is dropped by the instant it was captured,
+  // through the same `removePassage` the composer's per-passage remove uses.
+  // Dropping the whole group would also destroy anything the user collected
+  // while the run was still feeding, which never left — see `FedPassages`.
+  //
+  // Every page in ONE read-modify-write, not one write per page: each removal is
+  // by identity, so a write that lands leaves the collection exactly as one write
+  // per page did, and the store is written once, not once per page. A refusal
+  // (`updatePassages` resolves `storage-full` for a failed read or write; it does
+  // not reject) now keeps EVERY fed page's passages, where one write per page kept
+  // only the refused page's. `forgetFed` keeps the run alive either way.
   forgetPassages: async (fed) => {
-    for (const { url, ats } of fed) {
-      await updatePassages((all) => ({
-        ok: true,
-        all: ats.reduce((rest, at) => removePassage(rest, url, at), all),
-      }));
-    }
+    await updatePassages((all) => {
+      let kept = all;
+      for (const { url, ats } of fed) {
+        for (const at of ats) {
+          kept = removePassage(kept, url, at);
+        }
+      }
+      return { ok: true, all: kept };
+    });
   },
   connection: async () => {
     const conn = await getConnection();
@@ -808,10 +851,10 @@ function isBriefMessage(v: unknown): v is BriefMessage {
  * Fan-out for the six brief message kinds.
  *
  * A separate function, not six branches in the router: the router already carries
- * nineteen branches, and has since been split into four order-preserving slices
+ * twenty-four branches, and has since been split into five order-preserving slices
  * (`routeCapturePair` / `routeIndexReads` / `routeQueueAndConnection` /
- * `routeSubRouters`) to stay under Sonar's cognitive-complexity cap (S3776, 15) —
- * having earlier needed `openPanelForCue` extracted for the same reason.
+ * `routeDeploy` / `routeSubRouters`) to stay under Sonar's cognitive-complexity cap
+ * (S3776, 15) — having earlier needed `openPanelForCue` extracted for the same reason.
  */
 async function routeBriefMessage(message: BriefMessage): Promise<unknown> {
   if (message.kind === "brief-tabs") {
@@ -897,13 +940,20 @@ const quickClipDeps: QuickClipDeps = {
   runCapture,
   // The badge sync runs AFTER the response is settled, never gating it: the clip may
   // have enqueued (keep the count fresh), but a storage failure while syncing must
-  // not turn a successful clip into a silent no-toast. It is still awaited (a
-  // returned thenable settles `finally`) so the queue count repaints BEFORE any
-  // badge flash — otherwise a late sync would erase the flash.
-  clip: (req) =>
-    handleClip(clipDeps, req).finally(async () => {
-      await syncQueueState().catch(() => undefined);
-    }),
+  // not turn a successful clip into a silent no-toast — `reconcileAfterClip` never
+  // rejects. It is still awaited (the `finally` holds this promise until it is
+  // done) so the queue count repaints BEFORE any badge flash — otherwise a late
+  // sync would erase the flash. A rejected clip still syncs, with no outcome to
+  // act on.
+  clip: async (req) => {
+    let res: ClipResponse | undefined;
+    try {
+      res = await handleClip(clipDeps, req);
+      return res;
+    } finally {
+      await reconcileAfterClip(res);
+    }
+  },
   showFeedback: (tabId, state, restricted) =>
     showFeedback(
       { showToast, setBadgeText, restoreBadge: syncQueueState },
@@ -1059,7 +1109,7 @@ addMenuClickListener((menuItemId, tabId, selectionText) => {
  * act on.
  *
  * Lives outside the message listener rather than inline: the listener is a flat
- * router (now four order-preserving slices carrying nineteen branches between
+ * router (now five order-preserving slices carrying twenty-four branches between
  * them), and a nested `if` inside one of them costs more cognitive complexity
  * than the branch itself (SonarCloud S3776, which this pushed to 16 against a
  * threshold of 15). The router routes; this decides.
@@ -1142,8 +1192,30 @@ function wrapRespond(rawRespond: Respond): Respond {
   };
 }
 
+/** The answer to an `agent-run` or `agent-state` request whose handler rejected:
+ *  that lane, failed with `server_error`. */
+function failedLaneReply(lane: AgentLane): AgentStateResponse {
+  return { kind: "agent-state", lane, state: { kind: "failed", reason: "server_error" } };
+}
+
 /**
- * The router is split into four in ORDER-PRESERVING slices, not for tidiness:
+ * Answer a queue MUTATION (retry, remove) only once the toolbar badge and the flush
+ * alarm have been reconciled with it, via `syncQueueState`. Any failure — the
+ * mutation's or the reconcile's — answers an empty queue, as the list read does.
+ */
+function replyAfterQueueSync(mutation: Promise<QueueResponse>, respond: Respond): void {
+  mutation
+    .then(async (res) => {
+      await syncQueueState();
+      respond(res);
+    })
+    .catch(() => {
+      respond({ kind: "queue", items: [] });
+    });
+}
+
+/**
+ * The router is split into five in ORDER-PRESERVING slices, not for tidiness:
  * one function carrying every branch is past S3776's cognitive-complexity cap,
  * and a message must still meet the same guards in the same sequence, because
  * the guards are not disjoint by construction — only by the order they run in.
@@ -1189,22 +1261,31 @@ function routeCapturePair(message: unknown, respond: Respond, sender: SenderInfo
     return true;
   }
   if (isClipRequest(message)) {
-    handleClip(clipDeps, message)
-      .then(async (res) => {
-        if (res.ok) {
-          // Same rule as markStale above: `void` alone would leave a rejection
-          // unhandled.
-          void markClipSuccess(Date.now()).catch(() => undefined);
-        }
-        await syncQueueState();
-        respond(res);
-      })
-      .catch(() => {
-        respond({ kind: "clip", ok: false, reason: "server_error" });
-      });
+    clipThenReply(message, respond).catch(() => {
+      respond({ kind: "clip", ok: false, reason: "server_error" });
+    });
     return true;
   }
   return null;
+}
+
+/**
+ * The `clip` route, as one flat sequence: clip, note a success, reconcile the
+ * toolbar badge and the flush alarm, then answer with the clip's own outcome. Its
+ * caller answers `server_error` only when the clip itself rejects — the reconcile
+ * never does, see `reconcileAfterClip`.
+ *
+ * Noting the success is fire-and-forget, as `wrapRespond`'s `markStale` is: the
+ * answer must not wait on that storage write, and its `.catch` is what keeps a
+ * failed write from surfacing as an unhandled rejection.
+ */
+async function clipThenReply(message: ClipRequest, respond: Respond): Promise<void> {
+  const res = await handleClip(clipDeps, message);
+  if (res.ok) {
+    markClipSuccess(Date.now()).catch(() => undefined);
+  }
+  await reconcileAfterClip(res);
+  respond(res);
 }
 
 function routeIndexReads(message: unknown, respond: Respond): Routed {
@@ -1262,11 +1343,7 @@ function routeIndexReads(message: unknown, respond: Respond): Routed {
     handleAgentRun(agentRunDeps, message)
       .then(respond)
       .catch(() => {
-        respond({
-          kind: "agent-state",
-          lane: message.lane,
-          state: { kind: "failed", reason: "server_error" },
-        });
+        respond(failedLaneReply(message.lane));
       });
     return true;
   }
@@ -1274,11 +1351,7 @@ function routeIndexReads(message: unknown, respond: Respond): Routed {
     handleAgentState(agentStateDeps, message)
       .then(respond)
       .catch(() => {
-        respond({
-          kind: "agent-state",
-          lane: message.lane,
-          state: { kind: "failed", reason: "server_error" },
-        });
+        respond(failedLaneReply(message.lane));
       });
     return true;
   }
@@ -1295,28 +1368,17 @@ function routeQueueAndConnection(message: unknown, respond: Respond): Routed {
     return true;
   }
   if (isQueueRetryRequest(message)) {
-    handleQueueRetry(
-      { flush: (opts) => flushQueue(flushDeps, opts).then(() => undefined), getQueue },
-      message,
-    )
-      .then(async (res) => {
-        await syncQueueState();
-        respond(res);
-      })
-      .catch(() => {
-        respond({ kind: "queue", items: [] });
-      });
+    replyAfterQueueSync(
+      handleQueueRetry(
+        { flush: (opts) => flushQueue(flushDeps, opts).then(() => undefined), getQueue },
+        message,
+      ),
+      respond,
+    );
     return true;
   }
   if (isQueueRemoveRequest(message)) {
-    handleQueueRemove({ updateQueue }, message)
-      .then(async (res) => {
-        await syncQueueState();
-        respond(res);
-      })
-      .catch(() => {
-        respond({ kind: "queue", items: [] });
-      });
+    replyAfterQueueSync(handleQueueRemove({ updateQueue }, message), respond);
     return true;
   }
   if (isConnectionStatusRequest(message)) {
@@ -1345,8 +1407,8 @@ function routeQueueAndConnection(message: unknown, respond: Respond): Routed {
 }
 
 /**
- * The four deploy-readiness kinds (C10). A dedicated slice, not folded into one
- * of the four above: each arm here is guard-narrowed before the handler ever
+ * The five deploy-readiness kinds (C10). A dedicated slice, not folded into one
+ * of the other four: each arm here is guard-narrowed before the handler ever
  * sees the payload — `handleServiceBind` reads `req.binding.defaultBranch`
  * unguarded, trusting that `isServiceBindRequest` has already rejected a
  * malformed one.
@@ -1398,9 +1460,6 @@ function routeDeploy(message: unknown, respond: Respond): Routed {
 }
 
 function routeSubRouters(message: unknown, respond: Respond, sender: SenderInfo): Routed {
-  // ONE branch for six kinds — the fan-out lives in `routeBriefMessage` so this
-  // router stays under S3776's cap. Placed before the narrower guards below only
-  // because its own guard is exact (a `brief-` prefix plus an optional string id).
   // ONE branch for the three ledger reads, same shape and same reason as the
   // brief branch below.
   if (isEgressMessage(message)) {
@@ -1414,6 +1473,9 @@ function routeSubRouters(message: unknown, respond: Respond, sender: SenderInfo)
       });
     return true;
   }
+  // ONE branch for six kinds — the fan-out lives in `routeBriefMessage` so this
+  // router stays under S3776's cap. Placed before the narrower guards below only
+  // because its own guard is exact (a `brief-` prefix plus an optional string id).
   if (isBriefMessage(message)) {
     routeBriefMessage(message)
       .then(respond)

@@ -21,26 +21,13 @@ import type {
 } from "../shared/messages.ts";
 import type { Connection } from "../shared/types.ts";
 import type * as egressClient from "./egress-client.ts";
+import { withLabel } from "./http-json.ts";
 
 export interface EgressDeps {
   readonly getConnection: () => Promise<Connection | null>;
   readonly listEgress: typeof egressClient.listEgress;
   readonly verifyEgress: typeof egressClient.verifyEgress;
   readonly proveEgressWindow: typeof egressClient.proveEgressWindow;
-}
-
-/**
- * Widen the gateway's raw two-field gap into the `ScopeGap` the views need.
- *
- * The device label is client-side state, so the handler is what adds it — the
- * 403 body cannot carry it. Same shape as `handlers.ts` does for resolve and
- * fetch, and it is what lets `scopeCommand` build a pasteable command.
- */
-function withLabel(
-  label: string,
-  gap: { required: string; granted: string[] } | undefined,
-): { label: string; required: string; granted: string[] } | undefined {
-  return gap === undefined ? undefined : { label, ...gap };
 }
 
 export async function handleEgressWindow(

@@ -20,10 +20,7 @@
 // forever: every later write would await a promise that never settles, and the
 // store would go silently read-only for the life of the worker.
 import { storageGet } from "../browser/storage.ts";
-
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
+import { isObject } from "../shared/is-object.ts";
 
 /**
  * Read a whole keyed store, keeping only the entries that pass `isEntry`.

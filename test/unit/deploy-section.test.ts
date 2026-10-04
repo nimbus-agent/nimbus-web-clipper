@@ -144,11 +144,11 @@ describe("mountDeploySection", () => {
       .mockResolvedValueOnce({ kind: "service-bind", ok: false, reason: "unknown_service" });
     mountDeploySection(host, ctx, send);
     await flush();
-    expect(host.querySelectorAll('[role="group"] button').length).toBe(2);
+    expect(host.querySelectorAll('[role="group"] button')).toHaveLength(2);
 
     host.querySelector("form")?.dispatchEvent(new Event("submit", { cancelable: true }));
     await flush();
-    expect(host.querySelectorAll('[role="group"] button').length).toBe(2);
+    expect(host.querySelectorAll('[role="group"] button')).toHaveLength(2);
     expect(host.textContent).toContain("[metrics.dora.");
   });
 
@@ -356,5 +356,174 @@ describe("mountDeploySection", () => {
     await flush();
     expect(host.textContent).toMatch(/could not reach/i);
     expect(host.textContent).not.toMatch(/couldn't parse/i);
+  });
+
+  const unbound = {
+    kind: "deploy-preflight",
+    ok: false,
+    reason: "unbound",
+    resolution: { kind: "unclaimed" },
+    guessServiceId: "web",
+  };
+
+  function submit(host: HTMLElement): void {
+    host.querySelector("form")?.dispatchEvent(new Event("submit", { cancelable: true }));
+  }
+
+  // A page that is not indexed has no item id, and that is a distinct mount:
+  // the key changes when an id arrives, so the section re-asks for it.
+  test("a mount with no item id asks without one, and an id arriving re-asks", async () => {
+    const host = document.createElement("div");
+    const send = vi.fn(async () => ({
+      kind: "deploy-preflight",
+      ok: true,
+      serviceId: "web",
+      preflight: okEnvelope,
+    }));
+    const { itemId: _dropped, ...noItem } = ctx;
+    mountDeploySection(host, noItem, send);
+    await flush();
+    mountDeploySection(host, noItem, send);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith({
+      kind: "deploy-preflight",
+      product: "github",
+      origin: "https://github.com",
+      scope: "acme/web",
+    });
+
+    mountDeploySection(host, ctx, send);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  test.each([
+    ["unreachable", "Nimbus could not be reached to bind that service."],
+    ["server_error", "Nimbus hit an error binding that service — try again."],
+    ["malformed", "Nimbus sent back something this panel couldn't parse."],
+  ])("a bind refused as %s says so and keeps the form", async (reason, sentence) => {
+    const host = document.createElement("div");
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce(unbound)
+      .mockResolvedValueOnce({ kind: "service-bind", ok: false, reason });
+    mountDeploySection(host, ctx, send);
+    await flush();
+    submit(host);
+    await flush();
+    expect(host.textContent).toContain(sentence);
+    expect(host.querySelector("form")).not.toBeNull();
+  });
+
+  test("submitting an empty service id sends nothing", async () => {
+    const host = document.createElement("div");
+    const send = vi.fn().mockResolvedValueOnce(unbound);
+    mountDeploySection(host, ctx, send);
+    await flush();
+    const input = host.querySelector("input");
+    if (input !== null) input.value = "   ";
+    submit(host);
+    await flush();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  test("a bind answer the section cannot read renders the malformed note, not a verdict", async () => {
+    const host = document.createElement("div");
+    const send = vi
+      .fn()
+      .mockResolvedValueOnce(unbound)
+      .mockResolvedValueOnce({ kind: "service-bind", ok: "maybe" });
+    mountDeploySection(host, ctx, send);
+    await flush();
+    submit(host);
+    await flush();
+    expect(host.textContent).toContain("Nimbus sent back something this panel couldn't parse.");
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  // The section moved to another page while a bind or an ask was in flight.
+  // Whatever comes back for the OLD page — an answer or a rejection — renders
+  // nothing over the new one, and a landed bind does not re-ask for it.
+  test("a bind answer landing after the section moved on is dropped", async () => {
+    const host = document.createElement("div");
+    let answerBind: (value: unknown) => void = () => {};
+    const send = vi.fn((msg: unknown): Promise<unknown> => {
+      const m = msg as { kind: string; scope?: string };
+      if (m.kind === "service-bind") {
+        return new Promise((resolve) => {
+          answerBind = resolve;
+        });
+      }
+      return Promise.resolve(
+        m.scope === "acme/other"
+          ? {
+              kind: "deploy-preflight",
+              ok: true,
+              serviceId: "other",
+              preflight: { ...okEnvelope, service: "other" },
+            }
+          : unbound,
+      );
+    });
+    mountDeploySection(host, ctx, send);
+    await flush();
+    submit(host);
+    await flush();
+    mountDeploySection(host, { ...ctx, scope: "acme/other" }, send);
+    await flush();
+    const callsBefore = send.mock.calls.length;
+
+    answerBind({ kind: "service-bind", ok: true });
+    await flush();
+
+    expect(send).toHaveBeenCalledTimes(callsBefore);
+    expect(host.textContent).toMatch(/Clear to deploy other/);
+  });
+
+  test("a rejected bind or ask for a page the section left renders nothing", async () => {
+    const host = document.createElement("div");
+    let failBind: (reason: unknown) => void = () => {};
+    let failAsk: (reason: unknown) => void = () => {};
+    let asks = 0;
+    const send = vi.fn((msg: unknown): Promise<unknown> => {
+      const m = msg as { kind: string; scope?: string };
+      if (m.kind === "service-bind") {
+        return new Promise((_resolve, reject) => {
+          failBind = reject;
+        });
+      }
+      asks += 1;
+      if (asks === 1) {
+        return Promise.resolve(unbound);
+      }
+      if (m.scope === "acme/second") {
+        return new Promise((_resolve, reject) => {
+          failAsk = reject;
+        });
+      }
+      return Promise.resolve({
+        kind: "deploy-preflight",
+        ok: true,
+        serviceId: "third",
+        preflight: { ...okEnvelope, service: "third" },
+      });
+    });
+    mountDeploySection(host, ctx, send);
+    await flush();
+    submit(host);
+    await flush();
+    mountDeploySection(host, { ...ctx, scope: "acme/second" }, send);
+    await flush();
+    mountDeploySection(host, { ...ctx, scope: "acme/third" }, send);
+    await flush();
+    expect(host.textContent).toMatch(/Clear to deploy third/);
+
+    failBind(new Error("message channel closed"));
+    failAsk(new Error("message channel closed"));
+    await flush();
+
+    expect(host.textContent).toMatch(/Clear to deploy third/);
+    expect(host.textContent).not.toMatch(/could not reach/i);
   });
 });

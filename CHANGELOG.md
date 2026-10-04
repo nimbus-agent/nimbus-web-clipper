@@ -8,6 +8,29 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Changed
+
+- **The privacy policy names the two things it still left out.** Since 0.6.0
+  the extension has stored your gateway's latest report on which of its
+  connectors are working — reused for a minute, then replaced by the next one —
+  and since 0.9.0 the repositories you bind to a Nimbus service for deploy
+  readiness. Both stay on your machine like everything else the policy lists,
+  and both are now named in it.
+
+### Fixed
+
+- **A clip sent from the popup or the in-page panel could be reported as an
+  error after it had already been saved or queued.** Once a clip settles, the
+  extension updates the toolbar badge and the alarm that retries queued clips;
+  if either of those writes failed, the clip was answered as a server error —
+  "Nimbus had an error saving this." in the popup, "Couldn't save this copy to
+  Nimbus." in the panel — even though the gateway had stored the page, or, on a
+  rate limit or an unreachable gateway, even though the clip sat in the offline
+  queue the popup lists under "Waiting to sync". Both now report what actually
+  happened to the clip, and a queued clip still gets its retry alarm — from the
+  context menu and keyboard shortcut too, which already reported the right
+  outcome but could be left without that alarm.
+
 ## [0.10.0] - 2026-09-21
 
 ### Changed

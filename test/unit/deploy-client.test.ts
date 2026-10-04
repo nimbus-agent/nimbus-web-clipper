@@ -5,6 +5,7 @@ import {
   fetchPreflight,
   fetchServiceResolution,
 } from "../../src/background/deploy-client.ts";
+import { MAX_BRANCH_LEN } from "../../src/shared/services.ts";
 
 const ORIGIN = "http://127.0.0.1:7474";
 
@@ -85,6 +86,82 @@ describe("fetchPreflight", () => {
     expect(r).toEqual({ ok: false, reason: "malformed" });
     expect(doFetch).not.toHaveBeenCalled();
   });
+
+  test("refuses an empty or over-long target ref before sending it", async () => {
+    for (const ref of ["", "r".repeat(MAX_BRANCH_LEN + 1)]) {
+      const doFetch = vi.fn(async () => jsonRes(okEnvelope));
+      const r = await fetchPreflight(ORIGIN, "web", ref, doFetch as unknown as typeof fetch);
+      expect(r).toEqual({ ok: false, reason: "malformed" });
+      expect(doFetch).not.toHaveBeenCalled();
+    }
+    // The longest LEGAL ref is sent: the refusal above is the bound, not an
+    // off-by-one that would also refuse a real branch name.
+    const doFetch = vi.fn(async () => jsonRes(okEnvelope));
+    const r = await fetchPreflight(
+      ORIGIN,
+      "web",
+      "r".repeat(MAX_BRANCH_LEN),
+      doFetch as unknown as typeof fetch,
+    );
+    expect(r.ok).toBe(true);
+    expect(doFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The public reads are bounded like the scoped ones: a wedged gateway must not
+ * hold the deploy section open. Both doubles end only when the request's own
+ * signal aborts, the way a real `fetch` does, and each read is checked as
+ * "settled by then" rather than awaited, so one that ignored its signal fails
+ * here instead of hanging. 10s is `DEPLOY_TIMEOUT_MS` in `deploy-client.ts`.
+ */
+describe("the public reads' timeout", () => {
+  async function settleAfterTimeout(doFetch: typeof fetch): Promise<unknown> {
+    vi.useFakeTimers();
+    try {
+      const p = fetchPreflight(ORIGIN, "web", "main", doFetch);
+      let settled = false;
+      void p.then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+      return await p;
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  test("gives up on a gateway whose headers never arrive", async () => {
+    const hanging = ((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      })) as unknown as typeof fetch;
+    expect(await settleAfterTimeout(hanging)).toEqual({ ok: false, reason: "unreachable" });
+  });
+
+  // The timer stays armed across the body read, as the comment on `getJson`
+  // says. A body cut off mid-object reads as no body, which the envelope parser
+  // rejects — the same outcome as any 200 it cannot read.
+  test("gives up on a 200 whose body never finishes", async () => {
+    const hangingBody = (async (_url: string, init?: RequestInit) =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"service":'));
+            init?.signal?.addEventListener("abort", () => {
+              controller.error(new DOMException("aborted", "AbortError"));
+            });
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as unknown as typeof fetch;
+    expect(await settleAfterTimeout(hangingBody)).toEqual({ ok: false, reason: "malformed" });
+  });
 });
 
 describe("fetchItemBranch", () => {
@@ -121,6 +198,33 @@ describe("fetchItemBranch", () => {
     await fetchItemBranch(ORIGIN, "a/b", doFetch as unknown as typeof fetch);
     const [url] = doFetch.mock.calls[0] as unknown as [string];
     expect(url).toBe(`${ORIGIN}/v1/items/a%2Fb`);
+  });
+
+  test("a 200 whose body is not an object is malformed — the item route did not answer", async () => {
+    for (const body of ["i1", 42, null]) {
+      const doFetch = vi.fn(async () => jsonRes(body));
+      const r = await fetchItemBranch(ORIGIN, "i1", doFetch as unknown as typeof fetch);
+      expect(r).toEqual({ ok: false, reason: "malformed" });
+    }
+  });
+
+  // `metadata` is a JSON TEXT column upstream. A string that does not parse,
+  // or parses to something other than an object, has no branch to offer: the
+  // ladder falls through to the binding's default branch, it does not fail.
+  test.each([
+    ["a metadata string that is not JSON", "{branch: main"],
+    ["a metadata string that parses to a number", "42"],
+    ["metadata that is an array", ["main"]],
+  ])("%s is a null value, not a failure", async (_why, metadata) => {
+    const doFetch = vi.fn(async () => jsonRes({ data: { id: "i1", metadata } }));
+    const r = await fetchItemBranch(ORIGIN, "i1", doFetch as unknown as typeof fetch);
+    expect(r).toEqual({ ok: true, value: null });
+  });
+
+  test("an empty-string branch is no branch at all", async () => {
+    const doFetch = vi.fn(async () => jsonRes({ data: { id: "i1", metadata: { branch: "" } } }));
+    const r = await fetchItemBranch(ORIGIN, "i1", doFetch as unknown as typeof fetch);
+    expect(r).toEqual({ ok: true, value: null });
   });
 });
 

@@ -11,8 +11,9 @@
 // is why — see `meetsFloor`.
 
 import { endpointUrl, isLoopbackOrigin } from "../shared/gateway.ts";
+import { isObject } from "../shared/is-object.ts";
 import { AGENT_LANES, type AgentLane, type SurfaceKind } from "../shared/types.ts";
-import { isObject, readJson } from "./http-json.ts";
+import { readJson, withTimeout } from "./http-json.ts";
 
 /** A list read over a local index. The same bound the egress reads take. */
 const ROSTER_TIMEOUT_MS = 10_000;
@@ -69,15 +70,14 @@ export async function fetchAgentRoster(deps: RosterDeps): Promise<AgentRoster> {
   if (!isLoopbackOrigin(deps.origin)) {
     return { unavailable: true };
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ROSTER_TIMEOUT_MS);
-  try {
+  // The timer bounds the body read too, not just the wait for headers.
+  return await withTimeout(ROSTER_TIMEOUT_MS, async (signal): Promise<AgentRoster> => {
     let res: Response;
     try {
       res = await deps.doFetch(endpointUrl(deps.origin, "agents"), {
         method: "GET",
         headers: { authorization: `Bearer ${deps.token}` },
-        signal: controller.signal,
+        signal,
       });
     } catch {
       return { unavailable: true };
@@ -96,9 +96,7 @@ export async function fetchAgentRoster(deps: RosterDeps): Promise<AgentRoster> {
     }
     const names = parseNames(body);
     return names === null ? { unavailable: true } : { names, version: parseVersion(body) };
-  } finally {
-    clearTimeout(timer);
-  }
+  });
 }
 
 /**
