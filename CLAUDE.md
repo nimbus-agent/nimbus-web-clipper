@@ -227,8 +227,9 @@ CI runs `typecheck` / `lint` / `test` / `build` / `check-build` in the
 
 Dependencies have no update bot: a maintainer bumps them in periodic bulk PRs.
 `CONTRIBUTING.md` § Updating dependencies has the procedure, the versions that
-must move together, and why `bun audit` — not the Security tab — is the
-vulnerability check.
+must move together, why `bun audit` — not the Security tab — is the
+vulnerability check, and the advisories it still reports that are held open,
+each with the date it is due a re-check.
 
 Store-asset tooling (regenerates `store/screenshots/` and `store/promo/`; not part
 of the extension build): `bun run mock-gateway`, `bun run screenshots:setup`,
