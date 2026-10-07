@@ -229,7 +229,7 @@ it as `0`.
   |---|---|---|
   | `deploys_per_day` | one decimal; two below 0.1 | "1.4 / day", "0.05 / day" |
   | `ratio` | percentage, one decimal | "4.2%", "0.0%", "100.0%" |
-  | `seconds_median` | the two largest non-zero units, labelled "median" | "45s", "18m", "4h 12m", "2d 12h" |
+  | `seconds_median` | the largest unit, plus the next one down when non-zero, labelled "median" | "45s", "18m", "4h 12m", "2d 12h", "2d" |
   | `merges`, `incidents` | integer | "7" |
 
   An unknown unit prints the raw number and the unit string.
