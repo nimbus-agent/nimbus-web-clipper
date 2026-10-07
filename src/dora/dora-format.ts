@@ -106,6 +106,10 @@ export function trendSummary(points: readonly StatsPoint[], range: DoraRange): s
   );
   const first = values[0];
   if (first === undefined) return `${head}, none with values`;
+  // Upstream gives every point of one metric the same unit, but the parser does
+  // not enforce it — and a min/max across units would compare 1 minute to 30
+  // seconds as 1 < 30. Mixed units get no range rather than a wrong one.
+  if (values.some((x) => x.unit !== first.unit)) return `${head}, ${values.length} with values`;
   const min = values.reduce((a, b) => (b.v < a.v ? b : a), first);
   const max = values.reduce((a, b) => (b.v > a.v ? b : a), first);
   return `${head}, ${values.length} with values, ${formatValue(min.v, min.unit)} to ${formatValue(max.v, max.unit)}`;

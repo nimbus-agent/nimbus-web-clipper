@@ -114,4 +114,9 @@ describe("trendSummary", () => {
       "1 2-day point, none with values",
     );
   });
+
+  test("mixed units get no range rather than a cross-unit comparison", () => {
+    const pts = [p(60, null, "seconds_median"), p(1, null, "merges")];
+    expect(trendSummary(pts, RANGES["13w"])).toBe("2 weekly points, 2 with values");
+  });
 });
