@@ -59,6 +59,14 @@ const headline: Record<DoraMetricKey, HeadlineState> = Object.fromEntries(
   DELIVERY_KEYS.map((k) => [k, { kind: "loading" }]),
 ) as Record<DoraMetricKey, HeadlineState>;
 const trends = new Map<StatsMetricId, TrendState>();
+/** Set once any trend read of this generation answers "unsupported": the whole
+ *  trend column is then hidden, including series that already loaded. */
+let trendsUnsupported = false;
+
+function trendOf(m: StatsMetricId): TrendState {
+  if (trendsUnsupported) return { kind: "hidden" };
+  return trends.get(m) ?? { kind: "loading" };
+}
 
 function readRange(): DoraRangeId {
   try {
@@ -98,20 +106,12 @@ function paint(): void {
   const r = RANGES[range];
   deliveryList?.replaceChildren(
     ...DELIVERY_KEYS.map((k) =>
-      renderDeliveryRow(
-        document,
-        k,
-        headline[k],
-        trends.get(DELIVERY_ROWS[k]) ?? { kind: "loading" },
-        r,
-      ),
+      renderDeliveryRow(document, k, headline[k], trendOf(DELIVERY_ROWS[k]), r),
     ),
     renderFootnote(document),
   );
   activityList?.replaceChildren(
-    ...ACTIVITY_METRICS.map((m: ActivityMetricId) =>
-      renderActivityRow(document, m, trends.get(m) ?? { kind: "loading" }, r),
-    ),
+    ...ACTIVITY_METRICS.map((m: ActivityMetricId) => renderActivityRow(document, m, trendOf(m), r)),
   );
 }
 
@@ -164,6 +164,7 @@ async function readTrend(gen: number, svc: string, metric: StatsMetricId): Promi
     return "ok";
   }
   if (raw.reason === "unsupported") {
+    trendsUnsupported = true;
     trends.set(metric, { kind: "hidden" });
     setNotice(UNSUPPORTED_NOTICE);
   } else {
@@ -179,6 +180,7 @@ async function load(): Promise<void> {
   const svc = serviceId;
   for (const k of DELIVERY_KEYS) headline[k] = { kind: "loading" };
   trends.clear();
+  trendsUnsupported = false;
   setNotice(null);
   if (footer !== null) footer.textContent = "";
   paint();
@@ -258,7 +260,9 @@ for (const id of DORA_RANGES) {
     if (id === range) return;
     range = id;
     saveRange(id);
-    void load();
+    // With nothing selected there is nothing to load, but the buttons still show the range.
+    if (serviceId === null) paint();
+    else void load();
   });
 }
 

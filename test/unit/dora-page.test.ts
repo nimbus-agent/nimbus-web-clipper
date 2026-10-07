@@ -287,4 +287,35 @@ describe("the DORA page", () => {
     document.getElementById("range-4w")?.click();
     await vi.waitFor(() => expect(sent("dora-metrics").at(-1)?.range).toBe("4w"));
   });
+
+  test("a range click with no service selected repaints the buttons and reads nothing", async () => {
+    harness.sendMessage.mockImplementation(replies([binding("web"), binding("api")]));
+    await loadPage();
+    await vi.waitFor(() => expect(sent("service-bindings-list")).toHaveLength(1));
+    document.getElementById("range-4w")?.click();
+    expect(document.getElementById("range-4w")?.getAttribute("aria-pressed")).toBe("true");
+    expect(document.getElementById("range-13w")?.getAttribute("aria-pressed")).toBe("false");
+    expect(sent("dora-metrics")).toHaveLength(0);
+    expect(sent("metrics-stats")).toHaveLength(0);
+  });
+
+  test("an unsupported answer arriving last hides trends that already loaded", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    const slow = new Promise((r) => {
+      release = r;
+    });
+    harness.sendMessage.mockImplementation(
+      replies([binding("web")], {
+        "metrics-stats": async (m) => (m.metric === "mttr" ? slow : statsOk("web", m.metric ?? "")),
+      }),
+    );
+    await loadPage("?service=web");
+    await vi.waitFor(() => expect(document.querySelectorAll("svg").length).toBe(5));
+    release({ kind: "metrics-stats", ok: false, reason: "unsupported" });
+    await vi.waitFor(() => expect(document.querySelectorAll("svg")).toHaveLength(0));
+    expect(document.getElementById("dora-notice")?.textContent).toBe(
+      "Trends need a newer Nimbus gateway.",
+    );
+    expect(rowValue("deployment_frequency")).toBe("1.4 / day");
+  });
 });
