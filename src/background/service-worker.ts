@@ -21,9 +21,11 @@ import {
   addNavigationListener,
   addTabClosedListener,
   listCandidateTabs,
+  openExtensionPage,
   type TabNavigation,
   tabUrl,
 } from "../browser/tabs.ts";
+import { doraPagePath } from "../shared/dora.ts";
 import type { ItemUrlMap, LaneFindings } from "../shared/findings.ts";
 import { gapsOfBrief, laneFindingsFrom, synthesisFrom } from "../shared/findings-guards.ts";
 import {
@@ -39,10 +41,13 @@ import {
   isCueOpenRequest,
   isDeployPreflightRequest,
   isDiscoverRequest,
+  isDoraMetricsRequest,
   isEgressProveRequest,
   isEgressVerifyRequest,
   isEgressWindowRequest,
   isFetchRequest,
+  isMetricsStatsRequest,
+  isOpenDoraRequest,
   isPairRequest,
   isPassageClearRequest,
   isPassageDropRequest,
@@ -104,6 +109,7 @@ import {
   handleServiceBindingsList,
   handleServiceUnbind,
 } from "./deploy-handlers.ts";
+import { handleDoraMetrics, handleMetricsStats } from "./dora-handlers.ts";
 import { listEgress, proveEgressWindow, verifyEgress } from "./egress-client.ts";
 import {
   type EgressDeps,
@@ -1459,6 +1465,36 @@ function routeDeploy(message: unknown, respond: Respond): Routed {
   return null;
 }
 
+/**
+ * The DORA page's three kinds (C10.2). A slice of its own rather than three
+ * more arms on `routeDeploy`, which already carries five and sits near Sonar's
+ * cognitive-complexity ceiling (S3776, 15).
+ */
+function routeDora(message: unknown, respond: Respond): Routed {
+  if (isDoraMetricsRequest(message)) {
+    handleDoraMetrics(message, deployDeps)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "dora-metrics", ok: false, reason: "server_error" });
+      });
+    return true;
+  }
+  if (isMetricsStatsRequest(message)) {
+    handleMetricsStats(message, deployDeps)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "metrics-stats", ok: false, reason: "server_error" });
+      });
+    return true;
+  }
+  if (isOpenDoraRequest(message)) {
+    // No reply — see `OpenDoraRequest`. `false` closes the channel.
+    openExtensionPage(doraPagePath(message.serviceId));
+    return false;
+  }
+  return null;
+}
+
 function routeSubRouters(message: unknown, respond: Respond, sender: SenderInfo): Routed {
   // ONE branch for the three ledger reads, same shape and same reason as the
   // brief branch below.
@@ -1518,6 +1554,7 @@ addMessageListener((message, rawRespond, sender) => {
     routeIndexReads(message, respond) ??
     routeQueueAndConnection(message, respond) ??
     routeDeploy(message, respond) ??
+    routeDora(message, respond) ??
     routeSubRouters(message, respond, sender) ??
     false
   );

@@ -1,5 +1,6 @@
 import { describe, expect, it, test, vi } from "vitest";
 import { BRIEF_CAPS } from "../../src/shared/brief.ts";
+import { DORA_RANGES, STATS_METRIC_IDS } from "../../src/shared/dora.ts";
 import type { CueOpenRequest } from "../../src/shared/messages.ts";
 import {
   isAgentRunRequest,
@@ -14,12 +15,17 @@ import {
   isCueOpenRequest,
   isDeployPreflightRequest,
   isDeployPreflightResponse,
+  isDoraMetricsRequest,
+  isDoraMetricsResponse,
   isEgressProveRequest,
   isEgressVerifyRequest,
   isEgressWindowRequest,
   isEgressWindowSuccess,
   isFetchResponse,
   isLaneStateWith,
+  isMetricsStatsRequest,
+  isMetricsStatsResponse,
+  isOpenDoraRequest,
   isPairRequest,
   isPassageClearRequest,
   isPassageDropRequest,
@@ -1903,5 +1909,76 @@ describe("guard rungs the happy-path fixtures above never reach", () => {
     ).toBe(false);
     expect(isServiceBindingsCheckResponse(null)).toBe(false);
     expect(isServiceBindingsCheckResponse("service-bindings-check")).toBe(false);
+  });
+});
+
+describe("DORA request guards", () => {
+  test("accept every real range and metric", () => {
+    for (const range of DORA_RANGES) {
+      expect(isDoraMetricsRequest({ kind: "dora-metrics", serviceId: "web", range })).toBe(true);
+      for (const metric of STATS_METRIC_IDS) {
+        expect(
+          isMetricsStatsRequest({ kind: "metrics-stats", serviceId: "web", range, metric }),
+        ).toBe(true);
+      }
+    }
+  });
+
+  test("reject a string outside the lists — the type-narrow, runtime-wide trap", () => {
+    expect(isDoraMetricsRequest({ kind: "dora-metrics", serviceId: "web", range: "30d" })).toBe(
+      false,
+    );
+    expect(
+      isMetricsStatsRequest({
+        kind: "metrics-stats",
+        serviceId: "web",
+        range: "13w",
+        metric: "lead_time",
+      }),
+    ).toBe(false);
+  });
+
+  test("reject an unsendable service id", () => {
+    expect(isDoraMetricsRequest({ kind: "dora-metrics", serviceId: "", range: "13w" })).toBe(false);
+    expect(isOpenDoraRequest({ kind: "open-dora", serviceId: "x".repeat(65) })).toBe(false);
+    expect(isOpenDoraRequest({ kind: "open-dora", serviceId: "web" })).toBe(true);
+  });
+});
+
+describe("DORA response guards", () => {
+  const result = {
+    service: "web",
+    since_ms: 1,
+    computed_at: "t",
+    metrics: Object.fromEntries(
+      ["deployment_frequency", "lead_time_for_changes", "change_failure_rate", "mttr"].map((k) => [
+        k,
+        { value: 1, unit: "ratio", sample: 3, gap: null },
+      ]),
+    ),
+  };
+
+  test("an ok reply must carry a parseable envelope for the service asked about", () => {
+    expect(isDoraMetricsResponse({ kind: "dora-metrics", ok: true, result }, "web")).toBe(true);
+    expect(isDoraMetricsResponse({ kind: "dora-metrics", ok: true, result }, "other")).toBe(false);
+  });
+
+  test("a refusal must name a known reason", () => {
+    expect(
+      isDoraMetricsResponse({ kind: "dora-metrics", ok: false, reason: "unreachable" }, "web"),
+    ).toBe(true);
+    expect(
+      isDoraMetricsResponse({ kind: "dora-metrics", ok: false, reason: "unsupported" }, "web"),
+    ).toBe(false);
+    expect(
+      isMetricsStatsResponse(
+        { kind: "metrics-stats", ok: false, reason: "unsupported" },
+        "web",
+        "mttr",
+      ),
+    ).toBe(true);
+    expect(
+      isMetricsStatsResponse({ kind: "metrics-stats", ok: false, reason: "nope" }, "web", "mttr"),
+    ).toBe(false);
   });
 });

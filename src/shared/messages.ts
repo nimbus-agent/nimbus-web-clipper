@@ -6,6 +6,20 @@ import { isCanonicalRejection } from "./canonical.ts";
 import { isSourceShape } from "./clip.ts";
 import { CONNECTOR_STATES, type ConnectorHealth } from "./connector-health.ts";
 import { type DeployPreflightResult, parseDeployPreflight, sendableId } from "./deploy.ts";
+import {
+  DORA_READ_FAILURES,
+  type DoraMetricsResult,
+  type DoraRangeId,
+  type DoraReadFailure,
+  isDoraRangeId,
+  isStatsMetricId,
+  parseDoraMetrics,
+  parseStatsSeries,
+  STATS_READ_FAILURES,
+  type StatsMetricId,
+  type StatsReadFailure,
+  type StatsSeries,
+} from "./dora.ts";
 import type {
   EgressError,
   EgressPartition,
@@ -442,7 +456,10 @@ export type ExtensionRequest =
   | ServiceBindingsListRequest
   | ServiceBindRequest
   | ServiceUnbindRequest
-  | ServiceBindingsCheckRequest;
+  | ServiceBindingsCheckRequest
+  | DoraMetricsRequest
+  | MetricsStatsRequest
+  | OpenDoraRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }
@@ -1424,6 +1441,90 @@ export function isServiceBindResponse(v: unknown): v is ServiceBindResponse {
       reason === "server_error" ||
       reason === "malformed")
   );
+}
+
+// ── The DORA page (C10.2) ─────────────────────────────────────────────────
+
+/** One headline envelope for one range. `range` is a NAME, never milliseconds:
+ *  the worker resolves it through `RANGES`, so a page cannot ask for a window
+ *  that splits into short buckets or crosses the 400-bucket ceiling. */
+export interface DoraMetricsRequest {
+  readonly kind: "dora-metrics";
+  readonly serviceId: string;
+  readonly range: DoraRangeId;
+}
+
+export type DoraMetricsResponse =
+  | { readonly kind: "dora-metrics"; readonly ok: true; readonly result: DoraMetricsResult }
+  | { readonly kind: "dora-metrics"; readonly ok: false; readonly reason: DoraReadFailure };
+
+export interface MetricsStatsRequest {
+  readonly kind: "metrics-stats";
+  readonly serviceId: string;
+  readonly range: DoraRangeId;
+  readonly metric: StatsMetricId;
+}
+
+export type MetricsStatsResponse =
+  | { readonly kind: "metrics-stats"; readonly ok: true; readonly series: StatsSeries }
+  | { readonly kind: "metrics-stats"; readonly ok: false; readonly reason: StatsReadFailure };
+
+/**
+ * Open `dora.html?service=<id>` in a new tab — sent by the panel's deploy
+ * section, which is a content script and cannot call `chrome.tabs.create`.
+ *
+ * Why a message and not an `<a href="chrome-extension://…">`: a web page can
+ * only navigate to an extension page declared web-accessible, and declaring
+ * `dora.html` so would let any site probe for this extension. Do not
+ * "simplify" this into an anchor.
+ *
+ * NO REPLY, on the `cue-open` precedent: the route returns `false`, closing
+ * the channel, and the sender fires it as `void send(…).catch(() => undefined)`.
+ */
+export interface OpenDoraRequest {
+  readonly kind: "open-dora";
+  readonly serviceId: string;
+}
+
+export function isDoraMetricsRequest(v: unknown): v is DoraMetricsRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "dora-metrics" &&
+    sendableId(v["serviceId"]) &&
+    isDoraRangeId(v["range"])
+  );
+}
+
+export function isMetricsStatsRequest(v: unknown): v is MetricsStatsRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "metrics-stats" &&
+    sendableId(v["serviceId"]) &&
+    isDoraRangeId(v["range"]) &&
+    isStatsMetricId(v["metric"])
+  );
+}
+
+export function isOpenDoraRequest(v: unknown): v is OpenDoraRequest {
+  return isObject(v) && v["kind"] === "open-dora" && sendableId(v["serviceId"]);
+}
+
+/** Re-parses the envelope against the service the PAGE asked for: a reply
+ *  crossing `chrome.runtime` is external input to the page, too. */
+export function isDoraMetricsResponse(v: unknown, serviceId: string): v is DoraMetricsResponse {
+  if (!isObject(v) || v["kind"] !== "dora-metrics") return false;
+  if (v["ok"] === true) return parseDoraMetrics(v["result"], serviceId) !== null;
+  return v["ok"] === false && (DORA_READ_FAILURES as readonly unknown[]).includes(v["reason"]);
+}
+
+export function isMetricsStatsResponse(
+  v: unknown,
+  serviceId: string,
+  metric: StatsMetricId,
+): v is MetricsStatsResponse {
+  if (!isObject(v) || v["kind"] !== "metrics-stats") return false;
+  if (v["ok"] === true) return parseStatsSeries(v["series"], serviceId, metric) !== null;
+  return v["ok"] === false && (STATS_READ_FAILURES as readonly unknown[]).includes(v["reason"]);
 }
 
 export interface ServiceBindingsCheckRequest {
