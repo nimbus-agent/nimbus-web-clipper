@@ -112,13 +112,41 @@ Upstream facts the design depends on, each verified in the Nimbus source:
 4. Footer — the headline envelope's `computed_at`, and that every figure is read
    from the local gateway.
 
+The two routes name the same four metrics differently — snake_case keys in the
+headline envelope, kebab-case ids on the trend route, and `lead_time_for_changes`
+is `lead-time` there. One table in `src/shared/dora.ts` pairs them, so a row's
+headline and trend cannot come from different metrics:
+
+```ts
+export const DELIVERY_ROWS: Record<keyof DoraMetricsResult["metrics"], StatsMetricId> = {
+  deployment_frequency: "deployment-frequency",
+  lead_time_for_changes: "lead-time",
+  change_failure_rate: "change-failure-rate",
+  mttr: "mttr",
+};
+```
+
+A `Record` over the envelope's keys, so a fifth DORA metric upstream is a type
+error here rather than a row that silently never renders.
+
 ### 4.2 The service picker
 
 Seeded from the existing `service-bindings-list` message: the distinct service
-ids, each labelled with the repos bound to it. `?service=<id>` preselects; an
-absent or unbound id opens the picker rather than erroring. With no bindings the
-page says how to make one (from a PR page's deploy section) and issues **no**
-gateway reads.
+ids, each labelled with the repos bound to it. Which service loads, in order:
+
+1. `?service=<id>`, when it passes `sendableId` — **even if no binding names
+   it**. A binding is a convenience for the picker, not a permission: the routes
+   are public and the gateway is the authority on whether the id exists, so an
+   unknown one renders the headline's own `unknown_service` sentence rather than
+   a client-side refusal. Such an id joins the picker labelled "not bound in
+   this browser".
+2. Otherwise, when exactly one service is bound, that one.
+3. Otherwise the picker opens with nothing selected and no reads issued.
+
+Choosing a service updates the URL through `history.replaceState`, so a reload
+or a duplicated tab keeps it. With no bindings and no `?service=` the page says
+how to make one (from a PR page's deploy section) and issues **no** gateway
+reads.
 
 ### 4.3 The range
 
@@ -134,16 +162,27 @@ here divides exactly by its bucket.
 
 Default `13w`. One `RANGES` table in `src/shared/dora.ts` is the only source of
 these numbers; the page reads its labels from it and the worker its parameters.
+It is a `Record<DoraRangeId, { label, since, windowMs, bucketMs }>` keyed by
+`DORA_RANGES = ["4w", "13w", "26w"] as const` — the array the message guard
+tests membership against. The point count is **not** a field: it is
+`windowMs / bucketMs`, and a test asserts that divides exactly, so storing it
+too would only be a second number that could disagree.
 The choice persists per viewer in `localStorage`, every access wrapped in
 try/catch, falling back to `13w`.
 
 ### 4.4 Seven reads, independently fallible
 
-A render issues one `dora-metrics` and six `metrics-stats` messages concurrently
-under `Promise.allSettled` — never `Promise.all`. Each row fills as its read
-settles and fails on its own. Changing service or range re-issues all seven; a
-**generation counter** discards any reply belonging to an earlier selection, so
-a slow stale read never overwrites a newer one.
+A render issues one `dora-metrics` and six `metrics-stats` messages
+concurrently. **Each read carries its own `.then`** that renders its own row the
+moment it settles; a single `await Promise.allSettled(...)` before rendering
+would hold every row hostage to the slowest read. `Promise.allSettled` over the
+same seven promises is awaited *afterwards*, only to decide the page-level
+states below — never `Promise.all`, which would reject on the first failure.
+
+Changing service or range re-issues all seven; a **generation counter**,
+captured when the reads are issued and compared in every `.then` and in the
+`allSettled` continuation, discards any reply belonging to an earlier selection,
+so a slow stale read never overwrites a newer one.
 
 Page-level states, and only these:
 
@@ -156,10 +195,17 @@ Page-level states, and only these:
 
 ### 5.1 The gap vocabulary
 
-`src/shared/dora.ts` exports `DORA_GAPS` and `STATS_GAPS` as `as const` arrays,
-and the sentence for each renders through a `Record<StatsGap | typeof
-UNRECOGNISED_GAP, string>` — never a switch, so deleting an arm is a type error
-and there is no unreachable backstop line for coverage to count.
+`src/shared/dora.ts` exports `DORA_GAPS` and `STATS_GAPS` (the former spread
+into the latter) as `as const` arrays. The client-side type is
+`StatsGap = (typeof STATS_GAPS)[number] | typeof UNRECOGNISED_GAP | null`, and
+the sentence for each renders through a
+`Record<NonNullable<StatsGap>, string>` — `null` cannot be a `Record` key, and
+it needs no sentence because it means "no gap". Never a switch, so deleting an
+arm is a type error and there is no unreachable backstop line for coverage to
+count.
+
+**One** gap parser serves both routes, over `STATS_GAPS`. A headline that cites
+a stats-only reason is not a shape violation; it renders that reason's sentence.
 
 An unknown gap **string** parses to `UNRECOGNISED_GAP` (reusing the constant
 from `src/shared/deploy.ts`) and degrades only that point or headline. A gap of
@@ -175,10 +221,18 @@ it as `0`.
 - `n=` is always shown.
 - A value with a gap (`low_sample`, `mixed_source`) prints the value with the
   sentence beneath it.
-- Units format through a `Record` over the known units: `deploys_per_day` →
-  "1.4 / day"; `seconds_median` → a humanised duration, labelled "median";
-  `ratio` → a percentage; `merges` / `incidents` → an integer. An unknown unit
-  prints the raw number and the unit string.
+- Units format through a `Record` over the known units, one formatter per unit
+  shared by headlines, gap lists and sparkline `<title>`s, so a point and its
+  headline never disagree on precision:
+
+  | Unit | Format | Examples |
+  |---|---|---|
+  | `deploys_per_day` | one decimal; two below 0.1 | "1.4 / day", "0.05 / day" |
+  | `ratio` | percentage, one decimal | "4.2%", "0.0%", "100.0%" |
+  | `seconds_median` | the two largest non-zero units, labelled "median" | "45s", "18m", "4h 12m", "2d 12h" |
+  | `merges`, `incidents` | integer | "7" |
+
+  An unknown unit prints the raw number and the unit string.
 
 ### 5.3 Sparklines
 
@@ -188,7 +242,14 @@ Hand-drawn inline SVG in `dora-view.ts`; no charting dependency.
   `<title>` names its period and gap.
 - A point with a value *and* a gap is drawn hollow and its adjoining segments
   are dashed.
-- The y-axis **starts at zero** and ends at the largest plotted value.
+- The y-axis **starts at zero** and ends at the largest plotted value. When
+  that largest value is `0` — a flat zero series, e.g. no change failures in
+  any week — every point sits on the baseline; the scale is never computed as
+  `value / max`, which would make every coordinate `NaN`. It is **not** clamped
+  to a floor of `1` either: `ratio` lives in 0–1, and a floor of 1 would flatten
+  every change-failure-rate trend toward the baseline.
+- A series with exactly one plotted value draws a lone marker, since a
+  one-point path has no segment to stroke.
 - An all-null series renders no SVG: "No trend: <sentence for its most common
   gap>".
 - Each SVG carries a text summary for assistive technology, e.g. "13 weekly
@@ -219,7 +280,11 @@ In `src/shared/messages.ts`, `kind`-discriminated, each with a guard:
   `{ ok: true, result: DoraMetricsResult } | { ok: false, reason }`
 - `metrics-stats { serviceId, range, metric }` →
   `{ ok: true, series: StatsSeries } | { ok: false, reason }`
-- `open-dora { serviceId }` → no payload (§7.2)
+- `open-dora { serviceId }` → **no reply**, deliberately (§7.2). It follows
+  the existing `cue-open` precedent exactly: the route opens the tab and
+  returns `false`, which closes the channel, and the panel sends it as
+  `void sendMessage(…).catch(() => undefined)`. Nothing awaits it, so nothing
+  can hang; a reply type would be a shape no caller reads.
 
 The page sends a **range name**, never milliseconds; the worker resolves it
 through `RANGES`. The guards check `range` and `metric` by **membership in the
@@ -287,9 +352,17 @@ plus a scenario with the route absent (404).
   declared web-accessible, which would let any site probe for the extension.
   So the link sends `open-dora`; the worker validates the id with `sendableId`
   and opens `dora.html?service=<encodeURIComponent(id)>`. Its docblock says why,
-  so nobody "simplifies" it into an anchor.
+  so nobody "simplifies" it into an anchor. The control is a `<button>`, like
+  the deploy section's other actions, placed under the verdict.
 
-### 7.3 Docs
+### 7.3 Routing
+
+`src/background/service-worker.ts` routes through `??`-chained slices, each kept
+under Sonar's cognitive-complexity ceiling. `routeDeploy` already carries five
+messages, so the three new ones get a **`routeDora`** slice of their own,
+chained after `routeDeploy`, rather than growing it to eight.
+
+### 7.4 Docs
 
 - `docs/architecture.md` — "The DORA route's windows are nested, not a trend" is
   replaced by a "The DORA page" subsection recording §4.3's week alignment and
@@ -317,13 +390,19 @@ Test-first throughout, against the existing deploy/ledger test files.
   carries `RANGES`' numbers.
 - `deploy-handlers.test.ts` — `open-dora` rejects an unsendable id and encodes
   an accepted one.
-- `dora-view.test.ts` (jsdom) — one test per §5 rule. The `Record`
-  exhaustiveness is proven once by deleting a key and watching `typecheck` fail.
-- `dora-page.test.ts` (jsdom) — seven reads under `allSettled`; one failed stats
-  read leaves five rows; all seven unreachable → the page-level message; a 404
-  → the single "newer gateway" line; a range switch whose stale replies resolve
-  last leaves the newer data; `?service=` preselects, an unknown one opens the
-  picker; no bindings → no gateway reads; `localStorage` throwing still renders.
+- `dora-view.test.ts` (jsdom) — one test per §5 rule, including a flat-zero
+  series (no `NaN` in any coordinate, every point on the baseline), a 0–1
+  `ratio` series that is not flattened, a one-value series, and every row of
+  §5.2's format table. The `Record` exhaustiveness is proven once by deleting a
+  key and watching `typecheck` fail.
+- `dora-page.test.ts` (jsdom) — a fast row renders while a slow one is still
+  pending; one failed stats read leaves five rows; all seven unreachable → the
+  page-level message; a 404 → the single "newer gateway" line; a range switch
+  whose stale replies resolve last leaves the newer data; `?service=`
+  preselects, an unbound one still loads and joins the picker as "not bound in
+  this browser"; a single binding auto-selects; choosing a service rewrites the
+  URL; no bindings and no `?service=` → no gateway reads; `localStorage`
+  throwing still renders.
 - `mock-gateway.test.ts` — the new fixtures and the absent-route scenario.
 - e2e `test/e2e/dora.e2e.ts` — `dora-from-options`, `dora-from-panel`,
   `dora-old-gateway`, with matching markers in `development.md`.
@@ -338,6 +417,7 @@ One PR, three commits:
 1. Shared types, `RANGES`, parsers, client, messages — no UI.
 2. The page and the Options link.
 3. The panel link, docs, CHANGELOG — and deletion of
-   `2026-09-10-before-you-ship-it-design.md`, its `-review.md`, and this file,
+   `2026-09-10-before-you-ship-it-design.md`, its `-review.md`, this file and its
+   `2026-10-07-the-dora-page-review.md`,
    after confirming every durable decision in them lives in
    `docs/architecture.md`.
