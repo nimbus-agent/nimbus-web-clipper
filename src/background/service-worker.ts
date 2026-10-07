@@ -857,9 +857,9 @@ function isBriefMessage(v: unknown): v is BriefMessage {
  * Fan-out for the six brief message kinds.
  *
  * A separate function, not six branches in the router: the router already carries
- * twenty-four branches, and has since been split into five order-preserving slices
+ * twenty-four branches, and has since been split into six order-preserving slices
  * (`routeCapturePair` / `routeIndexReads` / `routeQueueAndConnection` /
- * `routeDeploy` / `routeSubRouters`) to stay under Sonar's cognitive-complexity cap
+ * `routeDeploy` / `routeDora` / `routeSubRouters`) to stay under Sonar's cognitive-complexity cap
  * (S3776, 15) — having earlier needed `openPanelForCue` extracted for the same reason.
  */
 async function routeBriefMessage(message: BriefMessage): Promise<unknown> {

@@ -198,6 +198,7 @@ export function parseDoraMetrics(v: unknown, service: string): DoraMetricsResult
   const computedAt = v["computed_at"];
   const metrics = v["metrics"];
   if (!finite(sinceMs) || typeof computedAt !== "string" || !isObject(metrics)) return null;
+  if (Number.isNaN(Date.parse(computedAt))) return null;
   const out: Partial<Record<DoraMetricKey, MetricValue>> = {};
   for (const key of DELIVERY_KEYS) {
     const parsed = parseMetricValue(metrics[key]);

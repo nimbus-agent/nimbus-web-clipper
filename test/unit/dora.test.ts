@@ -137,6 +137,11 @@ describe("parseDoraMetrics", () => {
     expect(r?.metrics.deployment_frequency).not.toHaveProperty("extra");
   });
 
+  test("rejects a computed_at that is not a date", () => {
+    expect(parseDoraMetrics(envelope({ computed_at: "yesterday-ish" }), "web")).toBeNull();
+    expect(parseDoraMetrics(envelope({ computed_at: "" }), "web")).toBeNull();
+  });
+
   test("rejects an envelope for a different service", () => {
     expect(parseDoraMetrics(envelope({ service: "other" }), "web")).toBeNull();
   });

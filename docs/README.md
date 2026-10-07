@@ -11,7 +11,7 @@ Design reference for the Nimbus Companion.
 - **[`development.md`](./development.md)** — the dev-load steps and the
   per-feature manual-verification checklists; a step an automated suite in
   `test/e2e/` covers carries an `<!-- e2e:<id> -->` marker.
-- **[`superpowers/specs/`](./superpowers/specs/)** — a workspace for design
+- **`superpowers/specs/`** — a workspace for design
   specs (and their reviews) still in flight, named by the date each was
   written. Today it holds nothing: the Phase C10 design and its review were pruned when
   C10.2 — the DORA metrics page — shipped, and their durable decisions live in

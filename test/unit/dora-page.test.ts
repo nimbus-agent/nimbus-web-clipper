@@ -318,4 +318,35 @@ describe("the DORA page", () => {
     );
     expect(rowValue("deployment_frequency")).toBe("1.4 / day");
   });
+
+  test("a refused trend read shows nothing extra on its row", async () => {
+    harness.sendMessage.mockImplementation(
+      replies([binding("web")], {
+        "metrics-stats": async (m) =>
+          m.metric === "mttr"
+            ? { kind: "metrics-stats", ok: false, reason: "refused" }
+            : statsOk("web", m.metric ?? ""),
+      }),
+    );
+    await loadPage("?service=web");
+    await vi.waitFor(() => expect(document.querySelectorAll("svg")).toHaveLength(5));
+    const row = document.querySelector('[data-metric="mttr"]');
+    expect(row?.textContent).not.toContain("Couldn't load this trend.");
+    expect(document.body.textContent).not.toContain("Couldn't load this trend.");
+    expect(document.getElementById("dora-notice")?.hidden).toBe(true);
+    expect(rowValue("deployment_frequency")).toBe("1.4 / day");
+  });
+
+  test("choosing the placeholder after a service loaded snaps the picker back", async () => {
+    harness.sendMessage.mockImplementation(replies([binding("web"), binding("api")]));
+    await loadPage("?service=web");
+    await vi.waitFor(() => expect(rowValue("pr-merges")).toBe("4"));
+    const calls = sent().length;
+    const picker = document.getElementById("service-picker") as HTMLSelectElement;
+    picker.value = "";
+    picker.dispatchEvent(new Event("change"));
+    expect(picker.value).toBe("web");
+    expect(sent()).toHaveLength(calls);
+    expect(rowValue("pr-merges")).toBe("4");
+  });
 });

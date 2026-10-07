@@ -9,6 +9,7 @@ import type {
   DoraMetricKey,
   DoraRange,
   MetricValue,
+  StatsGap,
   StatsSeries,
 } from "../shared/dora.ts";
 import { formatValue, GAP_SENTENCE, gapSummary, seriesTotal, trendSummary } from "./dora-format.ts";
@@ -99,6 +100,7 @@ function trendInto(
   notes: HTMLElement,
   state: TrendState,
   range: DoraRange,
+  headGap: StatsGap,
 ): void {
   if (state.kind === "hidden" || state.kind === "loading") return;
   if (state.kind === "failed") {
@@ -106,21 +108,33 @@ function trendInto(
     return;
   }
   const pts = state.series.points;
-  const gaps = gapSummary(pts);
+  let gaps = gapSummary(pts);
   if (pts.every((p) => p.value === null)) {
     const top = gaps[0];
-    trend.append(
-      el(
-        doc,
-        "p",
-        "dora-row__notrend",
-        `No trend: ${top === undefined ? "no data." : GAP_SENTENCE[top.gap]}`,
-      ),
-    );
+    if (top === undefined) {
+      trend.append(el(doc, "p", "dora-row__notrend", "No trend: no data."));
+    } else {
+      // The top gap's coverage rides on this line, so it is not listed again.
+      // When the headline already says it for every bucket, point at it.
+      const reason =
+        top.gap === headGap && top.count === pts.length
+          ? "for the reason above"
+          : GAP_SENTENCE[top.gap];
+      trend.append(
+        el(
+          doc,
+          "p",
+          "dora-row__notrend",
+          `No trend: ${reason} — ${top.count} of ${pts.length} ${range.bucketNoun}`,
+        ),
+      );
+      gaps = gaps.slice(1);
+    }
   } else {
     trend.append(renderSparkline(doc, pts, trendSummary(pts, range)));
   }
   for (const { gap, count } of gaps) {
+    if (gap === headGap && count === pts.length) continue; // the headline already says it
     notes.append(
       el(
         doc,
@@ -142,7 +156,14 @@ export function renderDeliveryRow(
   const f = rowFrame(doc, DELIVERY_LABEL[key]);
   f.row.dataset["metric"] = key;
   headlineInto(doc, f.head, f.notes, headline);
-  trendInto(doc, f.trend, f.notes, trend, range);
+  trendInto(
+    doc,
+    f.trend,
+    f.notes,
+    trend,
+    range,
+    headline.kind === "loaded" ? headline.value.gap : null,
+  );
   return f.row;
 }
 
@@ -171,7 +192,7 @@ export function renderActivityRow(
   } else {
     f.head.append(el(doc, "span", "dora-row__value", trend.kind === "loading" ? "…" : "—"));
   }
-  trendInto(doc, f.trend, f.notes, trend, range);
+  trendInto(doc, f.trend, f.notes, trend, range, null);
   return f.row;
 }
 

@@ -2267,7 +2267,10 @@ click only repaints the range buttons and issues no reads.
   change-failure-rate trend onto the baseline.
 - **A gap is listed once per row, with its coverage.** "Too few events to
   report a value — 4 of 13 weeks" is one line, not thirteen; an Activity row's
-  total states "N of 13 weeks reported".
+  total states "N of 13 weeks reported". A series-wide reason is one line too:
+  an all-null series puts its top gap's coverage on the "No trend:" line instead
+  of listing it again, and a gap that is the headline's own and covers every
+  bucket is not repeated under it.
 - **The count metrics' zero arrives as `value: null, gap: "low_sample"`.** The
   client never reinterprets it as `0`; the `low_sample` sentence is written to
   cover it ("none, or fewer than three"). The same `Record<NonNullable<StatsGap>,

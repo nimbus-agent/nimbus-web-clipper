@@ -106,6 +106,63 @@ describe("a delivery row", () => {
     expect(row.querySelector(".dora-row__notrend")?.textContent).toMatch(/^No trend: /);
   });
 
+  test("a series-wide gap that is also the headline's gap prints its sentence once", () => {
+    const row = renderDeliveryRow(
+      document,
+      "mttr",
+      {
+        kind: "loaded",
+        value: { value: null, unit: "seconds_median", sample: 0, gap: "no_pagerduty_mapping" },
+      },
+      {
+        kind: "loaded",
+        series: series(
+          "mttr",
+          Array.from({ length: 13 }, () => pt(null, "no_pagerduty_mapping", "seconds_median")),
+        ),
+      },
+      R,
+    );
+    const sentence = "no PagerDuty mapping";
+    expect(row.textContent?.split(sentence)).toHaveLength(2);
+    expect(row.querySelector(".dora-row__notrend")?.textContent).toMatch(/^No trend: /);
+    expect(row.querySelector(".dora-row__notrend")?.textContent).toMatch(/— 13 of 13 weeks$/);
+  });
+
+  test("an all-null series carries its top gap's coverage on the No trend line, once", () => {
+    const row = renderActivityRow(
+      document,
+      "pr-merges",
+      {
+        kind: "loaded",
+        series: series("pr-merges", [pt(null, "low_sample"), pt(null, "low_sample")]),
+      },
+      R,
+    );
+    const sentence = "Too few events to report a value";
+    expect(row.textContent?.split(sentence)).toHaveLength(2);
+    expect(row.querySelector(".dora-row__notrend")?.textContent).toMatch(/— 2 of 2 weeks$/);
+  });
+
+  test("an all-null series still lists its other gaps", () => {
+    const row = renderActivityRow(
+      document,
+      "pr-merges",
+      {
+        kind: "loaded",
+        series: series("pr-merges", [
+          pt(null, "low_sample"),
+          pt(null, "low_sample"),
+          pt(null, "github_only_merge_data"),
+        ]),
+      },
+      R,
+    );
+    expect(row.querySelector(".dora-row__notrend")?.textContent).toMatch(/— 2 of 3 weeks$/);
+    expect(row.querySelector(".dora-row__gap")?.textContent).toContain("Only GitHub");
+    expect(row.querySelectorAll(".dora-row__gap")).toHaveLength(1);
+  });
+
   test("a failed trend says so on this row only", () => {
     const row = renderDeliveryRow(document, "mttr", { kind: "loading" }, { kind: "failed" }, R);
     expect(row.textContent).toContain(TREND_FAILED);

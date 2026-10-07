@@ -714,7 +714,7 @@ mock with `/v1/metrics/stats` returning 404) for step 3.
    "—" and says why — never a 0.
 2. <!-- e2e:dora-from-panel --> On a pull request whose repository is bound,
    open the panel. Under Deploy readiness's verdict, press **Delivery metrics
-   for <id> →**; the page opens on that service.
+   for `<id>` →**; the page opens on that service.
 3. <!-- e2e:dora-old-gateway --> Against a gateway without the trend route, the
    page shows "Trends need a newer Nimbus gateway." once, draws no trend lines,
    and still shows every headline figure.

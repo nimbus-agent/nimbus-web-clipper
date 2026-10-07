@@ -167,6 +167,9 @@ async function readTrend(gen: number, svc: string, metric: StatsMetricId): Promi
     trendsUnsupported = true;
     trends.set(metric, { kind: "hidden" });
     setNotice(UNSUPPORTED_NOTICE);
+  } else if (raw.reason === "refused") {
+    // The headline already says why (unknown_service); this row adds nothing.
+    trends.set(metric, { kind: "hidden" });
   } else {
     trends.set(metric, { kind: "failed" });
   }
@@ -253,6 +256,9 @@ async function main(): Promise<void> {
 
 picker?.addEventListener("change", () => {
   if (picker.value !== "") select(picker.value);
+  // The placeholder is not a service: put the loaded one back rather than
+  // leave its rows under a picker reading "nothing chosen".
+  else if (serviceId !== null) picker.value = serviceId;
 });
 
 for (const id of DORA_RANGES) {

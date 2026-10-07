@@ -1949,7 +1949,7 @@ describe("DORA response guards", () => {
   const result = {
     service: "web",
     since_ms: 1,
-    computed_at: "t",
+    computed_at: "2026-09-10T00:00:00.000Z",
     metrics: Object.fromEntries(
       ["deployment_frequency", "lead_time_for_changes", "change_failure_rate", "mttr"].map((k) => [
         k,

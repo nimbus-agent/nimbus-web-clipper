@@ -381,6 +381,35 @@ describe("fetchDoraMetrics", () => {
   });
 });
 
+describe("the public metrics routes send no bearer", () => {
+  function capturing(body: unknown): { f: typeof fetch; inits: (RequestInit | undefined)[] } {
+    const inits: (RequestInit | undefined)[] = [];
+    const f = (async (_url: string | URL | Request, init?: RequestInit) => {
+      inits.push(init);
+      return new Response(JSON.stringify(body), { status: 200 });
+    }) as typeof fetch;
+    return { f, inits };
+  }
+  const hasAuth = (init: RequestInit | undefined) =>
+    Object.keys((init?.headers ?? {}) as Record<string, string>).some(
+      (k) => k.toLowerCase() === "authorization",
+    );
+
+  test("fetchStatsSeries", async () => {
+    const { f, inits } = capturing(STATS_OK);
+    expect((await fetchStatsSeries(ORIGIN, "web", "13w", "mttr", f)).ok).toBe(true);
+    expect(inits).toHaveLength(1);
+    expect(hasAuth(inits[0])).toBe(false);
+  });
+
+  test("fetchDoraMetrics", async () => {
+    const { f, inits } = capturing(DORA_OK);
+    expect((await fetchDoraMetrics(ORIGIN, "web", "13w", f)).ok).toBe(true);
+    expect(inits).toHaveLength(1);
+    expect(hasAuth(inits[0])).toBe(false);
+  });
+});
+
 describe("fetchStatsSeries", () => {
   test("sends the range's window and bucket in milliseconds", async () => {
     const f = jsonFetch(200, STATS_OK);
