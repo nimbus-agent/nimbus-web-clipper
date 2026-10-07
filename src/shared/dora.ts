@@ -271,7 +271,12 @@ export function parseStatsSeries(
  * with no pairing there is no gateway address to ask, and the remedy is to pair,
  * not to check whether the gateway is running.
  */
-export const DORA_READ_FAILURES = ["not_paired", "unreachable", "server_error", "malformed"] as const;
+export const DORA_READ_FAILURES = [
+  "not_paired",
+  "unreachable",
+  "server_error",
+  "malformed",
+] as const;
 export type DoraReadFailure = (typeof DORA_READ_FAILURES)[number];
 
 /**

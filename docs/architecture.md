@@ -2249,8 +2249,12 @@ guards test `range` and `metric` by membership in the real lists
 six `metrics-stats` messages concurrently. Each read has its own `.then` that
 paints its own row the moment it settles, so a slow read holds nothing
 hostage. `Promise.allSettled` over the same seven promises is awaited only
-afterwards, to decide the one page-level state — every read `unreachable` →
-"Can't reach your Nimbus gateway." in place of the rows. A **generation
+afterwards, to decide the two page-level states — every read `not_paired` →
+"This browser isn't paired with a Nimbus gateway yet." with an Open Options
+button, and every read `unreachable` → "Can't reach your Nimbus gateway.", each
+in place of the rows. The two stay apart because their remedies differ: pair
+the browser, or check the gateway. A timeout that cuts a body off mid-read is
+`unreachable` too, not `malformed` — the gateway stopped answering. A **generation
 counter**, captured when the reads are issued and compared in every
 continuation, discards a reply belonging to an earlier service or range, so a
 slow stale read never overwrites a newer one. With no service selected a range
