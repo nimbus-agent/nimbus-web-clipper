@@ -1,11 +1,11 @@
 // src/background/deploy-client.ts
 // The deploy-readiness reads (C10), and nothing else.
 //
-// Split from gateway-client.ts on the egress-client.ts precedent. Two of the
-// three reads here are UNAUTHENTICATED — `fetchPreflight` and `fetchItemBranch`
-// sit on the gateway's public read-only table, so they send no bearer header and
-// their error vocabulary (`DeployError`) has no 403, no scope gap and no
-// `nimbus clip scopes` remedy.
+// Split from gateway-client.ts on the egress-client.ts precedent. Three of the
+// four reads here are UNAUTHENTICATED — `fetchPreflight`, `fetchItemBranch` and
+// the two DORA reads sit on the gateway's public read-only table, so they send
+// no bearer header and their error vocabulary (`DeployError`) has no 403, no
+// scope gap and no `nimbus clip scopes` remedy.
 //
 // `fetchServiceResolution` is NOT one of them (C10.3). It is a bearer read under
 // the `resolve` scope with the full sibling vocabulary, and it carries its own
@@ -14,7 +14,17 @@
 // difference invisible.
 
 import type { DeployPreflightResult, ServiceResolution } from "../shared/deploy.ts";
-import { parseDeployPreflight, parseServiceResolution } from "../shared/deploy.ts";
+import { parseDeployPreflight, parseServiceResolution, sendableId } from "../shared/deploy.ts";
+import {
+  type DoraMetricsResult,
+  type DoraRangeId,
+  parseDoraMetrics,
+  parseStatsSeries,
+  RANGES,
+  type StatsMetricId,
+  type StatsReadFailure,
+  type StatsSeries,
+} from "../shared/dora.ts";
 import { endpointUrl } from "../shared/gateway.ts";
 import { isObject } from "../shared/is-object.ts";
 import { MAX_BRANCH_LEN, MAX_SERVICE_ID_LEN } from "../shared/services.ts";
@@ -161,4 +171,70 @@ export async function fetchServiceResolution(
   const qs = new URLSearchParams({ repo: urn }).toString();
   const url = `${endpointUrl(origin, "servicesResolve")}?${qs}`;
   return await scopedGet(url, token, DEPLOY_TIMEOUT_MS, parseServiceResolution, doFetch);
+}
+
+/**
+ * The headline envelope for one range (C10.2). Public route, so `getJson`'s
+ * three-outcome ladder is the whole vocabulary — an unknown service is not a
+ * 400 here but a 200 whose metrics all carry `unknown_service`.
+ */
+export async function fetchDoraMetrics(
+  origin: string,
+  service: string,
+  range: DoraRangeId,
+  doFetch: FetchLike,
+): Promise<DeployResult<DoraMetricsResult>> {
+  if (!sendableId(service)) {
+    return { ok: false, reason: "malformed" };
+  }
+  const qs = new URLSearchParams({ service, since: RANGES[range].since }).toString();
+  const res = await getJson(`${endpointUrl(origin, "metricsDora")}?${qs}`, doFetch);
+  if (!res.ok) {
+    return res;
+  }
+  const parsed = parseDoraMetrics(res.value, service);
+  return parsed === null ? { ok: false, reason: "malformed" } : { ok: true, value: parsed };
+}
+
+export type StatsResult =
+  | { ok: true; value: StatsSeries }
+  | { ok: false; reason: StatsReadFailure };
+
+/**
+ * One metric's series for one range. NOT routed through `getJson`, which
+ * collapses every non-2xx into `server_error`: upstream's 404 means "this
+ * gateway predates the route" and its 400 means "refused", and the page renders
+ * the two differently (spec §6.2).
+ */
+export async function fetchStatsSeries(
+  origin: string,
+  service: string,
+  range: DoraRangeId,
+  metric: StatsMetricId,
+  doFetch: FetchLike,
+): Promise<StatsResult> {
+  if (!sendableId(service)) {
+    return { ok: false, reason: "malformed" };
+  }
+  const r = RANGES[range];
+  const qs = new URLSearchParams({
+    service,
+    metric,
+    window_ms: String(r.windowMs),
+    bucket_ms: String(r.bucketMs),
+  }).toString();
+  const url = `${endpointUrl(origin, "metricsStats")}?${qs}`;
+  return await withTimeout(DEPLOY_TIMEOUT_MS, async (signal): Promise<StatsResult> => {
+    let res: Response;
+    try {
+      res = await doFetch(url, { method: "GET", signal });
+    } catch {
+      return { ok: false, reason: "unreachable" };
+    }
+    if (res.status === 404) return { ok: false, reason: "unsupported" };
+    if (res.status === 400) return { ok: false, reason: "refused" };
+    if (!res.ok) return { ok: false, reason: "server_error" };
+    const parsed = parseStatsSeries(await readJson(res), service, metric);
+    return parsed === null ? { ok: false, reason: "malformed" } : { ok: true, value: parsed };
+  });
 }

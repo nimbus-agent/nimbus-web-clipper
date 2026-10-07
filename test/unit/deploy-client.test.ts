@@ -1,10 +1,13 @@
 // test/unit/deploy-client.test.ts
 import { describe, expect, test, vi } from "vitest";
 import {
+  fetchDoraMetrics,
   fetchItemBranch,
   fetchPreflight,
   fetchServiceResolution,
+  fetchStatsSeries,
 } from "../../src/background/deploy-client.ts";
+import { DAY_MS } from "../../src/shared/dora.ts";
 import { MAX_BRANCH_LEN } from "../../src/shared/services.ts";
 
 const ORIGIN = "http://127.0.0.1:7474";
@@ -315,5 +318,111 @@ describe("fetchServiceResolution", () => {
       }) as unknown as typeof fetch,
     );
     expect(out).toEqual({ ok: false, reason: "unreachable" });
+  });
+});
+
+function jsonFetch(status: number, body: unknown): typeof fetch & { calls: string[] } {
+  const calls: string[] = [];
+  const f = (async (url: string | URL | Request) => {
+    calls.push(String(url));
+    return new Response(body === undefined ? null : JSON.stringify(body), { status });
+  }) as typeof fetch & { calls: string[] };
+  f.calls = calls;
+  return f;
+}
+
+const DORA_OK = {
+  service: "web",
+  since_ms: 1,
+  computed_at: "2026-10-07T09:00:00.000Z",
+  metrics: {
+    deployment_frequency: { value: 1, unit: "deploys_per_day", sample: 9, gap: null },
+    lead_time_for_changes: { value: 60, unit: "seconds_median", sample: 9, gap: null },
+    change_failure_rate: { value: 0.1, unit: "ratio", sample: 9, gap: null },
+    mttr: { value: null, unit: "seconds_median", sample: 0, gap: "no_pagerduty_mapping" },
+  },
+};
+
+const STATS_OK = {
+  metric: "mttr",
+  service: "web",
+  window: { since_ms: 0, until_ms: 91 * DAY_MS },
+  bucket_ms: 7 * DAY_MS,
+  points: [
+    { start_ms: 0, end_ms: 7 * DAY_MS, value: 60, unit: "seconds_median", sample: 3, gap: null },
+  ],
+};
+
+describe("fetchDoraMetrics", () => {
+  test("asks the public route with the range's since and no bearer", async () => {
+    const f = jsonFetch(200, DORA_OK);
+    const res = await fetchDoraMetrics(ORIGIN, "web", "13w", f);
+    expect(res.ok).toBe(true);
+    expect(f.calls[0]).toBe(`${ORIGIN}/v1/metrics/dora?service=web&since=91d`);
+  });
+
+  test("a body for another service is malformed", async () => {
+    const res = await fetchDoraMetrics(
+      ORIGIN,
+      "web",
+      "13w",
+      jsonFetch(200, { ...DORA_OK, service: "x" }),
+    );
+    expect(res).toEqual({ ok: false, reason: "malformed" });
+  });
+
+  test("an unsendable id never reaches the network", async () => {
+    const f = jsonFetch(200, DORA_OK);
+    expect(await fetchDoraMetrics(ORIGIN, "", "13w", f)).toEqual({
+      ok: false,
+      reason: "malformed",
+    });
+    expect(f.calls).toHaveLength(0);
+  });
+});
+
+describe("fetchStatsSeries", () => {
+  test("sends the range's window and bucket in milliseconds", async () => {
+    const f = jsonFetch(200, STATS_OK);
+    const res = await fetchStatsSeries(ORIGIN, "web", "13w", "mttr", f);
+    expect(res.ok).toBe(true);
+    expect(f.calls[0]).toBe(
+      `${ORIGIN}/v1/metrics/stats?service=web&metric=mttr&window_ms=${91 * DAY_MS}&bucket_ms=${7 * DAY_MS}`,
+    );
+  });
+
+  test.each([
+    [404, "unsupported"],
+    [400, "refused"],
+    [500, "server_error"],
+    [503, "server_error"],
+  ] as const)("status %i is %s", async (status, reason) => {
+    expect(
+      await fetchStatsSeries(ORIGIN, "web", "13w", "mttr", jsonFetch(status, { error: "x" })),
+    ).toEqual({
+      ok: false,
+      reason,
+    });
+  });
+
+  test("a thrown fetch is unreachable", async () => {
+    const f = (async () => {
+      throw new TypeError("connection refused");
+    }) as unknown as typeof fetch;
+    expect(await fetchStatsSeries(ORIGIN, "web", "13w", "mttr", f)).toEqual({
+      ok: false,
+      reason: "unreachable",
+    });
+  });
+
+  test("a body that fails the parser is malformed", async () => {
+    const res = await fetchStatsSeries(
+      ORIGIN,
+      "web",
+      "13w",
+      "mttr",
+      jsonFetch(200, { ...STATS_OK, metric: "lead-time" }),
+    );
+    expect(res).toEqual({ ok: false, reason: "malformed" });
   });
 });
