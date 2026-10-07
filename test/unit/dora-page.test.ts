@@ -164,7 +164,7 @@ describe("the DORA page", () => {
         document.querySelector('[data-metric="lead_time_for_changes"]')?.textContent,
       ).toContain("Couldn't load this trend."),
     );
-    expect(document.querySelectorAll("#delivery-rows svg, #activity-rows svg").length).toBe(5);
+    expect(document.querySelectorAll("#delivery-rows svg, #activity-rows svg")).toHaveLength(5);
     expect(document.getElementById("dora-notice")?.hidden).toBe(true);
   });
 
@@ -310,7 +310,7 @@ describe("the DORA page", () => {
       }),
     );
     await loadPage("?service=web");
-    await vi.waitFor(() => expect(document.querySelectorAll("svg").length).toBe(5));
+    await vi.waitFor(() => expect(document.querySelectorAll("svg")).toHaveLength(5));
     release({ kind: "metrics-stats", ok: false, reason: "unsupported" });
     await vi.waitFor(() => expect(document.querySelectorAll("svg")).toHaveLength(0));
     expect(document.getElementById("dora-notice")?.textContent).toBe(

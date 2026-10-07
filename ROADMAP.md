@@ -339,10 +339,9 @@ for anything newer.)
 - **Structured answers and links (Phases C8, C9)** — every lane renders its
   typed findings, gaps and provenance rather than a paragraph, and evidence
   titles link to the item they name wherever the answer can carry one.
-- **Deploy readiness (Phases C10.1–C10.3)** — on a pull request or a build, a
+- **Deploy readiness (Phases C10.1, C10.3)** — on a pull request or a build, a
   verdict over active P1 incidents, failing CI runs and merge conflicts, keyed
-  by a repo-to-service binding the gateway helps seed. The C10.2 DORA page
-  shows that service's delivery metrics with their trends.
+  by a repo-to-service binding the gateway helps seed.
 - **Release** — tag-driven build/package + Chrome Web Store / Firefox AMO publish
   automation.
 

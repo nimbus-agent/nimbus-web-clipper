@@ -104,8 +104,9 @@ export function trendSummary(points: readonly StatsPoint[], range: DoraRange): s
   const values = points.flatMap((pt) =>
     pt.value === null ? [] : [{ v: pt.value, unit: pt.unit }],
   );
-  if (values.length === 0) return `${head}, none with values`;
-  const min = values.reduce((a, b) => (b.v < a.v ? b : a));
-  const max = values.reduce((a, b) => (b.v > a.v ? b : a));
+  const first = values[0];
+  if (first === undefined) return `${head}, none with values`;
+  const min = values.reduce((a, b) => (b.v < a.v ? b : a), first);
+  const max = values.reduce((a, b) => (b.v > a.v ? b : a), first);
   return `${head}, ${values.length} with values, ${formatValue(min.v, min.unit)} to ${formatValue(max.v, max.unit)}`;
 }
