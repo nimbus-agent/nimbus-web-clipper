@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Delivery metrics — Nimbus</title>
+    <link rel="stylesheet" href="dora.css" />
+  </head>
+  <body>
+    <main class="dora">
+      <h1 class="dora__title">Delivery metrics</h1>
+      <p class="dora__lede">
+        How a service is delivering, read from your local Nimbus gateway every time you open
+        this page. A figure Nimbus can't vouch for says why instead of showing a number.
+      </p>
+
+      <div class="dora__controls">
+        <label for="service-picker">Service</label>
+        <select id="service-picker"></select>
+        <fieldset class="dora__ranges" aria-label="Range">
+          <button id="range-4w" type="button" aria-pressed="false">4 weeks</button>
+          <button id="range-13w" type="button" aria-pressed="false">13 weeks</button>
+          <button id="range-26w" type="button" aria-pressed="false">26 weeks</button>
+        </fieldset>
+      </div>
+
+      <p id="dora-notice" class="dora__notice" hidden></p>
+
+      <section class="dora__group">
+        <h2 class="dora__group-title">Delivery</h2>
+        <ul id="delivery-rows" class="dora__rows"></ul>
+      </section>
+
+      <section class="dora__group">
+        <h2 class="dora__group-title">Activity</h2>
+        <ul id="activity-rows" class="dora__rows"></ul>
+      </section>
+
+      <footer id="dora-footer" class="dora__footer"></footer>
+    </main>
+    <script src="dora.js"></script>
+  </body>
+</html>
