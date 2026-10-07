@@ -409,6 +409,12 @@ async function resolveFileSurface(
  * declines it before asking. The gateway matches on its canonical resolve key,
  * which clips carry like every other row.
  *
+ * Only the popup may ask. It is an extension page, so its messages carry no
+ * tab; a message from a tab came from one of our content scripts, which run
+ * inside web pages and have no reason to probe the index for arbitrary URLs.
+ * Rejecting those keeps "is this URL in your index?" answerable only from the
+ * toolbar, where the user asked.
+ *
  * Never throws and never reports a failure. Unpaired, a token without the
  * `resolve` scope, an older gateway, an unreachable one, a miss and an
  * ambiguous match are all `none`: the popup line is a hint, and a hint that
@@ -417,8 +423,10 @@ async function resolveFileSurface(
 export async function handleClipLookup(
   deps: { readonly getConnection: GetConnection; readonly resolveItem: ResolveItem },
   req: ClipLookupRequest,
+  sender: { readonly tabId?: number } = {},
 ): Promise<ClipLookupResponse> {
   const none: ClipLookupResponse = { kind: "clip-lookup", state: "none" };
+  if (sender.tabId !== undefined) return none;
   const pageUrl = safeHttpUrl(req.pageUrl);
   if (pageUrl === null) return none;
   const conn = await deps.getConnection();

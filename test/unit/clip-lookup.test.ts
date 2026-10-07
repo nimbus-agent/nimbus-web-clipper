@@ -94,6 +94,18 @@ describe("handleClipLookup", () => {
     expect(d.resolveItem).not.toHaveBeenCalled();
   });
 
+  test("a lookup sent from a tab (a content script) asks nothing — only the popup may ask", async () => {
+    const d = deps({
+      ok: true,
+      outcome: { kind: "found", item: item("nimbus", 42), matchKind: "exact" },
+    });
+    expect(await handleClipLookup(d, lookup(), { tabId: 7 })).toEqual({
+      kind: "clip-lookup",
+      state: "none",
+    });
+    expect(d.resolveItem).not.toHaveBeenCalled();
+  });
+
   test("a resolve that throws is `none`, never a rejection", async () => {
     const d = {
       getConnection: async () => conn,

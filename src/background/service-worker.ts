@@ -1296,11 +1296,11 @@ async function clipThenReply(message: ClipRequest, respond: Respond): Promise<vo
   respond(res);
 }
 
-function routeIndexReads(message: unknown, respond: Respond): Routed {
+function routeIndexReads(message: unknown, respond: Respond, sender: SenderInfo): Routed {
   if (isClipLookupRequest(message)) {
     // Never-clip-twice. The handler folds every failure into `none`; this catch
     // only covers it throwing anyway, with the same answer.
-    handleClipLookup({ getConnection, resolveItem }, message)
+    handleClipLookup({ getConnection, resolveItem }, message, sender)
       .then(respond)
       .catch(() => {
         respond({ kind: "clip-lookup", state: "none" });
@@ -1563,7 +1563,7 @@ addMessageListener((message, rawRespond, sender) => {
   // returns `false`, and that must STOP the chain — only `null` means "not mine".
   return (
     routeCapturePair(message, respond, sender) ??
-    routeIndexReads(message, respond) ??
+    routeIndexReads(message, respond, sender) ??
     routeQueueAndConnection(message, respond) ??
     routeDeploy(message, respond) ??
     routeDora(message, respond) ??
