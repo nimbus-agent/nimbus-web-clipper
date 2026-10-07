@@ -16,15 +16,17 @@ function deps(status: number, body: unknown) {
 }
 
 describe("handleDoraMetrics", () => {
-  test("no pairing is unreachable — there is no gateway address to ask", async () => {
+  test("no pairing is not_paired — the remedy is pairing, not checking the gateway", async () => {
     const d = { getConnection: async () => null, doFetch: fetch };
     expect(
       await handleDoraMetrics({ kind: "dora-metrics", serviceId: "web", range: "13w" }, d),
-    ).toEqual({
-      kind: "dora-metrics",
-      ok: false,
-      reason: "unreachable",
-    });
+    ).toEqual({ kind: "dora-metrics", ok: false, reason: "not_paired" });
+    expect(
+      await handleMetricsStats(
+        { kind: "metrics-stats", serviceId: "web", range: "13w", metric: "mttr" },
+        d,
+      ),
+    ).toEqual({ kind: "metrics-stats", ok: false, reason: "not_paired" });
   });
 
   test("never sends the bearer token on the public route", async () => {

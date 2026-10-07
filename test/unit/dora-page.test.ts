@@ -15,6 +15,7 @@ const FIXTURE = `
   <select id="service-picker"></select>
   <button id="range-4w"></button><button id="range-13w"></button><button id="range-26w"></button>
   <p id="dora-notice" hidden></p>
+  <button id="dora-pair" hidden></button>
   <ul id="delivery-rows"></ul>
   <ul id="activity-rows"></ul>
   <footer id="dora-footer"></footer>
@@ -183,6 +184,30 @@ describe("the DORA page", () => {
         "Can't reach your Nimbus gateway.",
       ),
     );
+  });
+
+  test("an unpaired browser is told to pair, not that the gateway is unreachable", async () => {
+    harness.sendMessage.mockImplementation(
+      replies([], {
+        "dora-metrics": async () => ({ kind: "dora-metrics", ok: false, reason: "not_paired" }),
+        "metrics-stats": async () => ({ kind: "metrics-stats", ok: false, reason: "not_paired" }),
+      }),
+    );
+    await loadPage("?service=web");
+    await vi.waitFor(() =>
+      expect(document.getElementById("dora-notice")?.textContent).toBe(
+        "This browser isn't paired with a Nimbus gateway yet.",
+      ),
+    );
+    expect(document.getElementById("dora-pair")?.hidden).toBe(false);
+    expect(document.querySelectorAll(".dora-row")).toHaveLength(0);
+  });
+
+  test("the pair button stays hidden while the gateway answers", async () => {
+    harness.sendMessage.mockImplementation(replies([binding("web")]));
+    await loadPage("?service=web");
+    await vi.waitFor(() => expect(sent("metrics-stats")).toHaveLength(6));
+    expect(document.getElementById("dora-pair")?.hidden).toBe(true);
   });
 
   test("a 404 on the trend route is one 'newer gateway' line, and headlines still render", async () => {

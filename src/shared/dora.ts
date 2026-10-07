@@ -266,8 +266,12 @@ export function parseStatsSeries(
   };
 }
 
-/** What a failed headline read becomes — `getJson`'s ladder, unchanged. */
-export const DORA_READ_FAILURES = ["unreachable", "server_error", "malformed"] as const;
+/**
+ * What a failed headline read becomes — `getJson`'s ladder, plus `not_paired`:
+ * with no pairing there is no gateway address to ask, and the remedy is to pair,
+ * not to check whether the gateway is running.
+ */
+export const DORA_READ_FAILURES = ["not_paired", "unreachable", "server_error", "malformed"] as const;
 export type DoraReadFailure = (typeof DORA_READ_FAILURES)[number];
 
 /**
@@ -276,6 +280,7 @@ export type DoraReadFailure = (typeof DORA_READ_FAILURES)[number];
  * meanings, and the page renders them differently (spec §6.2).
  */
 export const STATS_READ_FAILURES = [
+  "not_paired",
   "unreachable",
   "unsupported",
   "refused",
