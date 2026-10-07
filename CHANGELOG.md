@@ -8,6 +8,17 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Added
+
+- **Delivery metrics for a bound service.** A new page shows the four DORA
+  metrics — deployment frequency, lead time for changes, change failure rate
+  and time to restore — plus pull requests merged and incidents opened, each
+  with a trend over the last 4, 13 or 26 weeks. Open it from Options ("DORA
+  metrics") or from a pull request's Deploy readiness verdict. Every figure is
+  read from your local Nimbus gateway; where Nimbus can't vouch for a number,
+  the page shows "—" and says why rather than showing a zero. Trends need
+  gateway 7.19.0 or later; an older gateway still shows the figures.
+
 ### Changed
 
 - **The privacy policy names the two things it still left out.** Since 0.6.0

@@ -54,8 +54,8 @@ no cloud calls.
 > incident (C6), the source-file lanes (C7 — these need a gateway carrying the
 > file-resolve route; on an older one the page simply renders without them),
 > structured lane answers (C8), evidence titles that link to the item they name
-> (C9), and the deploy-readiness section (C10.1 and C10.3; the C10.2 DORA
-> metrics page is not built yet). Tagging `vX.Y.Z` builds, signs and submits to both stores
+> (C9), and the deploy-readiness section (C10.1 and C10.3) and the DORA
+> metrics page (C10.2). Tagging `vX.Y.Z` builds, signs and submits to both stores
 > ([store/publishing.md](./store/publishing.md)); each store's own review then
 > gates the public rollout. See the
 > [changelog](./CHANGELOG.md) for the per-slice breakdown.

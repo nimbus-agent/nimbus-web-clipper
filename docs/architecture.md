@@ -1837,9 +1837,8 @@ the same table `GET /v1/connectors` already answers from: no bearer, no scope,
 no re-pairing. One thing blocked reading it before C10, and it was the whole
 of the phase's novelty — the client did not know which Nimbus **service** the
 page in front of it belongs to. This section is the durable record of that
-gap and how it closed; the design spec that worked it out
-(`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`) is pruned
-once both of its slices ship.
+gap and how it closed; the design specs that worked it out were pruned
+once the phase shipped, and live on in git history.
 
 ### `deploy.preflight` is not `agents.preflight`
 
@@ -2214,26 +2213,100 @@ for the unrecognised member like any other, because a gapped check that says
 nothing renders as a bare label under a zero — the "all clear" this whole rule
 exists to prevent.
 
-### The DORA route's windows are nested, not a trend
+### The DORA page: a headline from `/dora`, a trend from `/stats`
 
-`GET /v1/metrics/dora` takes `since` and **no `until`**, so every window it
-answers ends at *now*: 7d, 30d and 90d are three **nested** windows sharing an
-end point, not three consecutive periods — a disjoint series is not
-expressible on the contract as it stands. Stitching three such windows into a
-line would draw a slope between three readings of the same metric at
-different resolutions, which any reader takes as change over time; it is not
-that. Whichever surface renders these three windows has to show them side by
-side, each column labelled as a window ending now — still directional, and
-still honest, without implying a trend the contract cannot back. `until` is
-proposed upstream precisely to make a real series expressible; until it
-lands, this constraint is a property of the route, not of any one client, and
-binds every future consumer of it.
+The page (`src/dora/`) answers *how is this service delivering?* for a service
+the user has bound, from two public read-only routes, and it exists to show its
+own uncertainty rather than a confident-looking number nobody should trust.
 
-It no longer has to bind the DORA page slice 2 has not built yet, though:
-`GET /v1/metrics/stats` (Nimbus#1493, gateway v7.19.0) now serves a genuine
-bucketed series over a wider metric set, so that page can draw the trend this
-route cannot. ROADMAP's C10.2 entry carries the correction; whoever builds the
-page should choose between the two routes there.
+**Two routes, each doing what the other cannot.** `GET /v1/metrics/dora` takes
+`since` and no `until`, so one call is one window ending now; its sample is the
+whole window, which makes it the robust figure, and it is the **headline**.
+`GET /v1/metrics/stats` (Nimbus#1493, gateway v7.19.0) serves one metric per
+call as a genuine bucketed series, but each bucket holds only a slice of the
+events, so its per-bucket values are thin — the **trend** is direction, never
+the figure. Stitching the nested `/dora` windows (7d, 30d, 90d, all ending now)
+into a line was ruled out for that reason: it would draw a slope between three
+readings of the same metric at different resolutions. `/stats` is what makes a
+real series expressible, so the page asks it for the line and asks `/dora` for
+the number, and the two never swap roles. The routes name the four DORA
+metrics differently (snake_case keys, kebab-case ids, `lead_time_for_changes`
+versus `lead-time`); `DELIVERY_ROWS` in `src/shared/dora.ts` is a `Record` over
+the envelope's keys that pairs them, so a fifth upstream metric is a type error
+rather than a row that silently never renders.
+
+**Ranges are 4, 13 and 26 weeks, and `RANGES` is the one table.** Upstream
+buckets walk backward from now and the **oldest bucket absorbs the remainder**:
+a window the bucket does not divide ends in a short first point, which on a
+count metric reads as a false dip. Every range therefore divides exactly
+(28d/2d, 91d/7d, 182d/14d). `RANGES` in `src/shared/dora.ts` is the only place
+those numbers live — the page reads its labels from it, the worker its
+parameters — and the page sends a range *name*, never milliseconds. The message
+guards test `range` and `metric` by membership in the real lists
+(`DORA_RANGES`, `STATS_METRIC_IDS`), not `typeof === "string"`.
+
+**Seven independently fallible reads.** A render issues one `dora-metrics` and
+six `metrics-stats` messages concurrently. Each read has its own `.then` that
+paints its own row the moment it settles, so a slow read holds nothing
+hostage. `Promise.allSettled` over the same seven promises is awaited only
+afterwards, to decide the one page-level state — every read `unreachable` →
+"Can't reach your Nimbus gateway." in place of the rows. A **generation
+counter**, captured when the reads are issued and compared in every
+continuation, discards a reply belonging to an earlier service or range, so a
+slow stale read never overwrites a newer one. With no service selected a range
+click only repaints the range buttons and issues no reads.
+
+**Honesty rules.**
+
+- **`null` is a gap, never a zero.** A `null` headline is "—" plus the gap
+  sentence; a `null` trend point breaks the line and draws a hollow baseline
+  marker whose `<title>` names its period and gap.
+- **The y-axis starts at zero and has no floor.** The scale is never
+  `value / max` (a flat-zero series would be `NaN`), and it is not clamped to a
+  minimum of 1: a `ratio` lives in 0–1, and a floor of 1 would flatten every
+  change-failure-rate trend onto the baseline.
+- **A gap is listed once per row, with its coverage.** "Too few events to
+  report a value — 4 of 13 weeks" is one line, not thirteen; an Activity row's
+  total states "N of 13 weeks reported".
+- **The count metrics' zero arrives as `value: null, gap: "low_sample"`.** The
+  client never reinterprets it as `0`; the `low_sample` sentence is written to
+  cover it ("none, or fewer than three"). The same `Record<NonNullable<StatsGap>,
+  string>` rule as `GAP_NOTE` applies: no switch, no unreachable backstop.
+- **One gap parser serves both routes**, and an unknown gap *string* degrades
+  only that point or headline to `UNRECOGNISED_GAP`; a gap of the wrong *type*
+  rejects the envelope. The parsers build new objects field by field, and
+  reject a service or metric other than the one requested, more than 400
+  points, a non-finite number, or `start_ms >= end_ms`.
+
+**The last-touch footnote.** The four wrapped DORA metrics bucket on the
+item's `modified_at` — last touch, not event time — so a PR or incident can
+land in a later bucket than it happened, and one exactly on a boundary can be
+counted in two. The four Delivery rows' trends carry one footnote saying so.
+`pr-merges` and `incidents-opened` bucket on true event time and do not carry
+it.
+
+**A 404 on `/v1/metrics/stats` is the capability signal, with no version
+floor.** The status ladder maps 404 to `unsupported`, and the page then shows
+"Trends need a newer Nimbus gateway." once and hides **every** trend of that
+selection — including any that had already loaded — while the headlines stay.
+A 400 is `refused` and shows nothing extra (the headline already says
+`unknown_service`; the gateway's 400 text names `nimbus.toml` internals and is
+never shown). A thrown fetch, a timeout, another non-2xx or a malformed body
+fails only that row.
+
+**`open-dora`, not a link to `dora.html`.** The panel is a content script: it
+cannot call `chrome.tabs.create`, and an `<a href="chrome-extension://…">` from
+a web page needs `dora.html` declared web-accessible, which would let any site
+probe for the extension. So "Delivery metrics for `<id>` →" is a `<button>`
+that sends `open-dora`; the worker validates the id with `sendableId` and opens
+`dora.html?service=<id>`. It has **no reply**, on the `cue-open` precedent —
+the route opens the tab and returns `false`, the panel sends it as
+`void sendMessage(…).catch(() => undefined)`, and a reply type would be a
+shape no caller reads. The DORA kinds route through their own `routeDora`
+slice, chained after `routeDeploy`, so neither grows past the cognitive
+complexity ceiling. A service id in `?service=` is honoured even when no
+binding names it: a binding is a convenience for the picker, not a permission,
+and the gateway answers an unknown service with `unknown_service`.
 
 ## Research briefs
 
