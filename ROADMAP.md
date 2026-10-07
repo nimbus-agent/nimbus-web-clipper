@@ -341,8 +341,7 @@ for anything newer.)
   titles link to the item they name wherever the answer can carry one.
 - **Deploy readiness (Phases C10.1, C10.3)** — on a pull request or a build, a
   verdict over active P1 incidents, failing CI runs and merge conflicts, keyed
-  by a repo-to-service binding the gateway helps seed. The C10.2 DORA page is
-  not built.
+  by a repo-to-service binding the gateway helps seed.
 - **Release** — tag-driven build/package + Chrome Web Store / Firefox AMO publish
   automation.
 
@@ -1521,42 +1520,37 @@ to; that gap is what this phase closes.*
 > pinned by `test/e2e/deploy-readiness.e2e.ts` end to end and by
 > `services.test.ts` / `service-binding-store.test.ts` / `deploy-client.test.ts`
 > / `deploy-view.test.ts` / `deploy-section.test.ts` at the unit level.
-> Full design:
-> [`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`](./docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md).
+> Full design: see [`docs/architecture.md`](./docs/architecture.md) under
+> "Deploy readiness (Phase C10)".
 
-### C10.2 The DORA metrics page · 🟢 · M
-> **What** A `dora.html` page renders the four DORA metrics — deployment
-> frequency, lead time for changes, change failure rate, MTTR — for a bound
-> service across three nested windows (7d / 30d / 90d, each ending now, never
-> stitched into a line a disjoint-window contract cannot honestly draw), each
-> metric's `null`/low-sample/approximate gaps shown rather than hidden.
+### C10.2 The DORA metrics page · 🟢 · M — ✅ shipped
+> **What** A `dora.html` page shows, for a bound service, the four DORA metrics
+> — deployment frequency, lead time for changes, change failure rate, MTTR —
+> plus pull requests merged and incidents opened: six rows, each a headline
+> figure from `GET /v1/metrics/dora` and a trend line from
+> `GET /v1/metrics/stats`, over 4, 13 or 26 weeks (week-aligned, so the
+> oldest bucket never reads as a false dip). Every gap the gateway reports is
+> named once per row with its coverage, and a `null` is "—", never a zero.
 > **Why it wows** The metrics half of "before you ship it", reachable from the
 > same bindings C10.1 already collects, with an honesty rule that shows its
 > own uncertainty instead of a confident-looking number nobody should trust.
-> **Touches** `src/shared/dora.ts` (new), `src/dora/` (new — `dora.ts`,
-> `dora-view.ts`, `dora.html`/`dora.css`), the `dora` esbuild entry, Options
-> and the deploy-readiness section (a link to `dora.html?service=<id>`).
+> **Touches** `src/shared/dora.ts` (`RANGES`, the metric ids, the gap
+> vocabulary, both parsers), `src/dora/` (`dora.ts`, `dora-view.ts`,
+> `dora-format.ts`, `sparkline.ts`, `dora.html`/`dora.css`),
+> `src/background/dora-handlers.ts` and a `routeDora` slice, the `dora`
+> esbuild entry, Options ("DORA metrics") and the deploy-readiness section
+> (an `open-dora` button, not a link).
 > **Depends** C10.1's bindings, for the service picker.
-> **Done when** Three independently-fallible reads (`Promise.allSettled`, never
-> `Promise.all`) each render their own column or their own failure; a `null`
-> metric value renders as a gap, never a zero.
-> Full design:
-> [`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`](./docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md)
-> (§5).
-> **Correction (2026-09-13, unbuilt)** The "never stitched into a line" rule
-> above, and §5.1 of the spec it cites, rest on `GET /v1/metrics/dora` taking
-> `since` and no `until` — so the three windows nest and a slope between them
-> would mean nothing. That held when it was written and does not now.
-> `GET /v1/metrics/stats` (Nimbus#1493, 2026-09-11, released in gateway
-> **v7.19.0**) serves one metric as a genuine **bucketed time series**
-> (`window_ms` + `bucket_ms` → `points[]`, each with `value | null`, `unit`,
-> `sample`, `gap`), it is **public** like the two routes C10.1 already uses, and
-> its metric set is *wider* than DORA's — the four, plus `pr-merges` and
-> `incidents-opened`, with `StatsGap` widening the gap vocabulary by
-> `github_only_merge_data` and `incidents_missing_opened_at`. Whoever builds
-> this slice should revisit §5.1 before writing the renderer: the page can now
-> honestly draw the trend its own spec forbids. The `until` proposed in §7 is
-> moot.
+> **Done when** Seven independently fallible reads each paint their own row
+> (`Promise.allSettled` only for the page-level "can't reach" state, a
+> generation counter against stale replies); a `null` value renders as a gap,
+> never a zero; a gateway without `/v1/metrics/stats` shows the headlines and
+> one "Trends need a newer Nimbus gateway." line, with no version floor.
+> **All met**, pinned by `test/e2e/dora.e2e.ts` and the `dora*.test.ts` unit
+> suites.
+> Full design: see [`docs/architecture.md`](./docs/architecture.md) under
+> "Deploy readiness (Phase C10)" — "The DORA page: a headline from `/dora`, a
+> trend from `/stats`".
 
 ### C10.3 The binding stops guessing · 🟢 · M — ✅ shipped
 > **What** The bind form stops seeding itself with a guessed slug and asks the
@@ -1589,10 +1583,7 @@ to; that gap is what this phase closes.*
 > "Deploy readiness (Phase C10)" — "`services/resolve` seeds the bind form
 > from the worker, never the panel", "The exact-comparison limitation", and
 > "Checking a stored binding for staleness: two messages, not one". C10.3 had
-> no design spec of its own. The phase's spec
-> ([`docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md`](./docs/superpowers/specs/2026-09-10-before-you-ship-it-design.md))
-> stays in the tree until C10.2 ships, because its §5 is still that slice's
-> design, and is pruned then, per the convention in `CLAUDE.md`.
+> no design spec of its own.
 
 ## Phase 1 — Trust you can see 🟢
 

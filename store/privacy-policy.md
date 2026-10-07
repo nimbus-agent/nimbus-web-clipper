@@ -28,7 +28,8 @@ it.
 ## What is stored, and where
 
 Everything below lives in the browser's local extension storage
-(`chrome.storage.local`) on your device only. None of it is synced, uploaded, or
+(`chrome.storage.local`, plus the browser storage of the extension's own
+pages) on your device only. None of it is synced, uploaded, or
 shared.
 
 - **Pairing token and gateway origin.** After you pair with your local gateway,
@@ -56,7 +57,7 @@ shared.
 - **Your settings.** The sites you configured for recognition, which of them may
   show the ambient cue, your preview / index-search preferences, and the
   repositories you have bound to a Nimbus service for the deploy-readiness
-  check.
+  check, and your last-chosen range on the delivery metrics page.
 
 Uninstalling the extension removes all of it.
 

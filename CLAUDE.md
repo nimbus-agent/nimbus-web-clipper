@@ -18,7 +18,8 @@ panel lanes — offering only the lanes the paired gateway publishes, whenever i
 can say what those are, and rendering each answer's typed findings, with links
 where they carry one — asks research briefs across your open tabs, reads the
 gateway's egress ledger back as an activity page, and on a PR or build page asks
-the gateway whether the change is safe to deploy. It is a **thin client**: it
+the gateway whether the change is safe to deploy, and shows that service's DORA
+metrics with their trends. It is a **thin client**: it
 talks only to a Nimbus gateway on `127.0.0.1` over a locked HTTP contract. No
 cloud calls, no telemetry.
 
@@ -61,9 +62,8 @@ roster C6 reads to decide which lanes to offer (`agents`), the five
 Tokenless, on the gateway's public read-only table: `GET /v1/health`,
 `GET /v1/connectors` (per-connector health), and C10's `GET /v1/preflight/deploy`
 and `GET /v1/items/{id}` (the full row, body included — read only in the
-worker, and only its branch crosses into a page). `GET /v1/metrics/dora` sits on
-that table too and is declared ahead of the unbuilt C10.2 DORA page; nothing
-calls it yet.
+worker, and only its branch crosses into a page). `GET /v1/metrics/dora` and `GET /v1/metrics/stats` (C10.2's DORA page — the
+headline and the trend) sit on that table too.
 **`src/shared/gateway.ts`'s `GATEWAY_PATHS` is the
 single list — read it rather than an enumeration in a doc.** Upstream,
 `clips/api-scopes.ts` sets `LEGACY_SCOPES = ["clip", "briefs"]`, so a browser
@@ -98,7 +98,7 @@ monorepo's git history.)
   logged.
 - **Bundled, no runtime deps.** `esbuild.mjs` bundles each entry
   (`background`, `popup`, `options`, `capture`, `panel`, `toast`, `cue`,
-  `brief`, `ledger` — `ENTRIES` there is the list) into `dist/<target>/` as
+  `brief`, `ledger`, `dora` — `ENTRIES` there is the list) into `dist/<target>/` as
   fully-inlined IIFE. `@mozilla/readability` is a devDependency inlined into
   `capture.js`. The shipped extension has no `node_modules`. A new entry must
   also be added to `REQUIRED_FILES` in `scripts/check-build.mjs` — and a new
@@ -120,7 +120,7 @@ monorepo's git history.)
   `queue-flush.ts`, `rate-limit-pause.ts`, `single-flight.ts`, `quick-clip.ts`,
   `feedback.ts`; and the later surfaces — `brief-client.ts`/`brief-handlers.ts`,
   `passage-collect.ts` (the "Add to brief" gesture),
-  `egress-client.ts`/`egress-handlers.ts`, `deploy-client.ts`/`deploy-handlers.ts`
+  `egress-client.ts`/`egress-handlers.ts`, `deploy-client.ts`/`deploy-handlers.ts`/`dora-handlers.ts`
   (C10), `agents-capability.ts` (the C6 roster gate), `item-urls.ts` (C9's item
   id → URL resolution), the `*-store.ts` persistence set (`agent-run`,
   `brief-run`, `brief-log`, `passage`, `origin`, `connector-health`,
@@ -147,6 +147,8 @@ monorepo's git history.)
   `brief.html`/`brief.css`, pure `brief-view.ts`)
 - `src/ledger/` — the activity page over the gateway's egress ledger (`ledger.ts`
   → `ledger.js` + `ledger.html`/`ledger.css`, pure `ledger-view.ts`)
+- `src/dora/` — the DORA metrics page (C10.2): `dora.ts` → `dora.js` +
+  `dora.html`/`dora.css`, pure `dora-view.ts`, `dora-format.ts`, `sparkline.ts`
 - `src/popup/` — toolbar popup (clip page / clip selection + tags + status) plus the
   pure `queue-view.ts` (offline-queue manager rendering)
 - `src/options/` — options page (gateway URL + 6-digit code → pairing form) plus the
@@ -179,8 +181,8 @@ monorepo's git history.)
   workspace for work in flight — specs, plans and review notes are all **pruned
   once the feature ships** and live on in git history, so anything still true
   after delivery must be written into `architecture.md` (or this file) BEFORE
-  its spec is deleted, never left only in the spec (today it holds only the C10
-  design and its review, kept until the C10.2 DORA page ships);
+  its spec is deleted, never left only in the spec (today it holds nothing — the C10
+  design and its review were pruned when C10.2 shipped);
   `development.md` is the dev-load guide plus the per-feature
   manual-verification checklists, whose steps are labelled — as each is
   triaged — covered by an e2e suite, human-only, or not yet automated;

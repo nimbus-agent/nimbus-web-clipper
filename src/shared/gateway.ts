@@ -111,6 +111,10 @@ export const GATEWAY_PATHS = {
    *  public table. Takes NO `until`, which is why the page renders nested
    *  windows rather than a series. */
   metricsDora: "/v1/metrics/dora",
+  /** `GET /v1/metrics/stats?service=&metric=&window_ms=&bucket_ms=` — one
+   *  metric as a bucketed time series (C10.2, gateway v7.19.0+). Public, like
+   *  `metricsDora`; a 404 is the capability signal, never a version floor. */
+  metricsStats: "/v1/metrics/stats",
   /**
    * `GET /v1/services/resolve?repo=<provider:id>` — which Nimbus service claims
    * a repo. A BEARER read under the `resolve` scope, the same one `resolve`,

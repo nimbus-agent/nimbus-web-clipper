@@ -48,5 +48,7 @@ export const DEPLOY_CSS = `
     font: inherit;
     cursor: pointer;
   }
+  .nimbus-deploy__dora { margin: 8px 0 0; }
+  .nimbus-deploy__dora-link { background: none; border: 0; padding: 0; font: inherit; color: var(--nimbus-accent); text-decoration: underline; cursor: pointer; }
   .nimbus-deploy__status { margin: 0 0 8px; font-size: 12px; color: var(--nimbus-muted); }
 `;

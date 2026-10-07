@@ -77,9 +77,9 @@ pick up a rebuild.
   (`src/shared/gateway.ts`): the three clip routes plus the `/v1/items/*` reads
   and targeted fetch, `/v1/agents/*`, `/v1/briefs*`, `/v1/egress*`,
   `/v1/services/resolve`, `/v1/preflight/deploy`, `/v1/connectors` and
-  `/v1/health` — and `/v1/metrics/dora`, declared ahead of the unbuilt DORA
-  page. Most sit behind their own gateway token scope; `/v1/health`,
-  `/v1/connectors`, `/v1/preflight/deploy` and `GET /v1/items/{id}` are on the
+  `/v1/health`, `/v1/metrics/dora` and `/v1/metrics/stats` (the DORA page). Most
+  sit behind their own gateway token scope; `/v1/health`, `/v1/connectors`,
+  `/v1/preflight/deploy`, the two metrics routes and `GET /v1/items/{id}` are on the
   gateway's public read-only table and carry no token.
 
 ## Pull requests

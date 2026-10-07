@@ -935,22 +935,86 @@ export const PREFLIGHT_UNKNOWN_SERVICE = {
 } as const;
 
 /**
- * `GET /v1/metrics/dora` (C10). Unused by this slice — S2's DORA page is the
- * first reader — but the route belongs beside its `preflight/deploy` sibling
- * rather than 404ing until S2 exists to need it. A plain envelope, no gaps: it
- * only has to be a well-formed answer, not a realistic one.
+ * `GET /v1/metrics/dora` (C10). The DORA page (C10.2) reads it. Units are the
+ * ones the gateway really sends; `mttr` carries a gap so the page's "—" and
+ * its reason are exercised.
  */
 export const DORA_METRICS_FIXTURE = {
   service: "web-app",
   since_ms: 1_700_000_000_000 - ONE_WEEK_MS,
   computed_at: "2026-09-10T09:30:00.000Z",
   metrics: {
-    deployment_frequency: { value: 3, unit: "per_week", sample: 3, gap: null },
-    lead_time_for_changes: { value: 4.5, unit: "hours", sample: 3, gap: null },
-    change_failure_rate: { value: 0.1, unit: "ratio", sample: 3, gap: null },
-    mttr: { value: 2, unit: "hours", sample: 3, gap: null },
+    deployment_frequency: { value: 1.4, unit: "deploys_per_day", sample: 42, gap: null },
+    lead_time_for_changes: { value: 15_120, unit: "seconds_median", sample: 38, gap: null },
+    change_failure_rate: { value: 0.095, unit: "ratio", sample: 42, gap: null },
+    mttr: { value: null, unit: "seconds_median", sample: 0, gap: "no_pagerduty_mapping" },
   },
 } as const;
+
+const STATS_UNIT: Record<string, string> = {
+  "deployment-frequency": "deploys_per_day",
+  "lead-time": "seconds_median",
+  "change-failure-rate": "ratio",
+  mttr: "seconds_median",
+  "pr-merges": "merges",
+  "incidents-opened": "incidents",
+};
+
+/**
+ * `GET /v1/metrics/stats` (C10.2): a deterministic series for any metric,
+ * echoing the requested service and bucket shape so the client's parser —
+ * which rejects a body for any other service or metric — accepts it.
+ * `mttr` and `incidents-opened` come back all-`no_pagerduty_mapping`, every
+ * fourth `pr-merges` bucket is `low_sample`, matching the headline fixture.
+ */
+export function statsFixture(
+  service: string,
+  metric: string,
+  windowMs: number,
+  bucketMs: number,
+): unknown {
+  const until = 1_760_000_000_000;
+  const n = Math.max(1, Math.floor(windowMs / bucketMs));
+  const unit = STATS_UNIT[metric] ?? "count";
+  const noMapping = metric === "mttr" || metric === "incidents-opened";
+  const points = Array.from({ length: n }, (_, i) => {
+    const start = until - (n - i) * bucketMs;
+    if (noMapping) {
+      return {
+        start_ms: start,
+        end_ms: start + bucketMs,
+        value: null,
+        unit,
+        sample: 0,
+        gap: "no_pagerduty_mapping",
+      };
+    }
+    if (metric === "pr-merges" && i % 4 === 3) {
+      return {
+        start_ms: start,
+        end_ms: start + bucketMs,
+        value: null,
+        unit,
+        sample: 0,
+        gap: "low_sample",
+      };
+    }
+    const value =
+      unit === "ratio"
+        ? 0.05 + (i % 3) * 0.02
+        : unit === "seconds_median"
+          ? 10_800 + i * 600
+          : 1 + (i % 4);
+    return { start_ms: start, end_ms: start + bucketMs, value, unit, sample: 5, gap: null };
+  });
+  return {
+    metric,
+    service,
+    window: { since_ms: until - windowMs, until_ms: until },
+    bucket_ms: bucketMs,
+    points,
+  };
+}
 
 /**
  * `GET /v1/items/{id}` (C10) — the full row `fetchItemBranch`
@@ -1011,6 +1075,8 @@ export interface Scenario {
   readonly preflight?: Readonly<Record<string, unknown>>;
   /** Answer for any service absent from `preflight`. Defaults to PREFLIGHT_OK. */
   readonly preflightDefault?: unknown;
+  /** `GET /v1/metrics/stats` (C10.2), keyed by metric id. Absent → `statsFixture`. */
+  readonly stats?: Readonly<Record<string, unknown>>;
   /** `GET /v1/metrics/dora` (C10). Defaults to DORA_METRICS_FIXTURE. */
   readonly doraMetrics?: unknown;
   /** `GET /v1/items/{id}` (C10). Defaults to ITEM_WITH_BRANCH. */

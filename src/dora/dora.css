@@ -1,0 +1,48 @@
+:root { color-scheme: light dark; }
+body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
+.dora { max-width: 760px; margin: 0 auto; padding: 32px 24px 64px; }
+.dora__title { margin: 0 0 4px; font-size: 22px; }
+.dora__lede { margin: 0 0 24px; opacity: 0.8; }
+
+.dora__controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 16px; }
+.dora__controls select { padding: 4px 8px; max-width: 100%; }
+.dora__ranges { display: flex; gap: 6px; border: 0; margin: 0; padding: 0; min-width: 0; }
+.dora__ranges button { padding: 6px 12px; cursor: pointer; }
+.dora__ranges button[aria-pressed="true"] { font-weight: 600; }
+
+.dora__notice { margin: 0 0 16px; padding: 8px 12px; border-radius: 6px; background: color-mix(in srgb, currentcolor 8%, transparent); }
+.dora__notice[hidden] { display: none; }
+
+.dora__group-title { margin: 24px 0 4px; font-size: 15px; }
+.dora__rows { list-style: none; margin: 0; padding: 0; }
+.dora-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 4px 16px;
+  padding: 10px 4px;
+  border-top: 1px solid color-mix(in srgb, currentcolor 15%, transparent);
+}
+.dora-row__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.dora-row__label { flex-basis: 100%; font-size: 13px; opacity: 0.8; }
+.dora-row__value { font-size: 20px; font-weight: 600; }
+.dora-row__value--loading { opacity: 0.5; }
+.dora-row__sample { font-size: 12px; opacity: 0.7; }
+.dora-row__trend { align-self: center; }
+.dora-row__notrend { margin: 0; font-size: 12px; opacity: 0.75; }
+.dora-row__notes { grid-column: 1 / -1; list-style: none; margin: 0; padding: 0; font-size: 12px; opacity: 0.8; }
+
+.dora-spark { display: block; width: 160px; height: 32px; overflow: visible; }
+.dora-spark__baseline { stroke: currentcolor; stroke-opacity: 0.2; stroke-width: 1; }
+.dora-spark__line { fill: none; stroke: currentcolor; stroke-width: 1.5; }
+.dora-spark__line--hedged { stroke-dasharray: 2 2; stroke-opacity: 0.6; }
+.dora-spark__dot { fill: currentcolor; }
+.dora-spark__dot--hedged { fill: Canvas; stroke: currentcolor; stroke-width: 1; }
+.dora-spark__dot--null { fill: none; stroke: currentcolor; stroke-opacity: 0.45; stroke-width: 1; }
+
+.dora__footnote, .dora__footer { margin: 12px 0 0; font-size: 12px; opacity: 0.7; }
+
+@media (max-width: 480px) {
+  .dora { padding: 24px 16px 48px; }
+  .dora-row { grid-template-columns: minmax(0, 1fr); }
+  .dora-row__trend { margin: 4px 0; }
+}

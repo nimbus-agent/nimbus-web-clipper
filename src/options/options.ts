@@ -869,6 +869,11 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("trust-ledger-open")?.addEventListener("click", () => {
     openExtensionPage("ledger.html");
   });
+  // The metrics page reads the same bindings this block manages; it opens in a
+  // tab of its own like Activity and Briefs.
+  document.getElementById("open-dora")?.addEventListener("click", () => {
+    openExtensionPage("dora.html");
+  });
   void refreshShortcuts();
   void refreshPreviewToggle();
   void refreshIndexToggle();

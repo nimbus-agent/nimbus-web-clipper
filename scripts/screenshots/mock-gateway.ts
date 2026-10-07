@@ -28,6 +28,7 @@ import {
   RESOLVE_FILE_FIXTURE,
   RESOLVE_FIXTURE,
   type Scenario,
+  statsFixture,
 } from "./gateway-fixtures.ts";
 
 export const DEFAULT_PORT = 8765;
@@ -264,11 +265,24 @@ export async function handleRequest(
     return jsonResponse(keyed ?? scenario.preflightDefault ?? PREFLIGHT_OK);
   }
   // `GET /v1/metrics/dora?service=&since=` — the DORA envelope (C10). Same
-  // public table as `preflightDeploy` above. Unused by this slice (S2's DORA
-  // page is the first reader) — seeded here only so the route has an answer
-  // rather than a 404 nothing yet asks for.
+  // public table as `preflightDeploy` above. The DORA page (C10.2) reads it,
+  // and its parser rejects a body for any other service, so echo the request.
   if (req.method === "GET" && url.pathname === GATEWAY_PATHS.metricsDora) {
-    return jsonResponse(scenario.doraMetrics ?? DORA_METRICS_FIXTURE);
+    const service = url.searchParams.get("service") ?? "";
+    const body = scenario.doraMetrics ?? DORA_METRICS_FIXTURE;
+    return jsonResponse(isObject(body) ? { ...body, service } : body);
+  }
+  // `GET /v1/metrics/stats` (C10.2). Public, like the two above. A scenario
+  // removes it with `status: { [GATEWAY_PATHS.metricsStats]: 404 }`, which the
+  // generic override already honours — that is the old-gateway case.
+  if (req.method === "GET" && url.pathname === GATEWAY_PATHS.metricsStats) {
+    const service = url.searchParams.get("service") ?? "";
+    const metric = url.searchParams.get("metric") ?? "";
+    const windowMs = Number(url.searchParams.get("window_ms"));
+    const bucketMs = Number(url.searchParams.get("bucket_ms"));
+    return jsonResponse(
+      scenario.stats?.[metric] ?? statsFixture(service, metric, windowMs, bucketMs),
+    );
   }
   // `GET /v1/items/{id}` (C10) — the full row `fetchItemBranch`
   // (src/background/deploy-client.ts) reads `metadata.branch` off of. Checked
