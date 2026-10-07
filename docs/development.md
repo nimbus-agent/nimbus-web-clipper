@@ -702,6 +702,23 @@ keeps its guess until the owner grants it.
    /v1/items/{id}` fixture cannot distinguish "the real branch" from "a
    plausible one" the way a real checkout can.
 
+## Manual verification — Delivery metrics (C10.2)
+
+Needs a gateway at v7.19.0 or later for steps 1–2, and an older one (or the
+mock with `/v1/metrics/stats` returning 404) for step 3.
+
+1. <!-- e2e:dora-from-options --> With one service bound, open Options and press
+   **DORA metrics**. The page opens on that service: four Delivery rows with a
+   figure, `n=` and a trend line each, and two Activity rows whose figure reads
+   "total · N of 13 weeks reported". A metric the gateway cannot compute shows
+   "—" and says why — never a 0.
+2. <!-- e2e:dora-from-panel --> On a pull request whose repository is bound,
+   open the panel. Under Deploy readiness's verdict, press **Delivery metrics
+   for <id> →**; the page opens on that service.
+3. <!-- e2e:dora-old-gateway --> Against a gateway without the trend route, the
+   page shows "Trends need a newer Nimbus gateway." once, draws no trend lines,
+   and still shows every headline figure.
+
 ## Manual verification — Setup that works (discovery, connection health, the trust panel)
 
 Prereq: a Nimbus gateway available to start/stop on demand. Step 1 needs a

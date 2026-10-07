@@ -494,3 +494,27 @@ describe("scenarios", () => {
     expect(await res.json()).toEqual(RELATED);
   });
 });
+
+test("GET /v1/metrics/stats answers a series the client parser accepts", async () => {
+  const { parseStatsSeries, RANGES } = await import("../../src/shared/dora.ts");
+  const r = RANGES["13w"];
+  const res = await handleRequest(
+    new Request(
+      `http://127.0.0.1/v1/metrics/stats?service=web&metric=pr-merges&window_ms=${r.windowMs}&bucket_ms=${r.bucketMs}`,
+    ),
+    {},
+    newBriefRuns(),
+  );
+  const parsed = parseStatsSeries(await res.json(), "web", "pr-merges");
+  expect(parsed?.points).toHaveLength(13);
+  expect(parsed?.points.some((p) => p.gap === "low_sample")).toBe(true);
+});
+
+test("GET /v1/metrics/dora echoes the requested service", async () => {
+  const res = await handleRequest(
+    new Request("http://127.0.0.1/v1/metrics/dora?service=api&since=91d"),
+    {},
+    newBriefRuns(),
+  );
+  expect(((await res.json()) as { service: string }).service).toBe("api");
+});
