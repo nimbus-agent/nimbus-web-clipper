@@ -65,12 +65,14 @@ to get a code.
 1. Clip an article from the popup, close the popup, and open it again on the
    same page. Under the title it says "You clipped this just now." and the
    first button reads **Update clip**; pressing it reports "Updated in Nimbus."
+   **(not yet automated — a Playwright-opened popup is its own active tab, a `chrome-extension://` page, so the lookup never fires there)**
 2. Open the popup on a page a connector indexed (for example a GitHub pull
    request on a gateway with GitHub configured). It says "Already in Nimbus
    from GitHub, updated …" and the button still reads **Clip page**.
+   **(not yet automated — a Playwright-opened popup is its own active tab, a `chrome-extension://` page, so the lookup never fires there)**
 3. Open it on a page Nimbus has never seen, on an unpaired browser, and with
    the gateway stopped. In all three the line is absent and clipping works as
-   before.
+   before. **(not yet automated — a Playwright-opened popup is its own active tab, a `chrome-extension://` page, so the lookup never fires there)**
 
 ## Manual verification — Slice 2 (related panel)
 

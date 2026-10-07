@@ -1602,7 +1602,8 @@ uniquely ours, and the fastest way to make the extension feel different.*
 > (`clip-lookup`), `src/background/handlers.ts` (`handleClipLookup`).
 > **Approach** As the old reframe said: built on the resolve read, not on
 > `/v1/clips/related` (which uses `canonicalUrl` to *exclude* the current host,
-> not to match it). One `/v1/items/resolve` read for ANY http(s) page — the
+> not to match it). One `/v1/items/resolve` read for ANY http(s) page, made only for a
+> valid URL on a paired browser — the
 > panel's `resolve` message declines unrecognised pages before asking, and a
 > blog post is the case that matters. Every failure is a silent `none`; the
 > "jump to it" action was dropped with 4.1's open-in-Nimbus, since there is no
