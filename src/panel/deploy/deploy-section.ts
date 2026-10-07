@@ -13,7 +13,12 @@ import {
   type ServiceResolutionOutcome,
 } from "../../shared/messages.ts";
 import type { Product, SurfaceKind } from "../../shared/types.ts";
-import { renderBindForm, renderDeployBody, renderSectionFrame } from "./deploy-view.ts";
+import {
+  renderBindForm,
+  renderDeployBody,
+  renderDoraLink,
+  renderSectionFrame,
+} from "./deploy-view.ts";
 
 /** The only surfaces a deploy binding can be keyed by. `home` carries no scope
  *  at all (see the recognition doc comment on `Recognition.scope`); `file` has
@@ -178,7 +183,14 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
       return;
     }
     if (res.ok) {
-      body.replaceChildren(renderDeployBody(doc, res.preflight));
+      const serviceId = res.serviceId;
+      body.replaceChildren(
+        renderDeployBody(doc, res.preflight),
+        renderDoraLink(doc, serviceId, () => {
+          // No reply by design (`OpenDoraRequest`); nothing to await.
+          void send({ kind: "open-dora", serviceId }).catch(() => undefined);
+        }),
+      );
       return;
     }
     if (res.reason === "unbound") {

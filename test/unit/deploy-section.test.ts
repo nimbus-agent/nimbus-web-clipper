@@ -526,4 +526,19 @@ describe("mountDeploySection", () => {
     expect(host.textContent).toMatch(/Clear to deploy third/);
     expect(host.textContent).not.toMatch(/could not reach/i);
   });
+
+  test("a bound verdict offers the DORA page for the BOUND id, via open-dora", async () => {
+    const host = document.createElement("div");
+    const send = vi.fn(async (msg: unknown) =>
+      (msg as { kind: string }).kind === "deploy-preflight"
+        ? { kind: "deploy-preflight", ok: true, serviceId: "web-ci", preflight: okEnvelope }
+        : undefined,
+    );
+    mountDeploySection(host, ctx, send);
+    await flush();
+    const link = host.querySelector<HTMLButtonElement>(".nimbus-deploy__dora-link");
+    expect(link?.textContent).toBe("Delivery metrics for web-ci →");
+    link?.click();
+    expect(send).toHaveBeenCalledWith({ kind: "open-dora", serviceId: "web-ci" });
+  });
 });

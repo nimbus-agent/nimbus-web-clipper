@@ -142,6 +142,25 @@ export function renderDeployBody(doc: Document, r: DeployPreflightResult): HTMLE
 }
 
 /**
+ * The way from a verdict to the metrics behind it (C10.2). A BUTTON that asks
+ * the worker to open the page (`open-dora`), never an anchor: this renders in a
+ * web page, which can only navigate to an extension page declared
+ * web-accessible — and declaring `dora.html` so would let any site probe for
+ * the extension.
+ */
+export function renderDoraLink(doc: Document, serviceId: string, onOpen: () => void): HTMLElement {
+  const p = doc.createElement("p");
+  p.className = "nimbus-deploy__dora";
+  const b = doc.createElement("button");
+  b.type = "button";
+  b.className = "nimbus-deploy__dora-link";
+  b.textContent = `Delivery metrics for ${serviceId} →`;
+  b.addEventListener("click", onOpen);
+  p.append(b);
+  return p;
+}
+
+/**
  * The section's frame: the heading every other panel section has, and the body
  * element the controller repaints on each state change.
  *

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 // test/unit/deploy-view.test.ts
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   DEPLOY_SECTION_TITLE,
   GAP_NOTE,
   renderBindForm,
   renderDeployBody,
+  renderDoraLink,
   renderSectionFrame,
   verdictLine,
 } from "../../src/panel/deploy/deploy-view.ts";
@@ -378,5 +379,17 @@ describe("renderBindForm", () => {
     expect(text).not.toMatch(/nimbus clip scopes/);
     expect(text).not.toMatch(/missing the .resolve. scope/i);
     expect(form.querySelectorAll(".nimbus-deploy__resolution")).toHaveLength(1);
+  });
+});
+
+describe("renderDoraLink", () => {
+  test("is a button naming the service, never a chrome-extension:// anchor", () => {
+    const onOpen = vi.fn();
+    const p = renderDoraLink(document, "web-ci", onOpen);
+    const b = p.querySelector("button");
+    expect(b?.textContent).toBe("Delivery metrics for web-ci →");
+    expect(p.querySelector("a")).toBeNull();
+    b?.click();
+    expect(onOpen).toHaveBeenCalledOnce();
   });
 });
