@@ -10,6 +10,14 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **The popup tells you when a page is already in Nimbus.** Open it on a page
+  you clipped before and it says "You clipped this 3 days ago." with **Clip
+  page** relabelled **Update clip** — clipping again updates that copy rather
+  than adding a second one. On a page a connector already indexed, such as a
+  GitHub pull request, it says "Already in Nimbus from GitHub". If the check
+  can't be made (not paired yet, an older gateway, or one that isn't running)
+  the popup simply says nothing and clips as before.
+
 - **Delivery metrics for a bound service.** A new page shows the four DORA
   metrics — deployment frequency, lead time for changes, change failure rate
   and time to restore — plus pull requests merged and incidents opened, each

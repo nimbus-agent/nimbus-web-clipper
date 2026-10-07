@@ -60,6 +60,18 @@ to get a code.
 7. **Search:** in Nimbus, `nimbus search` for a word in the clip → it appears.
 8. Repeat 1–4 in Firefox.
 
+### Never-clip-twice (1.1)
+
+1. Clip an article from the popup, close the popup, and open it again on the
+   same page. Under the title it says "You clipped this just now." and the
+   first button reads **Update clip**; pressing it reports "Updated in Nimbus."
+2. Open the popup on a page a connector indexed (for example a GitHub pull
+   request on a gateway with GitHub configured). It says "Already in Nimbus
+   from GitHub, updated …" and the button still reads **Clip page**.
+3. Open it on a page Nimbus has never seen, on an unpaired browser, and with
+   the gateway stopped. In all three the line is absent and clipping works as
+   before.
+
 ## Manual verification — Slice 2 (related panel)
 
 Prereq: paired (Slice 1) and the gateway has some indexed items.

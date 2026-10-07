@@ -8,6 +8,8 @@ import type {
   AgentStateResponse,
   CaptureRequest,
   CaptureResponse,
+  ClipLookupRequest,
+  ClipLookupResponse,
   ClipRequest,
   ClipResponse,
   ConnectionResponse,
@@ -31,9 +33,11 @@ import { enqueue, type QueuedClip, removeFromQueue, toView } from "../shared/que
 import { recognise } from "../shared/recognise/index.ts";
 import { PRODUCT_SERVICE_ID } from "../shared/recognise/registry.ts";
 import { buildRelatedQuery, type RelatedQuery } from "../shared/related.ts";
+import { safeHttpUrl } from "../shared/safe-url.ts";
 import {
   type AgentError,
   type AgentLane,
+  CLIP_SERVICE,
   type ClipPostResult,
   type ConfiguredOrigin,
   type Connection,
@@ -395,6 +399,38 @@ async function resolveFileSurface(
     file: probe.ok ? probe.resolution : { kind: "unsupported" },
     ...offered,
   };
+}
+
+/**
+ * Never-clip-twice (roadmap 1.1): is this page already in Nimbus?
+ *
+ * ONE read — `resolveItem` on the page's own URL — for any http(s) page,
+ * recognised or not: a blog post is the case that matters and `handleResolve`
+ * declines it before asking. The gateway matches on its canonical resolve key,
+ * which clips carry like every other row.
+ *
+ * Never throws and never reports a failure. Unpaired, a token without the
+ * `resolve` scope, an older gateway, an unreachable one, a miss and an
+ * ambiguous match are all `none`: the popup line is a hint, and a hint that
+ * cannot be given is simply not shown.
+ */
+export async function handleClipLookup(
+  deps: { readonly getConnection: GetConnection; readonly resolveItem: ResolveItem },
+  req: ClipLookupRequest,
+): Promise<ClipLookupResponse> {
+  const none: ClipLookupResponse = { kind: "clip-lookup", state: "none" };
+  const pageUrl = safeHttpUrl(req.pageUrl);
+  if (pageUrl === null) return none;
+  const conn = await deps.getConnection();
+  if (conn === null) return none;
+  const res = await deps
+    .resolveItem(conn.origin, conn.token, pageUrl)
+    .catch((): { ok: false; reason: ResolveError } => ({ ok: false, reason: "unreachable" }));
+  if (!res.ok || res.outcome.kind !== "found") return none;
+  const { service, modifiedAt } = res.outcome.item;
+  return service === CLIP_SERVICE
+    ? { kind: "clip-lookup", state: "clipped", modifiedAt }
+    : { kind: "clip-lookup", state: "indexed", service, modifiedAt };
 }
 
 /**

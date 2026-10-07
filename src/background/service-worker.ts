@@ -36,6 +36,7 @@ import {
   isAgentStateRequest,
   isBriefStartRequest,
   isCaptureRequest,
+  isClipLookupRequest,
   isClipRequest,
   isConnectionStatusRequest,
   isCueOpenRequest,
@@ -136,6 +137,7 @@ import {
   handleAgentState,
   handleCapture,
   handleClip,
+  handleClipLookup,
   handleConnectionStatus,
   handleDiscover,
   handleFetch,
@@ -1295,6 +1297,16 @@ async function clipThenReply(message: ClipRequest, respond: Respond): Promise<vo
 }
 
 function routeIndexReads(message: unknown, respond: Respond): Routed {
+  if (isClipLookupRequest(message)) {
+    // Never-clip-twice. The handler folds every failure into `none`; this catch
+    // only covers it throwing anyway, with the same answer.
+    handleClipLookup({ getConnection, resolveItem }, message)
+      .then(respond)
+      .catch(() => {
+        respond({ kind: "clip-lookup", state: "none" });
+      });
+    return true;
+  }
   if (isRelatedRequest(message)) {
     handleRelated({ getConnection, postRelated }, message)
       .then(respond)

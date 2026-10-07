@@ -7,6 +7,7 @@ import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts"
 
 const FIXTURE = `
   <main class="popup">
+    <p id="lookup" hidden></p>
     <input id="tags" type="text" />
     <div class="popup__actions">
       <button id="clip-page" type="button">Clip page</button>
@@ -62,9 +63,10 @@ beforeEach(async () => {
   harness = installChromeMock();
   document.body.innerHTML = FIXTURE;
   document.dispatchEvent(new Event("DOMContentLoaded"));
-  // Let the initial refreshQueue() (fired from DOMContentLoaded) settle before
-  // each test configures its own mock sequencing.
-  await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledTimes(1));
+  // Let the two reads fired from DOMContentLoaded — refreshQueue() and the
+  // never-clip-twice lookup — settle before each test configures its own mock
+  // sequencing.
+  await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledTimes(2));
 });
 
 afterEach(() => {
@@ -169,7 +171,7 @@ describe("clip(article)", () => {
     await vi.waitFor(() =>
       expect(statusText()).toBe("Nimbus can't clip browser system or store pages."),
     );
-    expect(harness.sendMessage).toHaveBeenCalledTimes(1); // only the initial refreshQueue call
+    expect(harness.sendMessage).toHaveBeenCalledTimes(2); // only the two load-time reads
   });
 
   test("an unexpected sendMessage response reports Unexpected response.", async () => {
@@ -194,7 +196,7 @@ describe("clip(selection)", () => {
     click("clip-selection");
 
     await vi.waitFor(() => expect(statusText()).toBe("Select some text first."));
-    expect(harness.sendMessage).toHaveBeenCalledTimes(1); // only the initial refreshQueue call
+    expect(harness.sendMessage).toHaveBeenCalledTimes(2); // only the two load-time reads
   });
 
   test("non-empty selection sends the clip in selection mode", async () => {
@@ -252,8 +254,8 @@ describe("clip error mapping", () => {
       await confirmPreview();
 
       await vi.waitFor(() => expect(statusText()).toBe(message));
-      await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledTimes(3));
-      expect(harness.sendMessage).toHaveBeenNthCalledWith(3, { kind: "queue-list" });
+      await vi.waitFor(() => expect(harness.sendMessage).toHaveBeenCalledTimes(4));
+      expect(harness.sendMessage).toHaveBeenNthCalledWith(4, { kind: "queue-list" });
     });
   }
 
@@ -598,10 +600,18 @@ describe("preview before sending", () => {
 });
 
 describe("popup with partial markup", () => {
-  /** Re-boots the popup against a different page, after the shared beforeEach. */
-  function rebootWith(markup: string): void {
+  /**
+   * Re-boots the popup against a different page, after the shared beforeEach,
+   * and waits for the reboot's two load-time reads (the queue and the
+   * never-clip-twice lookup) so a test's queued replies are not consumed by them.
+   */
+  async function rebootWith(markup: string): Promise<void> {
+    const before = harness.sendMessage.mock.calls.length;
     document.body.innerHTML = markup;
     document.dispatchEvent(new Event("DOMContentLoaded"));
+    await vi.waitFor(() =>
+      expect(harness.sendMessage.mock.calls.length).toBeGreaterThanOrEqual(before + 2),
+    );
   }
 
   // The preview is a confirmation, never a gate that can silently eat a clip:
@@ -609,7 +619,9 @@ describe("popup with partial markup", () => {
   // and no queue section means the queue read paints nothing.
   test("with no preview UI, a clip is sent rather than dropped", async () => {
     // The reboot's own queue read went out synchronously, above, before this.
-    rebootWith(`<button id="clip-page" type="button">Clip</button><output id="status"></output>`);
+    await rebootWith(
+      `<button id="clip-page" type="button">Clip</button><output id="status"></output>`,
+    );
     stubCapture();
     harness.sendMessage.mockResolvedValueOnce({
       kind: "clip",
@@ -631,7 +643,7 @@ describe("popup with partial markup", () => {
   // Every control the composer lock would touch is missing here; the preview
   // still shows, and Confirm still sends exactly what it showed.
   test("a preview with no composer controls or status line still confirms and sends", async () => {
-    rebootWith(`
+    await rebootWith(`
       <button id="clip-page" type="button">Clip</button>
       <section id="preview" hidden>
         <div id="preview-body"></div>
@@ -658,8 +670,8 @@ describe("popup with partial markup", () => {
 
   // Cancel's confirmation must not depend on the section it hides: a page that
   // kept the button but lost the preview section still says nothing was sent.
-  test("Cancel with no preview section still reports that nothing was sent", () => {
-    rebootWith(`
+  test("Cancel with no preview section still reports that nothing was sent", async () => {
+    await rebootWith(`
       <button id="preview-cancel" type="button">Cancel</button>
       <output id="status"></output>`);
     harness.sendMessage.mockClear();
@@ -680,7 +692,7 @@ describe("popup with partial markup", () => {
       return {};
     };
     chromeLike.chrome.runtime["getURL"] = (path: string) => `chrome-extension://abc/${path}`;
-    rebootWith(`<button id="open-brief" type="button">Open brief</button>`);
+    await rebootWith(`<button id="open-brief" type="button">Open brief</button>`);
 
     click("open-brief");
 
@@ -725,5 +737,68 @@ describe("queue clicks that name no action", () => {
     await Promise.resolve();
 
     expect(harness.sendMessage.mock.calls).toHaveLength(callsBefore);
+  });
+});
+
+describe("never-clip-twice", () => {
+  /** Re-run the popup's load with a chosen lookup reply. */
+  async function openWith(lookupReply: unknown): Promise<void> {
+    harness.sendMessage.mockReset();
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) =>
+      m.kind === "clip-lookup" ? lookupReply : undefined,
+    );
+    document.body.innerHTML = FIXTURE;
+    document.dispatchEvent(new Event("DOMContentLoaded"));
+    await vi.waitFor(() =>
+      expect(harness.sendMessage).toHaveBeenCalledWith({
+        kind: "clip-lookup",
+        pageUrl: "https://example.com/",
+      }),
+    );
+  }
+
+  test("a page you clipped says so and offers Update clip", async () => {
+    await openWith({ kind: "clip-lookup", state: "clipped", modifiedAt: Date.now() });
+    const line = document.getElementById("lookup");
+    await vi.waitFor(() => expect(line?.hidden).toBe(false));
+    expect(line?.textContent).toBe("You clipped this just now.");
+    expect(document.getElementById("clip-page")?.textContent).toBe("Update clip");
+  });
+
+  test("an item a connector indexed says so but keeps Clip page", async () => {
+    await openWith({
+      kind: "clip-lookup",
+      state: "indexed",
+      service: "github",
+      modifiedAt: Date.now(),
+    });
+    const line = document.getElementById("lookup");
+    await vi.waitFor(() => expect(line?.hidden).toBe(false));
+    expect(line?.textContent).toBe("Already in Nimbus from GitHub, updated just now.");
+    expect(document.getElementById("clip-page")?.textContent).toBe("Clip page");
+  });
+
+  test("nothing known, or a garbled reply, shows no line", async () => {
+    await openWith({ kind: "clip-lookup", state: "none" });
+    expect(document.getElementById("lookup")?.hidden).toBe(true);
+    await openWith({ kind: "clip-lookup", state: "clipped" });
+    expect(document.getElementById("lookup")?.hidden).toBe(true);
+    expect(document.getElementById("clip-page")?.textContent).toBe("Clip page");
+  });
+
+  test("a first successful clip turns the button into Update clip", async () => {
+    await openWith({ kind: "clip-lookup", state: "none" });
+    harness.executeScript
+      .mockResolvedValueOnce([{ result: undefined }])
+      .mockResolvedValueOnce([{ result: ARTICLE_CAPTURE }]);
+    harness.sendMessage.mockImplementation(async (m: { kind: string }) =>
+      m.kind === "clip"
+        ? { kind: "clip", ok: true, id: "c1", status: "created", bookmarked: false }
+        : undefined,
+    );
+    click("clip-page");
+    await confirmPreview();
+    await vi.waitFor(() => expect(statusText()).toBe("Saved to Nimbus."));
+    expect(document.getElementById("clip-page")?.textContent).toBe("Update clip");
   });
 });

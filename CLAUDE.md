@@ -150,7 +150,8 @@ monorepo's git history.)
 - `src/dora/` — the DORA metrics page (C10.2): `dora.ts` → `dora.js` +
   `dora.html`/`dora.css`, pure `dora-view.ts`, `dora-format.ts`, `sparkline.ts`
 - `src/popup/` — toolbar popup (clip page / clip selection + tags + status) plus the
-  pure `queue-view.ts` (offline-queue manager rendering)
+  pure `queue-view.ts` (offline-queue manager rendering) and `lookup-view.ts`
+  (the never-clip-twice line)
 - `src/options/` — options page (gateway URL + 6-digit code → pairing form) plus the
   pure views it composes: `connection-view.ts` (pairing status + unpair),
   `setup-view.ts`, `surfaces-view.ts`, `shortcuts-view.ts`,

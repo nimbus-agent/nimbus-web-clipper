@@ -9,6 +9,8 @@ import {
   isBriefStartRequest,
   isCaptureRequest,
   isCaptureResponse,
+  isClipLookupRequest,
+  isClipLookupResponse,
   isClipRequest,
   isConnectionResponse,
   isConnectionStatusRequest,
@@ -1979,6 +1981,38 @@ describe("DORA response guards", () => {
     ).toBe(true);
     expect(
       isMetricsStatsResponse({ kind: "metrics-stats", ok: false, reason: "nope" }, "web", "mttr"),
+    ).toBe(false);
+  });
+});
+
+describe("clip-lookup guards", () => {
+  test("the request needs a string page URL", () => {
+    expect(isClipLookupRequest({ kind: "clip-lookup", pageUrl: "https://a.example/x" })).toBe(true);
+    expect(isClipLookupRequest({ kind: "clip-lookup" })).toBe(false);
+    expect(isClipLookupRequest({ kind: "clip-lookup", pageUrl: 3 })).toBe(false);
+    expect(isClipLookupRequest({ kind: "clip-lookup", pageUrl: "x".repeat(8193) })).toBe(false);
+  });
+
+  test("the reply is one of three closed states, each with its own fields", () => {
+    expect(isClipLookupResponse({ kind: "clip-lookup", state: "none" })).toBe(true);
+    expect(isClipLookupResponse({ kind: "clip-lookup", state: "clipped", modifiedAt: 1 })).toBe(
+      true,
+    );
+    expect(
+      isClipLookupResponse({
+        kind: "clip-lookup",
+        state: "indexed",
+        service: "github",
+        modifiedAt: 1,
+      }),
+    ).toBe(true);
+    expect(isClipLookupResponse({ kind: "clip-lookup", state: "clipped" })).toBe(false);
+    expect(isClipLookupResponse({ kind: "clip-lookup", state: "indexed", modifiedAt: 1 })).toBe(
+      false,
+    );
+    expect(isClipLookupResponse({ kind: "clip-lookup", state: "maybe" })).toBe(false);
+    expect(
+      isClipLookupResponse({ kind: "clip-lookup", state: "clipped", modifiedAt: Number.NaN }),
     ).toBe(false);
   });
 });

@@ -143,6 +143,55 @@ export interface ResolveRequest {
  * would be attacker-controllable on a hostile site; the worker instead uses the
  * sender's own tab, which the browser supplies and the page cannot forge.
  */
+/**
+ * Never-clip-twice (roadmap 1.1): is the page the popup is open on already in
+ * Nimbus? One `/v1/items/resolve` read, for ANY http(s) page — unlike
+ * `resolve`, which answers only on a recognised product page and also starts
+ * the roster and connector-health reads.
+ */
+export interface ClipLookupRequest {
+  readonly kind: "clip-lookup";
+  readonly pageUrl: string;
+}
+
+/**
+ * Three closed states. Every failure — unpaired, no `resolve` scope, an older
+ * gateway, an unreachable one, a miss, an ambiguous match — is `none`: the
+ * popup line is a hint, never an error, and never blocks a clip.
+ */
+export type ClipLookupResponse =
+  | { readonly kind: "clip-lookup"; readonly state: "clipped"; readonly modifiedAt: number }
+  | {
+      readonly kind: "clip-lookup";
+      readonly state: "indexed";
+      readonly service: string;
+      readonly modifiedAt: number;
+    }
+  | { readonly kind: "clip-lookup"; readonly state: "none" };
+
+/** A page URL longer than this is not one worth asking about — and a bound keeps a
+ *  page-sized string from crossing into the worker's request. */
+const MAX_LOOKUP_URL_LEN = 8192;
+
+export function isClipLookupRequest(v: unknown): v is ClipLookupRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "clip-lookup" &&
+    typeof v["pageUrl"] === "string" &&
+    v["pageUrl"].length <= MAX_LOOKUP_URL_LEN
+  );
+}
+
+export function isClipLookupResponse(v: unknown): v is ClipLookupResponse {
+  if (!isObject(v) || v["kind"] !== "clip-lookup") return false;
+  const at = v["modifiedAt"];
+  const stamped = typeof at === "number" && Number.isFinite(at);
+  if (v["state"] === "none") return true;
+  if (v["state"] === "clipped") return stamped;
+  if (v["state"] === "indexed") return stamped && typeof v["service"] === "string";
+  return false;
+}
+
 export interface CueOpenRequest {
   readonly kind: "cue-open";
 }
@@ -459,7 +508,8 @@ export type ExtensionRequest =
   | ServiceBindingsCheckRequest
   | DoraMetricsRequest
   | MetricsStatsRequest
-  | OpenDoraRequest;
+  | OpenDoraRequest
+  | ClipLookupRequest;
 
 export type PairResponse =
   | { readonly kind: "pair"; readonly ok: true; readonly label: string }

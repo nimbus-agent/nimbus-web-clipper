@@ -1591,21 +1591,24 @@ to; that gap is what this phase closes.*
 and stop the single most common annoyance (clipping the same page twice). Cheap,
 uniquely ours, and the fastest way to make the extension feel different.*
 
-### 1.1 Never-clip-twice · 🟢 · S
-> **What** Detect an already-indexed page and say so *before* the user clips.
-> **Why it wows** No other clipper tells you "you already saved this" the instant
-> you reach for the button — and offers a one-click jump to it.
-> **Touches** `src/popup/popup.ts`, `src/shared/related.ts`,
-> `src/background/handlers.ts` (a lightweight `handleLookup`).
-> **Approach** On popup open, call `/v1/clips/related` with the canonical URL;
-> an exact-URL hit means "already clipped." Reuse the `updated` status the ingest
-> endpoint already returns as the post-clip confirmation.
-> **Done when** Opening the popup on an indexed page shows an "Already in Nimbus"
-> state with a jump action; clipping it reports "updated," not "created."
-> **Reframe** Same feature, different plumbing: the approach above does not
-> actually work against today's contract — `/v1/clips/related` uses
-> `canonicalUrl` to *exclude* the current host, not to match it. This is the
-> shallow case of **C1.1** and should be built on the resolve read, not before it.
+### 1.1 Never-clip-twice · 🟢 · S — ✅ shipped
+> **What** Opening the popup on a page Nimbus already has says so *before* you
+> clip: "You clipped this 3 days ago." with **Update clip** in place of **Clip
+> page**, or "Already in Nimbus from GitHub, updated 2 days ago." for an item a
+> connector indexed.
+> **Why it wows** No other clipper tells you "you already saved this" the
+> instant you reach for the button.
+> **Touches** `src/popup/` (`lookup-view.ts`, `popup.ts`), `src/shared/messages.ts`
+> (`clip-lookup`), `src/background/handlers.ts` (`handleClipLookup`).
+> **Approach** As the old reframe said: built on the resolve read, not on
+> `/v1/clips/related` (which uses `canonicalUrl` to *exclude* the current host,
+> not to match it). One `/v1/items/resolve` read for ANY http(s) page — the
+> panel's `resolve` message declines unrecognised pages before asking, and a
+> blog post is the case that matters. Every failure is a silent `none`; the
+> "jump to it" action was dropped with 4.1's open-in-Nimbus, since there is no
+> Nimbus page to jump to.
+> **Done when** Met: an indexed page shows the line, a clipped one relabels the
+> button, and re-clipping still reports "Updated in Nimbus."
 
 ### 1.2 "Where does my data go?" trust panel · 🟢 · S — ✅ shipped
 > **What** A plain, always-reachable panel stating: one destination
