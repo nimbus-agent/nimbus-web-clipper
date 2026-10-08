@@ -19,7 +19,7 @@ export async function handleDoraMetrics(
 ): Promise<DoraMetricsResponse> {
   const conn = await deps.getConnection();
   if (conn === null) {
-    return { kind: "dora-metrics", ok: false, reason: "unreachable" };
+    return { kind: "dora-metrics", ok: false, reason: "not_paired" };
   }
   const res = await fetchDoraMetrics(conn.origin, req.serviceId, req.range, deps.doFetch);
   return res.ok
@@ -33,7 +33,7 @@ export async function handleMetricsStats(
 ): Promise<MetricsStatsResponse> {
   const conn = await deps.getConnection();
   if (conn === null) {
-    return { kind: "metrics-stats", ok: false, reason: "unreachable" };
+    return { kind: "metrics-stats", ok: false, reason: "not_paired" };
   }
   const res = await fetchStatsSeries(
     conn.origin,

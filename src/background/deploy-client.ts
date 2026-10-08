@@ -234,7 +234,11 @@ export async function fetchStatsSeries(
     if (res.status === 404) return { ok: false, reason: "unsupported" };
     if (res.status === 400) return { ok: false, reason: "refused" };
     if (!res.ok) return { ok: false, reason: "server_error" };
-    const parsed = parseStatsSeries(await readJson(res), service, metric);
+    const body = await readJson(res);
+    // `readJson` swallows an abort into `null`; a timeout mid-body is a gateway
+    // that stopped answering, not one that answered nonsense.
+    if (signal.aborted) return { ok: false, reason: "unreachable" };
+    const parsed = parseStatsSeries(body, service, metric);
     return parsed === null ? { ok: false, reason: "malformed" } : { ok: true, value: parsed };
   });
 }

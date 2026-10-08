@@ -444,6 +444,27 @@ describe("fetchStatsSeries", () => {
     });
   });
 
+  test("a timeout while the body is still arriving is unreachable, not malformed", async () => {
+    vi.useFakeTimers();
+    try {
+      // Headers arrive at once; the body never does, until the timeout aborts it.
+      const f = (async (_url: string, init?: RequestInit) =>
+        ({
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            }),
+        }) as unknown as Response) as unknown as typeof fetch;
+      const pending = fetchStatsSeries(ORIGIN, "web", "13w", "mttr", f);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await pending).toEqual({ ok: false, reason: "unreachable" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("a body that fails the parser is malformed", async () => {
     const res = await fetchStatsSeries(
       ORIGIN,

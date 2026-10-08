@@ -26,6 +26,16 @@ describe("renderSparkline", () => {
     const svg = renderSparkline(document, [p(0.1), p(null, "low_sample")], "s");
     const dot = svg.querySelector("circle.dora-spark__dot--null");
     expect(dot?.querySelector("title")?.textContent).toContain("Too few events");
+    // The marker names its period too, not only the reason.
+    expect(dot?.querySelector("title")?.textContent).toMatch(/ – .*: —. /);
+  });
+
+  test("a flat-zero series sits every dot on the baseline", () => {
+    const svg = renderSparkline(document, [p(0), p(0), p(0)], "s");
+    const ys = [...svg.querySelectorAll("circle.dora-spark__dot")].map((c) => c.getAttribute("cy"));
+    const base = svg.querySelector(".dora-spark__baseline")?.getAttribute("y1");
+    expect(ys).toHaveLength(3);
+    for (const y of ys) expect(Number(y)).toBe(Number(base));
   });
 
   test("a value with a gap is hedged: hollow dot, dashed neighbours", () => {

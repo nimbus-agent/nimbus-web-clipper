@@ -718,6 +718,10 @@ mock with `/v1/metrics/stats` returning 404) for step 3.
 3. <!-- e2e:dora-old-gateway --> Against a gateway without the trend route, the
    page shows "Trends need a newer Nimbus gateway." once, draws no trend lines,
    and still shows every headline figure.
+4. Unpair the browser (Options → Unpair this browser) and open
+   `dora.html?service=<id>` directly. The page says the browser isn't paired
+   yet and offers **Open Options to pair** — never "Can't reach your Nimbus
+   gateway."
 
 ## Manual verification — Setup that works (discovery, connection health, the trust panel)
 

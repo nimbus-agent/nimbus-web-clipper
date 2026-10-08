@@ -1981,4 +1981,17 @@ describe("DORA response guards", () => {
       isMetricsStatsResponse({ kind: "metrics-stats", ok: false, reason: "nope" }, "web", "mttr"),
     ).toBe(false);
   });
+
+  test("both reads can say the browser is not paired", () => {
+    expect(
+      isDoraMetricsResponse({ kind: "dora-metrics", ok: false, reason: "not_paired" }, "web"),
+    ).toBe(true);
+    expect(
+      isMetricsStatsResponse(
+        { kind: "metrics-stats", ok: false, reason: "not_paired" },
+        "web",
+        "mttr",
+      ),
+    ).toBe(true);
+  });
 });

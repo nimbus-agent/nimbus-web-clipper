@@ -9,6 +9,7 @@
 // reply that belongs to an earlier service or range.
 
 import { sendMessage } from "../browser/runtime.ts";
+import { openExtensionPage } from "../browser/tabs.ts";
 import { sendableId } from "../shared/deploy.ts";
 import {
   ACTIVITY_METRICS,
@@ -32,6 +33,7 @@ import {
 import type { ServiceBinding } from "../shared/services.ts";
 import {
   type HeadlineState,
+  NOT_PAIRED_NOTICE,
   renderActivityRow,
   renderDeliveryRow,
   renderFootnote,
@@ -47,6 +49,7 @@ const CHOOSE = "Choose a service";
 
 const picker = document.getElementById("service-picker") as HTMLSelectElement | null;
 const notice = document.getElementById("dora-notice");
+const pairButton = document.getElementById("dora-pair");
 const deliveryList = document.getElementById("delivery-rows");
 const activityList = document.getElementById("activity-rows");
 const footer = document.getElementById("dora-footer");
@@ -116,8 +119,16 @@ function paint(): void {
 }
 
 /** A rejected send — the channel closed, most often a worker restart — counts
- *  as unreachable: nothing was answered. */
-type Outcome = "ok" | "unreachable" | "other";
+ *  as unreachable: nothing was answered. `not_paired` is kept apart from it
+ *  because its remedy is different: pair the browser, not restart the gateway. */
+type Outcome = "ok" | "unreachable" | "not_paired" | "other";
+
+/** The page-level outcome a worker refusal contributes. */
+function refusalOutcome(reason: string): Outcome {
+  if (reason === "unreachable") return "unreachable";
+  if (reason === "not_paired") return "not_paired";
+  return "other";
+}
 
 async function readHeadline(gen: number, svc: string): Promise<Outcome> {
   let raw: unknown;
@@ -133,9 +144,7 @@ async function readHeadline(gen: number, svc: string): Promise<Outcome> {
     // Only no answer at all, or the worker's own "unreachable", counts toward
     // the page-level state; a malformed reply is a failed row, not a dead gateway.
     if (raw === undefined) return "unreachable";
-    return isDoraMetricsResponse(raw, svc) && !raw.ok && raw.reason === "unreachable"
-      ? "unreachable"
-      : "other";
+    return isDoraMetricsResponse(raw, svc) && !raw.ok ? refusalOutcome(raw.reason) : "other";
   }
   for (const k of DELIVERY_KEYS) headline[k] = { kind: "loaded", value: raw.result.metrics[k] };
   if (footer !== null) {
@@ -174,7 +183,7 @@ async function readTrend(gen: number, svc: string, metric: StatsMetricId): Promi
     trends.set(metric, { kind: "failed" });
   }
   paint();
-  return raw.reason === "unreachable" ? "unreachable" : "other";
+  return refusalOutcome(raw.reason);
 }
 
 async function load(): Promise<void> {
@@ -185,6 +194,7 @@ async function load(): Promise<void> {
   trends.clear();
   trendsUnsupported = false;
   setNotice(null);
+  if (pairButton !== null) pairButton.hidden = true;
   if (footer !== null) footer.textContent = "";
   paint();
   const metrics: StatsMetricId[] = [
@@ -194,7 +204,14 @@ async function load(): Promise<void> {
   const reads = [readHeadline(gen, svc), ...metrics.map((m) => readTrend(gen, svc, m))];
   const settled = await Promise.allSettled(reads);
   if (gen !== generation) return;
-  if (settled.every((s) => s.status === "fulfilled" && s.value === "unreachable")) {
+  const all = (o: Outcome): boolean =>
+    settled.every((s) => s.status === "fulfilled" && s.value === o);
+  if (all("not_paired")) {
+    setNotice(NOT_PAIRED_NOTICE);
+    if (pairButton !== null) pairButton.hidden = false;
+    deliveryList?.replaceChildren();
+    activityList?.replaceChildren();
+  } else if (all("unreachable")) {
     setNotice(UNREACHABLE_NOTICE);
     deliveryList?.replaceChildren();
     activityList?.replaceChildren();
@@ -253,6 +270,8 @@ async function main(): Promise<void> {
   }
   paint();
 }
+
+pairButton?.addEventListener("click", () => openExtensionPage("options.html"));
 
 picker?.addEventListener("change", () => {
   if (picker.value !== "") select(picker.value);

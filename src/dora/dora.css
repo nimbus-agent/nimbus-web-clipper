@@ -11,7 +11,9 @@ body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.5; }
 .dora__ranges button[aria-pressed="true"] { font-weight: 600; }
 
 .dora__notice { margin: 0 0 16px; padding: 8px 12px; border-radius: 6px; background: color-mix(in srgb, currentcolor 8%, transparent); }
-.dora__notice[hidden] { display: none; }
+.dora__notice[hidden],
+.dora__pair[hidden] { display: none; }
+.dora__pair { margin: 0 0 16px; padding: 6px 12px; cursor: pointer; }
 
 .dora__group-title { margin: 24px 0 4px; font-size: 15px; }
 .dora__rows { list-style: none; margin: 0; padding: 0; }

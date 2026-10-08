@@ -40,6 +40,7 @@ export const ACTIVITY_LABEL: Record<ActivityMetricId, string> = {
 };
 
 export const UNREACHABLE_NOTICE = "Can't reach your Nimbus gateway.";
+export const NOT_PAIRED_NOTICE = "This browser isn't paired with a Nimbus gateway yet.";
 export const UNSUPPORTED_NOTICE = "Trends need a newer Nimbus gateway.";
 export const TREND_FAILED = "Couldn't load this trend.";
 export const HEADLINE_FAILED = "Couldn't load this figure.";
@@ -177,7 +178,8 @@ export function renderActivityRow(
   f.row.dataset["metric"] = metric;
   if (trend.kind === "loaded") {
     const t = seriesTotal(trend.series.points);
-    const unit = trend.series.points[0]?.unit ?? "";
+    // From a point that HAS a value: that is the unit the total is a sum of.
+    const unit = trend.series.points.find((p) => p.value !== null)?.unit ?? "";
     f.head.append(
       el(doc, "span", "dora-row__value", t.total === null ? "—" : formatValue(t.total, unit)),
     );

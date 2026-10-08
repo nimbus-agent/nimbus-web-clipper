@@ -69,6 +69,15 @@ describe("GAP_SENTENCE", () => {
 });
 
 describe("gapSummary", () => {
+  test("ties keep the vocabulary order, and an unrecognised reason sorts last", () => {
+    const pts = [p(null, UNRECOGNISED_GAP), p(null, "no_repos"), p(null, "unknown_service")];
+    expect(gapSummary(pts).map((g) => g.gap)).toEqual([
+      "unknown_service",
+      "no_repos",
+      UNRECOGNISED_GAP,
+    ]);
+  });
+
   test("lists each distinct gap once with its count, most frequent first", () => {
     const pts = [
       p(null, "low_sample"),

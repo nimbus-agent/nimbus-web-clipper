@@ -17,7 +17,9 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
   metrics") or from a pull request's Deploy readiness verdict. Every figure is
   read from your local Nimbus gateway; where Nimbus can't vouch for a number,
   the page shows "—" and says why rather than showing a zero. Trends need
-  gateway 7.19.0 or later; an older gateway still shows the figures.
+  gateway 7.19.0 or later; an older gateway still shows the figures. A
+  browser that isn't paired yet is told so, with a button to Options, rather
+  than being told the gateway is unreachable.
 
 ### Changed
 

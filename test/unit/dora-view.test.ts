@@ -175,6 +175,19 @@ describe("a delivery row", () => {
 });
 
 describe("an activity row", () => {
+  test("the total takes its unit from a point that has a value, not from the first point", () => {
+    const row = renderActivityRow(
+      document,
+      "pr-merges",
+      {
+        kind: "loaded",
+        series: series("pr-merges", [pt(null, "low_sample", "count"), pt(4, null, "merges")]),
+      },
+      R,
+    );
+    expect(row.querySelector(".dora-row__value")?.textContent).toBe("4");
+  });
+
   test("the headline is a total with its coverage", () => {
     const row = renderActivityRow(
       document,
