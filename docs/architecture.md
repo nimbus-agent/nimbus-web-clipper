@@ -132,7 +132,11 @@ check that constant rather than this diagram when the two could disagree.
   renderers (`findings/`, Phase C8) and its deploy-readiness section (`deploy/`,
   Phase C10), and the ambient cue (`cue-in-page.ts`, pure `cue-view.ts`).
 - **`src/popup/`**, **`src/options/`** — the toolbar popup (clip / clip-selection
-  + tags + status + queue view) and the options page (gateway URL + 6-digit
+  + tags + status + queue view, plus the never-clip-twice line: on open it sends
+  one `clip-lookup` that the worker answers — for a valid http(s) URL on a
+  paired browser, and only then — with a single `/v1/items/resolve` read, for
+  ANY such page — `resolve` itself declines unrecognised pages —
+  folding every failure into a silent `none`) and the options page (gateway URL + 6-digit
   pairing form + connection management, plus the surfaces / shortcuts /
   disclosure-log / activity-summary / service-bindings views it composes).
 - **`src/brief/`**, **`src/ledger/`** — the two full-tab extension pages: the

@@ -8,11 +8,13 @@ telemetry.
 
 ## What the extension does
 
-When you clip a page, open the related-items panel, run one of the panel's
-agent lanes, check whether a change is safe to deploy, or ask a research brief,
-the extension sends what you asked about —
-the page content, your selection, or the address, title and readable text of
-each tab you picked for a brief — to a Nimbus gateway running on your own
+When you clip a page, open the toolbar popup, open the related-items panel, run
+one of the panel's agent lanes, check whether a change is safe to deploy, or ask
+a research brief, the extension sends what you asked about —
+the page content, your selection, the page's address (the popup asks whether
+Nimbus already has this page, so it can say "You clipped this …"), or the
+address, title and readable text of each tab you picked for a brief — to a
+Nimbus gateway running on your own
 machine at `127.0.0.1` (loopback). **That is
 the only network destination the extension ever contacts.** Every request it
 makes goes there; it has no code path that sends anything anywhere else.

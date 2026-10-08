@@ -3,10 +3,11 @@ import { sendMessage } from "../browser/runtime.ts";
 import { injectPanel, runCapture } from "../browser/scripting.ts";
 import { activeTab, openExtensionPage } from "../browser/tabs.ts";
 import { buildClipPayload, parseTags } from "../shared/clip.ts";
-import { type ClipResponse, isQueueResponse } from "../shared/messages.ts";
+import { type ClipResponse, isClipLookupResponse, isQueueResponse } from "../shared/messages.ts";
 import { buildClipPreview } from "../shared/preview.ts";
 import { renderPreview } from "../shared/preview-view.ts";
 import type { CaptureResult } from "../shared/types.ts";
+import { lookupLine } from "./lookup-view.ts";
 import { renderQueueList } from "./queue-view.ts";
 
 const RATE_LIMITED_MESSAGE = "Nimbus is busy — queued, will retry shortly.";
@@ -87,6 +88,35 @@ function showPreview(capture: CaptureResult, tags: string[]): void {
   setStatus("");
 }
 
+/** Once the page is in Nimbus, clipping it again updates that copy — say so. */
+function markClipped(): void {
+  const button = document.getElementById("clip-page");
+  if (button !== null) button.textContent = "Update clip";
+}
+
+/**
+ * Never-clip-twice (roadmap 1.1): ask, once, whether this page is already in
+ * Nimbus, and say so under the title. Silent on every failure — the worker
+ * already folds them into `none` — and never in the way of a clip.
+ */
+async function showLookup(): Promise<void> {
+  let pageUrl: string;
+  try {
+    pageUrl = (await activeTab()).url;
+  } catch {
+    return;
+  }
+  if (!pageUrl.startsWith("http://") && !pageUrl.startsWith("https://")) return;
+  const res = await sendMessage({ kind: "clip-lookup", pageUrl }).catch(() => undefined);
+  if (!isClipLookupResponse(res)) return;
+  const text = lookupLine(res, Date.now());
+  const line = document.getElementById("lookup");
+  if (text === null || line === null) return;
+  line.textContent = text;
+  line.hidden = false;
+  if (res.state === "clipped") markClipped();
+}
+
 async function send(capture: CaptureResult, tags: string[]): Promise<void> {
   const res = await sendMessage({ kind: "clip", capture, tags });
   if (!isClipResponse(res)) {
@@ -103,6 +133,7 @@ async function send(capture: CaptureResult, tags: string[]): Promise<void> {
       savedMessage = "Saved to Nimbus.";
     }
     setStatus(savedMessage);
+    markClipped();
   } else {
     // rate_limited is queued too, but it must not read as "Nimbus is down" — so it
     // is checked BEFORE the generic queued wording.
@@ -221,4 +252,5 @@ document.addEventListener("DOMContentLoaded", () => {
     void (async () => renderQueue(await sendMessage({ kind: "queue-retry" })))();
   });
   void refreshQueue();
+  void showLookup();
 });
