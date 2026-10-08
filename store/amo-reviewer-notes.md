@@ -38,9 +38,11 @@ into the submitted zip).
 - `brief.js` — the research-briefs page (`src/brief/brief.ts`).
 - `ledger.js` — the Activity page, which reads the local gateway's record of
   what it did (`src/ledger/ledger.ts`).
+- `dora.js` — the delivery-metrics page, which reads a bound service's DORA
+  metrics and trends from the local gateway (`src/dora/dora.ts`).
 
 `manifest.json` is generated from `src/manifest/manifest.ts` at build time. The
-`popup`, `options`, `brief` and `ledger` pages' HTML and CSS, and the icons
+`popup`, `options`, `brief`, `ledger` and `dora` pages' HTML and CSS, and the icons
 under `src/icons/`, are copied verbatim. `meta.json` is esbuild's build
 metafile, read only by the repository's build check
 (`scripts/check-build.mjs`); nothing in the add-on loads it.
