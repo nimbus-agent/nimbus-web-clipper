@@ -8,6 +8,8 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-08
+
 ### Added
 
 - **The popup tells you when a page is already in Nimbus.** Open it on a page
@@ -748,7 +750,8 @@ silently or showing an empty result.
   extension storage; never logged, never placed in the page or popup/options
   DOM, and never returned to the UI. The pairing code is likewise never logged.
 
-[Unreleased]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/nimbus-agent/nimbus-web-clipper/compare/v0.7.0...v0.8.0
