@@ -1360,7 +1360,7 @@ there (see the `agentParams` comment in `handlers.ts` for why that hold is
 deliberate). Because a lane can now answer the same question with different
 wording depending on where it is asked, the item surfaces get their own lane
 titles — "How did we get here", "Who should I talk to", "Who owns this"
-(`ITEM_SURFACE_TITLES` in `panel-in-page.ts`) — rather than the PR-flavoured
+(`ITEM_SURFACE_TITLES` in `lane-input.ts`) — rather than the PR-flavoured
 "Why does this change exist" reused on a page that is not a change under
 review.
 

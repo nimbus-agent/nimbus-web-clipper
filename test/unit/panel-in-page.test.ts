@@ -1,10 +1,19 @@
 // @vitest-environment jsdom
 // test/unit/panel-in-page.test.ts
 import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
+import { headerFrom, withPick } from "../../src/panel/header-state.ts";
+import {
+  laneContextFrom,
+  showsRelated,
+  termStateFrom,
+  visibleLanes,
+} from "../../src/panel/lane-input.ts";
 import {
   AGENT_LANES,
   type AgentLane,
+  type FileResolution,
   type LaneState,
+  type Recognition,
   type RelatedHit,
   SURFACE_KINDS,
   scopeForLane,
@@ -2907,7 +2916,7 @@ describe("lanes appear only where they can answer", () => {
 
   // `pageSubject` gates a file page's lanes on the PROBE, not on the header —
   // the header renders identically on a hit, a miss, and a gateway too old for
-  // the route (see `laneContext` in panel-in-page.ts). These two pin the two
+  // the route (see `laneContextFrom` in lane-input.ts). These two pin the two
   // ways the gate must stay CLOSED even though the header still says "file".
   function fileResolve(product: string, ref: string, file: unknown): unknown {
     return {
@@ -4450,5 +4459,140 @@ describe("the glossary lane", () => {
     expect(runs[0]).toMatchObject({ lane: "glossary", term: "runbook" });
     // And still no page lanes, which DO depend on the page.
     expect(root.querySelector('details[data-lane="impact"]')).toBeNull();
+  });
+});
+
+// The panel and any other caller of lane-input.ts must show the same lanes: the
+// panel renders `visibleLanes`, so this pins that nothing in `paint()` filters,
+// prepends or gates on top of it. Every case is built from the same resolve
+// answer the panel is mounted with, so the expectation shares no state with it.
+describe("lane list parity", () => {
+  const SELECTION = "idempotency key";
+  const ITEM = (id: string, kind: string) => ({
+    id,
+    service: "github",
+    type: kind,
+    title: `Item ${id}`,
+    url: null,
+  });
+
+  function recognitionFor(kind: string): unknown {
+    return {
+      ok: true,
+      product: "github",
+      kind,
+      label: `GitHub ${kind}`,
+      ref: "acme/web #1",
+      resolveUrl: "https://github.com/acme/web/x",
+    };
+  }
+
+  interface Fixture {
+    readonly name: string;
+    readonly res: unknown;
+    readonly pick: string | null;
+  }
+
+  function fixturesFor(kind: string): Fixture[] {
+    const recognition = recognitionFor(kind);
+    const answer = (outcome: unknown, extra: object = {}): unknown => ({
+      kind: "resolve",
+      ok: true,
+      recognition,
+      outcome,
+      ...extra,
+    });
+    const found = {
+      kind: "found",
+      matchKind: "exact",
+      item: { ...ITEM("a", kind), modifiedAt: 1_700_000_000_000 },
+    };
+    const ambiguous = {
+      kind: "ambiguous",
+      fetchable: false,
+      truncated: false,
+      candidates: [ITEM("a", kind), ITEM("b", kind)],
+    };
+    const notIndexed = { kind: "not-indexed", fetchable: false };
+    const out: Fixture[] = [
+      { name: "found", res: answer(found), pick: null },
+      { name: "ambiguous, no pick", res: answer(ambiguous), pick: null },
+      { name: "ambiguous, with a pick", res: answer(ambiguous), pick: "b" },
+      { name: "not indexed", res: answer(notIndexed), pick: null },
+      {
+        name: "unrecognised",
+        res: { kind: "resolve", ok: true, recognition: { ok: false, reason: "unknown-host" } },
+        pick: null,
+      },
+    ];
+    if (kind === "file") {
+      out.push(
+        {
+          name: "file found",
+          res: answer(found, { file: { kind: "found", path: "a.ts" } }),
+          pick: null,
+        },
+        {
+          name: "file miss",
+          res: answer(found, { file: { kind: "miss", reason: "file_not_indexed", repo: "r" } }),
+          pick: null,
+        },
+      );
+    }
+    if (kind === "home") {
+      for (const state of ["healthy", "not_configured", "degraded"]) {
+        out.push({
+          name: `home, ${state}`,
+          res: answer(notIndexed, { connector: { state } }),
+          pick: null,
+        });
+      }
+    }
+    return out;
+  }
+
+  const CASES = SURFACE_KINDS.flatMap((kind) =>
+    fixturesFor(kind).flatMap((fixture) =>
+      [true, false].map((withTerm) => ({ kind, fixture, withTerm })),
+    ),
+  );
+
+  function select(text: string): void {
+    const p = document.createElement("p");
+    p.textContent = text;
+    document.body.append(p);
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    window.getSelection()?.addRange(range);
+  }
+
+  test.each(CASES)("$kind / $fixture.name / term $withTerm", async ({ fixture, withTerm }) => {
+    if (withTerm) {
+      select(SELECTION);
+    }
+    const root = await mountPanelWithResolve(fixture.res);
+    if (fixture.pick !== null) {
+      const buttons = root.querySelectorAll<HTMLButtonElement>("button.nimbus-related__candidate");
+      const index = fixture.pick === "a" ? 0 : 1;
+      buttons[index]?.click();
+      await flush();
+    }
+    const response = fixture.res as {
+      recognition: { ok: boolean };
+      file?: unknown;
+    };
+    const recognition = response.recognition.ok ? (response.recognition as Recognition) : null;
+    const ctx = laneContextFrom({
+      shown: withPick(headerFrom(fixture.res, Date.now(), false), fixture.pick),
+      recognition,
+      file: (response.file ?? null) as FileResolution | null,
+      offered: null,
+      term: termStateFrom(withTerm ? SELECTION : null),
+    });
+    const rendered = [...root.querySelectorAll("details[data-lane]")]
+      .map((el) => el.getAttribute("data-lane"))
+      .filter((id) => id !== "related");
+    expect(rendered).toEqual(visibleLanes(ctx).map((l) => l.lane));
+    expect(root.querySelector('details[data-lane="related"]') !== null).toBe(showsRelated(ctx));
   });
 });

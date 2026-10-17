@@ -3,12 +3,18 @@ import { describe, expect, it } from "vitest";
 import {
   type LaneContext,
   laneCanRun,
+  laneContextFrom,
   laneRequestInput,
   lanesFor,
+  laneTitle,
+  showsRelated,
   type TermState,
   termStateFrom,
+  visibleLanes,
 } from "../../src/panel/lane-input.ts";
+import type { HeaderState } from "../../src/panel/panel-view.ts";
 import { MAX_TERM_LENGTH } from "../../src/shared/term.ts";
+import type { FileResolution } from "../../src/shared/types.ts";
 
 const NO_TERM: TermState = { kind: "none" };
 
@@ -19,6 +25,7 @@ function ctx(over: Partial<LaneContext> = {}): LaneContext {
     pickedItemId: null,
     term: NO_TERM,
     offered: null,
+    connectorHealthy: true,
     ...over,
   };
 }
@@ -175,5 +182,129 @@ describe("laneCanRun", () => {
     expect(laneCanRun("glossary", ctx({ term: { kind: "refused", reason: "too_long" } }))).toBe(
       false,
     );
+  });
+});
+
+describe("laneContextFrom", () => {
+  const ITEM = { id: "i1", service: "github", type: "pr", title: "T", url: null };
+  const PR = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "a/b #1",
+    resolveUrl: "https://github.com/a/b/pull/1",
+  } as const;
+  const base = { recognition: PR, file: null, offered: null, term: NO_TERM } as const;
+  const resolved: HeaderState = {
+    kind: "resolved",
+    surface: "s",
+    item: { ...ITEM, modifiedAt: 1 },
+    matchKind: "exact",
+    nowMs: 1,
+  };
+  const service = (state: "healthy" | "not_configured"): HeaderState => ({
+    kind: "service",
+    surface: "s",
+    product: "github",
+    connector: { state },
+    nowMs: 1,
+  });
+  const pageSubject = (shown: HeaderState, file: FileResolution | null = null): boolean =>
+    laneContextFrom({ ...base, shown, file }).pageSubject;
+
+  it("takes the surface kind from the recognition, null when it was rejected", () => {
+    expect(laneContextFrom({ ...base, shown: resolved }).surfaceKind).toBe("pr");
+    const rejected = { ok: false, reason: "unknown-host" } as const;
+    expect(
+      laneContextFrom({ ...base, shown: resolved, recognition: rejected }).surfaceKind,
+    ).toBeNull();
+    expect(laneContextFrom({ ...base, shown: resolved, recognition: null }).surfaceKind).toBeNull();
+  });
+
+  it("has a page subject for resolved, service and chosen headers only", () => {
+    expect(pageSubject(resolved)).toBe(true);
+    expect(pageSubject(service("healthy"))).toBe(true);
+    expect(pageSubject({ kind: "chosen", surface: "s", candidate: ITEM })).toBe(true);
+    expect(pageSubject({ kind: "captured", item: { ...ITEM, modifiedAt: 1 }, ageNowMs: 1 })).toBe(
+      false,
+    );
+    expect(
+      pageSubject({ kind: "ambiguous", surface: "s", candidates: [ITEM], truncated: false }),
+    ).toBe(false);
+  });
+
+  it("gates a file header on the probe, not on the header", () => {
+    const file: HeaderState = { kind: "file", surface: "s" };
+    expect(pageSubject(file, { kind: "found", path: "a.ts" })).toBe(true);
+    expect(pageSubject(file, { kind: "unsupported" })).toBe(false);
+    expect(pageSubject(file)).toBe(false);
+  });
+
+  it("carries the picked item id from a chosen header only", () => {
+    expect(
+      laneContextFrom({ ...base, shown: { kind: "chosen", surface: "s", candidate: ITEM } })
+        .pickedItemId,
+    ).toBe("i1");
+    expect(laneContextFrom({ ...base, shown: resolved }).pickedItemId).toBeNull();
+  });
+
+  it("fails open on connector health except for an unservable service header", () => {
+    expect(laneContextFrom({ ...base, shown: resolved }).connectorHealthy).toBe(true);
+    expect(laneContextFrom({ ...base, shown: service("healthy") }).connectorHealthy).toBe(true);
+    expect(laneContextFrom({ ...base, shown: service("not_configured") }).connectorHealthy).toBe(
+      false,
+    );
+  });
+});
+
+describe("laneTitle", () => {
+  it("quotes the term for glossary", () => {
+    expect(laneTitle("glossary", "pr", { kind: "ready", term: "idempotency" })).toBe(
+      "“idempotency”",
+    );
+  });
+
+  it("falls back to the plain title for glossary without a ready term", () => {
+    expect(laneTitle("glossary", "pr", { kind: "refused", reason: "empty" })).toBe("Definition");
+  });
+
+  it("applies the surface override, and falls through where there is none", () => {
+    expect(laneTitle("expert", "file", NO_TERM)).toBe("Who knows this file");
+    expect(laneTitle("why", "incident", NO_TERM)).toBe("How did we get here");
+    expect(laneTitle("why", "pr", NO_TERM)).toBe("Why does this change exist");
+    expect(laneTitle("why", null, NO_TERM)).toBe("Why does this change exist");
+  });
+});
+
+describe("visibleLanes and showsRelated", () => {
+  it("returns nothing on an unhealthy home, even with a ready term", () => {
+    const unhealthy = ctx({
+      surfaceKind: "home",
+      connectorHealthy: false,
+      term: { kind: "ready", term: "x" },
+    });
+    expect(visibleLanes(unhealthy)).toEqual([]);
+  });
+
+  it("titles each lane and never includes related", () => {
+    const lanes = visibleLanes(ctx({ term: { kind: "ready", term: "x" } }));
+    expect(lanes.map((l) => l.lane)).toEqual(["glossary", "impact", "expert", "why"]);
+    expect(lanes[0]).toEqual({ lane: "glossary", title: "“x”", canRun: true });
+    expect(lanes.map((l) => String(l.lane))).not.toContain("related");
+  });
+
+  it("carries a refusal exactly on a lane that cannot run", () => {
+    const lanes = visibleLanes(ctx({ term: { kind: "refused", reason: "too_long" } }));
+    const glossary = lanes.find((l) => l.lane === "glossary");
+    expect(glossary?.canRun).toBe(false);
+    expect(glossary?.refusal).toBe("That's a passage, not a term — select a word or phrase.");
+    expect(lanes.filter((l) => l.canRun).every((l) => l.refusal === undefined)).toBe(true);
+  });
+
+  it("shows related everywhere but home", () => {
+    expect(showsRelated(ctx({ surfaceKind: "home" }))).toBe(false);
+    expect(showsRelated(ctx({ surfaceKind: "pr" }))).toBe(true);
+    expect(showsRelated(ctx({ surfaceKind: null }))).toBe(true);
   });
 });

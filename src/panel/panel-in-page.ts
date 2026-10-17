@@ -4,7 +4,6 @@
 // reads the page context, asks the SW for related items, and renders them.
 import { sendMessage } from "../browser/runtime.ts";
 import { declaredCanonicalHref, resolveCanonical } from "../shared/canonical.ts";
-import { gatePolicy } from "../shared/connector-health.ts";
 import {
   type ClipResponse,
   type ExtensionRequest,
@@ -30,7 +29,6 @@ import {
   type Recognition,
   type RelatedHit,
   type ResolveCandidate,
-  type SurfaceKind,
 } from "../shared/types.ts";
 import { DEPLOY_CSS } from "./deploy/deploy-css.ts";
 import { deployBelongsOnSurface, mountDeploySection, type Send } from "./deploy/deploy-section.ts";
@@ -39,10 +37,12 @@ import { headerFrom } from "./header-state.ts";
 import {
   type LaneContext,
   laneCanRun,
+  laneContextFrom,
   laneRequestInput,
-  lanesFor,
+  showsRelated,
   type TermState,
   termStateFrom,
+  visibleLanes,
 } from "./lane-input.ts";
 import {
   type HeaderState,
@@ -54,20 +54,6 @@ import {
 } from "./panel-view.ts";
 
 const HOST_ID = PANEL_HOST_ID;
-
-/**
- * What the panel says when it will not send a selection to the glossary agent.
- *
- * Rendered locally, without a round trip, because the panel is the side that
- * still has the user in front of it: the message boundary refuses the same input
- * (`isNormalisedTerm` in messages.ts), but a rejected message can only come back
- * as a transport error, which would tell the user Nimbus is broken when in fact
- * they selected three paragraphs.
- */
-const TERM_MESSAGES: Record<"empty" | "too_long", string> = {
-  too_long: "That's a passage, not a term — select a word or phrase.",
-  empty: "Select a word or phrase first — this lane needs one.",
-};
 
 /**
  * The four ways `capture` can refuse, each answered honestly rather than with
@@ -117,76 +103,6 @@ const FETCH_MESSAGES: Record<string, string> = {
   unsupported: "This Nimbus gateway can't fetch pages yet.",
   unreachable: "Couldn't connect to Nimbus.",
   server_error: "Nimbus had an error fetching this page.",
-};
-
-/**
- * The C2 agent lanes' summary labels — each phrased as the question its
- * agent answers. The wording is load-bearing, not decorative: see
- * `docs/architecture.md`'s "The agent lanes" section, which is where that
- * reasoning lives now that the design spec has been pruned.
- *
- * Left here rather than moved into `panel-view.ts`, which nominally owns
- * render code but not a fixed copy table: `Lane.title` is caller-supplied by
- * design (see `Lane` in panel-view.ts) precisely so a lane's label lives with
- * its caller, not hardcoded into the shared shell. `RELATED_MESSAGES` /
- * `RESOLVE_MESSAGES` (header-state.ts) / `FETCH_MESSAGES` above are the same pattern for
- * per-outcome copy — this file, not panel-view.ts, is where copy keyed off a
- * caller-owned identifier (a lane id, an error reason) actually lives.
- * Consolidating all of it into panel-view.ts would mean changing that
- * contract for four tables at once, which is out of scope here.
- */
-const LANE_TITLES: Record<AgentLane, string> = {
-  // The fallback only — a glossary lane with a term shows the TERM as its title
-  // (see `laneTitle` below), because "Definition" repeated on every lane says
-  // nothing about which word the user asked about.
-  glossary: "Definition",
-  impact: "What breaks if it lands",
-  expert: "Who should review it",
-  why: "Why does this change exist",
-  catchup: "What happened while I was away",
-  decisions: "What got decided",
-  ownership: "Who owns what",
-};
-
-/**
- * The titles an ITEM surface asks for instead — the same three lanes, on a page
- * that is not a change under review.
- *
- * `LANE_TITLES` above was written for a pull request, and on one it is right:
- * "Why does this change exist" over a PR names exactly what the lane answers. On
- * a PagerDuty incident the same words are not merely awkward, they are false —
- * an incident is not a change. These are the spec's own phrasings (§4.2).
- */
-const ITEM_SURFACE_TITLES: Partial<Record<AgentLane, string>> = {
-  why: "How did we get here",
-  expert: "Who should I talk to",
-  ownership: "Who owns this",
-};
-
-/**
- * Which surfaces override which titles. An EXCEPTION table, deliberately not a
- * second copy of `LANE_TITLES`: an unlisted (lane, surface) pair falls straight
- * through to the title above, so `pr` and `home` keep the shipped copy written
- * for them and nothing but the changed words lives here.
- *
- * `issue` and `incident` share ONE object rather than two identical literals.
- * They are the same question asked about the same kind of thing — an indexed item
- * with a graph entity — and two copies would be two places for one wording to
- * drift.
- */
-const SURFACE_LANE_TITLES: Partial<Record<SurfaceKind, Partial<Record<AgentLane, string>>>> = {
-  issue: ITEM_SURFACE_TITLES,
-  incident: ITEM_SURFACE_TITLES,
-  /**
-   * A file gets its own object rather than sharing `ITEM_SURFACE_TITLES`. `ownership`
-   * happens to want the same words today, but an issue and a file are not the same
-   * kind of thing — sharing the literal would tie two independent reasons to change.
-   */
-  file: {
-    impact: "What breaks if this changes",
-    expert: "Who knows this file",
-    ownership: "Who owns this",
-  },
 };
 
 /** How often an OPEN panel re-asks the worker for a running lane's state — a
@@ -579,7 +495,7 @@ function createPanel(body: HTMLElement): {
    */
   let offeredLanes: readonly AgentLane[] | null = null;
   /** The file probe's answer for the pinned page, or null on any other surface.
-   *  Read by `laneContext` — the header cannot serve as the gate, because it is the
+   *  Read by `laneContext` (-> `laneContextFrom`) — the header cannot serve as the gate, because it is the
    *  same shape on a hit, a miss and a gateway too old for the route. */
   let fileResolution: FileResolution | null = null;
   /** The last URL `checkNavigation` looked at — so a tick on an unchanged URL
@@ -845,47 +761,15 @@ function createPanel(body: HTMLElement): {
     return header.kind === "not-indexed" ? header.surface : null;
   }
 
-  /** Everything `lanesFor`/`laneRequestInput`/`laneCanRun` need, from one place —
-   *  so a lane cannot be rendered under one context and then asked under another. */
+  /** The panel's inputs to `laneContextFrom` (lane-input.ts), which owns the rule. */
   function laneContext(): LaneContext {
-    const shown = shownHeader();
-    return {
-      surfaceKind: pinnedRecognition?.ok === true ? pinnedRecognition.kind : null,
-      pageSubject:
-        shown.kind === "resolved" ||
-        shown.kind === "service" ||
-        shown.kind === "chosen" ||
-        // A file page's lanes are gated on the PROBE, not on the header: the header
-        // is the same shape on a hit, a miss and an older gateway, and only a hit
-        // has a subject to answer about.
-        (shown.kind === "file" && fileResolution?.kind === "found"),
-      pickedItemId: shown.kind === "chosen" ? shown.candidate.id : null,
-      term,
+    return laneContextFrom({
+      shown: shownHeader(),
+      recognition: pinnedRecognition,
+      file: fileResolution,
       offered: offeredLanes,
-    };
-  }
-
-  /** A term lane wears its term as its title — "Definition" on every one of them
-   *  would say nothing about which word was asked about. Quoted so a one-word
-   *  term still reads as a quotation rather than as a heading this panel wrote.
-   *
-   *  Otherwise the surface may override the title (`SURFACE_LANE_TITLES`), and
-   *  anything it does not name falls through to `LANE_TITLES`. `surfaceKind` is
-   *  passed in from the caller's `pinnedRecognition` read rather than taken from
-   *  the header or re-derived here: the title and the render gate that decided to
-   *  show this lane at all must answer from one surface, not two. */
-  function laneTitle(lane: AgentLane, surfaceKind: SurfaceKind | null): string {
-    if (lane === "glossary" && term.kind === "ready") {
-      return `“${term.term}”`;
-    }
-    const override = surfaceKind === null ? undefined : SURFACE_LANE_TITLES[surfaceKind]?.[lane];
-    return override ?? LANE_TITLES[lane];
-  }
-
-  /** Why this panel will not send the current selection. Only ever called for a
-   *  lane `laneCanRun` refused, which is only ever a refused term. */
-  function termRefusal(): string {
-    return term.kind === "refused" ? TERM_MESSAGES[term.reason] : TERM_MESSAGES.empty;
+      term,
+    });
   }
 
   function clearLanePoll(lane: AgentLane): void {
@@ -1338,26 +1222,11 @@ function createPanel(body: HTMLElement): {
     // assignment below for the same pattern.
     const nowMs = Date.now();
     const shown = shownHeader();
-    // Which lanes render is `lanesFor` (lane-input.ts), against the context
-    // assembled just below. Two gates, one per kind of lane:
-    //
-    // A PAGE lane needs the pinned page's surface to be one it belongs on, and
-    // the header to name a subject: `resolved` (one indexed item), `service` (a
-    // dashboard, no item at all), or `chosen` — the candidate the user picked out
-    // of an ambiguous answer. `chosen` counts NOW, and did not before: the picked
-    // id travels with `agent-run` (messages.ts) and `resolveForAgent` honours it
-    // after verifying it against the candidate set, so the lanes answer about the
-    // item the header names instead of refusing with `not_resolved` under a
-    // header that had just named it — see ROADMAP C2.5. There is still nothing to
-    // ask about on a miss, an error, or an ambiguous answer nobody has picked
-    // from.
-    //
-    // A TERM lane needs only a term, and consults none of the above.
-    //
-    // The surface kind comes from `pinnedRecognition`, not from the header: the
-    // `resolved` HeaderState carries only the human surface LINE ("GitHub PR ·
-    // acme/web #482"), not the typed kind.
-    const surfaceKind = pinnedRecognition?.ok === true ? pinnedRecognition.kind : null;
+    // Which lanes render, and under which titles, is `visibleLanes`
+    // (lane-input.ts), against the context assembled just below — the same list
+    // any other caller of that module sees. Its page-lane gate is the C2.5 rule:
+    // a `chosen` header counts as a subject, an ambiguous answer nobody has
+    // picked from does not.
     const laneCtx = laneContext();
     // Hoisted out of the `render` arrow below rather than written inline inside it.
     // Inline it was a fourth nested function — map callback -> render -> run callback —
@@ -1368,40 +1237,24 @@ function createPanel(body: HTMLElement): {
       () => {
         sendAgentRun(lane).catch(() => undefined);
       };
-    const agentLanes: Lane[] = lanesFor(laneCtx).map((lane) => ({
-      id: lane,
-      title: laneTitle(lane, surfaceKind),
-      expanded: laneOpen[lane],
+    const agentLanes: Lane[] = visibleLanes(laneCtx).map((visible) => ({
+      id: visible.lane,
+      title: visible.title,
+      expanded: laneOpen[visible.lane],
       render: (doc: Document) =>
         // A lane that cannot run renders its reason here, locally, and sends
         // nothing — the only lane in this panel that is shown precisely so it can
         // say why it will not ask.
-        laneCanRun(lane, laneCtx)
-          ? renderLaneBody(doc, laneState[lane], nowMs, runLane(lane))
-          : renderError(doc, termRefusal()),
+        visible.canRun
+          ? renderLaneBody(doc, laneState[visible.lane], nowMs, runLane(visible.lane))
+          : renderError(doc, visible.refusal ?? ""),
     }));
-    // No related lane on a dashboard: `/v1/clips/related` keyed on a dashboard's
-    // title and URL returns noise dressed as recall. The related REQUEST is still
-    // sent — after the resolve, once the recognition is known — its answer is
-    // simply not rendered here.
-    //
-    // On a dashboard, whether the agent lanes render at all is gated on the
-    // connector's health (`gatePolicy`): three lanes that can only ever come back
-    // empty read as "you have no work", not as "Nimbus cannot ask this connector
-    // anything". `shown.kind === "service"` whenever `surfaceKind === "home"` —
-    // see `headerFrom` — so the `!== "service"` arm below is unreachable in
-    // practice. It is written to FAIL OPEN on purpose: this feature's own rule is
-    // that "we don't know" means ungated, never blank, so a `shown` of some other
-    // kind must not silently blank the lanes if that invariant ever stops holding.
-    const homeLanes = shown.kind !== "service" || gatePolicy(shown.connector.state).lanes;
-    const homeSurfaceLanes: Lane[] = homeLanes ? agentLanes : [];
-    const lanes: Lane[] =
-      surfaceKind === "home"
-        ? homeSurfaceLanes
-        : [
-            { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
-            ...agentLanes,
-          ];
+    const lanes: Lane[] = showsRelated(laneCtx)
+      ? [
+          { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
+          ...agentLanes,
+        ]
+      : agentLanes;
     const navAwayState = navAway
       ? {
           pinnedRef: pinnedRecognition?.ok === true ? pinnedRecognition.ref : null,
