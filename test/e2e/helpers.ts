@@ -9,6 +9,7 @@
 // picked up as a spec of its own.
 import type { Page } from "@playwright/test";
 import type { Harness } from "../../scripts/e2e/launch.ts";
+import type { PaletteInit } from "../../src/shared/panel-host.ts";
 
 /**
  * Injects panel.js into the tab currently on `url`, queried by URL rather
@@ -45,4 +46,34 @@ export async function gotoRecognisedPage(
   await page.evaluate((p) => history.pushState({}, "", p), path);
   await page.bringToFront();
   return `${origin}${path}`;
+}
+
+/**
+ * Opens the command palette on the tab at `url` the way `showPalette`
+ * (src/browser/scripting.ts) does: inject `palette.js`, then call its entry with
+ * the `PaletteInit` the worker would have built. Playwright cannot fire
+ * `chrome.commands`, so this stands in for the keyboard shortcut; like
+ * `togglePanel` it toggles, because the bundle's own entry does.
+ */
+export async function openPalette(
+  sw: Harness["sw"],
+  url: string,
+  init: PaletteInit,
+): Promise<void> {
+  await sw.evaluate(
+    async ([target, i]) => {
+      const [tab] = await chrome.tabs.query({ url: target as string });
+      if (tab?.id === undefined) {
+        throw new Error(`e2e: no tab matched ${target}`);
+      }
+      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["palette.js"] });
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (x: unknown) =>
+          (globalThis as unknown as { __nimbusPalette: (y: unknown) => void }).__nimbusPalette(x),
+        args: [i],
+      });
+    },
+    [url, init] as const,
+  );
 }

@@ -1143,6 +1143,51 @@ should keep.
    digest, the signature and the public key. It is the only action that spends
    the gateway's signing budget, so it must never fire on page load.
 
+## Manual verification — Command palette (3.1)
+
+The palette opens on `Alt+Shift+K` (the `open_palette` command). The e2e suite
+cannot fire `chrome.commands`, so it injects `palette.js` from the service
+worker the way `showPalette` does, with the `PaletteInit` the worker would
+build. Keys and clicks it sends are trusted input.
+
+1. <!-- e2e:palette-1 --> On a recognised page, open the palette. The input has
+   focus, the lane rows appear above *Related items*, *Clip page* and *Clip
+   selection* once resolve lands, and typing filters them. A filter that
+   matches nothing leaves one disabled *No matching actions* row.
+2. <!-- e2e:palette-2 --> Arrow to a lane row and press Enter. The palette
+   closes, the panel opens, and that lane is already asked and answers.
+3. <!-- e2e:palette-3 --> With the panel already open and a word selected on
+   the page, run the glossary row. The open panel gets the term; it is not
+   re-injected (which would close it).
+4. <!-- e2e:palette-4 --> On an ambiguous page, pick a candidate in the panel,
+   then open the palette. Lane rows are offered (not *Pick the item in the
+   panel*) and run against the picked item.
+5. <!-- e2e:palette-5 --> With the panel and palette both open, press Esc. Only
+   the palette closes.
+6. <!-- e2e:palette-6 --> Click a row (for example *Related items*). It runs,
+   and the click did not first take focus away and close the palette.
+7. <!-- e2e:palette-7 --> Run *Clip page*. The palette closes and the page is
+   ingested.
+8. <!-- e2e:palette-8 --> Select text, open the palette and run *Clip
+   selection*. The clip carries the selected text, not an empty selection.
+9. <!-- e2e:palette-9 --> Press Tab: the palette closes. Reopen it and focus a
+   page element: it closes and the page element keeps focus, with no error from
+   the host being removed while focused.
+10. **(human — a real shortcut binding)** On a fresh Chrome profile and a fresh
+    Firefox profile, load the build and check `Alt+Shift+K` is bound (chrome
+    ://extensions/shortcuts, `about:addons` Manage Extension Shortcuts) and
+    opens the palette.
+11. **(human — real sites with their own shortcuts)** On GitHub, Jira and
+    Confluence, press `Alt+Shift+K`. It reaches the extension and not the
+    site. If it collides, change the suggested key before release.
+12. **(human — contenteditable selection behaviour)** Select text inside a
+    contenteditable (a GitHub comment box, a Jira description editor), open
+    the palette and run *Clip selection*. The selection survives and is
+    clipped.
+13. **(covered by unit tests — not e2e)** Command routing (`open_palette` to
+    the palette, not the panel) and the restricted-page badge: on a
+    `chrome://` page the toolbar badge flashes and nothing is injected.
+
 ## Security check
 
 - The bearer token never appears in the page DOM, the popup/options DOM, or any
