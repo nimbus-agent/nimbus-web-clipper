@@ -317,7 +317,8 @@ ask an open panel about itself. The panel host gains a second expando beside
 __nimbusPanelState(): { pinnedUrl: string; chosenId: string | null }
 ```
 
-- **Panel open on this page** (`pinnedUrl === location.href`) **with a pick:**
+- **Panel open on this page** (`pinnedUrl` equals `location.href` with both
+  fragments dropped; see §6.2) **with a pick:**
   the palette passes that candidate into the header derivation (matched by id
   against its own resolve's candidates, and treated as no pick if it's no
   longer among them). Its lanes then match the open panel's, and it shows no
@@ -355,10 +356,15 @@ which is what keeps the toggle-close from firing. The existing `"define"` and
 
 ### 6.2 The panel applies an intent
 
-- **Stale pin first.** If the panel's `pinnedUrl !== location.href` when an
-  intent arrives, it calls `reread()` and parks the intent until the new
-  page's header lands. A palette lane never runs against the page the panel
-  happened to be pinned to.
+- **Stale pin first.** If the panel's `pinnedUrl` differs from
+  `location.href` when an intent arrives, it calls `reread()` and parks the
+  intent until the new page's header lands. A palette lane never runs
+  against the page the panel happened to be pinned to. **The comparison
+  ignores the fragment**, on both sides. A `#heading` anchor or a GitHub
+  `#issuecomment-…` link is the same page, and re-reading on it would
+  collapse every lane, drop a candidate pick and reset the term, all for a
+  click that didn't navigate. The panel's own navigation watcher already
+  treats a fragment change as the same item.
 - **`lane`:** set `laneOpen[lane] = true` and call `sendAgentRun(lane)`, the
   path a first expand takes. On a freshly mounted or re-read panel the header
   hasn't resolved yet, so the intent is **parked** and applied once
