@@ -807,6 +807,21 @@ describe("command route", () => {
     expect(harness.executeScript).not.toHaveBeenCalled();
   });
 
+  test("open_palette injects palette.js into the active tab", async () => {
+    await load();
+    harness.tabsQuery.mockResolvedValue([
+      { id: 7, url: "https://github.com/acme/web/pull/1", title: "x" },
+    ]);
+
+    harness.emitCommand("open_palette");
+    await settle();
+
+    expect(harness.executeScript).toHaveBeenCalledWith({
+      target: { tabId: 7 },
+      files: ["palette.js"],
+    });
+  });
+
   test("an unrecognized command does nothing", async () => {
     await load();
     harness.tabsQuery.mockClear();

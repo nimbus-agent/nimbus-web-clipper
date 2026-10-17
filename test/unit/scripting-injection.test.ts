@@ -11,7 +11,13 @@
 // (`shared/panel-host.ts`'s element id and property NAME) is exercised end to
 // end; a mismatch there fails SILENTLY in production.
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { deliverIntent, runCapture, showCue, showToast } from "../../src/browser/scripting.ts";
+import {
+  deliverIntent,
+  runCapture,
+  showCue,
+  showPalette,
+  showToast,
+} from "../../src/browser/scripting.ts";
 import { PANEL_HOST_ID, PANEL_INTENT_HOOK } from "../../src/shared/panel-host.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
@@ -225,5 +231,19 @@ describe("showToast / showCue injected bodies", () => {
 
     expect(injectedFiles()).toEqual(["cue.js"]);
     expect(nimbusCue).toHaveBeenCalledWith({ label: "GitHub PR", ref: "acme/web #482" });
+  });
+});
+
+describe("showPalette injected body", () => {
+  test("calls the page's __nimbusPalette with the init", async () => {
+    const nimbusPalette = vi.fn();
+    (globalThis as unknown as Record<string, unknown>)["__nimbusPalette"] = nimbusPalette;
+    driveExecuteScript();
+    const init = { recognition: { ok: false, reason: "unknown-host" } } as const;
+
+    await showPalette(7, init);
+
+    expect(injectedFiles()).toEqual(["palette.js"]);
+    expect(nimbusPalette).toHaveBeenCalledWith(init);
   });
 });

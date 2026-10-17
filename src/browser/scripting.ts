@@ -1,6 +1,11 @@
 import { isCanonicalRejection } from "../shared/canonical.ts";
 import { isSourceShape } from "../shared/clip.ts";
-import { PANEL_HOST_ID, PANEL_INTENT_HOOK, type PanelIntent } from "../shared/panel-host.ts";
+import {
+  PANEL_HOST_ID,
+  PANEL_INTENT_HOOK,
+  type PaletteInit,
+  type PanelIntent,
+} from "../shared/panel-host.ts";
 import type { CaptureResult, CueState, ToastState } from "../shared/types.ts";
 
 function isCaptureResult(v: unknown): v is CaptureResult {
@@ -115,5 +120,16 @@ export async function showCue(tabId: number, state: CueState): Promise<void> {
     func: (s: CueState) =>
       (globalThis as unknown as { __nimbusCue: (x: CueState) => void }).__nimbusCue(s),
     args: [state],
+  });
+}
+
+/** Inject palette.js then call its global with the init (two-step, like showCue). */
+export async function showPalette(tabId: number, init: PaletteInit): Promise<void> {
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["palette.js"] });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (i: PaletteInit) =>
+      (globalThis as unknown as { __nimbusPalette: (x: PaletteInit) => void }).__nimbusPalette(i),
+    args: [init],
   });
 }

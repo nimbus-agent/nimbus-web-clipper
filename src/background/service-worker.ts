@@ -14,6 +14,7 @@ import {
   injectPanel,
   runCapture,
   showCue,
+  showPalette,
   showToast,
 } from "../browser/scripting.ts";
 import {
@@ -157,6 +158,7 @@ import { type RawScopeGap, withLabel } from "./http-json.ts";
 import { itemIdsOf, resolveItemUrls } from "./item-urls.ts";
 import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
+import { type OpenPaletteDeps, openPalette } from "./palette-open.ts";
 import { collectPassage, type PassageCollectDeps } from "./passage-collect.ts";
 import { getPassages, updatePassages } from "./passage-store.ts";
 import { isPreviewEnabled } from "./preview-pref.ts";
@@ -990,6 +992,14 @@ const passageCollectDeps: PassageCollectDeps = {
   now: () => Date.now(),
 };
 
+// Unlike `openPanel`, the palette says so on a page it cannot open on (badge flash).
+const openPaletteDeps: OpenPaletteDeps = {
+  activeTab,
+  getOrigins,
+  showPalette,
+  showFeedback: quickClipDeps.showFeedback,
+};
+
 // Menus are re-registered from scratch (removeAll first) so a reload/upgrade can't
 // leave a duplicate id behind — chrome.contextMenus.create throws on a duplicate.
 // Single-flighted because on a fresh install the startup sequence and onInstalled
@@ -1631,6 +1641,10 @@ addCommandListener((command) => {
   }
   if (command === "clip-selection") {
     quickClip(quickClipDeps, "selection").catch(() => undefined);
+    return;
+  }
+  if (command === "open_palette") {
+    openPalette(openPaletteDeps).catch(() => undefined);
   }
 });
 

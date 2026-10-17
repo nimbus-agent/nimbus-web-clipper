@@ -25,7 +25,7 @@ interface ManifestAction {
 }
 
 interface CommandDef {
-  readonly suggested_key: { readonly default: string };
+  readonly suggested_key?: { readonly default: string };
   readonly description: string;
 }
 
@@ -33,6 +33,7 @@ interface ManifestCommands {
   readonly show_related: CommandDef;
   readonly "clip-page": CommandDef;
   readonly "clip-selection": CommandDef;
+  readonly open_palette: CommandDef;
 }
 
 interface ChromeBackground {
@@ -128,6 +129,10 @@ export function composeManifest(target: BrowserTarget, version: string): WebClip
       "clip-selection": {
         suggested_key: { default: "Alt+Shift+S" },
         description: "Clip the current selection to Nimbus",
+      },
+      open_palette: {
+        suggested_key: { default: "Alt+Shift+K" },
+        description: "Open the Nimbus command palette",
       },
     },
     options_ui: {
