@@ -239,10 +239,11 @@ state is the one case with a next step.
 |---|---|---|
 | resolved / service / chosen / file found | as the panel shows them | none |
 | ambiguous, no pick | glossary only, if a term | **Pick the item in the panel** → `candidates` intent |
+| ambiguous, truncated (the gateway sent no candidates) | glossary only, if a term | disabled, the panel's "Too many matches to choose from…" line; there is no picker to send anyone to |
 | file, miss (`banner` set) | glossary only, if a term | disabled, the `banner` sentence |
 | file, unsupported (older gateway, no `banner`) | glossary only, if a term | none (the panel says nothing either) |
 | captured copy | glossary only, if a term | none (as the panel) |
-| not-indexed | glossary only, if a term | disabled, the panel's "Not in your Nimbus index…" line |
+| not-indexed | glossary only, if a term | disabled, the panel's "Not indexed." line |
 | needs-scope / not paired / gateway down / error | glossary only, if a term | disabled, the panel header's wording |
 | unrecognised (an ordinary article) | glossary only, if a term | none, so Related and Clip stay clean on normal pages |
 | home with an unhealthy connector | none (the gate hides every agent lane, glossary included) | none |
@@ -526,7 +527,7 @@ against `main` before it was accepted.
 | 2.1 | `visibleLanes` order, duplicated `surfaceKind`, `LaneId` | **Fixed** (§5.1): agent lanes only, Related placed by the caller, `connectorHealthy` on `LaneContext`, `AgentLane`. On the home gate, **strict parity is kept**: it hides glossary too, as `paint()` does today. Changing that is a panel decision outside this spec. |
 | 2.2.1 | Deploy readiness across resolve outcomes | **Fixed** (§4.4): instant and outcome-independent. Verified in `appendDeploySection`, which is gated only on `pinnedRecognition`. |
 | 2.2.2 | `file` miss vs. unsupported | **Fixed** (§4.4 table): the miss shows its `banner`; unsupported shows nothing, as the panel does. |
-| 2.2.3 | Unrecognised vs. not-indexed copy; fetch | **Fixed** (§4.4 table, §2): unrecognised shows no extra row; not-indexed reuses the panel's sentence; fetch is an explicit v1 non-goal. |
+| 2.2.3 | Unrecognised vs. not-indexed copy; fetch | **Fixed** (§4.4 table, §2): unrecognised shows no extra row; not-indexed reuses the panel's sentence; fetch is an explicit v1 non-goal. The plan review later corrected the quoted copy: the panel says "Not indexed.", which is what the table now quotes. The same review added the truncated-ambiguous row. |
 | 2.3 | Planted host defeats the toggle | **Fixed** (§4.3): a host counts as the palette's own only if it carries the module's expando, which page script can't see or forge; decoys are removed. **Deferred, out of scope:** the panel's own self-toggle (`panel-in-page.ts`, the tail `getElementById` check) has the same gap. A planted `#nimbus-related-host` makes the first press remove it and not open. That's a pre-existing panel defect, worth its own small fix rather than riding in this feature. |
 | 2.4.1 | `blur` tears down before `click` | **Fixed** (§4.3): `preventDefault` on `pointerdown`, and `focusout` with a `relatedTarget` check. |
 | 2.4.2 | Focus bouncing through the page | **Fixed** (§4.3): no page-focus restore on a panel intent. |
