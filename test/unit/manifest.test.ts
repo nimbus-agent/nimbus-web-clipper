@@ -80,6 +80,22 @@ describe("composeManifest — commands", () => {
   }
 });
 
+describe("composeManifest — open_palette", () => {
+  for (const target of ["chrome", "firefox"] as const) {
+    test(`${target} declares open_palette on Alt+Shift+K`, () => {
+      const m = composeManifest(target, "1.2.3");
+      expect(m.commands.open_palette.suggested_key?.default).toBe("Alt+Shift+K");
+      expect(m.commands.open_palette.description).toBe("Open the Nimbus command palette");
+    });
+
+    test(`${target} has at most four suggested keys (Chrome's cap)`, () => {
+      const m = composeManifest(target, "1.2.3");
+      const keyed = Object.values(m.commands).filter((c) => c.suggested_key !== undefined);
+      expect(keyed.length).toBeLessThanOrEqual(4);
+    });
+  }
+});
+
 describe("composeManifest — alarms permission", () => {
   for (const target of BROWSER_TARGETS) {
     test(`${target} declares the alarms permission (for the offline-queue flush)`, () => {
