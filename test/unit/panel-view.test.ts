@@ -3,6 +3,7 @@
 import { describe, expect, it, test, vi } from "vitest";
 import {
   type HeaderState,
+  headerStatusLine,
   type Lane,
   renderError,
   renderFetchPreview,
@@ -1602,5 +1603,85 @@ describe("the capture offer", () => {
     });
     expect(el.querySelector(".nimbus-related__fetch")).not.toBeNull();
     expect(el.querySelector(".nimbus-related__capture")).toBeNull();
+  });
+});
+
+describe("headerStatusLine parity", () => {
+  const candidate = { id: "a", service: "jira", type: "issue", title: "One", url: null };
+  const resolvedItem: ResolvedItem = {
+    id: "i",
+    service: "github",
+    type: "pr",
+    title: "T",
+    url: "https://x.test/",
+    modifiedAt: 1_700_000_000_000,
+  };
+  const NOW_MS = 1_700_000_060_000;
+  const withStatus: Record<string, HeaderState> = {
+    error: { kind: "error", surface: "GitHub PR · a/b #1", message: "Couldn't connect to Nimbus." },
+    "needs-scope": { kind: "needs-scope", surface: "GitHub PR · a/b #1", scopeGap: null },
+    "not-indexed": {
+      kind: "not-indexed",
+      surface: "GitHub PR · a/b #1",
+      product: "github",
+      fetchable: true,
+    },
+    "file with banner": { kind: "file", surface: "GitHub file", banner: "A miss sentence." },
+    "truncated ambiguous": {
+      kind: "ambiguous",
+      surface: "Jira issue · ABC-1",
+      candidates: [],
+      truncated: true,
+    },
+  };
+
+  it.each(Object.entries(withStatus))(
+    "%s: equals the first status line renderHeader shows",
+    (_n, state) => {
+      const first = renderHeader(document, state).querySelector(".nimbus-related__status");
+      const text = headerStatusLine(state);
+      expect(text).not.toBeNull();
+      expect(text).toBe(first?.textContent);
+    },
+  );
+
+  const noLine: Record<string, HeaderState> = {
+    loading: { kind: "loading" },
+    unrecognised: { kind: "unrecognised" },
+    captured: { kind: "captured", item: resolvedItem, ageNowMs: NOW_MS },
+    service: {
+      kind: "service",
+      surface: "GitHub dashboard",
+      product: "github",
+      connector: { state: "unknown" },
+      nowMs: NOW_MS,
+    },
+    "file without banner": { kind: "file", surface: "GitHub file" },
+    resolved: {
+      kind: "resolved",
+      surface: "GitHub PR",
+      item: resolvedItem,
+      matchKind: "exact",
+      nowMs: NOW_MS,
+    },
+    chosen: { kind: "chosen", surface: "s", candidate },
+    "untruncated ambiguous": {
+      kind: "ambiguous",
+      surface: "s",
+      candidates: [candidate],
+      truncated: false,
+    },
+    fetching: { kind: "fetching", surface: "s", product: "github" },
+    "fetch-blocked": {
+      kind: "fetch-blocked",
+      surface: "s",
+      product: "github",
+      reason: "unfetchable",
+      scopeGap: null,
+    },
+  };
+
+  it.each(Object.entries(noLine))("%s: has no line", (_n, state) => {
+    expect(headerStatusLine(state)).toBeNull();
   });
 });

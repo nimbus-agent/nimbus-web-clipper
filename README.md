@@ -46,7 +46,7 @@ no cloud calls.
 > (`POST /v1/clips`), the related-items panel (`POST /v1/clips/related`), the
 > offline retry queue, connection management (pairing status + unpair), quick-clip
 > entry points (right-click context menu + `Alt+Shift+C` / `Alt+Shift+S`, confirmed
-> by an in-page toast), and terminal-413 / rate-limited-429 handling are all
+> by an in-page toast), the `Alt+Shift+K` command palette, and terminal-413 / rate-limited-429 handling are all
 > implemented — as are the later phases: page recognition and per-origin page
 > access (C1), the agent lanes (C2), targeted fetch and capture-as-last-resort
 > (C3), the Activity page over the gateway's egress ledger (C4.1), research

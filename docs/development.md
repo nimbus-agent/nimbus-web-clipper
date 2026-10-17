@@ -441,7 +441,7 @@ building so the context menu is re-registered.
    tab, not the focused one.
 3. On `chrome://extensions` → the entry either does not appear or does
    nothing; no error surfaces.
-4. Options stage 2 lists all three commands with their real bindings.
+4. Options stage 2 lists every command (four, with the palette) with their real bindings.
 5. Deliberately rebind `Alt+Shift+R` to something else in the browser's
    shortcut settings → Options reflects the change on reload.
 6. Unbind it entirely → Options shows **Not set**, and the context-menu route
@@ -810,13 +810,13 @@ more than one indexed item (the panel shows a chooser when it does).
 
 1. <!-- e2e:input-lanes-1 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly.)** On any page, select a word → right-click →
    **Define in Nimbus**. The panel opens, a lane titled with that term is
    **already expanded**, and it answers.
 2. <!-- e2e:input-lanes-2 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly.)** With the panel still open, select a *different*
    word → **Define in Nimbus**. The panel must **stay open** (this is the
    toggle hazard: the worker reaches the open panel through its hook, never by
@@ -824,19 +824,19 @@ more than one indexed item (the panel shows a chooser when it does).
    term.
 3. <!-- e2e:input-lanes-3 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly.)** Select a whole paragraph → **Define in
    Nimbus**. The lane says *"That's a passage, not a term"*. Confirm in
    DevTools' network/SW logs that **no** `/v1/agents/glossary` call went out.
 4. <!-- e2e:input-lanes-4 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly.)** Repeat step 1 on a page Nimbus does **not**
    recognise — an internal wiki, a vendor console. The lane must still work;
    the page lanes must still be absent. This is the slice's central claim.
 5. <!-- e2e:input-lanes-5 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly. And
    specifically here, so is the browser's own capture of `selectionText` from
    inside the field, which the e2e suite cannot drive either: it hands the
@@ -847,7 +847,7 @@ more than one indexed item (the panel shows a chooser when it does).
    than the page's own selection).
 6. <!-- e2e:input-lanes-6 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly.)** Select text → **What's related to this?**. The
    Related lane re-runs against the selection, and the glossary lane appears
    **collapsed and unrun** — no agent run is spent on a question nobody asked.
@@ -904,7 +904,7 @@ Prereq: paired, gateway running, a resolved GitHub pull request available.
 7. **(not yet automated — the mock's `/v1/clips/related` route is
    deliberately unconditional on the query (see step 6 above), so "the
    results must change" has nothing to change against; input-lanes.e2e.ts's
-   selection hook can already drive the gesture, this just needs a
+   intent hook can already drive the gesture, this just needs a
    query-aware related route in the mock to answer differently).** Select a
    phrase and run *What's related to this?* — the results must change, and
    the PR you are on must not appear among them.
@@ -1142,6 +1142,58 @@ should keep.
 5. Press **Export proof**. A `nimbus-egress-proof.json` downloads carrying the
    digest, the signature and the public key. It is the only action that spends
    the gateway's signing budget, so it must never fire on page load.
+
+## Manual verification — Command palette (3.1)
+
+The palette opens on `Alt+Shift+K` (the `open_palette` command). The e2e suite
+cannot fire `chrome.commands`, so it injects `palette.js` from the service
+worker the way `showPalette` does, with the `PaletteInit` the worker would
+build. Keys and clicks it sends are trusted input.
+
+1. <!-- e2e:palette-1 --> On a recognised page, open the palette. The input has
+   focus, the lane rows appear above *Related items*, *Clip page* and *Clip
+   selection* once resolve lands, and typing filters them. A filter that
+   matches nothing leaves one disabled *No matching actions* row.
+2. <!-- e2e:palette-2 --> Arrow to a lane row and press Enter. The palette
+   closes, the panel opens, and that lane is already asked and answers.
+3. <!-- e2e:palette-3 --> With the panel already open and a word selected on
+   the page, run the glossary row. The open panel gets the term; it is not
+   re-injected (which would close it).
+4. <!-- e2e:palette-4 --> On an ambiguous page, pick a candidate in the panel,
+   then open the palette. Lane rows are offered (not *Pick the item in the
+   panel*) and run against the picked item.
+5. <!-- e2e:palette-5 --> With the panel and palette both open, press Esc. Only
+   the palette closes.
+6. <!-- e2e:palette-6 --> Click a row (for example *Related items*). It runs,
+   and the click did not first take focus away and close the palette.
+7. <!-- e2e:palette-7 --> Run *Clip page*. The palette closes and the page is
+   ingested.
+8. <!-- e2e:palette-8 --> Select text, open the palette and run *Clip
+   selection*. The clip carries the selected text, not an empty selection.
+9. <!-- e2e:palette-9 --> Press Tab: the palette closes. Reopen it and focus a
+   page element: it closes and the page element keeps focus, with no error from
+   the host being removed while focused.
+10. **(human — a real shortcut binding)** On a fresh Chrome profile and a fresh
+    Firefox profile, load the build and check `Alt+Shift+K` is bound (chrome
+    ://extensions/shortcuts, `about:addons` Manage Extension Shortcuts) and
+    opens the palette.
+11. **(human — real sites with their own shortcuts)** On GitHub, Jira and
+    Confluence, press `Alt+Shift+K`. It reaches the extension and not the
+    site. If it collides, change the suggested key before release.
+12. **(human — contenteditable selection behaviour)** Select text inside a
+    contenteditable (a GitHub comment box, a Jira description editor), open
+    the palette and run *Clip selection*. The selection survives and is
+    clipped.
+13. **(human — a real click into page text)** Select some text, open the
+    palette, then click into plain page text elsewhere (or drag a new
+    selection). The palette closes, and the new caret or selection is the one
+    left on the page: the old selection is not restored over it. A real click
+    on non-focusable text blurs the input with a null `relatedTarget`, the
+    `dismiss` path that restores the saved selection, so this checks that the
+    restore never undoes the user's own click.
+14. **(covered by unit tests — not e2e)** Command routing (`open_palette` to
+    the palette, not the panel) and the restricted-page badge: on a
+    `chrome://` page the toolbar badge flashes and nothing is injected.
 
 ## Security check
 

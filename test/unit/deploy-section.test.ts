@@ -41,6 +41,16 @@ describe("deployBelongsOnSurface", () => {
 });
 
 describe("mountDeploySection", () => {
+  test("its heading is focusable by script, so a palette can land focus on it", () => {
+    const host = document.createElement("div");
+    mountDeploySection(
+      host,
+      ctx,
+      vi.fn(() => new Promise(() => undefined)),
+    );
+    expect(host.querySelector<HTMLElement>(".nimbus-deploy__title")?.tabIndex).toBe(-1);
+  });
+
   test("renders the verdict once the worker answers", async () => {
     const host = document.createElement("div");
     const send = vi.fn(async () => ({

@@ -481,7 +481,7 @@ export async function handleResolve(
     // the service lanes can answer at all. Absent that, three lanes run against a
     // connector nobody configured and return nothing, which reads as "you have no
     // work" rather than "Nimbus is not connected to this". The outcome below is
-    // otherwise INERT: `headerFrom` (panel-in-page.ts) branches on `recognition.kind`
+    // otherwise INERT: `headerFrom` (header-state.ts) branches on `recognition.kind`
     // before it reads an outcome, so a home page never renders as a miss. It is
     // filled in only because `ResolveResponse`'s ok arm requires one — the same
     // synthetic the unrecognised branch above already uses. `fetchable:false` keeps

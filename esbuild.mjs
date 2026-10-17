@@ -29,6 +29,7 @@ const ENTRIES = [
   { in: "src/panel/panel-in-page.ts", out: "panel" },
   { in: "src/capture/toast-in-page.ts", out: "toast" },
   { in: "src/panel/cue-in-page.ts", out: "cue" },
+  { in: "src/palette/palette-in-page.ts", out: "palette" },
   { in: "src/brief/brief.ts", out: "brief" },
   { in: "src/ledger/ledger.ts", out: "ledger" },
   { in: "src/dora/dora.ts", out: "dora" },

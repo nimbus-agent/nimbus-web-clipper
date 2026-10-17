@@ -1767,7 +1767,7 @@ endpoint.*
 *Theme: strip every gram of friction from the capture gesture and from
 organizing after.*
 
-### 3.1 Command palette · 🟢 · M
+### 3.1 Command palette · 🟢 · M — ✅ shipped
 > **What** A keyboard-summoned palette: clip · clip-selection · show-related ·
 > (later) ask · open options.
 > **Why it wows** Power-user speed; never hunt for a button again.
@@ -1778,6 +1778,13 @@ organizing after.*
 > **Reframe** Retained and re-aimed: the palette becomes the keyboard route into
 > the **C2** lanes for the resolved item, not a list of capture verbs. Still not
 > a generic ask box.
+> **Status** ✅ shipped: `Alt+Shift+K` (the fourth and last suggested key Chrome
+> allows) opens an overlay listing exactly the lanes the panel would offer, plus
+> deploy readiness, related items and the two clip verbs, and a choice lands in the
+> panel. The brief's "restricted pages fail closed with a toast" became the toolbar
+> badge: a toast cannot be injected on exactly those pages. Design and decisions are
+> in `docs/architecture.md` § The command palette (3.1) (the design spec was pruned
+> on delivery).
 
 ### 3.2 One-press undo · 🟢 · S
 > **What** Undo the last clip immediately after it lands.

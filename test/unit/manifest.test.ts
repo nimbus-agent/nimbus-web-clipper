@@ -65,8 +65,8 @@ describe("composeManifest", () => {
 
   test("declares clip-page and clip-selection commands with default keys", () => {
     const m = composeManifest("chrome", "1.2.3");
-    expect(m.commands["clip-page"]?.suggested_key.default).toBe("Alt+Shift+C");
-    expect(m.commands["clip-selection"]?.suggested_key.default).toBe("Alt+Shift+S");
+    expect(m.commands["clip-page"]?.suggested_key?.default).toBe("Alt+Shift+C");
+    expect(m.commands["clip-selection"]?.suggested_key?.default).toBe("Alt+Shift+S");
   });
 });
 
@@ -74,8 +74,24 @@ describe("composeManifest — commands", () => {
   for (const target of ["chrome", "firefox"] as const) {
     test(`${target} declares the show_related command with a suggested key`, () => {
       const m = composeManifest(target, "1.2.3");
-      expect(m.commands.show_related.suggested_key.default).toBe("Alt+Shift+R");
+      expect(m.commands.show_related.suggested_key?.default).toBe("Alt+Shift+R");
       expect(m.commands.show_related.description.length).toBeGreaterThan(0);
+    });
+  }
+});
+
+describe("composeManifest — open_palette", () => {
+  for (const target of ["chrome", "firefox"] as const) {
+    test(`${target} declares open_palette on Alt+Shift+K`, () => {
+      const m = composeManifest(target, "1.2.3");
+      expect(m.commands.open_palette.suggested_key?.default).toBe("Alt+Shift+K");
+      expect(m.commands.open_palette.description).toBe("Open the Nimbus command palette");
+    });
+
+    test(`${target} has at most four suggested keys (Chrome's cap)`, () => {
+      const m = composeManifest(target, "1.2.3");
+      const keyed = Object.values(m.commands).filter((c) => c.suggested_key !== undefined);
+      expect(keyed.length).toBeLessThanOrEqual(4);
     });
   }
 });

@@ -10,10 +10,11 @@ import { addMenuClickListener, createMenu, removeAllMenus } from "../browser/con
 import { hasOrigin } from "../browser/permissions.ts";
 import { addInstalledListener, addMessageListener } from "../browser/runtime.ts";
 import {
-  deliverSelection,
+  deliverIntent,
   injectPanel,
   runCapture,
   showCue,
+  showPalette,
   showToast,
 } from "../browser/scripting.ts";
 import {
@@ -50,11 +51,13 @@ import {
   isMetricsStatsRequest,
   isOpenDoraRequest,
   isPairRequest,
+  isPaletteIntentRequest,
   isPassageClearRequest,
   isPassageDropRequest,
   isQueueListRequest,
   isQueueRemoveRequest,
   isQueueRetryRequest,
+  isQuickClipRequest,
   isRecogniseRequest,
   isRelatedRequest,
   isResolveRequest,
@@ -65,6 +68,7 @@ import {
   isUnpairRequest,
   type QueueResponse,
 } from "../shared/messages.ts";
+import type { PanelIntent } from "../shared/panel-host.ts";
 import { removeGroup, removePassage } from "../shared/passage.ts";
 import type { AgentError, AgentLane, LaneState, Recognition } from "../shared/types.ts";
 import {
@@ -154,6 +158,7 @@ import { type RawScopeGap, withLabel } from "./http-json.ts";
 import { itemIdsOf, resolveItemUrls } from "./item-urls.ts";
 import { menuAction, registerMenus } from "./menus.ts";
 import { getOrigins } from "./origin-store.ts";
+import { type OpenPaletteDeps, openPalette } from "./palette-open.ts";
 import { collectPassage, type PassageCollectDeps } from "./passage-collect.ts";
 import { getPassages, updatePassages } from "./passage-store.ts";
 import { isPreviewEnabled } from "./preview-pref.ts";
@@ -859,9 +864,9 @@ function isBriefMessage(v: unknown): v is BriefMessage {
  * Fan-out for the six brief message kinds.
  *
  * A separate function, not six branches in the router: the router already carries
- * twenty-four branches, and has since been split into six order-preserving slices
+ * many branches, and has since been split into seven order-preserving slices
  * (`routeCapturePair` / `routeIndexReads` / `routeQueueAndConnection` /
- * `routeDeploy` / `routeDora` / `routeSubRouters`) to stay under Sonar's cognitive-complexity cap
+ * `routeDeploy` / `routeDora` / `routePalette` / `routeSubRouters`) to stay under Sonar's cognitive-complexity cap
  * (S3776, 15) — having earlier needed `openPanelForCue` extracted for the same reason.
  */
 async function routeBriefMessage(message: BriefMessage): Promise<unknown> {
@@ -987,6 +992,14 @@ const passageCollectDeps: PassageCollectDeps = {
   now: () => Date.now(),
 };
 
+// Unlike `openPanel`, the palette says so on a page it cannot open on (badge flash).
+const openPaletteDeps: OpenPaletteDeps = {
+  activeTab,
+  getOrigins,
+  showPalette,
+  showFeedback: quickClipDeps.showFeedback,
+};
+
 // Menus are re-registered from scratch (removeAll first) so a reload/upgrade can't
 // leave a duplicate id behind — chrome.contextMenus.create throws on a duplicate.
 // Single-flighted because on a fresh install the startup sequence and onInstalled
@@ -1030,7 +1043,7 @@ function openPanel(tabId?: number): void {
 
 /**
  * The two selection entries: hand the selected text to the panel in the clicked
- * tab, opening one if none is there (`deliverSelection` is what keeps that from
+ * tab, opening one if none is there (`deliverIntent` is what keeps that from
  * toggling an open panel shut).
  *
  * A missing `tabId` cannot be recovered from here. Unlike `openPanel`, which
@@ -1056,7 +1069,7 @@ function handleSelectionMenu(
     return;
   }
   const intent = action === "define-selection" ? "define" : "related";
-  deliverSelection(tabId, { text: selectionText, intent }).catch(() => undefined);
+  deliverIntent(tabId, { kind: "selection", text: selectionText, intent }).catch(() => undefined);
 }
 
 addMenuClickListener((menuItemId, tabId, selectionText) => {
@@ -1117,7 +1130,7 @@ addMenuClickListener((menuItemId, tabId, selectionText) => {
  * act on.
  *
  * Lives outside the message listener rather than inline: the listener is a flat
- * router (now five order-preserving slices carrying twenty-four branches between
+ * router (now seven order-preserving slices carrying many branches between
  * them), and a nested `if` inside one of them costs more cognitive complexity
  * than the branch itself (SonarCloud S3776, which this pushed to 16 against a
  * threshold of 15). The router routes; this decides.
@@ -1557,6 +1570,48 @@ function routeSubRouters(message: unknown, respond: Respond, sender: SenderInfo)
   return null;
 }
 
+/**
+ * The in-page palette's two messages. Neither replies (`false`, like `cue-open`),
+ * and both act on `sender.tabId` ONLY — the browser's word for which tab spoke,
+ * never a field of the message — and are dropped when it is absent.
+ *
+ * `isPanelIntent` passes the caller's object through, extra keys and all, so the
+ * intent is REBUILT from its narrowed fields rather than forwarded: what reaches
+ * `executeScript`'s `args` is exactly the closed shape and nothing else.
+ */
+function routePalette(message: unknown, sender: SenderInfo): Routed {
+  if (isPaletteIntentRequest(message)) {
+    const tabId = sender.tabId;
+    if (tabId !== undefined) {
+      deliverIntent(tabId, rebuildIntent(message.intent)).catch(() => undefined);
+    }
+    return false;
+  }
+  if (isQuickClipRequest(message)) {
+    const tabId = sender.tabId;
+    if (tabId !== undefined) {
+      quickClip(quickClipDeps, message.mode, tabId).catch(() => undefined);
+    }
+    return false;
+  }
+  return null;
+}
+
+function rebuildIntent(intent: PanelIntent): PanelIntent {
+  switch (intent.kind) {
+    case "selection":
+      return { kind: "selection", text: intent.text, intent: intent.intent };
+    case "lane":
+      return { kind: "lane", lane: intent.lane };
+    case "deploy":
+      return { kind: "deploy" };
+    case "related":
+      return { kind: "related" };
+    case "candidates":
+      return { kind: "candidates" };
+  }
+}
+
 addMessageListener((message, rawRespond, sender) => {
   const respond = wrapRespond(rawRespond);
   // `??`, not `||`: a route that handled the message by answering synchronously
@@ -1567,6 +1622,7 @@ addMessageListener((message, rawRespond, sender) => {
     routeQueueAndConnection(message, respond) ??
     routeDeploy(message, respond) ??
     routeDora(message, respond) ??
+    routePalette(message, sender) ??
     routeSubRouters(message, respond, sender) ??
     false
   );
@@ -1585,6 +1641,10 @@ addCommandListener((command) => {
   }
   if (command === "clip-selection") {
     quickClip(quickClipDeps, "selection").catch(() => undefined);
+    return;
+  }
+  if (command === "open_palette") {
+    openPalette(openPaletteDeps).catch(() => undefined);
   }
 });
 

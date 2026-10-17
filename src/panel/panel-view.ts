@@ -647,7 +647,47 @@ function appendErrorHeader(
   if (state.surface !== null) {
     box.append(line(doc, "nimbus-related__surface", state.surface));
   }
-  box.append(line(doc, "nimbus-related__status", state.message));
+  box.append(line(doc, "nimbus-related__status", headerStatusLine(state) ?? state.message));
+}
+
+const NOT_INDEXED_LINE = "Not indexed.";
+const TRUNCATED_AMBIGUOUS_LINE = "Too many matches to choose from — open the item in Nimbus.";
+const NEEDS_SCOPE_LEAD = "This pairing can't resolve pages yet.";
+
+/**
+ * The one sentence a header says about a page's state, for the arms where that
+ * sentence is the whole story: `error`, `needs-scope`, `not-indexed`, a `file`
+ * miss banner and a truncated `ambiguous`. `null` for every other arm — their
+ * lines describe a subject (an item, a dashboard) a caller that already names it
+ * has no need to restate. {@link renderHeader} draws these same arms from this
+ * function, so the copy has one source.
+ */
+export function headerStatusLine(h: HeaderState): string | null {
+  switch (h.kind) {
+    case "error":
+      return h.message;
+    case "needs-scope":
+      return NEEDS_SCOPE_LEAD;
+    case "not-indexed":
+      return NOT_INDEXED_LINE;
+    case "file":
+      return h.banner ?? null;
+    case "ambiguous":
+      return h.truncated ? TRUNCATED_AMBIGUOUS_LINE : null;
+    // Every other arm, named rather than defaulted: the return type has no
+    // `undefined`, so a new `HeaderState` arm left out here fails typecheck
+    // instead of silently getting no line (and no palette status row).
+    case "loading":
+    case "unrecognised":
+    case "captured":
+    case "service":
+    case "resolved":
+    case "chosen":
+    case "fetching":
+    case "fetch-blocked":
+    case "fetch-retry":
+      return null;
+  }
 }
 
 /**
@@ -663,13 +703,7 @@ function appendAmbiguousHeader(
   if (state.truncated) {
     // Upstream deliberately sends an EMPTY list when it would have to truncate:
     // a shortened menu implies the right answer is on it. Say so instead.
-    box.append(
-      line(
-        doc,
-        "nimbus-related__status",
-        "Too many matches to choose from — open the item in Nimbus.",
-      ),
-    );
+    box.append(line(doc, "nimbus-related__status", headerStatusLine(state) ?? ""));
     return;
   }
   box.append(line(doc, "nimbus-related__status", "Several indexed items match this page:"));
@@ -686,7 +720,7 @@ function appendNotIndexed(
   state: Extract<HeaderState, { kind: "not-indexed" }>,
   onFetch?: (action: "fetch" | "resolve") => void,
 ): void {
-  box.append(line(doc, "nimbus-related__status", "Not indexed."));
+  box.append(line(doc, "nimbus-related__status", headerStatusLine(state) ?? ""));
   // The button appears only when the miss is fetchable — otherwise there is
   // nothing to offer.
   if (state.fetchable) {
@@ -716,8 +750,9 @@ function appendFileHeader(
   box: HTMLElement,
   state: Extract<HeaderState, { kind: "file" }>,
 ): void {
-  if (state.banner !== undefined) {
-    box.append(line(doc, "nimbus-related__status", state.banner));
+  const banner = headerStatusLine(state);
+  if (banner !== null) {
+    box.append(line(doc, "nimbus-related__status", banner));
   }
 }
 
@@ -785,7 +820,7 @@ export function renderHeader(
   }
 
   if (state.kind === "needs-scope") {
-    appendScopeGuidance(doc, box, "This pairing can't resolve pages yet.", state.scopeGap);
+    appendScopeGuidance(doc, box, headerStatusLine(state) ?? "", state.scopeGap);
     return box;
   }
 

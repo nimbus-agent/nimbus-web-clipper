@@ -4,8 +4,6 @@
 // reads the page context, asks the SW for related items, and renders them.
 import { sendMessage } from "../browser/runtime.ts";
 import { declaredCanonicalHref, resolveCanonical } from "../shared/canonical.ts";
-import { isCapturedCopy } from "../shared/capture-offer.ts";
-import { gatePolicy } from "../shared/connector-health.ts";
 import {
   type ClipResponse,
   type ExtensionRequest,
@@ -14,10 +12,16 @@ import {
   isFetchResponse,
   isRecognitionResponse,
   isRelatedResponse,
-  isResolveResponse,
-  type ResolveResponse,
 } from "../shared/messages.ts";
-import { PANEL_HOST_ID, type PanelSelection } from "../shared/panel-host.ts";
+import {
+  PANEL_HOST_ID,
+  PANEL_INTENT_HOOK,
+  PANEL_STATE_HOOK,
+  type PanelHostState,
+  type PanelIntent,
+  type PanelSelection,
+  samePage,
+} from "../shared/panel-host.ts";
 import type { ClipPreview } from "../shared/preview.ts";
 import { sameItem, surfaceLine } from "../shared/recognise/index.ts";
 import {
@@ -26,25 +30,26 @@ import {
   type CaptureError,
   type CaptureResult,
   type FetchTarget,
-  type FileMissReason,
   type FileResolution,
   type LaneState,
   type Product,
   type Recognition,
   type RelatedHit,
   type ResolveCandidate,
-  type SurfaceKind,
 } from "../shared/types.ts";
 import { DEPLOY_CSS } from "./deploy/deploy-css.ts";
 import { deployBelongsOnSurface, mountDeploySection, type Send } from "./deploy/deploy-section.ts";
 import { FINDINGS_CSS } from "./findings/findings-css.ts";
+import { headerFrom, laneInputsFrom } from "./header-state.ts";
 import {
   type LaneContext,
   laneCanRun,
+  laneContextFrom,
   laneRequestInput,
-  lanesFor,
+  showsRelated,
   type TermState,
   termStateFrom,
+  visibleLanes,
 } from "./lane-input.ts";
 import {
   type HeaderState,
@@ -58,22 +63,8 @@ import {
 const HOST_ID = PANEL_HOST_ID;
 
 /**
- * What the panel says when it will not send a selection to the glossary agent.
- *
- * Rendered locally, without a round trip, because the panel is the side that
- * still has the user in front of it: the message boundary refuses the same input
- * (`isNormalisedTerm` in messages.ts), but a rejected message can only come back
- * as a transport error, which would tell the user Nimbus is broken when in fact
- * they selected three paragraphs.
- */
-const TERM_MESSAGES: Record<"empty" | "too_long", string> = {
-  too_long: "That's a passage, not a term — select a word or phrase.",
-  empty: "Select a word or phrase first — this lane needs one.",
-};
-
-/**
  * The four ways `capture` can refuse, each answered honestly rather than with
- * one generic failure — same pattern as `RESOLVE_MESSAGES`/`FETCH_MESSAGES`
+ * one generic failure — same pattern as `RESOLVE_MESSAGES` (header-state.ts)/`FETCH_MESSAGES`
  * below, but total over `CaptureError`'s four members rather than falling
  * back for an open-ended reason set: there is nowhere else for a fifth
  * capture reason to come from.
@@ -103,36 +94,6 @@ const RELATED_MESSAGES: Record<string, string> = {
   server_error: "Nimbus had an error fetching related items.",
 };
 
-const RESOLVE_MESSAGES: Record<string, string> = {
-  not_paired: "Pair with Nimbus in Options to see what it knows about this page.",
-  unauthorized: "Nimbus rejected this pairing. Re-pair in Options.",
-  unsupported: "This Nimbus gateway can't resolve pages yet.",
-  unreachable: "Couldn't connect to Nimbus.",
-  server_error: "Nimbus had an error resolving this page.",
-  // `insufficient_scope` is handled BEFORE this map is consulted, in headerFrom
-  // below — but only when `surface !== null`. That guard always holds in
-  // practice: `handleResolve` calls the gateway only after `recognise()`
-  // succeeds, and a 403 can only come back from a gateway call, so a 403 always
-  // carries a surface. This entry exists as a fallback for that invariant alone
-  // — if it were ever violated, this is the one message this branch went out of
-  // its way to avoid reusing the generic "Couldn't resolve this page." for.
-  insufficient_scope:
-    "This pairing can't resolve pages yet. Run nimbus clip status to find this device, then nimbus clip scopes.",
-};
-
-/**
- * The two ways the file probe can miss, each with the repo the coordinate named —
- * matching `RESOLVE_MESSAGES`/`FETCH_MESSAGES` above: an honest sentence per
- * reason rather than one generic "not indexed" that would hide which of the two
- * fixes (track the remote, index the file) actually applies.
- */
-const FILE_MISS_SENTENCES: Record<FileMissReason, (repo: string) => string> = {
-  remote_not_tracked: (repo) =>
-    `Nimbus has no local checkout of \`${repo}\`, so it cannot answer about its files.`,
-  file_not_indexed: (repo) =>
-    `Nimbus has a checkout of \`${repo}\`, but this file is not in its index.`,
-};
-
 // `insufficient_scope` and `timeout` are handled BEFORE this map is consulted,
 // in `fetchOutcomeHeader` below, where they get their own first-class header
 // states (`fetch-blocked`/`needs-fetch-scope` and `fetch-retry`/`still-working`)
@@ -141,7 +102,7 @@ const FILE_MISS_SENTENCES: Record<FileMissReason, (repo: string) => string> = {
 // `unsupported`, `unreachable` and `server_error` — every one of them a
 // designed, reachable outcome (a stale/missing pairing, a gateway with the
 // route disabled, the network down, or an unexpected server failure), not an
-// undesigned catch-all. This mirrors `RESOLVE_MESSAGES` above, which is the
+// undesigned catch-all. This mirrors `RESOLVE_MESSAGES` (header-state.ts), which is the
 // same fallback for the same five reasons on the resolve route.
 const FETCH_MESSAGES: Record<string, string> = {
   not_paired: "Pair with Nimbus in Options to fetch this page.",
@@ -149,76 +110,6 @@ const FETCH_MESSAGES: Record<string, string> = {
   unsupported: "This Nimbus gateway can't fetch pages yet.",
   unreachable: "Couldn't connect to Nimbus.",
   server_error: "Nimbus had an error fetching this page.",
-};
-
-/**
- * The C2 agent lanes' summary labels — each phrased as the question its
- * agent answers. The wording is load-bearing, not decorative: see
- * `docs/architecture.md`'s "The agent lanes" section, which is where that
- * reasoning lives now that the design spec has been pruned.
- *
- * Left here rather than moved into `panel-view.ts`, which nominally owns
- * render code but not a fixed copy table: `Lane.title` is caller-supplied by
- * design (see `Lane` in panel-view.ts) precisely so a lane's label lives with
- * its caller, not hardcoded into the shared shell. `RELATED_MESSAGES` /
- * `RESOLVE_MESSAGES` / `FETCH_MESSAGES` above are the same pattern for
- * per-outcome copy — this file, not panel-view.ts, is where copy keyed off a
- * caller-owned identifier (a lane id, an error reason) actually lives.
- * Consolidating all of it into panel-view.ts would mean changing that
- * contract for four tables at once, which is out of scope here.
- */
-const LANE_TITLES: Record<AgentLane, string> = {
-  // The fallback only — a glossary lane with a term shows the TERM as its title
-  // (see `laneTitle` below), because "Definition" repeated on every lane says
-  // nothing about which word the user asked about.
-  glossary: "Definition",
-  impact: "What breaks if it lands",
-  expert: "Who should review it",
-  why: "Why does this change exist",
-  catchup: "What happened while I was away",
-  decisions: "What got decided",
-  ownership: "Who owns what",
-};
-
-/**
- * The titles an ITEM surface asks for instead — the same three lanes, on a page
- * that is not a change under review.
- *
- * `LANE_TITLES` above was written for a pull request, and on one it is right:
- * "Why does this change exist" over a PR names exactly what the lane answers. On
- * a PagerDuty incident the same words are not merely awkward, they are false —
- * an incident is not a change. These are the spec's own phrasings (§4.2).
- */
-const ITEM_SURFACE_TITLES: Partial<Record<AgentLane, string>> = {
-  why: "How did we get here",
-  expert: "Who should I talk to",
-  ownership: "Who owns this",
-};
-
-/**
- * Which surfaces override which titles. An EXCEPTION table, deliberately not a
- * second copy of `LANE_TITLES`: an unlisted (lane, surface) pair falls straight
- * through to the title above, so `pr` and `home` keep the shipped copy written
- * for them and nothing but the changed words lives here.
- *
- * `issue` and `incident` share ONE object rather than two identical literals.
- * They are the same question asked about the same kind of thing — an indexed item
- * with a graph entity — and two copies would be two places for one wording to
- * drift.
- */
-const SURFACE_LANE_TITLES: Partial<Record<SurfaceKind, Partial<Record<AgentLane, string>>>> = {
-  issue: ITEM_SURFACE_TITLES,
-  incident: ITEM_SURFACE_TITLES,
-  /**
-   * A file gets its own object rather than sharing `ITEM_SURFACE_TITLES`. `ownership`
-   * happens to want the same words today, but an issue and a file are not the same
-   * kind of thing — sharing the literal would tie two independent reasons to change.
-   */
-  file: {
-    impact: "What breaks if this changes",
-    expert: "Who knows this file",
-    ownership: "Who owns this",
-  },
 };
 
 /** How often an OPEN panel re-asks the worker for a running lane's state — a
@@ -414,14 +305,35 @@ ${DEPLOY_CSS}
 interface NimbusHost extends HTMLElement {
   __nimbusClose?: () => void;
   /**
-   * How the service worker hands a selection to an ALREADY-OPEN panel. Named by
-   * `PANEL_SELECTION_HOOK` (shared/panel-host.ts) — the worker looks it up by
-   * that string, so the two must not drift.
+   * How the service worker hands an intent (a menu selection, a palette choice)
+   * to an ALREADY-OPEN panel. Named by `PANEL_INTENT_HOOK`
+   * (shared/panel-host.ts) — the worker looks it up by that string, so the two
+   * must not drift.
    *
    * The worker cannot deliver by re-injecting `panel.js`: that entry is a
    * self-toggle and would close the panel the user is trying to use.
    */
-  __nimbusSelection?: (selection: PanelSelection) => void;
+  [PANEL_INTENT_HOOK]?: (intent: PanelIntent) => void;
+  /** What the panel reports about itself, read in the page. Named by
+   *  `PANEL_STATE_HOOK` (shared/panel-host.ts). */
+  [PANEL_STATE_HOOK]?: () => PanelHostState;
+}
+
+/**
+ * Where an intent other than a lane or a selection lands focus, inside the
+ * panel body. A `Record`, so a new `PanelIntent` arm without a target is a type
+ * error here rather than an intent that silently focuses nothing. Each falls
+ * back to the panel's heading when its target is not on screen.
+ */
+const INTENT_FOCUS: Record<Exclude<PanelIntent["kind"], "selection" | "lane">, string> = {
+  deploy: ".nimbus-deploy__title",
+  related: laneTitleSelector("related"),
+  candidates: ".nimbus-related__candidate",
+};
+
+/** A lane's `<summary>` — the focus target for a lane intent and a define. */
+function laneTitleSelector(lane: AgentLane | "related"): string {
+  return `[data-lane="${lane}"] .nimbus-related__lane-title`;
 }
 
 function readContext(): { title: string; canonicalUrl?: string; selection: string } {
@@ -441,117 +353,6 @@ function readContext(): { title: string; canonicalUrl?: string; selection: strin
     ...(canonical.kind === "resolved" ? { canonicalUrl: canonical.url } : {}),
     selection,
   };
-}
-
-/**
- * The last phase of {@link headerFrom}: a recognised page whose answer is about ONE
- * indexed item — found (connector data or a captured copy), ambiguous, or not
- * indexed. `headerFrom` reaches this only after its refusal, unrecognised, `home` and
- * `file` arms, so `res.outcome` here is the real answer, never the inert placeholder
- * those two surfaces carry. Extracted to bring `headerFrom` under the
- * cognitive-complexity gate (Sonar `S3776`); the header states are unchanged.
- */
-function itemOutcomeHeader(
-  res: Extract<ResolveResponse, { ok: true }>,
-  surface: string,
-  nowMs: number,
-  fetchSent: boolean,
-): HeaderState {
-  const outcome = res.outcome;
-  if (outcome.kind === "found") {
-    // A captured copy is keyed on the ITEM, never on "we just captured it" —
-    // see `isCapturedCopy`'s own doc comment. Without this branch, a COLD
-    // panel open on a page captured last week would present the copy as
-    // ordinary connector data, which is exactly the dishonesty the `captured`
-    // header arm exists to prevent — capturing IN this session is not the
-    // only way to reach it.
-    if (isCapturedCopy(outcome.item)) {
-      return { kind: "captured", item: outcome.item, ageNowMs: nowMs };
-    }
-    return { kind: "resolved", surface, item: outcome.item, matchKind: outcome.matchKind, nowMs };
-  }
-  if (outcome.kind === "ambiguous") {
-    return {
-      kind: "ambiguous",
-      surface,
-      candidates: outcome.candidates,
-      truncated: outcome.truncated,
-    };
-  }
-  // `unresolvable` means the gateway could not parse the URL we sent — a client
-  // bug, not a user-facing distinction. It reads as "not indexed" either way.
-  //
-  // `res.recognition.ok` is guaranteed true whenever `surface` is non-null (see
-  // `surfaceLine`), and `headerFrom` passes a non-null one, so this guard is
-  // unreachable in practice; it exists only so TS can narrow `product` off
-  // `res.recognition` without a non-null assertion.
-  if (!res.recognition.ok) {
-    return { kind: "unrecognised" };
-  }
-  return {
-    kind: "not-indexed",
-    surface,
-    product: res.recognition.product,
-    // Once a fetch has been sent for this panel, `fetchable` is forced false on
-    // every subsequent resolve — including a recovery re-resolve that comes back
-    // as another miss. See the `fetchSent` doc comment in `createPanel` for why
-    // the button must not return.
-    fetchable: outcome.fetchable && !fetchSent,
-  };
-}
-
-function headerFrom(res: unknown, nowMs: number, fetchSent: boolean): HeaderState {
-  if (!isResolveResponse(res)) {
-    return { kind: "error", surface: null, message: "Couldn't read Nimbus's answer." };
-  }
-  const surface = surfaceLine(res.recognition);
-  if (!res.ok) {
-    // `insufficient_scope` is NOT an error: the route works, the owner just has
-    // not granted this device the scope. It gets its own state so the panel can
-    // say what to run instead of blaming Nimbus.
-    if (res.reason === "insufficient_scope" && surface !== null) {
-      return { kind: "needs-scope", surface, scopeGap: res.scopeGap ?? null };
-    }
-    return {
-      kind: "error",
-      surface,
-      message: RESOLVE_MESSAGES[res.reason] ?? "Couldn't resolve this page.",
-    };
-  }
-  if (surface === null) {
-    return { kind: "unrecognised" };
-  }
-  // Before any outcome is read. A home page carries an inert outcome
-  // (handlers.ts fills one in only because the response type demands it), so
-  // reading it here would render a dashboard as a miss.
-  if (res.recognition.ok && res.recognition.kind === "home") {
-    // `res.connector` is optional only because the type is shared with every
-    // other surface (see its doc comment in messages.ts) — `handlers.ts` always
-    // fills one in for a home recognition, falling back to `unknown` itself when
-    // the read failed or listed no row for this connector. The fallback here is
-    // a second line of defence, for the same "unknown" reason: never guess.
-    return {
-      kind: "service",
-      surface,
-      product: res.recognition.product,
-      connector: res.connector ?? { state: "unknown" },
-      nowMs,
-    };
-  }
-  // Same reasoning as the `home` branch above: a `file` recognition's `outcome`
-  // is an inert `{kind:"not-indexed", fetchable:false}` (handlers.ts), filled in
-  // only because `ResolveResponse`'s ok arm requires one. The real answer is
-  // `res.file` — a 403 never reaches here (see this branch's own doc comment
-  // in messages.ts and `FileResolution`'s), so only `found`/`miss`/`unsupported`
-  // are possible.
-  if (res.recognition.ok && res.recognition.kind === "file") {
-    const file = res.file;
-    if (file === undefined || file.kind === "unsupported" || file.kind === "found") {
-      return { kind: "file", surface };
-    }
-    return { kind: "file", surface, banner: FILE_MISS_SENTENCES[file.reason](file.repo) };
-  }
-  return itemOutcomeHeader(res, surface, nowMs, fetchSent);
 }
 
 /**
@@ -672,13 +473,18 @@ function shownItemId(shown: HeaderState): string | undefined {
  * not actually leak between mounts — but a closure needs no reset step, and it
  * makes "this response belongs to that panel" structural instead of incidental.
  */
-function createPanel(body: HTMLElement): {
+function createPanel(
+  body: HTMLElement,
+  heading: HTMLElement,
+): {
   paint: () => void;
   loadHeader: () => Promise<void>;
   loadRelated: (selection?: string) => Promise<void>;
   stopPolling: () => void;
   checkNavigation: () => Promise<void>;
   applySelection: (text: string, intent: PanelSelection["intent"] | null) => void;
+  applyIntent: (intent: PanelIntent) => void;
+  state: () => PanelHostState;
 } {
   let header: HeaderState = { kind: "loading" };
   /** The deploy-readiness section's own host, created once per panel mount and
@@ -696,7 +502,8 @@ function createPanel(body: HTMLElement): {
    * navigates, and a lane answering about the tab's current page under a header
    * naming the pinned one is precisely the defect this exists to make
    * impossible. `reread()` is its only other writer, from an explicit user
-   * click.
+   * gesture: the notice's button, or an intent arriving once the tab shows a
+   * different item.
    */
   let pinnedUrl = window.location.href;
   /**
@@ -722,7 +529,7 @@ function createPanel(body: HTMLElement): {
    */
   let offeredLanes: readonly AgentLane[] | null = null;
   /** The file probe's answer for the pinned page, or null on any other surface.
-   *  Read by `laneContext` — the header cannot serve as the gate, because it is the
+   *  Read by `laneContext` (-> `laneContextFrom`) — the header cannot serve as the gate, because it is the
    *  same shape on a hit, a miss and a gateway too old for the route. */
   let fileResolution: FileResolution | null = null;
   /** The last URL `checkNavigation` looked at — so a tick on an unchanged URL
@@ -902,6 +709,27 @@ function createPanel(body: HTMLElement): {
    */
   let term: TermState = { kind: "none" };
   /**
+   * The selection a `related` menu entry (or palette selection intent) asked
+   * Related about, kept so a LATER selection-less `loadRelated()` asks about it
+   * too. Without it, mount's own `loadHeader().then(loadRelated)` — and
+   * `reread`'s trailing one — could land after the selection's request and
+   * overwrite it with a selection-less answer. Per-page: `reread` clears it.
+   */
+  let relatedSelection: string | null = null;
+  /**
+   * The one parking slot for an intent that arrived before the header did
+   * (`applyIntent`). A newer intent replaces it — the last gesture wins and runs
+   * never queue. `loadHeader` releases it after its paint, `reread` keeps it,
+   * and teardown (`stopAgentPolls`) drops it.
+   */
+  let pendingIntent: PanelIntent | null = null;
+  /**
+   * Orders intents across `applyIntent`'s stale-pin recognise. Each intent
+   * takes a ticket; a recognise answer acts only for the latest one, so an
+   * intent superseded while its round trip was out never runs.
+   */
+  let intentSeq = 0;
+  /**
    * Lanes with an `agent-run` genuinely IN FLIGHT — sent but not yet answered.
    * Guards a double invoke on rapid toggling: expand -> collapse -> expand
    * before the worker has persisted `{kind:"running"}` would otherwise send a
@@ -988,47 +816,15 @@ function createPanel(body: HTMLElement): {
     return header.kind === "not-indexed" ? header.surface : null;
   }
 
-  /** Everything `lanesFor`/`laneRequestInput`/`laneCanRun` need, from one place —
-   *  so a lane cannot be rendered under one context and then asked under another. */
+  /** The panel's inputs to `laneContextFrom` (lane-input.ts), which owns the rule. */
   function laneContext(): LaneContext {
-    const shown = shownHeader();
-    return {
-      surfaceKind: pinnedRecognition?.ok === true ? pinnedRecognition.kind : null,
-      pageSubject:
-        shown.kind === "resolved" ||
-        shown.kind === "service" ||
-        shown.kind === "chosen" ||
-        // A file page's lanes are gated on the PROBE, not on the header: the header
-        // is the same shape on a hit, a miss and an older gateway, and only a hit
-        // has a subject to answer about.
-        (shown.kind === "file" && fileResolution?.kind === "found"),
-      pickedItemId: shown.kind === "chosen" ? shown.candidate.id : null,
-      term,
+    return laneContextFrom({
+      shown: shownHeader(),
+      recognition: pinnedRecognition,
+      file: fileResolution,
       offered: offeredLanes,
-    };
-  }
-
-  /** A term lane wears its term as its title — "Definition" on every one of them
-   *  would say nothing about which word was asked about. Quoted so a one-word
-   *  term still reads as a quotation rather than as a heading this panel wrote.
-   *
-   *  Otherwise the surface may override the title (`SURFACE_LANE_TITLES`), and
-   *  anything it does not name falls through to `LANE_TITLES`. `surfaceKind` is
-   *  passed in from the caller's `pinnedRecognition` read rather than taken from
-   *  the header or re-derived here: the title and the render gate that decided to
-   *  show this lane at all must answer from one surface, not two. */
-  function laneTitle(lane: AgentLane, surfaceKind: SurfaceKind | null): string {
-    if (lane === "glossary" && term.kind === "ready") {
-      return `“${term.term}”`;
-    }
-    const override = surfaceKind === null ? undefined : SURFACE_LANE_TITLES[surfaceKind]?.[lane];
-    return override ?? LANE_TITLES[lane];
-  }
-
-  /** Why this panel will not send the current selection. Only ever called for a
-   *  lane `laneCanRun` refused, which is only ever a refused term. */
-  function termRefusal(): string {
-    return term.kind === "refused" ? TERM_MESSAGES[term.reason] : TERM_MESSAGES.empty;
+      term,
+    });
   }
 
   function clearLanePoll(lane: AgentLane): void {
@@ -1108,6 +904,22 @@ function createPanel(body: HTMLElement): {
   }
 
   /**
+   * Ask the worker what item `url` is — the one recognition both the navigation
+   * watcher and `applyIntent`'s stale-pin check use, so the two can never
+   * disagree about whether the tab moved. `null` means no conclusion: the
+   * worker was unreachable, its answer unreadable, or its own read failed.
+   */
+  async function recogniseUrl(url: string): Promise<Recognition | null> {
+    let res: unknown;
+    try {
+      res = await sendMessage({ kind: "recognise", pageUrl: url });
+    } catch {
+      return null;
+    }
+    return isRecognitionResponse(res) && res.ok ? res.recognition : null;
+  }
+
+  /**
    * Compare the tab's item identity against the pinned one, and flip `navAway`
    * when it differs. Identity, NOT the URL: `resolveUrl` keeps sub-tab segments
    * and the query string on purpose, so a PR's Files tab is a different URL and
@@ -1160,41 +972,25 @@ function createPanel(body: HTMLElement): {
     const previous = lastCheckedUrl;
     lastCheckedUrl = url;
     const seq = ++recogniseSeq;
-    let res: unknown;
-    try {
-      res = await sendMessage({ kind: "recognise", pageUrl: url });
-    } catch {
-      // The worker is unreachable. Every OTHER sendMessage failure in this panel
-      // leaves the user a way back — an error header, a Re-run button — but a
-      // navigation check has no button, so the next tick is the only recovery
-      // there is. Leaving `lastCheckedUrl` marked would remove it: this URL would
-      // match on every future tick and never be re-checked, and the notice for it
-      // would never appear.
-      //
-      // Rolled back only while this is still the LATEST check AND still this same
-      // generation — `generation`'s own doc comment says a stale response must
-      // neither store nor paint, and this is a store.
-      if (gen === generation && seq === recogniseSeq) {
-        lastCheckedUrl = previous;
-      }
-      return;
-    }
+    const current = await recogniseUrl(url);
     if (closed || gen !== generation || seq !== recogniseSeq) {
       // A newer check — a later tick, or a `reread` — already owns the marker.
       // Restoring an older URL over it here would make that newer check re-send
-      // for a URL it has already moved past.
+      // for a URL it has already moved past. (`generation`'s own doc comment
+      // says a stale response must neither store nor paint, and a rollback is
+      // a store.)
       return;
     }
-    if (!isRecognitionResponse(res) || !res.ok) {
-      // The worker reached no conclusion — the response was unreadable, or (on
-      // `ok: false`) its storage read failed. "I could not look" is not "there
-      // is no item here": treating either as a completed check would leave this
-      // URL sitting in `lastCheckedUrl` forever, matching on every later tick, so
-      // the notice for it could never appear — the exact defect class this
-      // watcher exists to remove. Roll the marker back to `previous` so the
-      // NEXT TICK re-asks about this same URL instead. No second guard is needed
-      // on the rollback itself: the check just above has already established
-      // this is still the latest ticket and the current generation.
+    if (current === null) {
+      // The worker reached no conclusion — it was unreachable, the response
+      // was unreadable, or (on `ok: false`) its storage read failed. "I could
+      // not look" is not "there is no item here": treating it as a completed
+      // check would leave this URL sitting in `lastCheckedUrl` forever,
+      // matching on every later tick, so the notice for it could never appear
+      // — the exact defect class this watcher exists to remove. A navigation
+      // check has no button, unlike every OTHER failure in this panel, so the
+      // next tick is the only recovery there is: roll the marker back to
+      // `previous` and that tick re-asks about this same URL.
       lastCheckedUrl = previous;
       return;
     }
@@ -1202,7 +998,7 @@ function createPanel(body: HTMLElement): {
     // already refused to spend a check without one — but TypeScript does not
     // retain that narrowing of a closure `let` across the `await` on the send
     // above, so it still types as `Recognition | null` at this line.
-    const away = pinnedRecognition !== null && !sameItem(pinnedRecognition, res.recognition);
+    const away = pinnedRecognition !== null && !sameItem(pinnedRecognition, current);
     if (away === navAway) {
       return;
     }
@@ -1213,9 +1009,11 @@ function createPanel(body: HTMLElement): {
   /**
    * Re-pin to the page the tab is on now and describe THAT page instead.
    *
-   * Only reachable from the notice's own button — an explicit user action, which
-   * is why it is allowed to spend two gateway calls when nothing else in this
-   * panel re-reads on its own.
+   * Reached from the notice's own button, and from `applyIntent` when an intent
+   * (a menu entry, a palette choice) arrives for a tab now showing a different
+   * item (or one the recogniser could not place) — both
+   * explicit user actions, which is why it is allowed to spend two gateway calls
+   * when nothing else in this panel re-reads on its own.
    *
    * `fetchSent` resets deliberately: the one-fetch-per-panel rule exists to stop
    * a second outbound provider request for the SAME item, and this is a different
@@ -1243,9 +1041,10 @@ function createPanel(body: HTMLElement): {
     // transient paint() below runs with `header: loading` and `term: none`,
     // both of which already block every offered-gated lane on their own, and
     // by the time a header state that unblocks one can be reached, loadHeader
-    // has always just overwritten this from that same response (see its `res.ok`
-    // arm) — reachable header kinds and knowledge of `offeredLanes` are set by
-    // the same branch. So this line is here for when that ordering someday
+    // has always just overwritten this from that same response (its
+    // `laneInputsFrom` step, which sets the offered list from every readable
+    // answer) — reachable header kinds and knowledge of `offeredLanes` come
+    // from the same response. So this line is here for when that ordering someday
     // changes, not because a test can currently tell its absence from its
     // presence — see the "offered-lanes gate" describe block in
     // panel-in-page.test.ts for the reasoning trail.
@@ -1273,6 +1072,7 @@ function createPanel(body: HTMLElement): {
     // Keeping it would leave a glossary lane on the new page titled with a term
     // lifted from the old one.
     term = { kind: "none" };
+    relatedSelection = null;
     relatedBody = (doc) => renderError(doc, "Loading…");
     relatedExpanded = true;
     for (const lane of AGENT_LANES) {
@@ -1392,6 +1192,9 @@ function createPanel(body: HTMLElement): {
    *  `closed`'s own doc comment. */
   function stopAgentPolls(): void {
     closed = true;
+    // A parked intent belongs to a panel that is going away: a resolve settling
+    // after teardown must not release it into a run nobody can see.
+    pendingIntent = null;
     for (const lane of AGENT_LANES) {
       clearLanePoll(lane);
     }
@@ -1481,26 +1284,11 @@ function createPanel(body: HTMLElement): {
     // assignment below for the same pattern.
     const nowMs = Date.now();
     const shown = shownHeader();
-    // Which lanes render is `lanesFor` (lane-input.ts), against the context
-    // assembled just below. Two gates, one per kind of lane:
-    //
-    // A PAGE lane needs the pinned page's surface to be one it belongs on, and
-    // the header to name a subject: `resolved` (one indexed item), `service` (a
-    // dashboard, no item at all), or `chosen` — the candidate the user picked out
-    // of an ambiguous answer. `chosen` counts NOW, and did not before: the picked
-    // id travels with `agent-run` (messages.ts) and `resolveForAgent` honours it
-    // after verifying it against the candidate set, so the lanes answer about the
-    // item the header names instead of refusing with `not_resolved` under a
-    // header that had just named it — see ROADMAP C2.5. There is still nothing to
-    // ask about on a miss, an error, or an ambiguous answer nobody has picked
-    // from.
-    //
-    // A TERM lane needs only a term, and consults none of the above.
-    //
-    // The surface kind comes from `pinnedRecognition`, not from the header: the
-    // `resolved` HeaderState carries only the human surface LINE ("GitHub PR ·
-    // acme/web #482"), not the typed kind.
-    const surfaceKind = pinnedRecognition?.ok === true ? pinnedRecognition.kind : null;
+    // Which lanes render, and under which titles, is `visibleLanes`
+    // (lane-input.ts), against the context assembled just below — the same list
+    // any other caller of that module sees. Its page-lane gate is the C2.5 rule:
+    // a `chosen` header counts as a subject, an ambiguous answer nobody has
+    // picked from does not.
     const laneCtx = laneContext();
     // Hoisted out of the `render` arrow below rather than written inline inside it.
     // Inline it was a fourth nested function — map callback -> render -> run callback —
@@ -1511,40 +1299,24 @@ function createPanel(body: HTMLElement): {
       () => {
         sendAgentRun(lane).catch(() => undefined);
       };
-    const agentLanes: Lane[] = lanesFor(laneCtx).map((lane) => ({
-      id: lane,
-      title: laneTitle(lane, surfaceKind),
-      expanded: laneOpen[lane],
+    const agentLanes: Lane[] = visibleLanes(laneCtx).map((visible) => ({
+      id: visible.lane,
+      title: visible.title,
+      expanded: laneOpen[visible.lane],
       render: (doc: Document) =>
         // A lane that cannot run renders its reason here, locally, and sends
         // nothing — the only lane in this panel that is shown precisely so it can
         // say why it will not ask.
-        laneCanRun(lane, laneCtx)
-          ? renderLaneBody(doc, laneState[lane], nowMs, runLane(lane))
-          : renderError(doc, termRefusal()),
+        visible.canRun
+          ? renderLaneBody(doc, laneState[visible.lane], nowMs, runLane(visible.lane))
+          : renderError(doc, visible.refusal ?? ""),
     }));
-    // No related lane on a dashboard: `/v1/clips/related` keyed on a dashboard's
-    // title and URL returns noise dressed as recall. The related REQUEST is still
-    // sent — after the resolve, once the recognition is known — its answer is
-    // simply not rendered here.
-    //
-    // On a dashboard, whether the agent lanes render at all is gated on the
-    // connector's health (`gatePolicy`): three lanes that can only ever come back
-    // empty read as "you have no work", not as "Nimbus cannot ask this connector
-    // anything". `shown.kind === "service"` whenever `surfaceKind === "home"` —
-    // see `headerFrom` — so the `!== "service"` arm below is unreachable in
-    // practice. It is written to FAIL OPEN on purpose: this feature's own rule is
-    // that "we don't know" means ungated, never blank, so a `shown` of some other
-    // kind must not silently blank the lanes if that invariant ever stops holding.
-    const homeLanes = shown.kind !== "service" || gatePolicy(shown.connector.state).lanes;
-    const homeSurfaceLanes: Lane[] = homeLanes ? agentLanes : [];
-    const lanes: Lane[] =
-      surfaceKind === "home"
-        ? homeSurfaceLanes
-        : [
-            { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
-            ...agentLanes,
-          ];
+    const lanes: Lane[] = showsRelated(laneCtx)
+      ? [
+          { id: "related", title: "Related", expanded: relatedExpanded, render: relatedBody },
+          ...agentLanes,
+        ]
+      : agentLanes;
     const navAwayState = navAway
       ? {
           pinnedRef: pinnedRecognition?.ok === true ? pinnedRecognition.ref : null,
@@ -1561,6 +1333,7 @@ function createPanel(body: HTMLElement): {
       capturePreview === null || pendingCapture === null
         ? undefined
         : { preview: capturePreview, onSend: confirmCapture, onCancel: cancelCapturePreview };
+    const restoreFocus = focusKeeper();
     body.replaceChildren(
       renderShell(
         document,
@@ -1593,6 +1366,45 @@ function createPanel(body: HTMLElement): {
     );
     attachLaneToggles();
     appendDeploySection(shown);
+    restoreFocus();
+  }
+
+  /**
+   * `paint` rebuilds the body, which drops focus from whatever held it. An
+   * intent lands focus on purpose (`applyIntent`), and the answer's repaint a
+   * moment later would otherwise throw it back to the document. Returns the step
+   * that puts focus back on the equivalent element of the NEW render: a lane's
+   * summary by its lane id, a candidate button by its position, or the deploy
+   * heading (whose host is re-appended, not re-created). Anything else is left
+   * where the rebuild leaves it, which is what every paint did before this.
+   */
+  function focusKeeper(): () => void {
+    const root = body.getRootNode();
+    const active = root instanceof ShadowRoot ? root.activeElement : null;
+    if (!(active instanceof HTMLElement) || !body.contains(active)) {
+      return () => undefined;
+    }
+    const find = refinder(active);
+    // `preventScroll`: this restores focus, it does not move the reader. A
+    // user scrolled away from the focused lane must not be yanked back to it
+    // by an unrelated answer landing.
+    return () => {
+      find()?.focus({ preventScroll: true });
+    };
+  }
+
+  /** How to find `active`'s equivalent in the next render; see `focusKeeper`. */
+  function refinder(active: HTMLElement): () => HTMLElement | null {
+    if (active.classList.contains("nimbus-related__lane-title")) {
+      const lane = active.closest("[data-lane]")?.getAttribute("data-lane") ?? "";
+      return () =>
+        body.querySelector<HTMLElement>(`[data-lane="${lane}"] .nimbus-related__lane-title`);
+    }
+    if (active.classList.contains("nimbus-related__candidate")) {
+      const index = [...body.querySelectorAll(".nimbus-related__candidate")].indexOf(active);
+      return () => body.querySelectorAll<HTMLElement>(".nimbus-related__candidate").item(index);
+    }
+    return () => (active.isConnected ? active : null);
   }
 
   async function loadHeader(): Promise<void> {
@@ -1614,19 +1426,21 @@ function createPanel(body: HTMLElement): {
       header = { kind: "error", surface: null, message: "Couldn't connect to Nimbus." };
       fetchState = null;
       paint();
+      releaseParked();
       return;
     }
     if (gen !== generation) {
       return;
     }
-    if (isResolveResponse(res)) {
+    // The same derivation the palette uses (`laneInputsFrom`), so the two read
+    // one answer the same way. An unreadable answer changes none of the three.
+    const inputs = laneInputsFrom(res);
+    if (inputs !== null) {
       // The identity of the page this panel describes, from the same response the
       // header is built from — never a second recognition of its own.
-      pinnedRecognition = res.recognition;
-      if (res.ok) {
-        offeredLanes = res.offeredLanes ?? null;
-      }
-      fileResolution = res.ok === true ? (res.file ?? null) : null;
+      pinnedRecognition = inputs.recognition;
+      offeredLanes = inputs.offered;
+      fileResolution = inputs.file;
     }
     // Taken ONCE per repaint here, not re-read per rendered line — see the
     // `resolved` state's `nowMs` doc comment in panel-view.ts.
@@ -1664,6 +1478,7 @@ function createPanel(body: HTMLElement): {
       captureState = null;
     }
     paint();
+    releaseParked();
   }
 
   /**
@@ -1991,15 +1806,148 @@ function createPanel(body: HTMLElement): {
       // started explicitly: `attachLaneToggle` deliberately swallows the
       // synthetic toggle a freshly-rendered open <details> fires, which is what
       // stops a repaint from re-invoking every open lane.
-      laneOpen.glossary = true;
-      paint();
+      expandLane("glossary");
       sendAgentRun("glossary").catch(() => undefined);
       return;
     }
     paint();
     if (intent === "related") {
+      relatedSelection = text;
       loadRelated(text).catch(() => undefined);
     }
+  }
+
+  /**
+   * Opens a lane from code and repaints. Not just `laneOpen[lane] = true`:
+   * `paint` opens by reading each lane's LIVE `<details>` back into `laneOpen`,
+   * so a lane already on screen collapsed would read back closed and stay so.
+   * Opening the live element first is what makes the flag survive that read.
+   */
+  function expandLane(lane: AgentLane): void {
+    const live = body.querySelector<HTMLDetailsElement>(`details[data-lane="${lane}"]`);
+    if (live !== null) {
+      live.open = true;
+    }
+    laneOpen[lane] = true;
+    paint();
+  }
+
+  /** Focus `selector` inside the body, else the panel heading. */
+  function focusIn(selector: string): HTMLElement {
+    const target = body.querySelector<HTMLElement>(selector) ?? heading;
+    target.focus();
+    return target;
+  }
+
+  /**
+   * Apply an intent from the worker (`deliverIntent`), in this order:
+   *
+   * 1. A STALE PIN first, for every kind, selection included — decided by
+   *    ITEM, the rule `checkNavigation` uses, so the two can never disagree.
+   *    The same URL with the fragment dropped (`samePage`) is the same item
+   *    and applies now. Any other URL is recognised (`recogniseUrl`) and
+   *    compared with `sameItem` against `pinnedRecognition`: the same item (a
+   *    PR's Conversation → Files changed tab) applies directly; a different
+   *    one, or a recognise that reached no conclusion, parks the intent and
+   *    re-reads (`staleThenApply`). First because `reread` resets `term`,
+   *    which would wipe a selection applied before it — and because a palette
+   *    lane must never run against a different item than the pinned one.
+   * 2. A selection goes straight to `applySelection`, even while the header is
+   *    loading — today's menu behaviour; it sets `term` before it paints or runs.
+   *    It also drops any parked intent: the last gesture wins.
+   * 3. Anything else waits in `pendingIntent` while the header is loading.
+   * 4. Otherwise it is applied now (`applyResolvedIntent`).
+   */
+  function applyIntent(intent: PanelIntent): void {
+    // Every intent takes a ticket, so one that lands while an earlier one's
+    // recognise is still out supersedes it: the last gesture wins.
+    const seq = ++intentSeq;
+    if (samePage(pinnedUrl, window.location.href)) {
+      applyOnPinnedItem(intent);
+      return;
+    }
+    // A newer gesture also supersedes one parked behind a loading header.
+    pendingIntent = null;
+    staleThenApply(intent, seq).catch(() => undefined);
+  }
+
+  /** Step 1's round trip: is the tab's URL still the pinned item? */
+  async function staleThenApply(intent: PanelIntent, seq: number): Promise<void> {
+    const gen = generation;
+    const current = await recogniseUrl(window.location.href);
+    if (closed || gen !== generation || seq !== intentSeq) {
+      return;
+    }
+    if (pinnedRecognition !== null && current !== null && sameItem(pinnedRecognition, current)) {
+      applyOnPinnedItem(intent);
+      return;
+    }
+    // Parked BEFORE the re-read, which leaves it parked: its `loadHeader`
+    // releases it once the new page's header lands.
+    pendingIntent = intent;
+    reread().catch(() => undefined);
+  }
+
+  /** Steps 2–4 of `applyIntent`: the pin names the item the tab is on. */
+  function applyOnPinnedItem(intent: PanelIntent): void {
+    if (intent.kind === "selection") {
+      // The last gesture wins and runs never queue: a lane parked while the
+      // header loads must not also run once it lands.
+      pendingIntent = null;
+      applySelection(intent.text, intent.intent);
+      if (intent.intent === "define") {
+        focusIn(laneTitleSelector("glossary"));
+      }
+      return;
+    }
+    if (header.kind === "loading") {
+      pendingIntent = intent;
+      return;
+    }
+    applyResolvedIntent(intent);
+  }
+
+  /** Step 4 of `applyIntent`: the header has landed for the page in the tab. */
+  function applyResolvedIntent(intent: Exclude<PanelIntent, { kind: "selection" }>): void {
+    if (intent.kind === "lane") {
+      applyLaneIntent(intent.lane);
+      return;
+    }
+    const target = focusIn(INTENT_FOCUS[intent.kind]);
+    if (intent.kind === "deploy" && target !== heading) {
+      target.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  /**
+   * Expand a lane and ask it — but only a lane this panel would show, and only
+   * when it has nothing to show yet: `collapsed`, or `failed` (re-asking a failed
+   * lane is the Re-run the user would otherwise click). `sendAgentRun` has no
+   * `done` guard of its own and would overwrite a finished answer, so `running`
+   * and `done` are expanded and focused only. A lane the page or roster does not
+   * offer runs nothing and focuses the header.
+   */
+  function applyLaneIntent(lane: AgentLane): void {
+    if (!visibleLanes(laneContext()).some((visible) => visible.lane === lane)) {
+      heading.focus();
+      return;
+    }
+    expandLane(lane);
+    const kind = laneState[lane].kind;
+    if (kind === "collapsed" || kind === "failed") {
+      sendAgentRun(lane).catch(() => undefined);
+    }
+    focusIn(laneTitleSelector(lane));
+  }
+
+  /** `loadHeader`'s last step: apply the intent that was waiting for it. */
+  function releaseParked(): void {
+    const parked = pendingIntent;
+    if (parked === null || closed) {
+      return;
+    }
+    pendingIntent = null;
+    applyIntent(parked);
   }
 
   /**
@@ -2007,9 +1955,14 @@ function createPanel(body: HTMLElement): {
    * pass it: the user's next click is usually into this panel, and clicking into
    * the panel collapses the page selection, so by the time an open panel acts on
    * a menu entry `window.getSelection()` may already read empty. `readContext`
-   * remains the source on mount, when the selection is still live.
+   * remains the source on mount, when the selection is still live. Omitted, it
+   * defaults to `relatedSelection` — the selection a `related` entry already
+   * asked about on this page — so a later selection-less call cannot overwrite
+   * that answer with one about nothing.
    */
-  async function loadRelated(selection?: string): Promise<void> {
+  async function loadRelated(
+    selection: string | undefined = relatedSelection ?? undefined,
+  ): Promise<void> {
     const gen = generation;
     let res: unknown;
     // The item this panel's header names — `resolved`, or the candidate the
@@ -2071,6 +2024,8 @@ function createPanel(body: HTMLElement): {
     stopPolling: stopAgentPolls,
     checkNavigation,
     applySelection,
+    applyIntent,
+    state: () => ({ pinnedUrl, pinnedRecognition, chosenId: chosen?.id ?? null }),
   };
 }
 
@@ -2094,6 +2049,9 @@ function mount(): void {
   const heading = document.createElement("h1");
   heading.className = "nimbus-related__heading";
   heading.textContent = "Related in Nimbus";
+  // Focusable by script only: it is the focus target an intent falls back to
+  // (`applyIntent`), and `.focus()` on a non-focusable element does nothing.
+  heading.tabIndex = -1;
   const close = document.createElement("button");
   close.type = "button";
   close.className = "nimbus-related__close";
@@ -2103,7 +2061,7 @@ function mount(): void {
 
   const body = document.createElement("div");
   body.className = "nimbus-related__body";
-  const view = createPanel(body);
+  const view = createPanel(body, heading);
   view.paint();
 
   panel.append(header, body);
@@ -2119,9 +2077,8 @@ function mount(): void {
     host.remove();
   };
   host.__nimbusClose = teardown;
-  host.__nimbusSelection = (selection) => {
-    view.applySelection(selection.text, selection.intent);
-  };
+  host[PANEL_INTENT_HOOK] = view.applyIntent;
+  host[PANEL_STATE_HOOK] = view.state;
   close.addEventListener("click", teardown, { signal });
   // Capture phase + stopPropagation so host apps (Docs/Jira/GitHub) don't also act on Esc.
   document.addEventListener(

@@ -98,7 +98,7 @@ monorepo's git history.)
   logged.
 - **Bundled, no runtime deps.** `esbuild.mjs` bundles each entry
   (`background`, `popup`, `options`, `capture`, `panel`, `toast`, `cue`,
-  `brief`, `ledger`, `dora` — `ENTRIES` there is the list) into `dist/<target>/` as
+  `brief`, `ledger`, `dora`, `palette` — `ENTRIES` there is the list) into `dist/<target>/` as
   fully-inlined IIFE. `@mozilla/readability` is a devDependency inlined into
   `capture.js`. The shipped extension has no `node_modules`. A new entry must
   also be added to `REQUIRED_FILES` in `scripts/check-build.mjs` — and a new
@@ -130,7 +130,8 @@ monorepo's git history.)
   `*-pref(s).ts` toggles, `http-json.ts` (what the gateway clients share: the request
   timeout, the body read, the scope-gap parse and the scoped-route status
   ladder, plus the `withLabel` step the handlers apply to that gap),
-  `ambient.ts`, `capture-tab.ts`, `menus.ts`
+  `ambient.ts`, `capture-tab.ts`, `menus.ts`, `palette-open.ts` (the palette hotkey:
+  restricted-page badge, then `recognise` → `PaletteInit`)
 - `src/browser/` — the thin typed seam over `chrome.*` (`storage`, `tabs`,
   `scripting`, `runtime`, `action`, `alarms`, `context-menus`, `commands`,
   `permissions`); the only place WebExtension APIs are touched directly
@@ -139,10 +140,13 @@ monorepo's git history.)
   `page-meta.ts` (the page's own author/date/site metadata), plus the injected
   result toast (`toast-in-page.ts` → `toast.js`, pure `toast-view.ts`)
 - `src/panel/` — the injected related-items + agent-lane panel (`panel-in-page.ts`
-  → `panel.js`, pure `panel-view.ts`), its per-lane typed-answer renderers in
-  `findings/` (C8) and the deploy-readiness section in `deploy/` (C10), plus the
-  ambient cue (`cue-in-page.ts` → `cue.js`, pure `cue-view.ts`) and
-  `lane-input.ts` / `related-groups.ts`
+  → `panel.js`, pure `panel-view.ts`), the pure `header-state.ts` (resolve response →
+  header) and `lane-input.ts` (`visibleLanes` — the one lane list the panel and the
+  palette share), its per-lane typed-answer renderers in `findings/` (C8) and the
+  deploy-readiness section in `deploy/` (C10), plus the ambient cue
+  (`cue-in-page.ts` → `cue.js`, pure `cue-view.ts`) and `related-groups.ts`
+- `src/palette/` — the command palette (3.1): `palette-in-page.ts` → `palette.js`,
+  pure `palette-view.ts` (rows + key reducer), `palette-css.ts`
 - `src/brief/` — the research-briefs page (`brief.ts` → `brief.js` +
   `brief.html`/`brief.css`, pure `brief-view.ts`)
 - `src/ledger/` — the activity page over the gateway's egress ledger (`ledger.ts`
@@ -162,7 +166,8 @@ monorepo's git history.)
   loopback origin validation, `messages.ts` typed message envelope + guards,
   `queue.ts`, `related.ts`, `origins.ts` + `recognise/` (page recognition —
   one module per product behind a registry table), `canonical.ts`,
-  `preview.ts`, `brief.ts`, `passage.ts`, `egress.ts`, …) —
+  `preview.ts`, `brief.ts`, `passage.ts`, `egress.ts`, `panel-host.ts` (the panel/palette
+  hand-off: `PanelIntent`, `PaletteInit`, `samePage`), …) —
   `ls src/shared` is the current list, not this parenthesis
 - `test/unit/` — Vitest unit tests (node env; DOM tests opt into jsdom via a docblock)
 - `test/e2e/` — Playwright suites (`bun run test:e2e`), run by the `e2e` job in

@@ -29,6 +29,7 @@ import {
   isMetricsStatsResponse,
   isOpenDoraRequest,
   isPairRequest,
+  isPaletteIntentRequest,
   isPassageClearRequest,
   isPassageDropRequest,
   isPingMessage,
@@ -36,6 +37,7 @@ import {
   isQueueRemoveRequest,
   isQueueResponse,
   isQueueRetryRequest,
+  isQuickClipRequest,
   isRecogniseRequest,
   isRecognitionResponse,
   isRelatedRequest,
@@ -48,9 +50,10 @@ import {
   isServiceBindResponse,
   isServiceUnbindRequest,
   isUnpairRequest,
+  MAX_INTENT_TEXT,
 } from "../../src/shared/messages.ts";
 import { MAX_SERVICE_ID_LEN } from "../../src/shared/services.ts";
-import { AGENT_LANES } from "../../src/shared/types.ts";
+import { AGENT_LANES, LANE_RULES } from "../../src/shared/types.ts";
 
 describe("isPingMessage", () => {
   test("accepts a well-formed ping", () => {
@@ -2027,5 +2030,75 @@ describe("clip-lookup guards", () => {
     expect(
       isClipLookupResponse({ kind: "clip-lookup", state: "clipped", modifiedAt: Number.NaN }),
     ).toBe(false);
+  });
+});
+
+describe("isPaletteIntentRequest", () => {
+  const req = (intent: unknown) => ({ kind: "palette-intent", intent });
+
+  test("accepts each of the five arms", () => {
+    expect(
+      isPaletteIntentRequest(req({ kind: "selection", text: "cache", intent: "define" })),
+    ).toBe(true);
+    expect(
+      isPaletteIntentRequest(req({ kind: "selection", text: "cache", intent: "related" })),
+    ).toBe(true);
+    expect(isPaletteIntentRequest(req({ kind: "lane", lane: "impact" }))).toBe(true);
+    expect(isPaletteIntentRequest(req({ kind: "deploy" }))).toBe(true);
+    expect(isPaletteIntentRequest(req({ kind: "related" }))).toBe(true);
+    expect(isPaletteIntentRequest(req({ kind: "candidates" }))).toBe(true);
+  });
+
+  test("accepts every page lane and no term lane", () => {
+    for (const lane of AGENT_LANES) {
+      expect(isPaletteIntentRequest(req({ kind: "lane", lane }))).toBe(
+        LANE_RULES[lane].input === "page",
+      );
+    }
+  });
+
+  test("rejects a lane outside AGENT_LANES, the term lane, and a missing lane", () => {
+    expect(isPaletteIntentRequest(req({ kind: "lane", lane: "nope" }))).toBe(false);
+    expect(LANE_RULES.glossary.input).toBe("term");
+    expect(isPaletteIntentRequest(req({ kind: "lane", lane: "glossary" }))).toBe(false);
+    expect(isPaletteIntentRequest(req({ kind: "lane" }))).toBe(false);
+  });
+
+  test("bounds selection text: non-empty, at most MAX_INTENT_TEXT characters", () => {
+    expect(MAX_INTENT_TEXT).toBe(8192);
+    const sel = (text: unknown) => req({ kind: "selection", text, intent: "define" });
+    expect(isPaletteIntentRequest(sel(""))).toBe(false);
+    expect(isPaletteIntentRequest(sel("x".repeat(8193)))).toBe(false);
+    expect(isPaletteIntentRequest(sel("x".repeat(8192)))).toBe(true);
+    expect(isPaletteIntentRequest(sel(42))).toBe(false);
+  });
+
+  test("rejects a selection whose intent is not define or related", () => {
+    expect(isPaletteIntentRequest(req({ kind: "selection", text: "cache", intent: null }))).toBe(
+      false,
+    );
+    expect(isPaletteIntentRequest(req({ kind: "selection", text: "cache" }))).toBe(false);
+  });
+
+  test("rejects an unknown kind, a missing intent, and the wrong envelope", () => {
+    expect(isPaletteIntentRequest(req({ kind: "open" }))).toBe(false);
+    expect(isPaletteIntentRequest(req(null))).toBe(false);
+    expect(isPaletteIntentRequest({ kind: "palette-intent" })).toBe(false);
+    expect(isPaletteIntentRequest({ kind: "cue-open", intent: { kind: "deploy" } })).toBe(false);
+    expect(isPaletteIntentRequest("palette-intent")).toBe(false);
+  });
+});
+
+describe("isQuickClipRequest", () => {
+  test("accepts article and selection", () => {
+    expect(isQuickClipRequest({ kind: "quick-clip", mode: "article" })).toBe(true);
+    expect(isQuickClipRequest({ kind: "quick-clip", mode: "selection" })).toBe(true);
+  });
+
+  test("rejects any other mode, a missing mode, and the wrong kind", () => {
+    expect(isQuickClipRequest({ kind: "quick-clip", mode: "page" })).toBe(false);
+    expect(isQuickClipRequest({ kind: "quick-clip" })).toBe(false);
+    expect(isQuickClipRequest({ kind: "capture", mode: "article" })).toBe(false);
+    expect(isQuickClipRequest(null)).toBe(false);
   });
 });

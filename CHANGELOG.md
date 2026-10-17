@@ -8,6 +8,26 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Added
+
+- **A command palette.** `Alt+Shift+K` opens a small keyboard overlay on any page
+  listing what Nimbus can do there: the same agent lanes the panel offers, deploy
+  readiness, related items, defining a selection, and clipping the page or a
+  selection. Type to filter, arrows to move, Enter to run, Esc to close. Choosing a
+  lane opens the panel with that lane asked. On a page the browser will not let
+  extensions touch, the toolbar badge flashes instead.
+
+### Fixed
+
+- **"What's related to this?" keeps its answer when it opens the panel.** On a
+  panel the menu entry had just opened, the panel's own first lookup could land
+  second and replace the results about your selection with results about the
+  page.
+
+- **"Define in Nimbus" opens the definition when the panel already shows one.**
+  If you had collapsed the definition lane, defining a new term asked the
+  question but left the lane closed. It now opens on the new answer.
+
 ## [0.11.0] - 2026-10-08
 
 ### Added
