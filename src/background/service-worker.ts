@@ -864,7 +864,7 @@ function isBriefMessage(v: unknown): v is BriefMessage {
  * Fan-out for the six brief message kinds.
  *
  * A separate function, not six branches in the router: the router already carries
- * twenty-four branches, and has since been split into seven order-preserving slices
+ * many branches, and has since been split into seven order-preserving slices
  * (`routeCapturePair` / `routeIndexReads` / `routeQueueAndConnection` /
  * `routeDeploy` / `routeDora` / `routePalette` / `routeSubRouters`) to stay under Sonar's cognitive-complexity cap
  * (S3776, 15) — having earlier needed `openPanelForCue` extracted for the same reason.
@@ -1130,7 +1130,7 @@ addMenuClickListener((menuItemId, tabId, selectionText) => {
  * act on.
  *
  * Lives outside the message listener rather than inline: the listener is a flat
- * router (now five order-preserving slices carrying twenty-four branches between
+ * router (now seven order-preserving slices carrying many branches between
  * them), and a nested `if` inside one of them costs more cognitive complexity
  * than the branch itself (SonarCloud S3776, which this pushed to 16 against a
  * threshold of 15). The router routes; this decides.

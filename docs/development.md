@@ -441,7 +441,7 @@ building so the context menu is re-registered.
    tab, not the focused one.
 3. On `chrome://extensions` → the entry either does not appear or does
    nothing; no error surfaces.
-4. Options stage 2 lists all three commands with their real bindings.
+4. Options stage 2 lists every command (four, with the palette) with their real bindings.
 5. Deliberately rebind `Alt+Shift+R` to something else in the browser's
    shortcut settings → Options reflects the change on reload.
 6. Unbind it entirely → Options shows **Not set**, and the context-menu route

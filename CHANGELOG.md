@@ -8,6 +8,15 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Added
+
+- **A command palette.** `Alt+Shift+K` opens a small keyboard overlay on any page
+  listing what Nimbus can do there: the same agent lanes the panel offers, deploy
+  readiness, related items, defining a selection, and clipping the page or a
+  selection. Type to filter, arrows to move, Enter to run, Esc to close. Choosing a
+  lane opens the panel with that lane asked. On a page the browser will not let
+  extensions touch, the toolbar badge flashes instead.
+
 ### Fixed
 
 - **"What's related to this?" keeps its answer when it opens the panel.** On a

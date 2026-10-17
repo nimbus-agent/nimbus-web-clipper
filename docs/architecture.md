@@ -866,7 +866,7 @@ which is the only safe default for an action with side effects.
 
 ### The shortcut readout exists because the browser will not tell you otherwise
 
-Options stage 2 now lists all three commands with the shortcut the browser
+Options stage 2 now lists every command (four, with the palette) with the shortcut the browser
 actually bound, via `getAllCommands()` (`src/browser/commands.ts`) — never the
 manifest's `suggested_key`. This is the only surface that can say so: an
 unbound command reports nothing anywhere else — no error, no empty state,
@@ -2559,6 +2559,292 @@ Counts are of ACTIONS, never rows. The gateway's `rowsTotal` includes markers �
 boot markers and outcome markers alike — so the trust-panel summary counts the
 partition instead, and says "at least N" for both figures whenever the page is a
 truncated view of the window.
+
+## The command palette (3.1)
+
+One shortcut opens a small overlay on any injectable page. It lists what this
+page can do, you pick a row with the keyboard, and the answer lands where answers
+already land: the panel. **The palette is a launcher, not a second panel**: it
+renders no agent output of its own, and it lists nothing that is not already a
+panel lane, a panel section or a quick-clip verb. A free-text ask box is out
+(Phase 5's reframe, and there is no endpoint for one); so is any palette-only
+action, which includes a "Fetch this item" row, because targeted fetch is an I13
+write behind the C4.2 preview and stays a panel gesture.
+
+```text
+ hotkey -> worker: openPalette(tab)
+             |- restricted URL -> badge "!" (showFeedback), stop
+             |- recognise(tab.url, origins) -> PaletteInit
+             '- inject palette.js -> __nimbusPalette(init)
+                    |- instant rows (from init): Deploy readiness, Related, Clip page, Clip selection
+                    |- send resolve -> add lane rows (glossary included)
+                    '- Enter on a row (restore selection, remove host)
+                         |- lane / deploy / related / candidates / define
+                         |     -> worker: palette-intent(sender tab) -> deliverIntent
+                         '- clip page / selection
+                               -> worker: quick-clip(sender tab, mode) -> quickClip()
+```
+
+### One lane list, not two
+
+The palette must offer exactly what the panel would, and the way that stays true
+is that there is one pipeline, not a copy of it. The panel's "which lanes are
+visible, under which titles" is pure code in `src/panel/lane-input.ts`:
+`visibleLanes(ctx)` returns the AGENT lanes in `AGENT_LANES` order with their
+per-surface titles and `canRun`, and `showsRelated(ctx)` says whether Related
+belongs (never on `home`). The resolve response -> header -> `LaneContext` step is
+shared too (`header-state.ts`, with `laneContextFrom`), including the status
+sentence the header shows. `paint()` and the palette both go response -> header
+-> context -> `visibleLanes`, and a parity test runs that one pipeline over every
+`SURFACE_KINDS` x resolve outcome x term present/absent x chosen/none fixture
+against the panel's rendered lanes.
+
+- `visibleLanes` returns **agent lanes only**. Each caller places Related where
+  its own layout wants it: the panel first, the palette after Deploy readiness.
+- `LaneContext` carries `connectorHealthy` (from `gatePolicy`) instead of a second
+  `gate` argument, so two surface parameters can never disagree. On `home` with an
+  unhealthy connector `visibleLanes` returns nothing, glossary included, because
+  that is what `paint()` has always done. Letting glossary escape that gate is a
+  panel decision, not a palette one.
+- A term the panel refuses (`termStateFrom`, run while the palette builds its
+  context) comes back as `canRun: false`, so the glossary row renders disabled
+  with the panel's own reason and `Enter` cannot send it.
+
+The palette sends its own `resolve` rather than borrowing the panel's. Opening
+the palette and then picking a lane costs two loopback resolves; resolve is a
+local index read with no egress, and a worker-side cache to save one would add
+state for no user-visible gain.
+
+### What the worker hands over, and the only-grow rule
+
+`recognise()` reads the self-hosted origins from `chrome.storage`, so an injected
+script cannot know the surface kind by itself. The worker (`openPalette` in
+`src/background/palette-open.ts`) therefore runs `recognise(tab.url, origins)`
+inside the command gesture (the activeTab grant outlives the storage await, as
+`openPanel`'s lookup does) and passes the result as a `PaletteInit` through the
+second `executeScript` call's `args`. That makes the surface-dependent instant
+rows exact from the first frame: Related is withheld on `home`, and Deploy
+readiness is decided by `deployBelongsOnSurface` plus `scope`/`origin`, exactly as
+`appendDeploySection` decides it. Deploy readiness does not wait for resolve and
+does not depend on its outcome, because the panel mounts the section from the
+recognition alone and `/v1/preflight/deploy` is tokenless.
+
+**Resolve only ever adds rows.** Lane rows, the glossary lane included, wait for
+resolve: before it the roster is unknown (`offered` is `null`, which fails open),
+so an early glossary row could vanish when a roster without it arrived. Until
+then one disabled row reads "Looking up this page...". The active row on open is
+the first enabled row, and it moves to the first lane when lanes arrive **unless
+the user has already pressed an arrow key or typed**. Rows never jump under a user
+mid-choice.
+
+Where the panel's header has no page lanes but shows a status sentence, the
+palette adds one disabled row carrying that same sentence from the shared
+derivation, never re-worded. Ambiguous-with-candidates is the one case with a
+next step (**Pick the item in the panel**, a `candidates` intent); ambiguous
+that was truncated has no picker, so it gets the disabled "Too many matches to
+choose from..." line; a file miss shows its `banner`; not-indexed shows "Not
+indexed."; an unrecognised ordinary article gets no extra row, so Related and Clip
+stay clean on normal pages.
+
+### Reading an open panel
+
+`panel.js` and `palette.js` run in the same isolated world, so the palette can ask
+an open panel about itself. The panel host carries a second expando beside
+`__nimbusClose`: `__nimbusPanelState()` returns `{ pinnedUrl, chosenId }`
+(`PanelHostState`, `PANEL_STATE_HOOK` in `src/shared/panel-host.ts`).
+
+- **Open on this page with a pick** (`samePage(pinnedUrl, location.href)`): the
+  palette feeds that candidate into the header derivation, matched by id against
+  its own resolve's candidates and treated as no pick if it is no longer among
+  them. Its lanes then match the open panel's, and it shows no "Pick the item" row
+  for a page that has already been picked.
+- **Pinned to a different URL** (an SPA navigation while the panel stayed open):
+  the palette lists lanes for the current page, and the panel catches up before it
+  runs anything (next section).
+
+`samePage` (also in `panel-host.ts`) is the one page-identity rule: it **ignores
+the fragment on both sides**. A `#heading` anchor or a GitHub `#issuecomment-...`
+link is the same page, and re-reading on it would collapse every lane, drop a
+candidate pick and reset the term for a click that never navigated. The panel's
+own navigation watcher already treats a fragment change as the same item.
+
+### The intent hook
+
+`PanelSelection` and `__nimbusSelection` became `PanelIntent` and
+`PANEL_INTENT_HOOK` (`__nimbusIntent`), and `deliverSelection` became
+`deliverIntent`: call the hook, and on a miss inject `panel.js` and call it again.
+That sequence is what keeps the self-toggle from closing a panel the user is
+trying to reach. The five arms:
+
+| Intent | Meaning |
+|---|---|
+| `selection` (`define` / `related`) | the context menu's two entries, and the palette's glossary row |
+| `lane` | expand a PAGE lane and ask it; never `glossary` |
+| `deploy` | scroll to the deploy-readiness section (it already asks on mount) |
+| `related` | bring the panel up with Related focused |
+| `candidates` | open at the ambiguous-resolve picker |
+
+**The glossary row sends `{kind:"selection", text, intent:"define"}`** with the
+text the palette saved at mount, not a `lane` intent. An already-open panel reads
+the selection only in `mount()`, so a lane intent for `glossary` would run with no
+term. `applySelection(text, "define")` sets the term, opens the lane and asks, and
+behaves the same on an open or a freshly mounted panel.
+
+**Applying one (`applyIntent` in `panel-in-page.ts`):**
+
+- **Stale pin first.** If `!samePage(pinnedUrl, location.href)` the panel calls
+  `reread()` and parks the intent until the new page's header lands. A palette
+  lane never runs against the page the panel happened to be pinned to.
+- **`lane`** sets `laneOpen[lane] = true` and calls `sendAgentRun(lane)` (the
+  first-expand path), only from `collapsed` or `failed`. On a freshly mounted or
+  re-read panel the header has not resolved, so the intent is parked and applied
+  once `loadHeader` lands; if the lane is then not visible (the page or roster
+  changed between the two resolves) the panel opens normally and runs nothing. It
+  never sends a run for a lane it would not show. A lane already running or done
+  is expanded and scrolled to, not re-asked: the worker's run cache answers and
+  `laneInFlight` guards the double-send.
+- **`related`** on `home` (no Related lane) falls back to the header, as does
+  `candidates` once a pick has removed the list.
+
+**Parked-intent lifetime.** At most one. A second intent before the header lands
+replaces it (the last gesture wins; runs never queue). `reread()` **re-parks** the
+current one, because the stale-pin path depends on it surviving a re-read, and
+`teardown()` drops it.
+
+**Focus targets**, applied when the intent is applied (including when a parked one
+is released). Until then the mount-time focus on the close button stands.
+
+| Intent | Receives focus |
+|---|---|
+| `lane`, `selection` (define) | that lane's `<summary>` |
+| `related` | the Related lane's `<summary>` |
+| `candidates` | the first candidate button |
+| `deploy` | the deploy heading, `tabIndex = -1`: it has no control while it reads "Checking deploy readiness..." |
+| any fallback above | the header (`.nimbus-related__heading`, also `tabIndex = -1`) |
+
+**The focus keeper in `paint()`.** `paint()` rebuilds the body, which drops focus
+from whatever held it, and an answer repainting a moment after an intent would
+throw focus back to the document. `focusKeeper()` captures the focused element
+before the rebuild and `refinder()` finds its equivalent in the new render: a
+lane `<summary>` by lane id, a candidate button by position, the deploy heading
+(re-appended, not re-created). It runs for any focus on those elements, not only
+the one an intent placed, so it also holds focus across repaints after an
+ordinary user click. It restores with `preventScroll`, so an unrelated answer
+landing never yanks a reader back to the lane. Anything else is left where the
+rebuild leaves it, as every paint did before.
+
+Two behaviours the intent path fixed that predate it, both recorded under
+`CHANGELOG.md`'s Fixed: `relatedSelection` makes the trailing selection-less
+`loadRelated()` keep a related selection instead of replacing it (the menu's
+mount-on-miss path had the race already), and `expandLane` opens a collapsed
+glossary lane when Define arrives on an open panel.
+
+### Two messages, tabs from the sender only
+
+`src/shared/messages.ts` gains `PaletteIntentRequest {kind:"palette-intent",
+intent}` -> `deliverIntent(sender.tabId, intent)` and `QuickClipRequest
+{kind:"quick-clip", mode}` -> `quickClip(deps, mode, sender.tabId)`, routed by
+`routePalette` (its own slice ahead of `routeSubRouters`, which stays the more
+complex home). **Both take the tab from `sender.tab.id`, never from the payload**,
+the rule `cue-open` set, and both refuse a sender with no tab: the palette runs in
+a page, so a payload tab id would be forgeable by a hostile site, and a palette can
+act only on the page it is drawn on.
+
+The guard checks values at runtime, not just in the type: `intent.kind` is one of
+the five arms, `lane` is in `AGENT_LANES` and is not the term lane, and
+`selection.text` is a non-empty string of at most 8192 characters. That last is a
+size bound, not a term rule: the panel stays the one place that normalises a term
+and words its refusal, and an over-long selection never gets that far because the
+glossary row is already disabled (see above). The handler rebuilds the intent
+field by field (`rebuildIntent`) rather than passing the caller's object through.
+
+### The overlay, and why a page cannot drive it
+
+`palette-in-page.ts` -> `palette.js`, pure rows and key reducer in
+`palette-view.ts`, inlined CSS in `palette-css.ts`; the cue/toast pattern (the
+file sets `__nimbusPalette`, a second `executeScript` func, `showPalette`, calls
+it). It keeps **no module-level mutable state**: every press re-evaluates the
+bundle, so a top-level `let` would be reset under a palette still open. All state
+lives in `mount`'s closure and every listener hangs off one `AbortController`.
+
+- **Open shadow root, so every handler rejects `!event.isTrusted`.** Closed would
+  buy nothing against an isolated-world script's real attack, which is synthesised
+  input. This applies to every key and pointer handler.
+- **Host trust by isolated-world expando.** `__nimbusPalette` treats a host as its
+  own only if it carries the `__nimbusClose` expando this module sets. An expando
+  set from the extension's isolated world is invisible to page script, so a page
+  that plants `<div id="nimbus-palette-host">` cannot forge one. Its own host
+  means toggle: close and stop. Anything else under the id is removed
+  (`querySelectorAll`, every match, as `cue-in-page.ts` does) and the palette
+  mounts fresh, so a decoy cannot swallow the first press. (The panel's own
+  self-toggle has the same gap with a planted `#nimbus-related-host`; that is a
+  pre-existing defect, left for its own small fix.)
+- **Escape precedence.** The panel's Escape is a document-level capture listener.
+  The palette's is a **window-level capture** listener, so it fires first and calls
+  `stopImmediatePropagation()` and `preventDefault()`. One Esc closes the palette
+  and leaves the panel open.
+- **Pointer and focus.** `pointerdown` on the dialog is `preventDefault`ed so the
+  input keeps focus and the row still exists when `click` fires. Close-on-leave is
+  `focusout` closing only when `relatedTarget` is outside the shadow root, not a
+  bare `blur`. `Tab` is not trapped: it closes.
+- **Placement.** Top centre, about 480px wide, 16px from the edge on narrow
+  viewports; to the panel's left when the panel is open at mount. Checking once at
+  mount is enough: anything that opens or closes the panel afterwards moves focus
+  out of the palette, which closes it.
+- **The selection survives the palette.** Focusing the input collapses the page
+  selection, and `quick-clip` (`runCapture` reads `window.getSelection()` in the
+  page) and a freshly injected panel's mount snapshot both read it afterwards. So
+  at mount the palette saves the selection's Ranges and text, and before it sends
+  any message it restores the ranges and removes its host. The glossary row does
+  not depend on the restore (it carries the saved text). If the restore throws,
+  Clip selection fails the way a lost selection already does: the "Select some
+  text first." toast.
+- **Focus on close** depends on how it closed. Dismissed (Esc, Tab, the toggle,
+  focus leaving to nowhere) and Clip page: focus returns to the mount-time page
+  element if still connected. Focus left to a page element the user chose: nothing
+  else is done, since refocusing would take it back and restoring the selection
+  would undo their click. Clip selection: the selection is restored and focus is
+  not moved, because focusing a contenteditable can move the selection the capture
+  reads. A panel intent: focus is not restored to the page (it would bounce
+  page -> panel, and focusing a page input can collapse the selection just
+  restored); the panel takes focus per the table above.
+- **No persistence**: no recent-actions list, no storage. It also closes on a run
+  and on a URL change (the cue's check).
+
+### A restricted page fails closed, visibly
+
+`isRestrictedUrl` is checked before injecting, and `showFeedback` with
+`restricted=true` flashes the toolbar badge. The roadmap said "fail closed with a
+toast"; a toast cannot be injected on exactly those pages, which is why
+`feedback.ts` already falls back to the badge, so the brief was corrected rather
+than met as written. When injection is rejected on a page `isRestrictedUrl` did
+not catch (the Web Store, a PDF viewer) the palette shows the same badge. **This
+is palette-only**: `openPanel`'s silent `.catch`, shared by the panel's hotkey,
+menu and cue, is deliberate and unchanged.
+
+### The four-suggested-keys ceiling
+
+Chrome caps suggested keys at four. `show_related`, `clip-page` and
+`clip-selection` took three; `open_palette` (`Alt+Shift+K`, no default binding in
+Chrome or Firefox and kin to the `Ctrl/Cmd+K` convention) takes the last. **A
+fifth command must ship unbound**, which is why `CommandDef.suggested_key` in
+`ManifestCommands` is now optional, and `manifest.test.ts` asserts at most four
+commands carry one. `suggested_key` is only a suggestion (the C1.5 lesson): an
+unbound palette shortcut shows as **Not set** in Options stage 2 for free, since
+`shortcuts-view.ts` is driven from `getAll`. The palette is the keyboard route,
+not the only one: the panel keeps its click triggers, so an unbound shortcut loses
+no capability. No new permission: the command is a gesture, so activeTab covers
+the injection and `store-listing.test.ts` is untouched.
+
+That `Alt+Shift+K` actually binds on a fresh Chrome and Firefox profile, and
+reaches the extension on GitHub, Jira and Confluence (which have shortcuts of
+their own), is human-only and lives in `development.md`.
+
+### Later, not now
+
+Rows that open extension pages (the DORA page for the bound service, briefs,
+activity, Options), a recent-actions memory and a "Rerun <lane>" row are cheap
+once the shape exists. They wait until the v1 list has been used.
 
 ## Two state machines worth understanding
 
