@@ -321,11 +321,16 @@ ask an open panel about itself. The panel host gains a second expando beside
 `__nimbusClose`:
 
 ```ts
-__nimbusPanelState(): { pinnedUrl: string; chosenId: string | null }
+__nimbusPanelState(): {
+  pinnedUrl: string;
+  pinnedRecognition: Recognition | null;
+  chosenId: string | null;
+}
 ```
 
-- **Panel open on this page** (`pinnedUrl` equals `location.href` with both
-  fragments dropped; see §6.2) **with a pick:**
+- **Panel open on this page** (the same rule as §6.2: the same URL with
+  fragments dropped, or failing that `sameItem(pinnedRecognition,
+  init.recognition)`) **with a pick:**
   the palette passes that candidate into the header derivation (matched by id
   against its own resolve's candidates, and treated as no pick if it's no
   longer among them). Its lanes then match the open panel's, and it shows no
@@ -363,15 +368,24 @@ which is what keeps the toggle-close from firing. The existing `"define"` and
 
 ### 6.2 The panel applies an intent
 
-- **Stale pin first.** If the panel's `pinnedUrl` differs from
-  `location.href` when an intent arrives, it calls `reread()` and parks the
-  intent until the new page's header lands. A palette lane never runs
-  against the page the panel happened to be pinned to. **The comparison
-  ignores the fragment**, on both sides. A `#heading` anchor or a GitHub
-  `#issuecomment-…` link is the same page, and re-reading on it would
-  collapse every lane, drop a candidate pick and reset the term, all for a
-  click that didn't navigate. The panel's own navigation watcher already
-  treats a fragment change as the same item.
+- **Stale pin first, by item, not by URL.** When an intent arrives, the
+  panel decides whether the tab has moved to a different item. It uses the
+  rule its navigation watcher uses, so the two can never disagree:
+  - the same URL with the fragment dropped on both sides (`samePage`) is
+    the same item, with no round trip;
+  - otherwise the panel recognises the current URL and compares it with
+    `sameItem` against the pinned recognition. The same item (a GitHub PR's
+    Conversation → Files changed tab, say) applies the intent directly.
+  - A different item, or a failed recognise, calls `reread()` and parks the
+    intent until the new page's header lands.
+
+  A palette lane never runs against a different item than the one the panel
+  is pinned to. Re-reading on a same-item move would collapse every lane,
+  drop a candidate pick and reset the term, for a move the panel's own
+  watcher says isn't one. (The first version of this rule compared URLs:
+  raw, then fragment-insensitive. The final review showed that both broke
+  same-item sub-tab navigation on the context-menu path, which on `main`
+  applied directly.)
 - **`lane`:** set `laneOpen[lane] = true` and call `sendAgentRun(lane)`, the
   path a first expand takes. On a freshly mounted or re-read panel the header
   hasn't resolved yet, so the intent is **parked** and applied once
