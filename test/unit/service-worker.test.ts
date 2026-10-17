@@ -2514,6 +2514,105 @@ describe("ambient surfacing", () => {
     await harness.emitMessage({ kind: "cue-open" });
     expect(harness.executeScript).not.toHaveBeenCalled();
   });
+
+  describe("palette routes", () => {
+    // The enclosing block runs on fake timers for the ambient debounce; these
+    // routes have none, and `settle()` needs a real clock.
+    beforeEach(() => {
+      vi.useRealTimers();
+    });
+
+    const hookCalls = (): { target: { tabId: number }; args?: unknown[] }[] =>
+      harness.executeScript.mock.calls
+        .map((c) => c[0] as { target: { tabId: number }; func?: unknown; args?: unknown[] })
+        .filter((c) => typeof c.func === "function");
+
+    test("palette-intent calls the hook in the sender's own tab", async () => {
+      await loadWorker();
+      harness.executeScript.mockResolvedValue([{ result: true }]);
+      await harness.emitMessageFromTab({ kind: "palette-intent", intent: { kind: "deploy" } }, 7);
+      await settle();
+      const calls = hookCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.target).toEqual({ tabId: 7 });
+      expect(calls[0]?.args?.[2]).toEqual({ kind: "deploy" });
+    });
+
+    test("palette-intent with no sender tab injects nothing", async () => {
+      await loadWorker();
+      await harness.emitMessage({ kind: "palette-intent", intent: { kind: "deploy" } });
+      await settle();
+      expect(harness.executeScript).not.toHaveBeenCalled();
+    });
+
+    test("a tabId in the payload is ignored", async () => {
+      await loadWorker();
+      harness.executeScript.mockResolvedValue([{ result: true }]);
+      await harness.emitMessageFromTab(
+        { kind: "palette-intent", tabId: 99, intent: { kind: "related", tabId: 99 } },
+        7,
+      );
+      await settle();
+      const targets = harness.executeScript.mock.calls.map(
+        (c) => (c[0] as { target: { tabId: number } }).target.tabId,
+      );
+      expect(targets.length).toBeGreaterThan(0);
+      expect(targets.every((t) => t === 7)).toBe(true);
+    });
+
+    test("extra keys on the intent do not reach the page", async () => {
+      await loadWorker();
+      harness.executeScript.mockResolvedValue([{ result: true }]);
+      await harness.emitMessageFromTab(
+        {
+          kind: "palette-intent",
+          intent: { kind: "lane", lane: "impact", smuggled: "x" },
+        },
+        7,
+      );
+      await settle();
+      const calls = hookCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.args?.[2]).toEqual({ kind: "lane", lane: "impact" });
+      expect(JSON.stringify(calls[0]?.args)).not.toContain("smuggled");
+    });
+
+    test("a malformed palette-intent is not routed", async () => {
+      await loadWorker();
+      await harness.emitMessageFromTab(
+        { kind: "palette-intent", intent: { kind: "lane", lane: "glossary" } },
+        7,
+      );
+      await settle();
+      expect(harness.executeScript).not.toHaveBeenCalled();
+    });
+
+    test("quick-clip selection runs capture on the sender's tab", async () => {
+      await loadWorker();
+      harness.storage.set(CONNECTION_KEY, conn);
+      harness.executeScript.mockResolvedValue([{ result: undefined }]);
+      await harness.emitMessageFromTab({ kind: "quick-clip", mode: "selection" }, 7);
+      await settle();
+      const targets = harness.executeScript.mock.calls.map(
+        (c) => (c[0] as { target: { tabId: number } }).target.tabId,
+      );
+      expect(targets.length).toBeGreaterThan(0);
+      expect(targets.every((t) => t === 7)).toBe(true);
+      expect(harness.executeScript).toHaveBeenCalledWith({
+        target: { tabId: 7 },
+        files: ["capture.js"],
+      });
+    });
+
+    test("quick-clip with no sender tab does nothing", async () => {
+      await loadWorker();
+      harness.storage.set(CONNECTION_KEY, conn);
+      await harness.emitMessage({ kind: "quick-clip", mode: "article" });
+      await settle();
+      expect(harness.executeScript).not.toHaveBeenCalled();
+      expect(harness.tabsQuery).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("a rejected token is remembered", () => {

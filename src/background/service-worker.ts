@@ -50,11 +50,13 @@ import {
   isMetricsStatsRequest,
   isOpenDoraRequest,
   isPairRequest,
+  isPaletteIntentRequest,
   isPassageClearRequest,
   isPassageDropRequest,
   isQueueListRequest,
   isQueueRemoveRequest,
   isQueueRetryRequest,
+  isQuickClipRequest,
   isRecogniseRequest,
   isRelatedRequest,
   isResolveRequest,
@@ -65,6 +67,7 @@ import {
   isUnpairRequest,
   type QueueResponse,
 } from "../shared/messages.ts";
+import type { PanelIntent } from "../shared/panel-host.ts";
 import { removeGroup, removePassage } from "../shared/passage.ts";
 import type { AgentError, AgentLane, LaneState, Recognition } from "../shared/types.ts";
 import {
@@ -859,9 +862,9 @@ function isBriefMessage(v: unknown): v is BriefMessage {
  * Fan-out for the six brief message kinds.
  *
  * A separate function, not six branches in the router: the router already carries
- * twenty-four branches, and has since been split into six order-preserving slices
+ * twenty-four branches, and has since been split into seven order-preserving slices
  * (`routeCapturePair` / `routeIndexReads` / `routeQueueAndConnection` /
- * `routeDeploy` / `routeDora` / `routeSubRouters`) to stay under Sonar's cognitive-complexity cap
+ * `routeDeploy` / `routeDora` / `routePalette` / `routeSubRouters`) to stay under Sonar's cognitive-complexity cap
  * (S3776, 15) — having earlier needed `openPanelForCue` extracted for the same reason.
  */
 async function routeBriefMessage(message: BriefMessage): Promise<unknown> {
@@ -1557,6 +1560,48 @@ function routeSubRouters(message: unknown, respond: Respond, sender: SenderInfo)
   return null;
 }
 
+/**
+ * The in-page palette's two messages. Neither replies (`false`, like `cue-open`),
+ * and both act on `sender.tabId` ONLY — the browser's word for which tab spoke,
+ * never a field of the message — and are dropped when it is absent.
+ *
+ * `isPanelIntent` passes the caller's object through, extra keys and all, so the
+ * intent is REBUILT from its narrowed fields rather than forwarded: what reaches
+ * `executeScript`'s `args` is exactly the closed shape and nothing else.
+ */
+function routePalette(message: unknown, sender: SenderInfo): Routed {
+  if (isPaletteIntentRequest(message)) {
+    const tabId = sender.tabId;
+    if (tabId !== undefined) {
+      deliverIntent(tabId, rebuildIntent(message.intent)).catch(() => undefined);
+    }
+    return false;
+  }
+  if (isQuickClipRequest(message)) {
+    const tabId = sender.tabId;
+    if (tabId !== undefined) {
+      quickClip(quickClipDeps, message.mode, tabId).catch(() => undefined);
+    }
+    return false;
+  }
+  return null;
+}
+
+function rebuildIntent(intent: PanelIntent): PanelIntent {
+  switch (intent.kind) {
+    case "selection":
+      return { kind: "selection", text: intent.text, intent: intent.intent };
+    case "lane":
+      return { kind: "lane", lane: intent.lane };
+    case "deploy":
+      return { kind: "deploy" };
+    case "related":
+      return { kind: "related" };
+    case "candidates":
+      return { kind: "candidates" };
+  }
+}
+
 addMessageListener((message, rawRespond, sender) => {
   const respond = wrapRespond(rawRespond);
   // `??`, not `||`: a route that handled the message by answering synchronously
@@ -1567,6 +1612,7 @@ addMessageListener((message, rawRespond, sender) => {
     routeQueueAndConnection(message, respond) ??
     routeDeploy(message, respond) ??
     routeDora(message, respond) ??
+    routePalette(message, sender) ??
     routeSubRouters(message, respond, sender) ??
     false
   );
