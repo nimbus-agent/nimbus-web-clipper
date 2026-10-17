@@ -1,10 +1,10 @@
 // src/shared/panel-host.ts
-// The facts the service worker, the injected panel and (later) the palette must
+// The facts the service worker, the injected panel and the palette must
 // agree on to hand an intent between them. Shared rather than duplicated because
 // a mismatch fails SILENTLY — the worker's hook lookup would simply miss, the
 // panel would never hear about the intent, and the menu entry would look inert.
 
-import type { AgentLane } from "./types.ts";
+import type { AgentLane, Recognition } from "./types.ts";
 
 /** The id of the panel's host element in the page. */
 export const PANEL_HOST_ID = "nimbus-related-host";
@@ -70,6 +70,17 @@ export interface PanelHostState {
   readonly pinnedUrl: string;
   /** The candidate the user picked out of an ambiguous resolve, if any. */
   readonly chosenId: string | null;
+}
+
+/**
+ * What the worker hands `__nimbusPalette` through `executeScript`'s `args`.
+ * Here rather than in src/palette/ so the worker can import the type without
+ * pulling the palette bundle in.
+ */
+export interface PaletteInit {
+  /** The same value resolve would carry — it decides the instant rows
+   *  (Deploy readiness, Related) before resolve lands. */
+  readonly recognition: Recognition;
 }
 
 /** The hook an open panel exposes on its host element to apply an intent. */
