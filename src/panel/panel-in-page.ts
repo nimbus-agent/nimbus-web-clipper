@@ -14,7 +14,14 @@ import {
   isRelatedResponse,
   isResolveResponse,
 } from "../shared/messages.ts";
-import { PANEL_HOST_ID, type PanelSelection } from "../shared/panel-host.ts";
+import {
+  PANEL_HOST_ID,
+  PANEL_INTENT_HOOK,
+  PANEL_STATE_HOOK,
+  type PanelHostState,
+  type PanelIntent,
+  type PanelSelection,
+} from "../shared/panel-host.ts";
 import type { ClipPreview } from "../shared/preview.ts";
 import { sameItem, surfaceLine } from "../shared/recognise/index.ts";
 import {
@@ -298,14 +305,35 @@ ${DEPLOY_CSS}
 interface NimbusHost extends HTMLElement {
   __nimbusClose?: () => void;
   /**
-   * How the service worker hands a selection to an ALREADY-OPEN panel. Named by
-   * `PANEL_SELECTION_HOOK` (shared/panel-host.ts) — the worker looks it up by
-   * that string, so the two must not drift.
+   * How the service worker hands an intent (a menu selection, a palette choice)
+   * to an ALREADY-OPEN panel. Named by `PANEL_INTENT_HOOK`
+   * (shared/panel-host.ts) — the worker looks it up by that string, so the two
+   * must not drift.
    *
    * The worker cannot deliver by re-injecting `panel.js`: that entry is a
    * self-toggle and would close the panel the user is trying to use.
    */
-  __nimbusSelection?: (selection: PanelSelection) => void;
+  [PANEL_INTENT_HOOK]?: (intent: PanelIntent) => void;
+  /** What the panel reports about itself, read in the page. Named by
+   *  `PANEL_STATE_HOOK` (shared/panel-host.ts). */
+  [PANEL_STATE_HOOK]?: () => PanelHostState;
+}
+
+/**
+ * Where an intent other than a lane or a selection lands focus, inside the
+ * panel body. A `Record`, so a new `PanelIntent` arm without a target is a type
+ * error here rather than an intent that silently focuses nothing. Each falls
+ * back to the panel's heading when its target is not on screen.
+ */
+const INTENT_FOCUS: Record<Exclude<PanelIntent["kind"], "selection" | "lane">, string> = {
+  deploy: ".nimbus-deploy__title",
+  related: laneTitleSelector("related"),
+  candidates: ".nimbus-related__candidate",
+};
+
+/** A lane's `<summary>` — the focus target for a lane intent and a define. */
+function laneTitleSelector(lane: AgentLane | "related"): string {
+  return `[data-lane="${lane}"] .nimbus-related__lane-title`;
 }
 
 function readContext(): { title: string; canonicalUrl?: string; selection: string } {
@@ -445,13 +473,18 @@ function shownItemId(shown: HeaderState): string | undefined {
  * not actually leak between mounts — but a closure needs no reset step, and it
  * makes "this response belongs to that panel" structural instead of incidental.
  */
-function createPanel(body: HTMLElement): {
+function createPanel(
+  body: HTMLElement,
+  heading: HTMLElement,
+): {
   paint: () => void;
   loadHeader: () => Promise<void>;
   loadRelated: (selection?: string) => Promise<void>;
   stopPolling: () => void;
   checkNavigation: () => Promise<void>;
   applySelection: (text: string, intent: PanelSelection["intent"] | null) => void;
+  applyIntent: (intent: PanelIntent) => void;
+  state: () => PanelHostState;
 } {
   let header: HeaderState = { kind: "loading" };
   /** The deploy-readiness section's own host, created once per panel mount and
@@ -674,6 +707,21 @@ function createPanel(body: HTMLElement): {
    * ordinary panel: the lane materialises with the term and not before.
    */
   let term: TermState = { kind: "none" };
+  /**
+   * The selection a `related` menu entry (or palette selection intent) asked
+   * Related about, kept so a LATER selection-less `loadRelated()` asks about it
+   * too. Without it, mount's own `loadHeader().then(loadRelated)` — and
+   * `reread`'s trailing one — could land after the selection's request and
+   * overwrite it with a selection-less answer. Per-page: `reread` clears it.
+   */
+  let relatedSelection: string | null = null;
+  /**
+   * The one parking slot for an intent that arrived before the header did
+   * (`applyIntent`). A newer intent replaces it — the last gesture wins and runs
+   * never queue. `loadHeader` releases it after its paint, `reread` keeps it,
+   * and teardown (`stopAgentPolls`) drops it.
+   */
+  let pendingIntent: PanelIntent | null = null;
   /**
    * Lanes with an `agent-run` genuinely IN FLIGHT — sent but not yet answered.
    * Guards a double invoke on rapid toggling: expand -> collapse -> expand
@@ -1014,6 +1062,7 @@ function createPanel(body: HTMLElement): {
     // Keeping it would leave a glossary lane on the new page titled with a term
     // lifted from the old one.
     term = { kind: "none" };
+    relatedSelection = null;
     relatedBody = (doc) => renderError(doc, "Loading…");
     relatedExpanded = true;
     for (const lane of AGENT_LANES) {
@@ -1133,6 +1182,9 @@ function createPanel(body: HTMLElement): {
    *  `closed`'s own doc comment. */
   function stopAgentPolls(): void {
     closed = true;
+    // A parked intent belongs to a panel that is going away: a resolve settling
+    // after teardown must not release it into a run nobody can see.
+    pendingIntent = null;
     for (const lane of AGENT_LANES) {
       clearLanePoll(lane);
     }
@@ -1271,6 +1323,7 @@ function createPanel(body: HTMLElement): {
       capturePreview === null || pendingCapture === null
         ? undefined
         : { preview: capturePreview, onSend: confirmCapture, onCancel: cancelCapturePreview };
+    const restoreFocus = focusKeeper();
     body.replaceChildren(
       renderShell(
         document,
@@ -1303,6 +1356,45 @@ function createPanel(body: HTMLElement): {
     );
     attachLaneToggles();
     appendDeploySection(shown);
+    restoreFocus();
+  }
+
+  /**
+   * `paint` rebuilds the body, which drops focus from whatever held it. An
+   * intent lands focus on purpose (`applyIntent`), and the answer's repaint a
+   * moment later would otherwise throw it back to the document. Returns the step
+   * that puts focus back on the equivalent element of the NEW render: a lane's
+   * summary by its lane id, a candidate button by its position, or the deploy
+   * heading (whose host is re-appended, not re-created). Anything else is left
+   * where the rebuild leaves it, which is what every paint did before this.
+   */
+  function focusKeeper(): () => void {
+    const root = body.getRootNode();
+    const active = root instanceof ShadowRoot ? root.activeElement : null;
+    if (!(active instanceof HTMLElement) || !body.contains(active)) {
+      return () => undefined;
+    }
+    const find = refinder(active);
+    // `preventScroll`: this restores focus, it does not move the reader. A
+    // user scrolled away from the focused lane must not be yanked back to it
+    // by an unrelated answer landing.
+    return () => {
+      find()?.focus({ preventScroll: true });
+    };
+  }
+
+  /** How to find `active`'s equivalent in the next render; see `focusKeeper`. */
+  function refinder(active: HTMLElement): () => HTMLElement | null {
+    if (active.classList.contains("nimbus-related__lane-title")) {
+      const lane = active.closest("[data-lane]")?.getAttribute("data-lane") ?? "";
+      return () =>
+        body.querySelector<HTMLElement>(`[data-lane="${lane}"] .nimbus-related__lane-title`);
+    }
+    if (active.classList.contains("nimbus-related__candidate")) {
+      const index = [...body.querySelectorAll(".nimbus-related__candidate")].indexOf(active);
+      return () => body.querySelectorAll<HTMLElement>(".nimbus-related__candidate").item(index);
+    }
+    return () => (active.isConnected ? active : null);
   }
 
   async function loadHeader(): Promise<void> {
@@ -1324,6 +1416,7 @@ function createPanel(body: HTMLElement): {
       header = { kind: "error", surface: null, message: "Couldn't connect to Nimbus." };
       fetchState = null;
       paint();
+      releaseParked();
       return;
     }
     if (gen !== generation) {
@@ -1374,6 +1467,7 @@ function createPanel(body: HTMLElement): {
       captureState = null;
     }
     paint();
+    releaseParked();
   }
 
   /**
@@ -1701,15 +1795,113 @@ function createPanel(body: HTMLElement): {
       // started explicitly: `attachLaneToggle` deliberately swallows the
       // synthetic toggle a freshly-rendered open <details> fires, which is what
       // stops a repaint from re-invoking every open lane.
-      laneOpen.glossary = true;
-      paint();
+      expandLane("glossary");
       sendAgentRun("glossary").catch(() => undefined);
       return;
     }
     paint();
     if (intent === "related") {
+      relatedSelection = text;
       loadRelated(text).catch(() => undefined);
     }
+  }
+
+  /**
+   * Opens a lane from code and repaints. Not just `laneOpen[lane] = true`:
+   * `paint` opens by reading each lane's LIVE `<details>` back into `laneOpen`,
+   * so a lane already on screen collapsed would read back closed and stay so.
+   * Opening the live element first is what makes the flag survive that read.
+   */
+  function expandLane(lane: AgentLane): void {
+    const live = body.querySelector<HTMLDetailsElement>(`details[data-lane="${lane}"]`);
+    if (live !== null) {
+      live.open = true;
+    }
+    laneOpen[lane] = true;
+    paint();
+  }
+
+  /** Focus `selector` inside the body, else the panel heading. */
+  function focusIn(selector: string): HTMLElement {
+    const target = body.querySelector<HTMLElement>(selector) ?? heading;
+    target.focus();
+    return target;
+  }
+
+  /**
+   * Apply an intent from the worker (`deliverIntent`), in this order:
+   *
+   * 1. A STALE PIN first, for every kind, selection included: the tab moved on
+   *    since this panel resolved, so it parks the intent and re-reads. First
+   *    because `reread` resets `term`, which would wipe a selection applied
+   *    before it — and because a palette lane must never run against the page
+   *    the panel happened to be pinned to.
+   * 2. A selection goes straight to `applySelection`, even while the header is
+   *    loading — today's menu behaviour; it sets `term` before it paints or runs.
+   * 3. Anything else waits in `pendingIntent` while the header is loading.
+   * 4. Otherwise it is applied now (`applyResolvedIntent`).
+   */
+  function applyIntent(intent: PanelIntent): void {
+    if (pinnedUrl !== window.location.href) {
+      pendingIntent = intent;
+      reread().catch(() => undefined);
+      return;
+    }
+    if (intent.kind === "selection") {
+      applySelection(intent.text, intent.intent);
+      if (intent.intent === "define") {
+        focusIn(laneTitleSelector("glossary"));
+      }
+      return;
+    }
+    if (header.kind === "loading") {
+      pendingIntent = intent;
+      return;
+    }
+    applyResolvedIntent(intent);
+  }
+
+  /** Step 4 of `applyIntent`: the header has landed for the page in the tab. */
+  function applyResolvedIntent(intent: Exclude<PanelIntent, { kind: "selection" }>): void {
+    if (intent.kind === "lane") {
+      applyLaneIntent(intent.lane);
+      return;
+    }
+    const target = focusIn(INTENT_FOCUS[intent.kind]);
+    if (intent.kind === "deploy" && target !== heading) {
+      target.scrollIntoView({ block: "nearest" });
+    }
+  }
+
+  /**
+   * Expand a lane and ask it — but only a lane this panel would show, and only
+   * when it has nothing to show yet: `collapsed`, or `failed` (re-asking a failed
+   * lane is the Re-run the user would otherwise click). `sendAgentRun` has no
+   * `done` guard of its own and would overwrite a finished answer, so `running`
+   * and `done` are expanded and focused only. A lane the page or roster does not
+   * offer runs nothing and focuses the header.
+   */
+  function applyLaneIntent(lane: AgentLane): void {
+    if (!visibleLanes(laneContext()).some((visible) => visible.lane === lane)) {
+      heading.focus();
+      return;
+    }
+    expandLane(lane);
+    const kind = laneState[lane].kind;
+    if (kind === "collapsed" || kind === "failed") {
+      sendAgentRun(lane).catch(() => undefined);
+    }
+    focusIn(laneTitleSelector(lane));
+  }
+
+  /** `loadHeader`'s last step: apply the intent that was waiting for it. */
+  function releaseParked(): void {
+    const parked = pendingIntent;
+    if (parked === null || closed) {
+      return;
+    }
+    pendingIntent = null;
+    applyIntent(parked);
   }
 
   /**
@@ -1717,9 +1909,14 @@ function createPanel(body: HTMLElement): {
    * pass it: the user's next click is usually into this panel, and clicking into
    * the panel collapses the page selection, so by the time an open panel acts on
    * a menu entry `window.getSelection()` may already read empty. `readContext`
-   * remains the source on mount, when the selection is still live.
+   * remains the source on mount, when the selection is still live. Omitted, it
+   * defaults to `relatedSelection` — the selection a `related` entry already
+   * asked about on this page — so a later selection-less call cannot overwrite
+   * that answer with one about nothing.
    */
-  async function loadRelated(selection?: string): Promise<void> {
+  async function loadRelated(
+    selection: string | undefined = relatedSelection ?? undefined,
+  ): Promise<void> {
     const gen = generation;
     let res: unknown;
     // The item this panel's header names — `resolved`, or the candidate the
@@ -1781,6 +1978,8 @@ function createPanel(body: HTMLElement): {
     stopPolling: stopAgentPolls,
     checkNavigation,
     applySelection,
+    applyIntent,
+    state: () => ({ pinnedUrl, chosenId: chosen?.id ?? null }),
   };
 }
 
@@ -1804,6 +2003,9 @@ function mount(): void {
   const heading = document.createElement("h1");
   heading.className = "nimbus-related__heading";
   heading.textContent = "Related in Nimbus";
+  // Focusable by script only: it is the focus target an intent falls back to
+  // (`applyIntent`), and `.focus()` on a non-focusable element does nothing.
+  heading.tabIndex = -1;
   const close = document.createElement("button");
   close.type = "button";
   close.className = "nimbus-related__close";
@@ -1813,7 +2015,7 @@ function mount(): void {
 
   const body = document.createElement("div");
   body.className = "nimbus-related__body";
-  const view = createPanel(body);
+  const view = createPanel(body, heading);
   view.paint();
 
   panel.append(header, body);
@@ -1829,9 +2031,8 @@ function mount(): void {
     host.remove();
   };
   host.__nimbusClose = teardown;
-  host.__nimbusSelection = (selection) => {
-    view.applySelection(selection.text, selection.intent);
-  };
+  host[PANEL_INTENT_HOOK] = view.applyIntent;
+  host[PANEL_STATE_HOOK] = view.state;
   close.addEventListener("click", teardown, { signal });
   // Capture phase + stopPropagation so host apps (Docs/Jira/GitHub) don't also act on Esc.
   document.addEventListener(

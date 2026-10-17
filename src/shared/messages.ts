@@ -35,6 +35,7 @@ import {
 } from "./findings-guards.ts";
 import { isObject } from "./is-object.ts";
 import { isProduct } from "./origins.ts";
+import type { PanelIntent, PanelSelection } from "./panel-host.ts";
 import type { ClipPreview } from "./preview.ts";
 import type { QueuedClipView } from "./queue.ts";
 import { isRelatedHit } from "./related.ts";
@@ -53,6 +54,7 @@ import {
   type FetchOutcome,
   FILE_MISS_REASONS,
   type FileResolution,
+  LANE_RULES,
   type LaneState,
   type PairError,
   type Product,
@@ -194,6 +196,23 @@ export function isClipLookupResponse(v: unknown): v is ClipLookupResponse {
 
 export interface CueOpenRequest {
   readonly kind: "cue-open";
+}
+
+/**
+ * The command palette's choice, for the panel in the palette's own tab. The
+ * worker takes that tab from `sender.tab.id`, never from the payload, and
+ * refuses a sender with no tab — a palette can only act on the page it is
+ * drawn on.
+ */
+export interface PaletteIntentRequest {
+  readonly kind: "palette-intent";
+  readonly intent: PanelIntent;
+}
+
+/** The palette's two clip rows. Same tab rule as `PaletteIntentRequest`. */
+export interface QuickClipRequest {
+  readonly kind: "quick-clip";
+  readonly mode: "article" | "selection";
 }
 
 export interface FetchRequest {
@@ -480,6 +499,8 @@ export type ExtensionRequest =
   | RelatedRequest
   | ResolveRequest
   | CueOpenRequest
+  | PaletteIntentRequest
+  | QuickClipRequest
   | FetchRequest
   | RecogniseRequest
   | AgentRunRequest
@@ -760,6 +781,63 @@ export function isResolveRequest(v: unknown): v is ResolveRequest {
 
 export function isCueOpenRequest(v: unknown): v is CueOpenRequest {
   return isObject(v) && v["kind"] === "cue-open";
+}
+
+/**
+ * The bound on a `selection` intent's raw text. A size bound, not a term rule:
+ * the panel still normalises the term and words its own refusal
+ * (`MAX_TERM_LENGTH` is 128). It sits at `MAX_LOOKUP_URL_LEN`'s order of
+ * magnitude, as the backstop for a palette that ever offers a refused term.
+ */
+export const MAX_INTENT_TEXT = 8192;
+
+const SELECTION_INTENTS: readonly string[] = [
+  "define",
+  "related",
+] satisfies readonly PanelSelection["intent"][];
+const BARE_INTENT_KINDS: readonly string[] = ["deploy", "related", "candidates"];
+
+function isIntentText(v: unknown): v is string {
+  return typeof v === "string" && v !== "" && v.length <= MAX_INTENT_TEXT;
+}
+
+/** A page lane only: the term lane's question is a selection, sent as one. */
+function isPageLane(v: unknown): v is AgentLane {
+  return isAgentLane(v) && LANE_RULES[v].input === "page";
+}
+
+/**
+ * Narrows an intent arriving from a page (the palette is page-side code).
+ * Every value is checked against a closed list at runtime — `kind`, `lane`,
+ * the selection's `intent` — not only in the type.
+ */
+export function isPanelIntent(v: unknown): v is PanelIntent {
+  if (!isObject(v)) {
+    return false;
+  }
+  const kind = v["kind"];
+  if (kind === "selection") {
+    const intent = v["intent"];
+    return (
+      isIntentText(v["text"]) && typeof intent === "string" && SELECTION_INTENTS.includes(intent)
+    );
+  }
+  if (kind === "lane") {
+    return isPageLane(v["lane"]);
+  }
+  return typeof kind === "string" && BARE_INTENT_KINDS.includes(kind);
+}
+
+export function isPaletteIntentRequest(v: unknown): v is PaletteIntentRequest {
+  return isObject(v) && v["kind"] === "palette-intent" && isPanelIntent(v["intent"]);
+}
+
+export function isQuickClipRequest(v: unknown): v is QuickClipRequest {
+  return (
+    isObject(v) &&
+    v["kind"] === "quick-clip" &&
+    (v["mode"] === "article" || v["mode"] === "selection")
+  );
 }
 
 export function isFetchRequest(v: unknown): v is FetchRequest {

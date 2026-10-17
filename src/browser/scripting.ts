@@ -1,6 +1,6 @@
 import { isCanonicalRejection } from "../shared/canonical.ts";
 import { isSourceShape } from "../shared/clip.ts";
-import { PANEL_HOST_ID, PANEL_SELECTION_HOOK, type PanelSelection } from "../shared/panel-host.ts";
+import { PANEL_HOST_ID, PANEL_INTENT_HOOK, type PanelIntent } from "../shared/panel-host.ts";
 import type { CaptureResult, CueState, ToastState } from "../shared/types.ts";
 
 function isCaptureResult(v: unknown): v is CaptureResult {
@@ -50,18 +50,18 @@ export async function injectPanel(tabId: number): Promise<void> {
 }
 
 /**
- * Call the open panel's selection hook. Resolves `false` when there is no panel
- * in the tab — the caller's cue to mount one.
+ * Call the open panel's intent hook. Resolves `false` when there is no panel in
+ * the tab — the caller's cue to mount one.
  *
  * Looked up by element id and property NAME rather than by importing anything
  * from the panel: `func` bodies are serialised and evaluated in the PAGE, with
  * no access to this bundle's imports. `shared/panel-host.ts` is what keeps the
  * two spellings from drifting.
  */
-async function callSelectionHook(tabId: number, selection: PanelSelection): Promise<boolean> {
+async function callIntentHook(tabId: number, intent: PanelIntent): Promise<boolean> {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
-    func: (hostId: string, hookName: string, sel: PanelSelection) => {
+    func: (hostId: string, hookName: string, it: PanelIntent) => {
       const host = document.getElementById(hostId) as
         | (HTMLElement & Record<string, unknown>)
         | null;
@@ -69,30 +69,31 @@ async function callSelectionHook(tabId: number, selection: PanelSelection): Prom
       if (typeof hook !== "function") {
         return false;
       }
-      (hook as (s: PanelSelection) => void)(sel);
+      (hook as (i: PanelIntent) => void)(it);
       return true;
     },
-    args: [PANEL_HOST_ID, PANEL_SELECTION_HOOK, selection],
+    args: [PANEL_HOST_ID, PANEL_INTENT_HOOK, intent],
   });
   return results[0]?.result === true;
 }
 
 /**
- * Hand a selection to the panel in this tab, opening one if none is there.
+ * Hand an intent (a menu selection, or a palette choice) to the panel in this
+ * tab, opening one if none is there.
  *
- * NOT `injectPanel`: `panel.js` is a self-toggle, so injecting it to deliver a
- * selection would CLOSE the panel whenever one was already open — precisely when
+ * NOT `injectPanel`: `panel.js` is a self-toggle, so injecting it to deliver an
+ * intent would CLOSE the panel whenever one was already open — precisely when
  * the user is most likely to be using these entries. So: try the hook, and mount
- * only on a miss. The freshly mounted panel is then handed the same selection
+ * only on a miss. The freshly mounted panel is then handed the same intent
  * rather than being left to read the page, because by then the click may already
- * have collapsed it.
+ * have collapsed the selection.
  */
-export async function deliverSelection(tabId: number, selection: PanelSelection): Promise<void> {
-  if (await callSelectionHook(tabId, selection)) {
+export async function deliverIntent(tabId: number, intent: PanelIntent): Promise<void> {
+  if (await callIntentHook(tabId, intent)) {
     return;
   }
   await injectPanel(tabId);
-  await callSelectionHook(tabId, selection);
+  await callIntentHook(tabId, intent);
 }
 
 /** Inject toast.js then call its global with the state (two-step, like runCapture). */

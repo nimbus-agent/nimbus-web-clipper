@@ -11,8 +11,8 @@
 // (`shared/panel-host.ts`'s element id and property NAME) is exercised end to
 // end; a mismatch there fails SILENTLY in production.
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { deliverSelection, runCapture, showCue, showToast } from "../../src/browser/scripting.ts";
-import { PANEL_HOST_ID, PANEL_SELECTION_HOOK } from "../../src/shared/panel-host.ts";
+import { deliverIntent, runCapture, showCue, showToast } from "../../src/browser/scripting.ts";
+import { PANEL_HOST_ID, PANEL_INTENT_HOOK } from "../../src/shared/panel-host.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
 interface Injection {
@@ -46,12 +46,12 @@ function driveExecuteScript(onFiles?: (files: string[]) => void): void {
   });
 }
 
-/** Mount a panel host carrying the selection hook, and record what it receives. */
+/** Mount a panel host carrying the intent hook, and record what it receives. */
 function mountPanelHost(): { received: unknown[] } {
   const received: unknown[] = [];
   const host = document.createElement("div");
   host.id = PANEL_HOST_ID;
-  (host as unknown as Record<string, unknown>)[PANEL_SELECTION_HOOK] = (sel: unknown): void => {
+  (host as unknown as Record<string, unknown>)[PANEL_INTENT_HOOK] = (sel: unknown): void => {
     received.push(sel);
   };
   document.body.append(host);
@@ -112,8 +112,8 @@ describe("runCapture's injected body", () => {
   });
 });
 
-describe("deliverSelection", () => {
-  const selection = { text: "idempotent", intent: "define" as const };
+describe("deliverIntent", () => {
+  const selection = { kind: "selection", text: "idempotent", intent: "define" } as const;
 
   test("hands the selection to an OPEN panel without re-injecting panel.js", async () => {
     // `panel.js` is a self-toggle: injecting it to deliver a selection would
@@ -122,7 +122,7 @@ describe("deliverSelection", () => {
     const { received } = mountPanelHost();
     driveExecuteScript();
 
-    await deliverSelection(7, selection);
+    await deliverIntent(7, selection);
 
     expect(received).toEqual([selection]);
     expect(injectedFiles()).toEqual([]);
@@ -138,7 +138,7 @@ describe("deliverSelection", () => {
       }
     });
 
-    await deliverSelection(7, selection);
+    await deliverIntent(7, selection);
 
     expect(injectedFiles()).toEqual(["panel.js"]);
     expect(mounted).not.toBeNull();
@@ -152,11 +152,11 @@ describe("deliverSelection", () => {
     // would throw in the page, so the body checks the TYPE before calling.
     const host = document.createElement("div");
     host.id = PANEL_HOST_ID;
-    (host as unknown as Record<string, unknown>)[PANEL_SELECTION_HOOK] = "not a function";
+    (host as unknown as Record<string, unknown>)[PANEL_INTENT_HOOK] = "not a function";
     document.body.append(host);
     driveExecuteScript();
 
-    await deliverSelection(7, selection);
+    await deliverIntent(7, selection);
 
     expect(injectedFiles()).toEqual(["panel.js"]);
   });
@@ -166,13 +166,41 @@ describe("deliverSelection", () => {
     // asserts against, and it is the failure that is silent in production.
     const host = document.createElement("div");
     host.id = `${PANEL_HOST_ID}-other`;
-    (host as unknown as Record<string, unknown>)[PANEL_SELECTION_HOOK] = (): void => undefined;
+    (host as unknown as Record<string, unknown>)[PANEL_INTENT_HOOK] = (): void => undefined;
     document.body.append(host);
     driveExecuteScript();
 
-    await deliverSelection(7, selection);
+    await deliverIntent(7, selection);
 
     expect(injectedFiles()).toEqual(["panel.js"]);
+  });
+
+  test("a hook hit for a non-selection intent injects no panel.js", async () => {
+    const { received } = mountPanelHost();
+    driveExecuteScript();
+    const intent = { kind: "lane", lane: "impact" } as const;
+
+    await deliverIntent(7, intent);
+
+    expect(received).toEqual([intent]);
+    expect(injectedFiles()).toEqual([]);
+  });
+
+  test("a miss injects panel.js once, then calls the hook with the same intent object", async () => {
+    let mounted: { received: unknown[] } | null = null;
+    driveExecuteScript((files) => {
+      if (files.includes("panel.js")) {
+        mounted = mountPanelHost();
+      }
+    });
+    const intent = { kind: "candidates" } as const;
+
+    await deliverIntent(7, intent);
+
+    expect(injectedFiles()).toEqual(["panel.js"]);
+    const second = funcInjections()[1];
+    expect(second?.args?.[2]).toBe(intent);
+    expect((mounted as unknown as { received: unknown[] }).received).toEqual([intent]);
   });
 });
 

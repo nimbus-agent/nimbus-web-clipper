@@ -2713,7 +2713,7 @@ describe("the selection context menus", () => {
     // stays open instead of being toggled shut.
     expect(fileCalls()).toEqual([]);
     const [arg] = hookCalls() as Array<{ args: unknown[] }>;
-    expect(arg?.args?.[2]).toEqual({ text: "blast radius", intent: "define" });
+    expect(arg?.args?.[2]).toEqual({ kind: "selection", text: "blast radius", intent: "define" });
   });
 
   test("mounts a panel first when none is open, then delivers", async () => {
@@ -2731,7 +2731,7 @@ describe("the selection context menus", () => {
     expect(fileCalls()).toEqual([expect.objectContaining({ files: ["panel.js"] })]);
     expect(hookCalls()).toHaveLength(2);
     const last = hookCalls().at(-1) as { args: unknown[] };
-    expect(last.args[2]).toEqual({ text: "canary", intent: "related" });
+    expect(last.args[2]).toEqual({ kind: "selection", text: "canary", intent: "related" });
   });
 
   test("targets the RIGHT-CLICKED tab", async () => {

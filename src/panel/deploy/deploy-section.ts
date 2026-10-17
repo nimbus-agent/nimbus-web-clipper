@@ -107,6 +107,10 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
   // presentation, so it claims the class rather than making its caller know it.
   host.className = "nimbus-deploy-section";
   const { title, body } = renderSectionFrame(doc);
+  // Focusable by script only: the panel lands a `deploy` intent's focus here,
+  // and while it reads "Checking deploy readiness…" the section has no
+  // focusable control of its own.
+  title.tabIndex = -1;
   host.replaceChildren(title, body);
 
   /**

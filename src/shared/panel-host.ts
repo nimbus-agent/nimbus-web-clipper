@@ -1,20 +1,23 @@
 // src/shared/panel-host.ts
-// The two facts the service worker and the injected panel must agree on to hand
-// a selection between them. Shared rather than duplicated because a mismatch
-// fails SILENTLY — the worker's hook lookup would simply miss, the panel would
-// never hear about the selection, and the menu entry would look inert.
+// The facts the service worker, the injected panel and (later) the palette must
+// agree on to hand an intent between them. Shared rather than duplicated because
+// a mismatch fails SILENTLY — the worker's hook lookup would simply miss, the
+// panel would never hear about the intent, and the menu entry would look inert.
+
+import type { AgentLane } from "./types.ts";
 
 /** The id of the panel's host element in the page. */
 export const PANEL_HOST_ID = "nimbus-related-host";
 
 /**
- * What the context menu hands an ALREADY-OPEN panel.
+ * What a context-menu selection hands the panel — the `selection` arm of
+ * `PanelIntent`.
  *
  * The worker cannot deliver this by re-injecting `panel.js`: that entry point is
  * a self-toggle, so re-injecting it while the panel is open would CLOSE the
  * panel the user was trying to use. Delivery is therefore a call onto a hook the
  * mounted panel exposes, with injection as the fallback for when no panel is
- * open — see `deliverSelection` in browser/scripting.ts.
+ * open — see `deliverIntent` in browser/scripting.ts.
  */
 export interface PanelSelection {
   /** The raw selection, exactly as `info.selectionText` gave it. Normalising is
@@ -34,5 +37,43 @@ export interface PanelSelection {
   readonly intent: "define" | "related";
 }
 
-/** The hook an open panel exposes on its host element. */
-export const PANEL_SELECTION_HOOK = "__nimbusSelection";
+/**
+ * Something the panel should DO, handed to it through `PANEL_INTENT_HOOK`.
+ *
+ * - `selection` — the context menu's two entries, and the palette's glossary
+ *   row (which sends `define` with the text it saved at mount).
+ * - `lane` — expand a PAGE lane and ask it. Never a term lane: the guard
+ *   (`isPanelIntent`, shared/messages.ts) refuses one, because a term lane's
+ *   question is the selection, and that arrives as a `selection` intent.
+ * - `deploy` — scroll to the deploy-readiness section.
+ * - `related` — bring the panel up with Related focused.
+ * - `candidates` — open at the ambiguous-resolve picker.
+ */
+export type PanelIntent =
+  | {
+      readonly kind: "selection";
+      readonly text: PanelSelection["text"];
+      readonly intent: PanelSelection["intent"];
+    }
+  | { readonly kind: "lane"; readonly lane: AgentLane }
+  | { readonly kind: "deploy" }
+  | { readonly kind: "related" }
+  | { readonly kind: "candidates" };
+
+/**
+ * What a mounted panel reports about itself through `PANEL_STATE_HOOK`.
+ *
+ * Not `PanelState`: panel-view.ts already exports one (the shell's render state).
+ */
+export interface PanelHostState {
+  /** The URL the panel's header was resolved for. */
+  readonly pinnedUrl: string;
+  /** The candidate the user picked out of an ambiguous resolve, if any. */
+  readonly chosenId: string | null;
+}
+
+/** The hook an open panel exposes on its host element to apply an intent. */
+export const PANEL_INTENT_HOOK = "__nimbusIntent";
+
+/** The hook an open panel exposes on its host element to report its state. */
+export const PANEL_STATE_HOOK = "__nimbusPanelState";

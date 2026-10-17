@@ -7,14 +7,14 @@
  * menu ("Define in Nimbus" / "What's related to this?"). Extension context
  * menus are not part of the page; Playwright has no way to click one. What
  * this suite drives instead is the same worker path EVERY menu entry
- * converges on — the panel's own selection hook (`PANEL_SELECTION_HOOK` on
+ * converges on — the panel's own intent hook (`PANEL_INTENT_HOOK` on
  * the element `PANEL_HOST_ID`, both from src/shared/panel-host.ts), the exact
- * lookup `callSelectionHook` (src/browser/scripting.ts) performs — by calling
+ * lookup `callIntentHook` (src/browser/scripting.ts) performs — by calling
  * that hook directly through `chrome.scripting.executeScript` from the
- * service worker (see `deliverSelection` below for why that, and not
+ * service worker (see `handSelection` below for why that, and not
  * `page.evaluate`, is the faithful stand-in). A CLOSED panel is injected
  * first and then handed the selection, in two visible steps, because that is
- * the one branch (`deliverSelection`'s — the production one's — mount-on-miss
+ * the one branch (`deliverIntent`'s — the production one's — mount-on-miss
  * fallback) this suite must not pretend a single call already covers. Each of
  * those five steps' text below carries both its marker AND the sentence
  * "(e2e covers the handler; the context-menu gesture itself is human)" for
@@ -26,7 +26,7 @@
  * and an SPA re-read (9) — so they carry a plain marker with no caveat.
  *
  * NOT covered: the context-menu registration itself, the worker's click
- * routing to `deliverSelection`, or the browser's OWN capture of
+ * routing to `deliverIntent`, or the browser's OWN capture of
  * `info.selectionText` from inside a form control (step 5's real point — see
  * that test's own comment for the honest boundary there).
  *
@@ -42,7 +42,7 @@ import {
   type Scenario,
 } from "../../scripts/screenshots/gateway-fixtures.ts";
 import { GATEWAY_PATHS } from "../../src/shared/gateway.ts";
-import { PANEL_HOST_ID, PANEL_SELECTION_HOOK } from "../../src/shared/panel-host.ts";
+import { PANEL_HOST_ID, PANEL_INTENT_HOOK } from "../../src/shared/panel-host.ts";
 import { MAX_TERM_LENGTH } from "../../src/shared/term.ts";
 import { gotoRecognisedPage, togglePanel } from "./helpers.ts";
 
@@ -59,8 +59,8 @@ export const COVERS = [
 ] as const;
 
 /**
- * Calls an ALREADY-OPEN panel's selection hook — the same lookup
- * `callSelectionHook` (src/browser/scripting.ts) performs, by element id and
+ * Hands a `selection` intent to an ALREADY-OPEN panel's intent hook — the same lookup
+ * `callIntentHook` (src/browser/scripting.ts) performs, by element id and
  * hook property NAME, both imported from `shared/panel-host.ts` rather than
  * retyped so a rename breaks this test loudly instead of silently skipping
  * the hook.
@@ -74,9 +74,9 @@ export const COVERS = [
  * page's MAIN world. `chrome.scripting.executeScript` with no `world` option
  * lands in that SAME isolated world panel.js itself runs in, which is
  * exactly what makes this the faithful stand-in for the hook lookup
- * `callSelectionHook` performs — not a same-effect substitute for it.
+ * `callIntentHook` performs — not a same-effect substitute for it.
  */
-async function deliverSelection(
+async function handSelection(
   sw: Harness["sw"],
   url: string,
   text: string,
@@ -102,7 +102,7 @@ async function deliverSelection(
         args: [hostId as string, hook as string, sel],
       });
     },
-    [url, PANEL_HOST_ID, PANEL_SELECTION_HOOK, { text, intent }] as const,
+    [url, PANEL_HOST_ID, PANEL_INTENT_HOOK, { kind: "selection", text, intent }] as const,
   );
 }
 
@@ -123,12 +123,12 @@ test("Define in Nimbus opens a closed panel with the glossary lane already answe
     await page.bringToFront();
 
     // Two visible steps, deliberately not one: the panel is not open yet, so
-    // this reproduces the SHAPE of `deliverSelection`'s mount-on-miss
+    // this reproduces the SHAPE of `deliverIntent`'s mount-on-miss
     // fallback (inject, then call the hook) — production's own
-    // `deliverSelection` is never entered here; see this suite's own header
+    // `deliverIntent` is never entered here; see this suite's own header
     // comment for why.
     await togglePanel(h.sw, url); // inject
-    await deliverSelection(h.sw, url, "cache", "define"); // hand it the selection
+    await handSelection(h.sw, url, "cache", "define"); // hand it the selection
 
     // input-lanes-1: the panel is open, the glossary lane is already
     // expanded, and it answers — with the STRUCTURED view (AGENT_RUN_DONE_GLOSSARY's
@@ -175,7 +175,7 @@ test("Define in Nimbus on a second word retitles the still-open panel instead of
     await page.bringToFront();
     await togglePanel(h.sw, url); // open, with no selection yet
 
-    await deliverSelection(h.sw, url, "alpha", "define");
+    await handSelection(h.sw, url, "alpha", "define");
     const glossaryLane = page.locator('[data-lane="glossary"]');
     await expect(glossaryLane.locator("summary")).toHaveText("“alpha”");
     const findingsAlpha = glossaryLane.locator(".nimbus-findings");
@@ -190,7 +190,7 @@ test("Define in Nimbus on a second word retitles the still-open panel instead of
     // hazard this step exists to guard: `panel.js` self-toggles, so if the
     // worker ever re-injected to deliver this it would close the panel the
     // user is looking at.
-    await deliverSelection(h.sw, url, "beta", "define");
+    await handSelection(h.sw, url, "beta", "define");
 
     await expect(page.locator(`#${PANEL_HOST_ID}`)).toHaveCount(1);
     await expect(glossaryLane.locator("summary")).toHaveText("“beta”");
@@ -228,7 +228,7 @@ test("a passage refuses locally, with no glossary invoke ever sent", async () =>
       "supporting collaboration and sync, and this sentence alone is already " +
       "long enough on its own to cross the term limit by a comfortable margin.";
     expect(passage.length).toBeGreaterThan(MAX_TERM_LENGTH);
-    await deliverSelection(h.sw, url, passage, "define");
+    await handSelection(h.sw, url, passage, "define");
 
     // input-lanes-3: the lane still appears — the refusal is what the user
     // is owed — but says why, locally, and reaches the gateway for nothing.
@@ -271,7 +271,7 @@ test("a selection lifted from inside a form control still reaches the glossary l
     });
     expect(term).toBe("quick");
 
-    await deliverSelection(h.sw, url, term, "define");
+    await handSelection(h.sw, url, term, "define");
 
     // input-lanes-5.
     const glossaryLane = page.locator('[data-lane="glossary"]');
@@ -309,7 +309,7 @@ test("What's related to this? reruns Related and leaves glossary collapsed and u
     await expect(page.locator('[data-lane="related"] .nimbus-related__item')).toHaveCount(3);
     const baseline = relatedCalls.length;
 
-    await deliverSelection(h.sw, url, "hybrid retrieval", "related");
+    await handSelection(h.sw, url, "hybrid retrieval", "related");
 
     // input-lanes-6: Related re-ran — a genuinely SECOND request landed, a
     // value this test can assert on rather than a repaint that merely looks
@@ -426,7 +426,7 @@ test("an SPA navigation away, then re-read, drops the glossary lane for the old 
     const firstUrl = await gotoRecognisedPage(page, h.origin, "/job/widget/7");
     await togglePanel(h.sw, firstUrl);
 
-    await deliverSelection(h.sw, firstUrl, "widget", "define");
+    await handSelection(h.sw, firstUrl, "widget", "define");
     const glossaryLane = page.locator('[data-lane="glossary"]');
     await expect(glossaryLane.locator(".nimbus-related__brief")).toHaveText(AGENT_RUN_DONE.brief);
 

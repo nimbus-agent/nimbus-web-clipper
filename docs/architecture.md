@@ -1134,7 +1134,7 @@ the page is not: the browser captures it when the menu opens, so it survives a
 page script that clears the selection, and it includes text selected inside an
 `<input>` or `<textarea>`, which `window.getSelection()` reports as empty. The
 worker cannot deliver by re-injecting `panel.js` — that entry self-toggles and
-would close the panel it is trying to reach — so `deliverSelection`
+would close the panel it is trying to reach — so `deliverIntent`
 (`browser/scripting.ts`) calls a hook on the mounted panel's host element and
 injects only on a miss. The element id and hook name live in
 `src/shared/panel-host.ts` so the two sides cannot drift; a mismatch there fails

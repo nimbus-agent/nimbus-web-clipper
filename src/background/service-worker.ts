@@ -10,7 +10,7 @@ import { addMenuClickListener, createMenu, removeAllMenus } from "../browser/con
 import { hasOrigin } from "../browser/permissions.ts";
 import { addInstalledListener, addMessageListener } from "../browser/runtime.ts";
 import {
-  deliverSelection,
+  deliverIntent,
   injectPanel,
   runCapture,
   showCue,
@@ -1030,7 +1030,7 @@ function openPanel(tabId?: number): void {
 
 /**
  * The two selection entries: hand the selected text to the panel in the clicked
- * tab, opening one if none is there (`deliverSelection` is what keeps that from
+ * tab, opening one if none is there (`deliverIntent` is what keeps that from
  * toggling an open panel shut).
  *
  * A missing `tabId` cannot be recovered from here. Unlike `openPanel`, which
@@ -1056,7 +1056,7 @@ function handleSelectionMenu(
     return;
   }
   const intent = action === "define-selection" ? "define" : "related";
-  deliverSelection(tabId, { text: selectionText, intent }).catch(() => undefined);
+  deliverIntent(tabId, { kind: "selection", text: selectionText, intent }).catch(() => undefined);
 }
 
 addMenuClickListener((menuItemId, tabId, selectionText) => {

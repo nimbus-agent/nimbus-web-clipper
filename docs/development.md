@@ -810,13 +810,13 @@ more than one indexed item (the panel shows a chooser when it does).
 
 1. <!-- e2e:input-lanes-1 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly.)** On any page, select a word → right-click →
    **Define in Nimbus**. The panel opens, a lane titled with that term is
    **already expanded**, and it answers.
 2. <!-- e2e:input-lanes-2 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly.)** With the panel still open, select a *different*
    word → **Define in Nimbus**. The panel must **stay open** (this is the
    toggle hazard: the worker reaches the open panel through its hook, never by
@@ -824,19 +824,19 @@ more than one indexed item (the panel shows a chooser when it does).
    term.
 3. <!-- e2e:input-lanes-3 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly.)** Select a whole paragraph → **Define in
    Nimbus**. The lane says *"That's a passage, not a term"*. Confirm in
    DevTools' network/SW logs that **no** `/v1/agents/glossary` call went out.
 4. <!-- e2e:input-lanes-4 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly.)** Repeat step 1 on a page Nimbus does **not**
    recognise — an internal wiki, a vendor console. The lane must still work;
    the page lanes must still be absent. This is the slice's central claim.
 5. <!-- e2e:input-lanes-5 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly. And
    specifically here, so is the browser's own capture of `selectionText` from
    inside the field, which the e2e suite cannot drive either: it hands the
@@ -847,7 +847,7 @@ more than one indexed item (the panel shows a chooser when it does).
    than the page's own selection).
 6. <!-- e2e:input-lanes-6 --> **(e2e covers the handler; the context-menu
    gesture itself is human, and so is the worker's click routing to
-   `deliverSelection` — including its mount-on-miss fallback, which the suite
+   `deliverIntent` — including its mount-on-miss fallback, which the suite
    simulates in two visible steps rather than exercising directly.)** Select text → **What's related to this?**. The
    Related lane re-runs against the selection, and the glossary lane appears
    **collapsed and unrun** — no agent run is spent on a question nobody asked.
@@ -904,7 +904,7 @@ Prereq: paired, gateway running, a resolved GitHub pull request available.
 7. **(not yet automated — the mock's `/v1/clips/related` route is
    deliberately unconditional on the query (see step 6 above), so "the
    results must change" has nothing to change against; input-lanes.e2e.ts's
-   selection hook can already drive the gesture, this just needs a
+   intent hook can already drive the gesture, this just needs a
    query-aware related route in the mock to answer differently).** Select a
    phrase and run *What's related to this?* — the results must change, and
    the PR you are on must not appear among them.

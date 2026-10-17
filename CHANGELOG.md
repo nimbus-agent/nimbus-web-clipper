@@ -8,6 +8,17 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ## [Unreleased]
 
+### Fixed
+
+- **"What's related to this?" keeps its answer when it opens the panel.** On a
+  panel the menu entry had just opened, the panel's own first lookup could land
+  second and replace the results about your selection with results about the
+  page.
+
+- **"Define in Nimbus" opens the definition when the panel already shows one.**
+  If you had collapsed the definition lane, defining a new term asked the
+  question but left the lane closed. It now opens on the new answer.
+
 ## [0.11.0] - 2026-10-08
 
 ### Added

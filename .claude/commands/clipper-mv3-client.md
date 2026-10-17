@@ -159,7 +159,7 @@ lane quietly disappear here rather than fail, and no gate in either repo notices
   `func:` call in `src/browser/scripting.ts`, and why the panel's element id and hook *name*
   live in `src/shared/panel-host.ts` as passed-in arguments.
 - **`panel.js` self-toggles on re-injection.** Delivering data to an already-open panel via
-  `injectPanel` closes it. `deliverSelection` calls the hook first and mounts only on a miss.
+  `injectPanel` closes it. `deliverIntent` calls the hook first and mounts only on a miss.
 - **A tab id from a message payload is forgeable.** `CueOpenRequest` deliberately carries no
   payload; the worker uses `sender.tabId`, which `src/browser/runtime.ts` narrows out of
   `sender.tab?.id`.

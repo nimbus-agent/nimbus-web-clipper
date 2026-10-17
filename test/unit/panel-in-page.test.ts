@@ -8,6 +8,7 @@ import {
   termStateFrom,
   visibleLanes,
 } from "../../src/panel/lane-input.ts";
+import { PANEL_INTENT_HOOK, PANEL_STATE_HOOK } from "../../src/shared/panel-host.ts";
 import {
   AGENT_LANES,
   type AgentLane,
@@ -54,6 +55,21 @@ async function advanceTimers(ms: number): Promise<void> {
 
 function host(): HTMLElement | null {
   return document.getElementById(HOST_ID);
+}
+
+/** Call a hook the mounted panel exposes on its host element, by its SHARED
+ *  name — the lookup `callIntentHook` (browser/scripting.ts) performs. */
+function callHook(name: string, ...args: unknown[]): unknown {
+  const fn = (host() as (HTMLElement & Record<string, unknown>) | null)?.[name];
+  if (typeof fn !== "function") {
+    throw new Error(`no ${name} hook on the panel host`);
+  }
+  return (fn as (...a: unknown[]) => unknown)(...args);
+}
+
+/** Hand the mounted panel an intent, as the worker's `deliverIntent` does. */
+function applyIntent(intent: unknown): void {
+  callHook(PANEL_INTENT_HOOK, intent);
 }
 
 function shadow(): ShadowRoot | null {
@@ -4253,15 +4269,9 @@ describe("the glossary lane", () => {
   }
 
   /** Hand a selection to the mounted panel, exactly as the service worker's
-   *  `deliverSelection` does — by calling the hook on the host element. */
+   *  `deliverIntent` does — by calling the intent hook on the host element. */
   function deliver(text: string, intent: "define" | "related"): void {
-    const el = document.getElementById(HOST_ID) as
-      | (HTMLElement & { __nimbusSelection?: (s: unknown) => void })
-      | null;
-    if (el?.__nimbusSelection === undefined) {
-      throw new Error("no selection hook on the panel host");
-    }
-    el.__nimbusSelection({ text, intent });
+    applyIntent({ kind: "selection", text, intent });
   }
 
   function lane(root: ShadowRoot): HTMLDetailsElement | null {
@@ -4594,5 +4604,398 @@ describe("lane list parity", () => {
       .filter((id) => id !== "related");
     expect(rendered).toEqual(visibleLanes(ctx).map((l) => l.lane));
     expect(root.querySelector('details[data-lane="related"]') !== null).toBe(showsRelated(ctx));
+  });
+});
+
+describe("panel intents", () => {
+  const PR = {
+    ok: true,
+    product: "github",
+    kind: "pr",
+    label: "GitHub PR",
+    ref: "acme/web #482",
+    resolveUrl: "https://github.com/acme/web/pull/482",
+    scope: "acme/web",
+    origin: "https://github.com",
+  } as const;
+  const ITEM = {
+    id: "github:acme/web#482",
+    service: "github",
+    type: "pr",
+    title: "Add retry budget",
+    url: "https://github.com/acme/web/pull/482",
+    modifiedAt: 1_700_000_000_000,
+  };
+  const FOUND = {
+    kind: "resolve",
+    ok: true,
+    recognition: PR,
+    outcome: { kind: "found", matchKind: "exact", item: ITEM },
+  };
+  const AMBIGUOUS = {
+    kind: "resolve",
+    ok: true,
+    recognition: {
+      ok: true,
+      product: "github",
+      kind: "issue",
+      label: "GitHub issue",
+      ref: "acme/web #9",
+      resolveUrl: "https://github.com/acme/web/issues/9",
+    },
+    outcome: {
+      kind: "ambiguous",
+      fetchable: false,
+      truncated: false,
+      candidates: [
+        { id: "a", service: "github", type: "issue", title: "One", url: null },
+        { id: "b", service: "github", type: "issue", title: "Two", url: null },
+      ],
+    },
+  };
+  const UNRECOGNISED = {
+    kind: "resolve",
+    ok: true,
+    recognition: { ok: false, reason: "unknown-host" },
+  };
+  const DONE = (lane: unknown) => ({
+    kind: "agent-state",
+    lane,
+    state: { kind: "done", brief: `Answer for ${String(lane)}` },
+  });
+
+  type Msg = Record<string, unknown>;
+  interface Answers {
+    readonly resolve?: (m: Msg) => unknown;
+    readonly agentRun?: (m: Msg) => unknown;
+  }
+
+  /** Script every message kind the panel sends, recording each in `sent`. */
+  function script(answers: Answers = {}): Msg[] {
+    const sent: Msg[] = [];
+    harness.sendMessage.mockImplementation(async (message: unknown) => {
+      const m = message as Msg;
+      sent.push(m);
+      switch (m["kind"]) {
+        case "resolve":
+          return answers.resolve === undefined ? FOUND : answers.resolve(m);
+        case "agent-run":
+          return answers.agentRun === undefined ? DONE(m["lane"]) : answers.agentRun(m);
+        case "related":
+          return { kind: "related", ok: true, items: [] };
+        case "deploy-preflight":
+          return { kind: "deploy-preflight", ok: false, reason: "unreachable" };
+        default:
+          return { kind: "agent-state", lane: m["lane"], state: { kind: "collapsed" } };
+      }
+    });
+    return sent;
+  }
+
+  /** A resolve held open until the test releases it. */
+  function heldResolve(answer: unknown = FOUND): {
+    readonly resolve: () => Promise<unknown>;
+    readonly release: () => void;
+  } {
+    let release: () => void = () => undefined;
+    return {
+      resolve: () =>
+        new Promise((r) => {
+          release = () => r(answer);
+        }),
+      release: () => release(),
+    };
+  }
+
+  const ofKind = (sent: Msg[], kind: string): Msg[] => sent.filter((m) => m["kind"] === kind);
+
+  async function settled(): Promise<ShadowRoot> {
+    await loadPanel();
+    await vi.waitFor(() => {
+      expect(headerText()).not.toContain("Checking Nimbus");
+    });
+    await flush();
+    const root = shadow();
+    if (root === null) {
+      throw new Error("no panel");
+    }
+    return root;
+  }
+
+  /** The class of whatever holds focus inside the panel's shadow root. */
+  function focused(): string {
+    return shadow()?.activeElement?.className ?? "(nothing)";
+  }
+
+  function focusedLane(): string | null | undefined {
+    return shadow()?.activeElement?.closest("[data-lane]")?.getAttribute("data-lane");
+  }
+
+  beforeEach(() => {
+    window.history.pushState({}, "", "/acme/web/pull/482");
+  });
+
+  it("a lane intent on a fresh mount waits for the resolve, then runs exactly once", async () => {
+    const held = heldResolve();
+    const sent = script({ resolve: held.resolve });
+    await loadPanel();
+    applyIntent({ kind: "lane", lane: "impact" });
+    await flush();
+    expect(ofKind(sent, "agent-run")).toHaveLength(0);
+
+    held.release();
+    await vi.waitFor(() => expect(ofKind(sent, "agent-run")).toHaveLength(1));
+    await flush();
+    expect(ofKind(sent, "agent-run")).toHaveLength(1);
+    expect(ofKind(sent, "agent-run")[0]).toMatchObject({ lane: "impact" });
+  });
+
+  it("two lane intents before the resolve: only the second runs", async () => {
+    const held = heldResolve();
+    const sent = script({ resolve: held.resolve });
+    await loadPanel();
+    applyIntent({ kind: "lane", lane: "impact" });
+    applyIntent({ kind: "lane", lane: "why" });
+    held.release();
+    await vi.waitFor(() => expect(ofKind(sent, "agent-run")).toHaveLength(1));
+    await flush();
+    expect(ofKind(sent, "agent-run").map((m) => m["lane"])).toEqual(["why"]);
+  });
+
+  it("a lane the roster does not offer runs nothing and focuses the header", async () => {
+    const sent = script({ resolve: () => ({ ...FOUND, offeredLanes: ["why"] }) });
+    const root = await settled();
+    applyIntent({ kind: "lane", lane: "impact" });
+    await flush();
+    expect(ofKind(sent, "agent-run")).toHaveLength(0);
+    expect(root.querySelector('[data-lane="impact"]')).toBeNull();
+    expect(focused()).toBe("nimbus-related__heading");
+  });
+
+  it("a lane intent for a failed lane asks again, once", async () => {
+    const sent = script({
+      agentRun: (m) =>
+        ofKind(sent, "agent-run").length === 1
+          ? {
+              kind: "agent-state",
+              lane: m["lane"],
+              state: { kind: "failed", reason: "server_error" },
+            }
+          : DONE(m["lane"]),
+    });
+    const root = await settled();
+    applyIntent({ kind: "lane", lane: "impact" });
+    await flush();
+    expect(ofKind(sent, "agent-run")).toHaveLength(1);
+    applyIntent({ kind: "lane", lane: "impact" });
+    await flush();
+    expect(ofKind(sent, "agent-run")).toHaveLength(2);
+    expect(root.textContent).toContain("Answer for impact");
+  });
+
+  it("a lane intent for a lane already done sends no agent-run, and expands it", async () => {
+    const sent = script();
+    const root = await settled();
+    applyIntent({ kind: "lane", lane: "impact" });
+    await flush();
+    const lane = (): HTMLDetailsElement | null =>
+      root.querySelector<HTMLDetailsElement>('details[data-lane="impact"]');
+    // The user collapses it; the palette's intent re-expands without re-asking.
+    lane()?.querySelector("summary")?.click();
+    await flush();
+    expect(lane()?.open).toBe(false);
+    applyIntent({ kind: "lane", lane: "impact" });
+    await flush();
+    expect(ofKind(sent, "agent-run")).toHaveLength(1);
+    expect(lane()?.open).toBe(true);
+  });
+
+  it("a stale pin re-reads first, then runs the define on the NEW page with the new term", async () => {
+    const sent = script();
+    await settled();
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    applyIntent({ kind: "selection", text: "widget", intent: "define" });
+    await vi.waitFor(() => expect(ofKind(sent, "agent-run")).toHaveLength(1));
+    await flush();
+    expect(String(ofKind(sent, "resolve").at(-1)?.["pageUrl"])).toMatch(/\/pull\/517$/);
+    const run = ofKind(sent, "agent-run")[0];
+    expect(run).toMatchObject({ lane: "glossary", term: "widget" });
+    expect(String(run?.["pageUrl"])).toMatch(/\/pull\/517$/);
+    // The term survived the re-read: the lane is there and answered.
+    expect(shadow()?.textContent).toContain("Answer for glossary");
+  });
+
+  it("with the URL changed after mount, a lane intent re-resolves and runs against the new page", async () => {
+    const sent = script();
+    await settled();
+    expect(ofKind(sent, "resolve")).toHaveLength(1);
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    applyIntent({ kind: "lane", lane: "why" });
+    await vi.waitFor(() => expect(ofKind(sent, "agent-run")).toHaveLength(1));
+    expect(ofKind(sent, "resolve")).toHaveLength(2);
+    expect(String(ofKind(sent, "resolve")[1]?.["pageUrl"])).toMatch(/\/pull\/517$/);
+    expect(String(ofKind(sent, "agent-run")[0]?.["pageUrl"])).toMatch(/\/pull\/517$/);
+  });
+
+  // The race since C2.5: mount's own selection-less related request could land
+  // after the menu's, and overwrite it.
+  it("a related selection into a fresh mount: the last related request carries the selection", async () => {
+    const held = heldResolve();
+    const sent = script({ resolve: held.resolve });
+    await loadPanel();
+    applyIntent({ kind: "selection", text: "blast radius", intent: "related" });
+    held.release();
+    await vi.waitFor(() => expect(ofKind(sent, "related").length).toBeGreaterThanOrEqual(2));
+    await flush();
+    expect(ofKind(sent, "related").at(-1)?.["selection"]).toBe("blast radius");
+    expect(ofKind(sent, "agent-run")).toHaveLength(0);
+  });
+
+  it("a re-read drops the related selection along with the rest of the old page", async () => {
+    const sent = script();
+    await settled();
+    applyIntent({ kind: "selection", text: "blast radius", intent: "related" });
+    await flush();
+    window.history.pushState({}, "", "/acme/web/pull/517");
+    applyIntent({ kind: "related" });
+    await vi.waitFor(() => expect(ofKind(sent, "resolve")).toHaveLength(2));
+    await flush();
+    expect(ofKind(sent, "related").at(-1)?.["selection"]).not.toBe("blast radius");
+  });
+
+  it("teardown with a parked intent, then the resolve settling, sends nothing", async () => {
+    const held = heldResolve();
+    const sent = script({ resolve: held.resolve });
+    await loadPanel();
+    applyIntent({ kind: "lane", lane: "impact" });
+    callHook("__nimbusClose");
+    held.release();
+    await flush();
+    await flush();
+    expect(ofKind(sent, "agent-run")).toHaveLength(0);
+  });
+
+  it("a selection/define into an open panel runs glossary with the new term, expanded", async () => {
+    const sent = script();
+    const root = await settled();
+    applyIntent({ kind: "selection", text: "alpha", intent: "define" });
+    await flush();
+    const glossary = (): HTMLDetailsElement | null =>
+      root.querySelector<HTMLDetailsElement>('details[data-lane="glossary"]');
+    glossary()?.querySelector("summary")?.click();
+    await flush();
+    expect(glossary()?.open).toBe(false);
+    applyIntent({ kind: "selection", text: "beta", intent: "define" });
+    await flush();
+    expect(ofKind(sent, "agent-run").map((m) => m["term"])).toEqual(["alpha", "beta"]);
+    expect(glossary()?.open).toBe(true);
+    expect(glossary()?.querySelector("summary")?.textContent).toContain("beta");
+  });
+
+  describe("focus", () => {
+    it("a lane intent focuses that lane's summary, and keeps it through the answer's repaint", async () => {
+      script();
+      await settled();
+      applyIntent({ kind: "lane", lane: "impact" });
+      await flush();
+      expect(shadow()?.textContent).toContain("Answer for impact");
+      expect(focused()).toBe("nimbus-related__lane-title");
+      expect(focusedLane()).toBe("impact");
+    });
+
+    it("a define focuses the glossary lane's summary", async () => {
+      script();
+      await settled();
+      applyIntent({ kind: "selection", text: "widget", intent: "define" });
+      await flush();
+      expect(focused()).toBe("nimbus-related__lane-title");
+      expect(focusedLane()).toBe("glossary");
+    });
+
+    it("related focuses Related's summary", async () => {
+      script();
+      await settled();
+      applyIntent({ kind: "related" });
+      expect(focused()).toBe("nimbus-related__lane-title");
+      expect(focusedLane()).toBe("related");
+    });
+
+    it("candidates focuses the first candidate button", async () => {
+      script({ resolve: () => AMBIGUOUS });
+      await settled();
+      applyIntent({ kind: "candidates" });
+      expect(focused()).toBe("nimbus-related__candidate");
+      expect(shadow()?.activeElement?.textContent).toContain("One");
+    });
+
+    it("candidates with no list falls back to the header", async () => {
+      script();
+      await settled();
+      applyIntent({ kind: "candidates" });
+      expect(focused()).toBe("nimbus-related__heading");
+    });
+
+    it("deploy focuses the section heading and scrolls it into view", async () => {
+      const scroll = vi.fn();
+      Element.prototype.scrollIntoView = scroll;
+      script();
+      const root = await settled();
+      await vi.waitFor(() => expect(root.querySelector(".nimbus-deploy__title")).not.toBeNull());
+      applyIntent({ kind: "deploy" });
+      expect(focused()).toBe("nimbus-deploy__title");
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll.mock.contexts[0]).toBe(root.querySelector(".nimbus-deploy__title"));
+    });
+
+    // Parked on a fresh mount: released after the header's paint, and the
+    // related answer's repaint that follows must not throw focus away.
+    it("a parked candidates intent keeps focus on its button through the related repaint", async () => {
+      const held = heldResolve(AMBIGUOUS);
+      const sent = script({ resolve: held.resolve });
+      await loadPanel();
+      applyIntent({ kind: "candidates" });
+      held.release();
+      await vi.waitFor(() => expect(ofKind(sent, "related")).toHaveLength(1));
+      await flush();
+      expect(focused()).toBe("nimbus-related__candidate");
+      expect(shadow()?.activeElement?.textContent).toContain("One");
+    });
+
+    it("a parked deploy intent keeps focus on the section heading through the related repaint", async () => {
+      Element.prototype.scrollIntoView = vi.fn();
+      const held = heldResolve();
+      const sent = script({ resolve: held.resolve });
+      await loadPanel();
+      applyIntent({ kind: "deploy" });
+      held.release();
+      await vi.waitFor(() => expect(ofKind(sent, "related")).toHaveLength(1));
+      await flush();
+      expect(focused()).toBe("nimbus-deploy__title");
+    });
+
+    it("deploy on a surface without the section falls back to the header", async () => {
+      Element.prototype.scrollIntoView = vi.fn();
+      script({ resolve: () => UNRECOGNISED });
+      await settled();
+      applyIntent({ kind: "deploy" });
+      expect(focused()).toBe("nimbus-related__heading");
+    });
+  });
+
+  describe("the state hook", () => {
+    it("reports the pinned URL, and the candidate the user picked", async () => {
+      script({ resolve: () => AMBIGUOUS });
+      const root = await settled();
+      expect(callHook(PANEL_STATE_HOOK)).toEqual({
+        pinnedUrl: window.location.href,
+        chosenId: null,
+      });
+      root.querySelector<HTMLButtonElement>("button.nimbus-related__candidate")?.click();
+      await flush();
+      expect(callHook(PANEL_STATE_HOOK)).toEqual({
+        pinnedUrl: window.location.href,
+        chosenId: "a",
+      });
+    });
   });
 });
