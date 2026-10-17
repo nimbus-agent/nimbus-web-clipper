@@ -4825,6 +4825,33 @@ describe("panel intents", () => {
     expect(shadow()?.textContent).toContain("Answer for glossary");
   });
 
+  it("a fragment-only change is the same page: the intent applies with no new resolve", async () => {
+    const sent = script();
+    const root = await settled();
+    applyIntent({ kind: "selection", text: "alpha", intent: "define" });
+    await flush();
+    window.history.pushState({}, "", "/acme/web/pull/482#issuecomment-1");
+    applyIntent({ kind: "lane", lane: "why" });
+    await flush();
+    expect(ofKind(sent, "resolve")).toHaveLength(1);
+    expect(ofKind(sent, "agent-run").map((m) => m["lane"])).toEqual(["glossary", "why"]);
+    // Nothing was reset: the term's lane and its answer are still there.
+    expect(root.querySelector('details[data-lane="glossary"]')).not.toBeNull();
+    expect(root.textContent).toContain("Answer for glossary");
+  });
+
+  it("a parked lane intent, then a Define before the resolve: only the glossary runs", async () => {
+    const held = heldResolve();
+    const sent = script({ resolve: held.resolve });
+    await loadPanel();
+    applyIntent({ kind: "lane", lane: "impact" });
+    applyIntent({ kind: "selection", text: "widget", intent: "define" });
+    held.release();
+    await vi.waitFor(() => expect(ofKind(sent, "agent-run")).toHaveLength(1));
+    await flush();
+    expect(ofKind(sent, "agent-run").map((m) => m["lane"])).toEqual(["glossary"]);
+  });
+
   it("with the URL changed after mount, a lane intent re-resolves and runs against the new page", async () => {
     const sent = script();
     await settled();

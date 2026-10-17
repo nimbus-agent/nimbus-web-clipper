@@ -77,3 +77,24 @@ export const PANEL_INTENT_HOOK = "__nimbusIntent";
 
 /** The hook an open panel exposes on its host element to report its state. */
 export const PANEL_STATE_HOOK = "__nimbusPanelState";
+
+/**
+ * Do two URLs name the same page, for deciding whether a panel's pin is stale?
+ *
+ * The fragment is ignored on both sides: `#heading`, GitHub's `#diff-…` and
+ * `#issuecomment-…` move within a page, and treating them as a navigation would
+ * re-read the panel, collapsing its lanes and dropping a candidate pick and
+ * the term. One rule for the panel (`applyIntent`) and the palette's read of
+ * an open panel. An unparseable URL falls back to plain string equality.
+ */
+export function samePage(a: string, b: string): boolean {
+  try {
+    const left = new URL(a);
+    const right = new URL(b);
+    left.hash = "";
+    right.hash = "";
+    return left.href === right.href;
+  } catch {
+    return a === b;
+  }
+}

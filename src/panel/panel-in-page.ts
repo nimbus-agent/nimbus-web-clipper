@@ -21,6 +21,7 @@ import {
   type PanelHostState,
   type PanelIntent,
   type PanelSelection,
+  samePage,
 } from "../shared/panel-host.ts";
 import type { ClipPreview } from "../shared/preview.ts";
 import { sameItem, surfaceLine } from "../shared/recognise/index.ts";
@@ -502,7 +503,7 @@ function createPanel(
    * navigates, and a lane answering about the tab's current page under a header
    * naming the pinned one is precisely the defect this exists to make
    * impossible. `reread()` is its only other writer, from an explicit user
-   * click.
+   * gesture: the notice's button, or an intent arriving for a moved-on tab.
    */
   let pinnedUrl = window.location.href;
   /**
@@ -1002,9 +1003,10 @@ function createPanel(
   /**
    * Re-pin to the page the tab is on now and describe THAT page instead.
    *
-   * Only reachable from the notice's own button — an explicit user action, which
-   * is why it is allowed to spend two gateway calls when nothing else in this
-   * panel re-reads on its own.
+   * Reached from the notice's own button, and from `applyIntent` when an intent
+   * (a menu entry, a palette choice) arrives for a tab that has moved on — both
+   * explicit user actions, which is why it is allowed to spend two gateway calls
+   * when nothing else in this panel re-reads on its own.
    *
    * `fetchSent` resets deliberately: the one-fetch-per-panel rule exists to stop
    * a second outbound provider request for the SAME item, and this is a different
@@ -1832,22 +1834,27 @@ function createPanel(
    * Apply an intent from the worker (`deliverIntent`), in this order:
    *
    * 1. A STALE PIN first, for every kind, selection included: the tab moved on
-   *    since this panel resolved, so it parks the intent and re-reads. First
+   *    since this panel resolved (`samePage` — a fragment-only change is not a
+   *    move), so it parks the intent and re-reads. First
    *    because `reread` resets `term`, which would wipe a selection applied
    *    before it — and because a palette lane must never run against the page
    *    the panel happened to be pinned to.
    * 2. A selection goes straight to `applySelection`, even while the header is
    *    loading — today's menu behaviour; it sets `term` before it paints or runs.
+   *    It also drops any parked intent: the last gesture wins.
    * 3. Anything else waits in `pendingIntent` while the header is loading.
    * 4. Otherwise it is applied now (`applyResolvedIntent`).
    */
   function applyIntent(intent: PanelIntent): void {
-    if (pinnedUrl !== window.location.href) {
+    if (!samePage(pinnedUrl, window.location.href)) {
       pendingIntent = intent;
       reread().catch(() => undefined);
       return;
     }
     if (intent.kind === "selection") {
+      // The last gesture wins and runs never queue: a lane parked while the
+      // header loads must not also run once it lands.
+      pendingIntent = null;
       applySelection(intent.text, intent.intent);
       if (intent.intent === "define") {
         focusIn(laneTitleSelector("glossary"));
