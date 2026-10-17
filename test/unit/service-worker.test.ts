@@ -2592,6 +2592,37 @@ describe("ambient surfacing", () => {
       expect(JSON.stringify(calls[0]?.args)).not.toContain("smuggled");
     });
 
+    test("a selection intent is rebuilt to exactly its three keys", async () => {
+      await loadWorker();
+      harness.executeScript.mockResolvedValue([{ result: true }]);
+      await harness.emitMessageFromTab(
+        {
+          kind: "palette-intent",
+          intent: { kind: "selection", text: "widget", intent: "define", smuggled: "x" },
+        },
+        7,
+      );
+      await settle();
+      const calls = hookCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.args?.[2]).toEqual({ kind: "selection", text: "widget", intent: "define" });
+      expect(JSON.stringify(calls[0]?.args)).not.toContain("smuggled");
+    });
+
+    test("a bare candidates intent is delivered", async () => {
+      await loadWorker();
+      harness.executeScript.mockResolvedValue([{ result: true }]);
+      await harness.emitMessageFromTab(
+        { kind: "palette-intent", intent: { kind: "candidates" } },
+        7,
+      );
+      await settle();
+      const calls = hookCalls();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.target).toEqual({ tabId: 7 });
+      expect(calls[0]?.args?.[2]).toEqual({ kind: "candidates" });
+    });
+
     test("a malformed palette-intent is not routed", async () => {
       await loadWorker();
       await harness.emitMessageFromTab(
