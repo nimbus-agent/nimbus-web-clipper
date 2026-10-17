@@ -190,10 +190,17 @@ the cue/toast pattern: the file sets `__nimbusPalette`, and a second
   first, and it calls `stopImmediatePropagation()` and `preventDefault()`.
   One `Esc` closes the palette and leaves the panel open.
 - **Focus on close** depends on how the palette closes:
-  - **Dismissed** (Esc, Tab, focus leaving, the toggle): focus goes back to
-    the page element that had it at mount, if that element is still
-    connected.
-  - **Quick clip:** the same, after the selection is restored (§4.5).
+  - **Dismissed** (Esc, Tab, the toggle, or focus leaving to nowhere): focus
+    goes back to the page element that had it at mount, if that element is
+    still connected.
+  - **Focus left to a page element the user chose** (a click on a link or
+    an input): the palette closes and does nothing else. Refocusing would
+    take focus back from the element the user just picked, and restoring the
+    selection would undo their click.
+  - **Clip page:** as Dismissed.
+  - **Clip selection:** the selection is restored (§4.5) and focus is **not**
+    moved. The capture reads the live selection, and focusing the
+    mount-time element (a contenteditable, say) can move it.
   - **Panel intent:** focus is **not** restored to the page. It would bounce
     page → panel, and focusing a page input can collapse the selection §4.5
     just restored. The panel takes focus instead (§6.2).
