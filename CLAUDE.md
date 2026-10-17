@@ -139,7 +139,7 @@ monorepo's git history.)
   `page-meta.ts` (the page's own author/date/site metadata), plus the injected
   result toast (`toast-in-page.ts` → `toast.js`, pure `toast-view.ts`)
 - `src/panel/` — the injected related-items + agent-lane panel (`panel-in-page.ts`
-  → `panel.js`, pure `panel-view.ts`), its per-lane typed-answer renderers in
+  → `panel.js`, pure `panel-view.ts`, pure `header-state.ts` — the resolve-response → header derivation), its per-lane typed-answer renderers in
   `findings/` (C8) and the deploy-readiness section in `deploy/` (C10), plus the
   ambient cue (`cue-in-page.ts` → `cue.js`, pure `cue-view.ts`) and
   `lane-input.ts` / `related-groups.ts`

@@ -472,7 +472,7 @@ Four decisions worth knowing before you change any of it:
   couldn't even parse the URL you sent"). But `unresolvable_url` can only happen
   if this client sent the gateway a `resolveUrl` its own `canonicalizeUrl` can't
   parse — a bug in `recognise()`, not a fact about the user's page. The panel
-  deliberately has no `HeaderState` arm for it: `panel-in-page.ts`'s
+  deliberately has no `HeaderState` arm for it: `header-state.ts`'s
   `headerFrom` folds `unresolvable` into `not-indexed` before it ever reaches
   `renderHeader`, so both read as "Not indexed." to the user. A user-facing
   "can't resolve this URL" distinction would be reporting a client bug as if it
