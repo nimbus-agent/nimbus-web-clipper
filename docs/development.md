@@ -1184,7 +1184,14 @@ build. Keys and clicks it sends are trusted input.
     contenteditable (a GitHub comment box, a Jira description editor), open
     the palette and run *Clip selection*. The selection survives and is
     clipped.
-13. **(covered by unit tests — not e2e)** Command routing (`open_palette` to
+13. **(human — a real click into page text)** Select some text, open the
+    palette, then click into plain page text elsewhere (or drag a new
+    selection). The palette closes, and the new caret or selection is the one
+    left on the page: the old selection is not restored over it. A real click
+    on non-focusable text blurs the input with a null `relatedTarget`, the
+    `dismiss` path that restores the saved selection, so this checks that the
+    restore never undoes the user's own click.
+14. **(covered by unit tests — not e2e)** Command routing (`open_palette` to
     the palette, not the panel) and the restricted-page badge: on a
     `chrome://` page the toolbar badge flashes and nothing is injected.
 

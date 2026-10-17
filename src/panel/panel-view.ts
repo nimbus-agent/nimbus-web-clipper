@@ -674,7 +674,18 @@ export function headerStatusLine(h: HeaderState): string | null {
       return h.banner ?? null;
     case "ambiguous":
       return h.truncated ? TRUNCATED_AMBIGUOUS_LINE : null;
-    default:
+    // Every other arm, named rather than defaulted: the return type has no
+    // `undefined`, so a new `HeaderState` arm left out here fails typecheck
+    // instead of silently getting no line (and no palette status row).
+    case "loading":
+    case "unrecognised":
+    case "captured":
+    case "service":
+    case "resolved":
+    case "chosen":
+    case "fetching":
+    case "fetch-blocked":
+    case "fetch-retry":
       return null;
   }
 }

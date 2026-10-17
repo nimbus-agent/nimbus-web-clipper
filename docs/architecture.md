@@ -2650,28 +2650,37 @@ stay clean on normal pages.
 
 `panel.js` and `palette.js` run in the same isolated world, so the palette can ask
 an open panel about itself. The panel host carries a second expando beside
-`__nimbusClose`: `__nimbusPanelState()` returns `{ pinnedUrl, chosenId }`
-(`PanelHostState`, `PANEL_STATE_HOOK` in `src/shared/panel-host.ts`).
+`__nimbusClose`: `__nimbusPanelState()` returns `{ pinnedUrl, pinnedRecognition,
+chosenId }` (`PanelHostState`, `PANEL_STATE_HOOK` in `src/shared/panel-host.ts`).
+`pinnedRecognition` is the recognition the panel's own resolve carried, `null`
+until that answer lands.
 
-- **Open on this page with a pick** (`samePage(pinnedUrl, location.href)`): the
-  palette feeds that candidate into the header derivation, matched by id against
-  its own resolve's candidates and treated as no pick if it is no longer among
-  them. Its lanes then match the open panel's, and it shows no "Pick the item" row
-  for a page that has already been picked.
-- **Pinned to a different URL** (an SPA navigation while the panel stayed open):
+- **Open on this item with a pick**: `samePage(pinnedUrl, location.href)`, or
+  failing that both recognitions known and `sameItem(pinnedRecognition,
+  init.recognition)`. The palette feeds that candidate into the header
+  derivation, matched by id against its own resolve's candidates and treated as
+  no pick if it is no longer among them. Its lanes then match the open panel's,
+  and it shows no "Pick the item" row for an item that has already been picked.
+- **Pinned to a different item** (an SPA navigation while the panel stayed open):
   the palette lists lanes for the current page, and the panel catches up before it
   runs anything (next section).
 
-`samePage` (also in `panel-host.ts`) is the one page-identity rule: it **ignores
-the fragment on both sides**. A `#heading` anchor or a GitHub `#issuecomment-...`
-link is the same page, and re-reading on it would collapse every lane, drop a
-candidate pick and reset the term for a click that never navigated. The panel's
-own navigation watcher already treats a fragment change as the same item.
+The stale-pin rule is **by item, not by URL**, and it is the rule the panel's
+own navigation watcher (`checkNavigation`) uses, so the two can never disagree.
+`samePage` (also in `panel-host.ts`) is its cheap first step: it ignores the
+fragment on both sides, so a `#heading` anchor or a GitHub `#issuecomment-...`
+link is the same page with no round trip. A different URL can still be the same
+item: GitHub's `/pull/1/files` is the PR at `/pull/1`. Re-reading on such a move
+would collapse every lane, drop a candidate pick and reset the term for a move
+the watcher says is no move at all. (A first version compared URLs, raw and then
+fragment-insensitive; both broke same-item sub-tab navigation on the
+context-menu path, which on `main` applied directly.)
 
 ### The intent hook
 
-`PanelSelection` and `__nimbusSelection` became `PanelIntent` and
-`PANEL_INTENT_HOOK` (`__nimbusIntent`), and `deliverSelection` became
+`__nimbusSelection` became `PANEL_INTENT_HOOK` (`__nimbusIntent`), carrying a
+`PanelIntent` (`PanelSelection` lives on as the shape of its `selection` arm),
+and `deliverSelection` became
 `deliverIntent`: call the hook, and on a miss inject `panel.js` and call it again.
 That sequence is what keeps the self-toggle from closing a panel the user is
 trying to reach. The five arms:
@@ -2692,9 +2701,14 @@ behaves the same on an open or a freshly mounted panel.
 
 **Applying one (`applyIntent` in `panel-in-page.ts`):**
 
-- **Stale pin first.** If `!samePage(pinnedUrl, location.href)` the panel calls
-  `reread()` and parks the intent until the new page's header lands. A palette
-  lane never runs against the page the panel happened to be pinned to.
+- **Stale pin first, by item.** `samePage(pinnedUrl, location.href)` applies
+  directly. Otherwise the panel sends `recognise` for the current URL through
+  `recogniseUrl`, the watcher's own helper, and compares with `sameItem` against
+  `pinnedRecognition`: the same item applies directly; a different item, or a
+  recognise that reached no conclusion, parks the intent and calls `reread()`
+  until the new page's header lands. An intent arriving while that recognise is
+  out supersedes it (`intentSeq`). A palette lane never runs against a different
+  item than the one the panel is pinned to.
 - **`lane`** sets `laneOpen[lane] = true` and calls `sendAgentRun(lane)` (the
   first-expand path), only from `collapsed` or `failed`. On a freshly mounted or
   re-read panel the header has not resolved, so the intent is parked and applied
@@ -2707,9 +2721,10 @@ behaves the same on an open or a freshly mounted panel.
   `candidates` once a pick has removed the list.
 
 **Parked-intent lifetime.** At most one. A second intent before the header lands
-replaces it (the last gesture wins; runs never queue). `reread()` **re-parks** the
-current one, because the stale-pin path depends on it surviving a re-read, and
-`teardown()` drops it.
+replaces it (the last gesture wins; runs never queue). The stale-pin path parks
+the intent **before** calling `reread()`, which leaves it parked, because that
+path depends on it surviving a re-read; `loadHeader` releases it on every arm,
+its send-failure arm included. `teardown()` drops it.
 
 **Focus targets**, applied when the intent is applied (including when a parked one
 is released). Until then the mount-time focus on the close button stands.
@@ -2730,8 +2745,9 @@ lane `<summary>` by lane id, a candidate button by position, the deploy heading
 (re-appended, not re-created). It runs for any focus on those elements, not only
 the one an intent placed, so it also holds focus across repaints after an
 ordinary user click. It restores with `preventScroll`, so an unrelated answer
-landing never yanks a reader back to the lane. Anything else is left where the
-rebuild leaves it, as every paint did before.
+landing never yanks a reader back to the lane. Any other focused element is
+kept only while it is still connected after the rebuild (`refinder` returns it
+as is); one the rebuild removed is not chased.
 
 Two behaviours the intent path fixed that predate it, both recorded under
 `CHANGELOG.md`'s Fixed: `relatedSelection` makes the trailing selection-less

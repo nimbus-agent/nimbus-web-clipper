@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // test/unit/panel-in-page.test.ts
 import { afterEach, beforeEach, describe, expect, it, test, vi } from "vitest";
-import { headerFrom, withPick } from "../../src/panel/header-state.ts";
+import { headerFrom, laneInputsFrom, withPick } from "../../src/panel/header-state.ts";
 import {
   laneContextFrom,
   showsRelated,
@@ -12,9 +12,7 @@ import { PANEL_INTENT_HOOK, PANEL_STATE_HOOK } from "../../src/shared/panel-host
 import {
   AGENT_LANES,
   type AgentLane,
-  type FileResolution,
   type LaneState,
-  type Recognition,
   type RelatedHit,
   SURFACE_KINDS,
   scopeForLane,
@@ -4530,6 +4528,16 @@ describe("lane list parity", () => {
       { name: "ambiguous, with a pick", res: answer(ambiguous), pick: "b" },
       { name: "not indexed", res: answer(notIndexed), pick: null },
       {
+        name: "found, with an offered list",
+        res: answer(found, { offeredLanes: ["impact", "why"] }),
+        pick: null,
+      },
+      {
+        name: "ok:false",
+        res: { kind: "resolve", ok: false, recognition, reason: "server_error" },
+        pick: null,
+      },
+      {
         name: "unrecognised",
         res: { kind: "resolve", ok: true, recognition: { ok: false, reason: "unknown-host" } },
         pick: null,
@@ -4587,16 +4595,14 @@ describe("lane list parity", () => {
       buttons[index]?.click();
       await flush();
     }
-    const response = fixture.res as {
-      recognition: { ok: boolean };
-      file?: unknown;
-    };
-    const recognition = response.recognition.ok ? (response.recognition as Recognition) : null;
+    // The palette's derivation (`resolvedFrom`) uses this same pair of
+    // helpers; the panel must render exactly what they say.
+    const inputs = laneInputsFrom(fixture.res);
     const ctx = laneContextFrom({
       shown: withPick(headerFrom(fixture.res, Date.now(), false), fixture.pick),
-      recognition,
-      file: (response.file ?? null) as FileResolution | null,
-      offered: null,
+      recognition: inputs?.recognition ?? null,
+      file: inputs?.file ?? null,
+      offered: inputs?.offered ?? null,
       term: termStateFrom(withTerm ? SELECTION : null),
     });
     const rendered = [...root.querySelectorAll("details[data-lane]")]
@@ -4668,6 +4674,22 @@ describe("panel intents", () => {
   interface Answers {
     readonly resolve?: (m: Msg) => unknown;
     readonly agentRun?: (m: Msg) => unknown;
+    readonly recognise?: (m: Msg) => unknown;
+  }
+
+  /** The recogniser's answer for a URL: `/pull/<n>` (and any sub-tab under it)
+   *  is PR #n, so a sub-tab is the same item and another number is not. */
+  function recogniseByUrl(m: Msg): unknown {
+    const n = /\/pull\/(\d+)/.exec(String(m["pageUrl"]))?.[1];
+    const recognition =
+      n === undefined
+        ? { ok: false, reason: "unknown-host" }
+        : {
+            ...PR,
+            ref: `acme/web #${n}`,
+            resolveUrl: `https://github.com/acme/web/pull/${n}`,
+          };
+    return { kind: "recognition", ok: true, recognition };
   }
 
   /** Script every message kind the panel sends, recording each in `sent`. */
@@ -4685,6 +4707,8 @@ describe("panel intents", () => {
           return { kind: "related", ok: true, items: [] };
         case "deploy-preflight":
           return { kind: "deploy-preflight", ok: false, reason: "unreachable" };
+        case "recognise":
+          return (answers.recognise ?? recogniseByUrl)(m);
         default:
           return { kind: "agent-state", lane: m["lane"], state: { kind: "collapsed" } };
       }
@@ -4838,6 +4862,135 @@ describe("panel intents", () => {
     // Nothing was reset: the term's lane and its answer are still there.
     expect(root.querySelector('details[data-lane="glossary"]')).not.toBeNull();
     expect(root.textContent).toContain("Answer for glossary");
+  });
+
+  describe("a stale pin compares items, not URLs", () => {
+    const lane = (root: ShadowRoot, id: string): HTMLDetailsElement | null =>
+      root.querySelector<HTMLDetailsElement>(`details[data-lane="${id}"]`);
+
+    it("a same-item sub-tab move applies a menu Define directly: no re-read, the open lane kept", async () => {
+      const sent = script();
+      const root = await settled();
+      applyIntent({ kind: "lane", lane: "why" });
+      await flush();
+      window.history.pushState({}, "", "/acme/web/pull/482/files");
+      applyIntent({ kind: "selection", text: "widget", intent: "define" });
+      await vi.waitFor(() => expect(ofKind(sent, "agent-run")).toHaveLength(2));
+      await flush();
+      expect(ofKind(sent, "resolve")).toHaveLength(1);
+      expect(String(ofKind(sent, "recognise").at(-1)?.["pageUrl"])).toMatch(/\/pull\/482\/files$/);
+      expect(ofKind(sent, "agent-run").map((m) => m["lane"])).toEqual(["why", "glossary"]);
+      // Answered about the pinned page, which is the same item.
+      expect(String(ofKind(sent, "agent-run")[1]?.["pageUrl"])).toMatch(/\/pull\/482$/);
+      expect(lane(root, "why")?.open).toBe(true);
+      expect(root.textContent).toContain("Answer for why");
+      expect(root.textContent).toContain("Answer for glossary");
+    });
+
+    it("a same-item sub-tab move applies a palette lane intent directly: lanes and term kept", async () => {
+      const sent = script();
+      const root = await settled();
+      applyIntent({ kind: "selection", text: "alpha", intent: "define" });
+      await flush();
+      window.history.pushState({}, "", "/acme/web/pull/482/files");
+      applyIntent({ kind: "lane", lane: "why" });
+      await vi.waitFor(() => expect(ofKind(sent, "agent-run")).toHaveLength(2));
+      await flush();
+      expect(ofKind(sent, "resolve")).toHaveLength(1);
+      expect(ofKind(sent, "agent-run").map((m) => m["lane"])).toEqual(["glossary", "why"]);
+      expect(lane(root, "glossary")?.querySelector("summary")?.textContent).toContain("alpha");
+      expect(root.textContent).toContain("Answer for glossary");
+    });
+
+    it("a same-item move keeps the candidate the user picked", async () => {
+      const sent = script({
+        resolve: () => AMBIGUOUS,
+        recognise: () => ({ kind: "recognition", ok: true, recognition: AMBIGUOUS.recognition }),
+      });
+      const root = await settled();
+      root.querySelector<HTMLButtonElement>("button.nimbus-related__candidate")?.click();
+      await flush();
+      window.history.pushState({}, "", "/acme/web/pull/482/files");
+      applyIntent({ kind: "related" });
+      await vi.waitFor(() => expect(ofKind(sent, "recognise").length).toBeGreaterThan(0));
+      await flush();
+      expect(ofKind(sent, "resolve")).toHaveLength(1);
+      expect((callHook(PANEL_STATE_HOOK) as { chosenId: unknown }).chosenId).toBe("a");
+      expect(focusedLane()).toBe("related");
+    });
+
+    it("a different item at a new path re-reads, then runs against the new page", async () => {
+      const sent = script({
+        recognise: () => ({
+          kind: "recognition",
+          ok: true,
+          recognition: { ...PR, ref: "acme/web #517" },
+        }),
+      });
+      await settled();
+      window.history.pushState({}, "", "/acme/web/pull/482/files");
+      applyIntent({ kind: "lane", lane: "why" });
+      await vi.waitFor(() => expect(ofKind(sent, "agent-run")).toHaveLength(1));
+      expect(ofKind(sent, "resolve")).toHaveLength(2);
+      expect(String(ofKind(sent, "agent-run")[0]?.["pageUrl"])).toMatch(/\/pull\/482\/files$/);
+    });
+
+    it.each([
+      [
+        "answers ok:false",
+        () => ({ kind: "recognition", ok: false, reason: "server_error" }) as unknown,
+      ],
+      [
+        "rejects",
+        (): unknown => {
+          throw new Error("worker gone");
+        },
+      ],
+    ])("a recognise that %s re-reads", async (_label, recognise) => {
+      const sent = script({ recognise });
+      await settled();
+      window.history.pushState({}, "", "/acme/web/pull/482/files");
+      applyIntent({ kind: "lane", lane: "why" });
+      await vi.waitFor(() => expect(ofKind(sent, "agent-run")).toHaveLength(1));
+      expect(ofKind(sent, "resolve")).toHaveLength(2);
+      expect(String(ofKind(sent, "resolve")[1]?.["pageUrl"])).toMatch(/\/pull\/482\/files$/);
+    });
+
+    it("a newer intent while the recognise is out wins: only it runs", async () => {
+      const releases: Array<() => void> = [];
+      const sent = script({
+        recognise: (m) =>
+          new Promise((r) => {
+            releases.push(() => r(recogniseByUrl(m)));
+          }),
+      });
+      await settled();
+      window.history.pushState({}, "", "/acme/web/pull/482/files");
+      applyIntent({ kind: "lane", lane: "impact" });
+      applyIntent({ kind: "lane", lane: "why" });
+      await vi.waitFor(() => expect(releases.length).toBeGreaterThanOrEqual(2));
+      for (const release of releases) {
+        release();
+      }
+      await vi.waitFor(() => expect(ofKind(sent, "agent-run")).toHaveLength(1));
+      await flush();
+      expect(ofKind(sent, "agent-run").map((m) => m["lane"])).toEqual(["why"]);
+      expect(ofKind(sent, "resolve")).toHaveLength(1);
+    });
+  });
+
+  it("a parked intent is released when the resolve send fails: the header takes focus and nothing runs", async () => {
+    const sent = script({
+      resolve: () => {
+        throw new Error("worker gone");
+      },
+    });
+    await loadPanel();
+    applyIntent({ kind: "lane", lane: "impact" });
+    await vi.waitFor(() => expect(headerText()).toContain("Couldn't connect to Nimbus."));
+    await flush();
+    expect(ofKind(sent, "agent-run")).toHaveLength(0);
+    expect(focused()).toBe("nimbus-related__heading");
   });
 
   it("a parked lane intent, then a Define before the resolve: only the glossary runs", async () => {
@@ -5010,19 +5163,31 @@ describe("panel intents", () => {
   });
 
   describe("the state hook", () => {
-    it("reports the pinned URL, and the candidate the user picked", async () => {
+    it("reports the pinned URL and recognition, and the candidate the user picked", async () => {
       script({ resolve: () => AMBIGUOUS });
       const root = await settled();
       expect(callHook(PANEL_STATE_HOOK)).toEqual({
         pinnedUrl: window.location.href,
+        pinnedRecognition: AMBIGUOUS.recognition,
         chosenId: null,
       });
       root.querySelector<HTMLButtonElement>("button.nimbus-related__candidate")?.click();
       await flush();
       expect(callHook(PANEL_STATE_HOOK)).toEqual({
         pinnedUrl: window.location.href,
+        pinnedRecognition: AMBIGUOUS.recognition,
         chosenId: "a",
       });
+    });
+
+    it("reports a null recognition before the resolve lands", async () => {
+      const held = heldResolve();
+      script({ resolve: held.resolve });
+      await loadPanel();
+      expect((callHook(PANEL_STATE_HOOK) as { pinnedRecognition: unknown }).pinnedRecognition).toBe(
+        null,
+      );
+      held.release();
     });
   });
 });

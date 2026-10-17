@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 // test/unit/palette-in-page.test.ts
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PANEL_HOST_ID, PANEL_STATE_HOOK, type PaletteInit } from "../../src/shared/panel-host.ts";
+import {
+  PANEL_HOST_ID,
+  PANEL_STATE_HOOK,
+  type PaletteInit,
+  type PanelHostState,
+} from "../../src/shared/panel-host.ts";
 import type { Recognition } from "../../src/shared/types.ts";
 import { type ChromeHarness, installChromeMock } from "./helpers/chrome-mock.ts";
 
@@ -372,10 +377,15 @@ describe("ARIA and placement", () => {
   });
 });
 
-function plantPanel(state: { pinnedUrl: string; chosenId: string | null }): HTMLElement {
+function plantPanel(state: {
+  pinnedUrl: string;
+  chosenId: string | null;
+  pinnedRecognition?: Recognition | null;
+}): HTMLElement {
   const panel = document.createElement("div") as unknown as HTMLElement & Record<string, unknown>;
   panel.id = PANEL_HOST_ID;
-  panel[PANEL_STATE_HOOK] = () => state;
+  const full: PanelHostState = { pinnedRecognition: null, ...state };
+  panel[PANEL_STATE_HOOK] = () => full;
   document.documentElement.append(panel);
   return panel;
 }
@@ -426,6 +436,74 @@ describe("resolve", () => {
     await settle();
     expect(rowTitles()).not.toContain("Pick the item in the panel");
     expect(rowTitles()).toContain("How did we get here");
+  });
+
+  const AMBIGUOUS_PR = { ...AMBIGUOUS_ISSUE, recognition: PR };
+
+  it("a panel pinned to the same item at another path lends its pick: lanes, no 'Pick the item'", async () => {
+    respond(AMBIGUOUS_PR);
+    // The panel opened on the PR's Conversation tab; the palette opens on its
+    // Files changed tab — a different URL, the same item.
+    plantPanel({
+      pinnedUrl: "https://github.com/acme/web/pull/1",
+      pinnedRecognition: PR,
+      chosenId: "a",
+    });
+    (await load())({ recognition: PR });
+    await settle();
+    expect(rowTitles()).not.toContain("Pick the item in the panel");
+    expect(rowTitles()).toContain("What breaks if it lands");
+  });
+
+  it("a panel pinned to a different item at another path lends no pick", async () => {
+    respond(AMBIGUOUS_PR);
+    plantPanel({
+      pinnedUrl: "https://github.com/acme/web/pull/2",
+      pinnedRecognition: { ...PR, ref: "acme/web #2" } as Recognition,
+      chosenId: "a",
+    });
+    (await load())({ recognition: PR });
+    await settle();
+    expect(rowTitles()).toContain("Pick the item in the panel");
+  });
+
+  it("a panel at another path whose resolve has not landed lends no pick", async () => {
+    respond(AMBIGUOUS_PR);
+    plantPanel({ pinnedUrl: "https://github.com/acme/web/pull/1", chosenId: "a" });
+    (await load())({ recognition: PR });
+    await settle();
+    expect(rowTitles()).toContain("Pick the item in the panel");
+  });
+
+  const FILE: Recognition = {
+    ok: true,
+    product: "github",
+    kind: "file",
+    label: "GitHub file",
+    ref: "acme/web src/a.ts",
+    resolveUrl: "https://github.com/acme/web/blob/main/src/a.ts",
+  } as Recognition;
+  const fileAnswer = (file: unknown): unknown => ({
+    kind: "resolve",
+    ok: true,
+    recognition: FILE,
+    outcome: { kind: "not-indexed", fetchable: false },
+    file,
+  });
+
+  it("a file page whose probe placed the file offers its lanes", async () => {
+    respond(fileAnswer({ kind: "found", path: "src/a.ts" }));
+    (await load())({ recognition: FILE });
+    await settle();
+    expect(rowTitles()).toContain("What breaks if this changes");
+  });
+
+  it("a file page whose probe missed offers no file lane, and says why", async () => {
+    respond(fileAnswer({ kind: "miss", reason: "file_not_indexed", repo: "acme/web" }));
+    (await load())({ recognition: FILE });
+    await settle();
+    expect(rowTitles()).not.toContain("What breaks if this changes");
+    expect(rowTitles().join(" ")).toContain("this file is not in its index");
   });
 
   it("a panel pinned elsewhere lends no pick", async () => {
@@ -582,6 +660,14 @@ describe("keys", () => {
     el.value = "zzzz";
     fire(el, "input", { isTrusted: false });
     expect(rowTitles()).not.toEqual(["No matching actions"]);
+  });
+
+  it("Escape mid-composition is the IME's: the palette stays open and lets it through", async () => {
+    respond(RESOLVED_PR);
+    (await load())({ recognition: PR });
+    const ev = press("Escape", { isComposing: true });
+    expect(hosts()).toHaveLength(1);
+    expect(ev.preventDefault).not.toHaveBeenCalled();
   });
 
   it("Enter mid-composition does nothing", async () => {
@@ -811,6 +897,17 @@ describe("lifetime", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(hosts()).toHaveLength(0);
     history.pushState(null, "", before);
+  });
+
+  it("a fragment-only URL change (a scroll-spy replaceState) keeps it open", async () => {
+    vi.useFakeTimers();
+    respond(RESOLVED_PR);
+    (await load())({ recognition: PR });
+    const before = window.location.href;
+    history.replaceState(null, "", "#section-2");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(hosts()).toHaveLength(1);
+    history.replaceState(null, "", before);
   });
 
   it("a palette closed from inside its own focus call leaves no running timer", async () => {

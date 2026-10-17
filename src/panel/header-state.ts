@@ -4,7 +4,13 @@
 import { isCapturedCopy } from "../shared/capture-offer.ts";
 import { isResolveResponse, type ResolveResponse } from "../shared/messages.ts";
 import { surfaceLine } from "../shared/recognise/index.ts";
-import type { FileMissReason, ResolveCandidate } from "../shared/types.ts";
+import type {
+  AgentLane,
+  FileMissReason,
+  FileResolution,
+  Recognition,
+  ResolveCandidate,
+} from "../shared/types.ts";
 import type { HeaderState } from "./panel-view.ts";
 
 const RESOLVE_MESSAGES: Record<string, string> = {
@@ -26,7 +32,7 @@ const RESOLVE_MESSAGES: Record<string, string> = {
 
 /**
  * The two ways the file probe can miss, each with the repo the coordinate named —
- * matching `RESOLVE_MESSAGES`/`FETCH_MESSAGES` above: an honest sentence per
+ * matching `RESOLVE_MESSAGES` above: an honest sentence per
  * reason rather than one generic "not indexed" that would hide which of the two
  * fixes (track the remote, index the file) actually applies.
  */
@@ -158,4 +164,34 @@ export function withPick(header: HeaderState, pickedId: string | null): HeaderSt
   }
   const candidate: ResolveCandidate | undefined = header.candidates.find((c) => c.id === pickedId);
   return candidate === undefined ? header : { kind: "chosen", surface: header.surface, candidate };
+}
+
+/** What a resolve answer feeds the lane derivation besides its header. */
+export interface LaneInputs {
+  readonly recognition: Recognition;
+  /** The file probe's answer — only on an `ok` answer, and only on a file page. */
+  readonly file: FileResolution | null;
+  /** The lanes the gateway offers here — only on an `ok` answer; `null` filters
+   *  nothing (see `offeredLanes` in messages.ts). */
+  readonly offered: readonly AgentLane[] | null;
+}
+
+/**
+ * The resolve answer -> the lane inputs `laneContextFrom` takes beside the
+ * header. One function for the panel (`loadHeader`) and the palette
+ * (`resolvedFrom`), so the two cannot read the same answer differently. `null`
+ * for an unreadable answer, which carries none of the three.
+ */
+export function laneInputsFrom(res: unknown): LaneInputs | null {
+  if (!isResolveResponse(res)) {
+    return null;
+  }
+  if (!res.ok) {
+    return { recognition: res.recognition, file: null, offered: null };
+  }
+  return {
+    recognition: res.recognition,
+    file: res.file ?? null,
+    offered: res.offeredLanes ?? null,
+  };
 }

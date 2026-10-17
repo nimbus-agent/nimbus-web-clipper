@@ -12,7 +12,6 @@ import {
   isFetchResponse,
   isRecognitionResponse,
   isRelatedResponse,
-  isResolveResponse,
 } from "../shared/messages.ts";
 import {
   PANEL_HOST_ID,
@@ -41,7 +40,7 @@ import {
 import { DEPLOY_CSS } from "./deploy/deploy-css.ts";
 import { deployBelongsOnSurface, mountDeploySection, type Send } from "./deploy/deploy-section.ts";
 import { FINDINGS_CSS } from "./findings/findings-css.ts";
-import { headerFrom } from "./header-state.ts";
+import { headerFrom, laneInputsFrom } from "./header-state.ts";
 import {
   type LaneContext,
   laneCanRun,
@@ -503,7 +502,8 @@ function createPanel(
    * navigates, and a lane answering about the tab's current page under a header
    * naming the pinned one is precisely the defect this exists to make
    * impossible. `reread()` is its only other writer, from an explicit user
-   * gesture: the notice's button, or an intent arriving for a moved-on tab.
+   * gesture: the notice's button, or an intent arriving once the tab shows a
+   * different item.
    */
   let pinnedUrl = window.location.href;
   /**
@@ -724,6 +724,12 @@ function createPanel(
    */
   let pendingIntent: PanelIntent | null = null;
   /**
+   * Orders intents across `applyIntent`'s stale-pin recognise. Each intent
+   * takes a ticket; a recognise answer acts only for the latest one, so an
+   * intent superseded while its round trip was out never runs.
+   */
+  let intentSeq = 0;
+  /**
    * Lanes with an `agent-run` genuinely IN FLIGHT — sent but not yet answered.
    * Guards a double invoke on rapid toggling: expand -> collapse -> expand
    * before the worker has persisted `{kind:"running"}` would otherwise send a
@@ -898,6 +904,22 @@ function createPanel(
   }
 
   /**
+   * Ask the worker what item `url` is — the one recognition both the navigation
+   * watcher and `applyIntent`'s stale-pin check use, so the two can never
+   * disagree about whether the tab moved. `null` means no conclusion: the
+   * worker was unreachable, its answer unreadable, or its own read failed.
+   */
+  async function recogniseUrl(url: string): Promise<Recognition | null> {
+    let res: unknown;
+    try {
+      res = await sendMessage({ kind: "recognise", pageUrl: url });
+    } catch {
+      return null;
+    }
+    return isRecognitionResponse(res) && res.ok ? res.recognition : null;
+  }
+
+  /**
    * Compare the tab's item identity against the pinned one, and flip `navAway`
    * when it differs. Identity, NOT the URL: `resolveUrl` keeps sub-tab segments
    * and the query string on purpose, so a PR's Files tab is a different URL and
@@ -950,41 +972,25 @@ function createPanel(
     const previous = lastCheckedUrl;
     lastCheckedUrl = url;
     const seq = ++recogniseSeq;
-    let res: unknown;
-    try {
-      res = await sendMessage({ kind: "recognise", pageUrl: url });
-    } catch {
-      // The worker is unreachable. Every OTHER sendMessage failure in this panel
-      // leaves the user a way back — an error header, a Re-run button — but a
-      // navigation check has no button, so the next tick is the only recovery
-      // there is. Leaving `lastCheckedUrl` marked would remove it: this URL would
-      // match on every future tick and never be re-checked, and the notice for it
-      // would never appear.
-      //
-      // Rolled back only while this is still the LATEST check AND still this same
-      // generation — `generation`'s own doc comment says a stale response must
-      // neither store nor paint, and this is a store.
-      if (gen === generation && seq === recogniseSeq) {
-        lastCheckedUrl = previous;
-      }
-      return;
-    }
+    const current = await recogniseUrl(url);
     if (closed || gen !== generation || seq !== recogniseSeq) {
       // A newer check — a later tick, or a `reread` — already owns the marker.
       // Restoring an older URL over it here would make that newer check re-send
-      // for a URL it has already moved past.
+      // for a URL it has already moved past. (`generation`'s own doc comment
+      // says a stale response must neither store nor paint, and a rollback is
+      // a store.)
       return;
     }
-    if (!isRecognitionResponse(res) || !res.ok) {
-      // The worker reached no conclusion — the response was unreadable, or (on
-      // `ok: false`) its storage read failed. "I could not look" is not "there
-      // is no item here": treating either as a completed check would leave this
-      // URL sitting in `lastCheckedUrl` forever, matching on every later tick, so
-      // the notice for it could never appear — the exact defect class this
-      // watcher exists to remove. Roll the marker back to `previous` so the
-      // NEXT TICK re-asks about this same URL instead. No second guard is needed
-      // on the rollback itself: the check just above has already established
-      // this is still the latest ticket and the current generation.
+    if (current === null) {
+      // The worker reached no conclusion — it was unreachable, the response
+      // was unreadable, or (on `ok: false`) its storage read failed. "I could
+      // not look" is not "there is no item here": treating it as a completed
+      // check would leave this URL sitting in `lastCheckedUrl` forever,
+      // matching on every later tick, so the notice for it could never appear
+      // — the exact defect class this watcher exists to remove. A navigation
+      // check has no button, unlike every OTHER failure in this panel, so the
+      // next tick is the only recovery there is: roll the marker back to
+      // `previous` and that tick re-asks about this same URL.
       lastCheckedUrl = previous;
       return;
     }
@@ -992,7 +998,7 @@ function createPanel(
     // already refused to spend a check without one — but TypeScript does not
     // retain that narrowing of a closure `let` across the `await` on the send
     // above, so it still types as `Recognition | null` at this line.
-    const away = pinnedRecognition !== null && !sameItem(pinnedRecognition, res.recognition);
+    const away = pinnedRecognition !== null && !sameItem(pinnedRecognition, current);
     if (away === navAway) {
       return;
     }
@@ -1004,7 +1010,8 @@ function createPanel(
    * Re-pin to the page the tab is on now and describe THAT page instead.
    *
    * Reached from the notice's own button, and from `applyIntent` when an intent
-   * (a menu entry, a palette choice) arrives for a tab that has moved on — both
+   * (a menu entry, a palette choice) arrives for a tab now showing a different
+   * item (or one the recogniser could not place) — both
    * explicit user actions, which is why it is allowed to spend two gateway calls
    * when nothing else in this panel re-reads on its own.
    *
@@ -1034,9 +1041,10 @@ function createPanel(
     // transient paint() below runs with `header: loading` and `term: none`,
     // both of which already block every offered-gated lane on their own, and
     // by the time a header state that unblocks one can be reached, loadHeader
-    // has always just overwritten this from that same response (see its `res.ok`
-    // arm) — reachable header kinds and knowledge of `offeredLanes` are set by
-    // the same branch. So this line is here for when that ordering someday
+    // has always just overwritten this from that same response (its
+    // `laneInputsFrom` step, which sets the offered list from every readable
+    // answer) — reachable header kinds and knowledge of `offeredLanes` come
+    // from the same response. So this line is here for when that ordering someday
     // changes, not because a test can currently tell its absence from its
     // presence — see the "offered-lanes gate" describe block in
     // panel-in-page.test.ts for the reasoning trail.
@@ -1424,14 +1432,15 @@ function createPanel(
     if (gen !== generation) {
       return;
     }
-    if (isResolveResponse(res)) {
+    // The same derivation the palette uses (`laneInputsFrom`), so the two read
+    // one answer the same way. An unreadable answer changes none of the three.
+    const inputs = laneInputsFrom(res);
+    if (inputs !== null) {
       // The identity of the page this panel describes, from the same response the
       // header is built from — never a second recognition of its own.
-      pinnedRecognition = res.recognition;
-      if (res.ok) {
-        offeredLanes = res.offeredLanes ?? null;
-      }
-      fileResolution = res.ok === true ? (res.file ?? null) : null;
+      pinnedRecognition = inputs.recognition;
+      offeredLanes = inputs.offered;
+      fileResolution = inputs.file;
     }
     // Taken ONCE per repaint here, not re-read per rendered line — see the
     // `resolved` state's `nowMs` doc comment in panel-view.ts.
@@ -1833,12 +1842,16 @@ function createPanel(
   /**
    * Apply an intent from the worker (`deliverIntent`), in this order:
    *
-   * 1. A STALE PIN first, for every kind, selection included: the tab moved on
-   *    since this panel resolved (`samePage` — a fragment-only change is not a
-   *    move), so it parks the intent and re-reads. First
-   *    because `reread` resets `term`, which would wipe a selection applied
-   *    before it — and because a palette lane must never run against the page
-   *    the panel happened to be pinned to.
+   * 1. A STALE PIN first, for every kind, selection included — decided by
+   *    ITEM, the rule `checkNavigation` uses, so the two can never disagree.
+   *    The same URL with the fragment dropped (`samePage`) is the same item
+   *    and applies now. Any other URL is recognised (`recogniseUrl`) and
+   *    compared with `sameItem` against `pinnedRecognition`: the same item (a
+   *    PR's Conversation → Files changed tab) applies directly; a different
+   *    one, or a recognise that reached no conclusion, parks the intent and
+   *    re-reads (`staleThenApply`). First because `reread` resets `term`,
+   *    which would wipe a selection applied before it — and because a palette
+   *    lane must never run against a different item than the pinned one.
    * 2. A selection goes straight to `applySelection`, even while the header is
    *    loading — today's menu behaviour; it sets `term` before it paints or runs.
    *    It also drops any parked intent: the last gesture wins.
@@ -1846,11 +1859,37 @@ function createPanel(
    * 4. Otherwise it is applied now (`applyResolvedIntent`).
    */
   function applyIntent(intent: PanelIntent): void {
-    if (!samePage(pinnedUrl, window.location.href)) {
-      pendingIntent = intent;
-      reread().catch(() => undefined);
+    // Every intent takes a ticket, so one that lands while an earlier one's
+    // recognise is still out supersedes it: the last gesture wins.
+    const seq = ++intentSeq;
+    if (samePage(pinnedUrl, window.location.href)) {
+      applyOnPinnedItem(intent);
       return;
     }
+    // A newer gesture also supersedes one parked behind a loading header.
+    pendingIntent = null;
+    staleThenApply(intent, seq).catch(() => undefined);
+  }
+
+  /** Step 1's round trip: is the tab's URL still the pinned item? */
+  async function staleThenApply(intent: PanelIntent, seq: number): Promise<void> {
+    const gen = generation;
+    const current = await recogniseUrl(window.location.href);
+    if (closed || gen !== generation || seq !== intentSeq) {
+      return;
+    }
+    if (pinnedRecognition !== null && current !== null && sameItem(pinnedRecognition, current)) {
+      applyOnPinnedItem(intent);
+      return;
+    }
+    // Parked BEFORE the re-read, which leaves it parked: its `loadHeader`
+    // releases it once the new page's header lands.
+    pendingIntent = intent;
+    reread().catch(() => undefined);
+  }
+
+  /** Steps 2–4 of `applyIntent`: the pin names the item the tab is on. */
+  function applyOnPinnedItem(intent: PanelIntent): void {
     if (intent.kind === "selection") {
       // The last gesture wins and runs never queue: a lane parked while the
       // header loads must not also run once it lands.
@@ -1986,7 +2025,7 @@ function createPanel(
     checkNavigation,
     applySelection,
     applyIntent,
-    state: () => ({ pinnedUrl, chosenId: chosen?.id ?? null }),
+    state: () => ({ pinnedUrl, pinnedRecognition, chosenId: chosen?.id ?? null }),
   };
 }
 

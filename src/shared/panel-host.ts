@@ -68,6 +68,12 @@ export type PanelIntent =
 export interface PanelHostState {
   /** The URL the panel's header was resolved for. */
   readonly pinnedUrl: string;
+  /**
+   * The item that header's resolve recognised, or `null` before the answer
+   * lands. Lets the palette match the panel's own stale-pin rule: a different
+   * URL naming the same item (a PR's Files changed tab) is still "this page".
+   */
+  readonly pinnedRecognition: Recognition | null;
   /** The candidate the user picked out of an ambiguous resolve, if any. */
   readonly chosenId: string | null;
 }
@@ -90,13 +96,19 @@ export const PANEL_INTENT_HOOK = "__nimbusIntent";
 export const PANEL_STATE_HOOK = "__nimbusPanelState";
 
 /**
- * Do two URLs name the same page, for deciding whether a panel's pin is stale?
+ * Do two URLs name the same page? The cheap first step of the stale-pin rule,
+ * which is by ITEM: `true` here means the same item with no round trip, and
+ * `false` only means "recognise and compare with `sameItem`" — GitHub's
+ * `/pull/1/files` is a different URL and the same PR. Used by the panel
+ * (`applyIntent`), the palette's read of an open panel, and the palette's own
+ * URL-change close.
  *
  * The fragment is ignored on both sides: `#heading`, GitHub's `#diff-…` and
- * `#issuecomment-…` move within a page, and treating them as a navigation would
- * re-read the panel, collapsing its lanes and dropping a candidate pick and
- * the term. One rule for the panel (`applyIntent`) and the palette's read of
- * an open panel. An unparseable URL falls back to plain string equality.
+ * `#issuecomment-…` move within a page, and a scroll-spy page rewrites its hash
+ * as the user scrolls; treating any of them as a navigation would re-read the
+ * panel (collapsing its lanes and dropping a candidate pick and the term) or
+ * close the palette mid-scroll. An unparseable URL falls back to plain string
+ * equality.
  */
 export function samePage(a: string, b: string): boolean {
   try {

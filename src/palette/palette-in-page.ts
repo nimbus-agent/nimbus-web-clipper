@@ -10,9 +10,8 @@
 // still open. Everything a palette owns lives in `mount`'s closure, and the only
 // thing that survives a re-evaluation is the host's `__nimbusClose` expando.
 import { sendMessage } from "../browser/runtime.ts";
-import { headerFrom, withPick } from "../panel/header-state.ts";
+import { headerFrom, laneInputsFrom, withPick } from "../panel/header-state.ts";
 import { laneContextFrom, termStateFrom } from "../panel/lane-input.ts";
-import { isResolveResponse } from "../shared/messages.ts";
 import {
   PANEL_HOST_ID,
   PANEL_STATE_HOOK,
@@ -20,6 +19,8 @@ import {
   type PanelHostState,
   samePage,
 } from "../shared/panel-host.ts";
+import { sameItem } from "../shared/recognise/index.ts";
+import type { Recognition } from "../shared/types.ts";
 import { PALETTE_CSS } from "./palette-css.ts";
 import {
   enterAction,
@@ -112,13 +113,28 @@ function refocus(el: Element | null): void {
 interface OpenPanel {
   /** A panel is mounted (ours: only our own host carries the state hook). */
   readonly present: boolean;
-  /** Its pick, only when it is pinned to THIS page (fragment ignored, §5.2). */
+  /** Its pick, only when it is pinned to THIS item (§5.2). */
   readonly chosenId: string | null;
+}
+
+/**
+ * Is the open panel about the item this palette opened on? The panel's own
+ * stale-pin rule (§6.2, `applyIntent` in panel-in-page.ts), so the palette's
+ * lanes match what the panel would run: the same URL with the fragment
+ * dropped, or failing that the same recognised item — a PR's Files changed tab
+ * is a different URL and the same PR. A panel whose resolve has not landed
+ * has no recognition to compare, so only the URL can say yes.
+ */
+function panelOnThisItem(state: PanelHostState, recognition: Recognition): boolean {
+  if (samePage(state.pinnedUrl, window.location.href)) {
+    return true;
+  }
+  return state.pinnedRecognition !== null && sameItem(state.pinnedRecognition, recognition);
 }
 
 /** Read once at mount: it decides placement and the pick folded into the header.
  *  Anything that opens or closes the panel later moves focus, which closes us. */
-function readOpenPanel(): OpenPanel {
+function readOpenPanel(recognition: Recognition): OpenPanel {
   const host = document.getElementById(PANEL_HOST_ID) as
     | (HTMLElement & { [PANEL_STATE_HOOK]?: unknown })
     | null;
@@ -129,7 +145,7 @@ function readOpenPanel(): OpenPanel {
   const state = (hook as () => PanelHostState)();
   return {
     present: true,
-    chosenId: samePage(state.pinnedUrl, window.location.href) ? state.chosenId : null,
+    chosenId: panelOnThisItem(state, recognition) ? state.chosenId : null,
   };
 }
 
@@ -143,13 +159,12 @@ function resolvedFrom(
   selectionText: string,
 ): PaletteInput["resolved"] {
   const header = withPick(headerFrom(res, Date.now(), false), chosenId);
-  const valid = isResolveResponse(res) ? res : null;
-  const ok = valid?.ok === true ? valid : null;
+  const inputs = laneInputsFrom(res);
   const ctx = laneContextFrom({
     shown: header,
-    recognition: valid?.recognition ?? null,
-    file: ok?.file ?? null,
-    offered: ok?.offeredLanes ?? null,
+    recognition: inputs?.recognition ?? null,
+    file: inputs?.file ?? null,
+    offered: inputs?.offered ?? null,
     term: termStateFrom(selectionText === "" ? null : selectionText),
   });
   return { kind: "done", ctx, header };
@@ -324,7 +339,8 @@ function wire(p: Palette): void {
   window.addEventListener(
     "keydown",
     (event) => {
-      if (!event.isTrusted || event.key !== "Escape") {
+      // Mid-composition, Escape is the IME's: it cancels the candidate text.
+      if (!event.isTrusted || event.key !== "Escape" || event.isComposing) {
         return;
       }
       event.stopImmediatePropagation();
@@ -367,7 +383,7 @@ function wire(p: Palette): void {
 function mount(init: PaletteInit): () => Promise<void> {
   const saved = saveSelection();
   const focusedAtMount = document.activeElement;
-  const panel = readOpenPanel();
+  const panel = readOpenPanel(init.recognition);
   const dom = buildDom(panel.present);
   const controller = new AbortController();
   const mountedUrl = window.location.href;
@@ -433,7 +449,9 @@ function mount(init: PaletteInit): () => Promise<void> {
     }
     // The page can detach our host without going through close(); a timer that
     // never self-terminates is not acceptable on someone else's page.
-    if (!dom.host.isConnected || window.location.href !== mountedUrl) {
+    // The fragment is ignored (`samePage`): a scroll-spy page rewrites its hash
+    // with `replaceState` as the user scrolls, which is not a navigation.
+    if (!dom.host.isConnected || !samePage(window.location.href, mountedUrl)) {
       close("dismiss");
     }
   }, NAV_CHECK_MS);
