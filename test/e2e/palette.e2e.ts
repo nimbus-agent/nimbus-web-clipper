@@ -258,6 +258,10 @@ test("Clip selection clips the selection the palette's focus took away", async (
     const word = await selectWord(page);
     await openPalette(h.sw, url, init);
     await expect(input(page)).toBeFocused();
+    // The premise: focusing the palette input really did take the page selection
+    // away (the selection is document-wide, so the main world can read it). Without
+    // this the test would pass with the restore logic deleted.
+    expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).not.toBe(word);
     await expect(row(page, "clip-selection")).not.toHaveAttribute("aria-disabled", "true");
     await row(page, "clip-selection").click();
 
@@ -275,6 +279,11 @@ test("Tab closes the palette, and so does focus moving to the page", async () =>
   const h = await launchExtension();
   try {
     const { page, url, init } = await seedPr(h);
+    // `pageerror` does see exceptions thrown in the extension's isolated world
+    // (proved with a deliberately throwing executeScript func and listener), so an
+    // error thrown from focusout during host.remove() would land here.
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
     await openPalette(h.sw, url, init);
     await expect(input(page)).toBeFocused();
     await page.keyboard.press("Tab");
@@ -293,6 +302,7 @@ test("Tab closes the palette, and so does focus moving to the page", async () =>
     await page.evaluate(() => document.getElementById("page-button")?.focus());
     await expect(palette(page)).toHaveCount(0);
     await expect(page.locator("#page-button")).toBeFocused();
+    expect(errors).toEqual([]);
   } finally {
     await h.close();
   }
