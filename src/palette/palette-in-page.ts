@@ -48,7 +48,10 @@ interface PaletteHost extends HTMLElement {
  *
  * - `dismiss` — Esc, Tab, the toggle, a URL change, focus going nowhere: restore
  *   the selection and refocus the element that had focus at mount.
- * - `quick-clip` — the same, before the clip message is sent.
+ * - `clip-page` — the same as `dismiss`, before the clip message is sent.
+ * - `clip-selection` — restore the selection but refocus nothing: refocusing a
+ *   contenteditable after `addRange` can move the very selection the capture
+ *   is about to read.
  * - `intent` — restore the selection but refocus nothing: focus would bounce
  *   page → panel, and focusing a page input can collapse the selection just
  *   restored. The panel takes focus itself.
@@ -56,7 +59,14 @@ interface PaletteHost extends HTMLElement {
  *   back: refocusing the mount-time element or restoring an old selection over
  *   the user's own click would fight them.
  */
-type CloseHow = "dismiss" | "quick-clip" | "intent" | "leave";
+type CloseHow = "dismiss" | "clip-page" | "clip-selection" | "intent" | "leave";
+
+function closeHowFor(action: PaletteAction): CloseHow {
+  if (action.kind === "intent") {
+    return "intent";
+  }
+  return action.mode === "article" ? "clip-page" : "clip-selection";
+}
 
 interface SavedSelection {
   readonly ranges: readonly Range[];
@@ -384,7 +394,7 @@ function mount(init: PaletteInit): () => Promise<void> {
     if (how !== "leave") {
       restoreSelection(saved);
     }
-    if (how === "dismiss" || how === "quick-clip") {
+    if (how === "dismiss" || how === "clip-page") {
       refocus(focusedAtMount);
     }
     return true;
@@ -392,7 +402,7 @@ function mount(init: PaletteInit): () => Promise<void> {
   const run = (action: PaletteAction): void => {
     // The host is gone and the selection back BEFORE the worker hears anything:
     // quick-clip reads the page selection, and so does a freshly mounted panel.
-    if (close(action.kind === "intent" ? "intent" : "quick-clip")) {
+    if (close(closeHowFor(action))) {
       send(action);
     }
   };
@@ -412,14 +422,22 @@ function mount(init: PaletteInit): () => Promise<void> {
     close("dismiss");
   };
   dispatch({ kind: "rows-changed" });
-  dom.input.focus();
+  // Started BEFORE the focus call: a page focus trap answering our `focusin` by
+  // refocusing its own element closes this palette from inside `focus()`, and a
+  // timer started after that close would never be cleared.
   navTimer = setInterval(() => {
+    // Belt and braces: a tick after close stops the timer rather than leaking it.
+    if (closed) {
+      clearInterval(navTimer);
+      return;
+    }
     // The page can detach our host without going through close(); a timer that
     // never self-terminates is not acceptable on someone else's page.
     if (!dom.host.isConnected || window.location.href !== mountedUrl) {
       close("dismiss");
     }
   }, NAV_CHECK_MS);
+  dom.input.focus();
 
   return async () => {
     let next: PaletteInput["resolved"];

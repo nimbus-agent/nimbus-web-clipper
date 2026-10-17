@@ -723,18 +723,47 @@ describe("pointer and focus", () => {
     expect(document.activeElement).not.toBe(a);
   });
 
-  it("a quick clip refocuses the element active at mount", async () => {
+  it("Clip page refocuses the element active at mount", async () => {
     respond(RESOLVED_PR);
     document.body.innerHTML = "<button id='a'>a</button>";
     const a = document.getElementById("a") as HTMLButtonElement;
     a.focus();
     (await load())({ recognition: PR });
+    const focus = vi.spyOn(a, "focus");
     typeFilter("Clip page");
     press("Enter");
+    expect(focus).toHaveBeenCalled();
     expect(document.activeElement).toBe(a);
     await vi.waitFor(() => {
       expect(sent[0]?.message).toEqual({ kind: "quick-clip", mode: "article" });
     });
+  });
+
+  it("Clip selection restores the selection and does not refocus the mount-time element", async () => {
+    respond(RESOLVED_PR);
+    document.body.innerHTML = "<button id='a'>a</button><p id='p'>hello world</p>";
+    const a = document.getElementById("a") as HTMLButtonElement;
+    const p = document.getElementById("p") as HTMLElement;
+    a.focus();
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    // jsdom's focus() leaves a collapsed range behind, and addRange is a no-op
+    // while one exists.
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    (await load())({ recognition: PR });
+    // Focusing the input collapses the page selection in a real browser.
+    window.getSelection()?.removeAllRanges();
+    // Refocusing a contenteditable after addRange can move the very selection
+    // the capture reads, so Clip selection refocuses nothing.
+    const focus = vi.spyOn(a, "focus");
+    typeFilter("Clip sel");
+    press("Enter");
+    expect(focus).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(sent[0]?.message).toEqual({ kind: "quick-clip", mode: "selection" });
+    });
+    expect(sent[0]?.selection).toBe("hello world");
   });
 
   it("a send that rejects is swallowed", async () => {
@@ -782,6 +811,55 @@ describe("lifetime", () => {
     await vi.advanceTimersByTimeAsync(500);
     expect(hosts()).toHaveLength(0);
     history.pushState(null, "", before);
+  });
+
+  it("a palette closed from inside its own focus call leaves no running timer", async () => {
+    respond(RESOLVED_PR);
+    document.body.innerHTML = "<button id='trap'>trap</button>";
+    const trap = document.getElementById("trap") as HTMLButtonElement;
+    const trapOff = new AbortController();
+    // A page focus trap: it answers our focusin by taking focus back, which
+    // reaches the palette as a trusted focusout naming the trap.
+    document.addEventListener(
+      "focusin",
+      (e) => {
+        const d = dialog();
+        if (e.target !== trap && d !== null) {
+          trap.focus();
+          fire(d, "focusout", { relatedTarget: trap });
+        }
+      },
+      { signal: trapOff.signal },
+    );
+    const fn = await load();
+    const setSpy = vi.spyOn(globalThis, "setInterval");
+    const clearSpy = vi.spyOn(globalThis, "clearInterval");
+    fn({ recognition: PR });
+    trapOff.abort();
+    expect(hosts()).toHaveLength(0);
+    expect(setSpy).toHaveBeenCalledTimes(1);
+    const id = setSpy.mock.results[0]?.value;
+    expect(id).toBeDefined();
+    expect(clearSpy).toHaveBeenCalledWith(id);
+  });
+
+  it("a tick after a close whose clear was missed stops the timer itself", async () => {
+    respond(RESOLVED_PR);
+    const fn = await load();
+    const setSpy = vi.spyOn(globalThis, "setInterval");
+    fn({ recognition: PR });
+    const tick = setSpy.mock.calls[0]?.[0];
+    const id = setSpy.mock.results[0]?.value;
+    if (typeof tick !== "function") {
+      throw new Error("no interval tick captured");
+    }
+    // The close's own clear is skipped, as if it had never run.
+    const clearSpy = vi.spyOn(globalThis, "clearInterval").mockImplementationOnce(() => undefined);
+    press("Escape");
+    expect(hosts()).toHaveLength(0);
+    clearSpy.mockClear();
+    tick();
+    expect(clearSpy).toHaveBeenCalledWith(id);
   });
 
   it("a host the page detached tears itself down", async () => {
