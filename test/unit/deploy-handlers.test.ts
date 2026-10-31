@@ -122,6 +122,79 @@ describe("handleDeployPreflight", () => {
     expect(preflightCall).toContain("target_ref=release");
   });
 
+  describe("refBasis — what the CI check was actually asked about", () => {
+    const bound = (defaultBranch?: string): ServiceBinding => ({
+      product: "github",
+      origin: ORIGIN,
+      scope: "acme/web",
+      serviceId: "web",
+      ...(defaultBranch === undefined ? {} : { defaultBranch }),
+    });
+
+    const ask = async (itemRes: Response, binding: ServiceBinding, targetRef?: string) => {
+      const doFetch = vi.fn(async (url: string) =>
+        url.includes("/v1/items/") ? itemRes.clone() : jsonRes(envelope()),
+      );
+      const r = await handleDeployPreflight(
+        { ...req, itemId: "i1", ...(targetRef === undefined ? {} : { targetRef }) },
+        deps({
+          getBindings: async () => [binding],
+          doFetch: doFetch as unknown as typeof fetch,
+        }),
+      );
+      const sent = doFetch.mock.calls
+        .map((c) => c[0] as string)
+        .find((u) => u.includes("/v1/preflight/deploy"));
+      return { r, sent };
+    };
+
+    test("the item's own branch is the page's", async () => {
+      const { r } = await ask(jsonRes({ data: { metadata: { branch: "feat/x" } } }), bound("main"));
+      expect(r).toMatchObject({ ok: true, refBasis: "page" });
+    });
+
+    test("an explicit ref on the request is the page's", async () => {
+      const { r, sent } = await ask(jsonRes({ data: {} }), bound("main"), "feat/y");
+      expect(sent).toContain("target_ref=feat%2Fy");
+      expect(r).toMatchObject({ ok: true, refBasis: "page" });
+    });
+
+    test("an item with no branch falls to the binding's default, and says so", async () => {
+      const { r } = await ask(jsonRes({ data: { metadata: {} } }), bound("release"));
+      expect(r).toMatchObject({ ok: true, refBasis: "default_branch" });
+    });
+
+    // What every gateway since v10.0.0 answers a tokenless GET /v1/items/{id}.
+    test("a refused item read falls to the binding's default, and says so", async () => {
+      const { r, sent } = await ask(jsonRes({ error: "unauthorized" }, 401), bound("release"));
+      expect(sent).toContain("target_ref=release");
+      expect(r).toMatchObject({ ok: true, refBasis: "default_branch" });
+    });
+
+    // The literal HEAD matches no branch, so the gateway's zero means "not looked at".
+    test("no branch from anywhere is `none`, not a checked ref", async () => {
+      const { r, sent } = await ask(jsonRes({ data: { metadata: {} } }), bound());
+      expect(sent).toContain("target_ref=HEAD");
+      expect(r).toMatchObject({ ok: true, refBasis: "none" });
+    });
+
+    test("a whitespace-only default branch is `none`", async () => {
+      const { r } = await ask(jsonRes({ data: {} }), bound("   "));
+      expect(r).toMatchObject({ ok: true, refBasis: "none" });
+    });
+
+    // Whichever rung supplied the literal, it still matches no branch.
+    test.each([
+      ["a stored default branch", jsonRes({ data: {} }), "HEAD", undefined],
+      ["an item's branch", jsonRes({ data: { metadata: { branch: "HEAD" } } }), "main", undefined],
+      ["the request", jsonRes({ data: {} }), "main", "HEAD"],
+    ])("a literal HEAD from %s is `none`", async (_label, itemRes, defaultBranch, targetRef) => {
+      const { r, sent } = await ask(itemRes, bound(defaultBranch), targetRef);
+      expect(sent).toContain("target_ref=HEAD");
+      expect(r).toMatchObject({ ok: true, refBasis: "none" });
+    });
+  });
+
   // The bug this fix closes: a binding for the SAME product/scope on a
   // DIFFERENT self-hosted origin must never answer this request — that would
   // silently render one instance's verdict on the other instance's page.

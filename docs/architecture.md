@@ -109,7 +109,8 @@ in a node environment.
                     │  /v1/briefs (5 routes) · /v1/egress (4 reads)
                     │  GET  /v1/services/resolve
                     │  GET  /v1/health · /v1/connectors              ← public, no token
-                    │  GET  /v1/preflight/deploy · /v1/items/{id}    ← public, no token
+                    │  GET  /v1/preflight/deploy                     ← public, no token
+                    │  GET  /v1/items/{id}          ← sent tokenless; `data` scope since v10.0.0
                     └───────────────────────┘
 ```
 
@@ -221,10 +222,12 @@ user," and the manual URL field never goes away.
 800ms timeout — runs during discovery, before any connection exists. It is not
 the only call without a bearer: pairing's own `POST /v1/clips/pair/confirm`
 cannot carry one, and `GET /v1/connectors` and C10's `GET /v1/preflight/deploy`
-and `GET /v1/items/{id}` carry none either, because upstream serves them on its
-public read-only table. But the pairing request goes to an origin `handlePair`
-has just checked with `isLoopbackOrigin`, and the other three go to the paired
-connection's origin, which passed that same check before it was ever stored.
+carry none either, because upstream serves them on its public read-only table.
+`GET /v1/items/{id}` also carries none, though it left that table in gateway
+v10.0.0 — see "What a verdict's branch is based on". But the pairing request goes
+to an origin `handlePair` has just checked with `isLoopbackOrigin`, and the others
+go to the paired connection's origin, which passed that same check before it was
+ever stored.
 The health probe has no connection to inherit that discipline from,
 which is exactly why it re-asserts `isLoopbackOrigin` itself rather than
 trusting its caller.
@@ -1899,6 +1902,22 @@ exact string comparison a live page's coordinate can legitimately fail (see
 "The exact-comparison limitation" below). `resolve` makes the binding
 **accurate to seed and cheap to check**; it does not make it optional. See the
 next two subsections for how it is used and where it stops being trusted.
+
+**What a verdict's branch is based on.** `failing_ci_runs` is the one ref-scoped
+check, and the gateway answers `count: 0` for a green branch and for a branch that
+does not exist alike. So `handleDeployPreflight` returns `refBasis` beside the
+verdict: `page`, `default_branch` or `none`. The third is the literal `HEAD`, which
+matches no branch, so the view drops the count, refuses to say "clear" and repaints
+an `ok` as `warn`. `default_branch` keeps its count and names the branch it checked.
+
+Today almost every PR page lands on `none`. Forge PR items carry no
+`metadata.branch` (only `ci_run` items do), the panel's bind form never sets
+`defaultBranch`, and since gateway v10.0.0 (Nimbus#1702) `GET /v1/items/{id}` needs a
+`data`-scoped token this client does not send, which costs build pages their branch
+too. Sending the token was rejected: `data` also opens every item's full body,
+`/v1/people` and `/v1/audit`, to learn one string, and it would still not fix a PR
+page. The fix belongs upstream — forge sync storing the source branch, and
+`/v1/items/resolve` returning it under the `resolve` scope the panel already holds.
 
 Validation needs no new route either: the client cannot list services, and it
 does not have to. An unknown service id does not error — `unconfiguredEnvelope`

@@ -1374,6 +1374,35 @@ describe("C10 deploy messages", () => {
   });
 });
 
+describe("DeployPreflightResponse ok arm", () => {
+  const ok = (refBasis: unknown) => ({
+    kind: "deploy-preflight",
+    ok: true,
+    serviceId: "web",
+    ...(refBasis === undefined ? {} : { refBasis }),
+    preflight: {
+      service: "web",
+      target_ref: "main",
+      computed_at: "2026-09-10T00:00:00.000Z",
+      verdict: "ok",
+      checks: {
+        active_p1_incidents: { count: 0, findings: [], gap: null },
+        failing_ci_runs: { count: 0, findings: [], gap: null },
+        merge_conflicts: { count: 0, findings: [], gap: null },
+      },
+    },
+  });
+
+  test.each(["page", "default_branch", "none"])("accepts refBasis %s", (basis) => {
+    expect(isDeployPreflightResponse(ok(basis))).toBe(true);
+  });
+
+  // A verdict that cannot say what it checked must not render as if it could.
+  test.each([undefined, "", "invented", 1, null])("rejects refBasis %s", (basis) => {
+    expect(isDeployPreflightResponse(ok(basis))).toBe(false);
+  });
+});
+
 describe("DeployPreflightResponse unbound arm", () => {
   test("accepts an unbound refusal carrying a resolution", () => {
     expect(

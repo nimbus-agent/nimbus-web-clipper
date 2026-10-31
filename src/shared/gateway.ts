@@ -46,8 +46,8 @@ export const GATEWAY_PATHS = {
   itemsFetch: "/v1/items/fetch",
   /**
    * Unauthenticated liveness, probed during discovery before any connection
-   * exists. No bearer token: like `connectors`, `preflightDeploy` and `items`
-   * below, it sits on the gateway's public read-only table (and `pairConfirm`,
+   * exists. No bearer token: like `connectors` and `preflightDeploy` below, it
+   * sits on the gateway's public read-only table (and `pairConfirm`,
    * which mints the token, cannot carry one). Served by the same server as the
    * clip routes (packages/gateway/src/ipc/http-server.ts,
    * dispatchReadOnlyDataGet), so an answer here means the gateway that ingests
@@ -123,8 +123,8 @@ export const GATEWAY_PATHS = {
    * `LEGACY_SCOPES = ["clip", "briefs"]`, so a browser paired before scopes
    * existed gets a 403, cleared with `nimbus clip scopes`.
    *
-   * NOT on the public read-only table, unlike `preflightDeploy` and `items`
-   * beside it: upstream mounts it scoped because it CLAIMS narrowness (one repo
+   * NOT on the public read-only table, unlike `preflightDeploy` beside it:
+   * upstream mounts it scoped because it CLAIMS narrowness (one repo
    * the caller named) and a public mount would let N cheap calls rebuild the
    * whole service-to-repo grouping it exists not to expose.
    *
@@ -143,6 +143,11 @@ export const GATEWAY_PATHS = {
    *
    * Returns the FULL row including `body`. Only the caller in the background
    * worker may read it, and only `metadata.branch` may cross into a page.
+   *
+   * Public until gateway v10.0.0, which put it behind the `data` scope. This
+   * client still sends no token, so only an older gateway answers it; a newer
+   * one's 401 lands on the `target_ref` ladder's next rung, and the verdict says
+   * so (`RefBasis`).
    */
   items: "/v1/items",
 } as const;
