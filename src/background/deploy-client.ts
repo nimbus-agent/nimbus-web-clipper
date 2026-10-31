@@ -1,11 +1,14 @@
 // src/background/deploy-client.ts
 // The deploy-readiness reads (C10), and nothing else.
 //
-// Split from gateway-client.ts on the egress-client.ts precedent. Three of the
-// four reads here are UNAUTHENTICATED — `fetchPreflight`, `fetchItemBranch` and
-// the two DORA reads sit on the gateway's public read-only table, so they send
+// Split from gateway-client.ts on the egress-client.ts precedent. `fetchPreflight`
+// and the two DORA reads sit on the gateway's public read-only table, so they send
 // no bearer header and their error vocabulary (`DeployError`) has no 403, no
 // scope gap and no `nimbus clip scopes` remedy.
+//
+// `fetchItemBranch` is sent the same way, but its route left that table in gateway
+// v10.0.0 and now needs a `data`-scoped token. It answers on older gateways only;
+// on newer ones the 401 folds into `server_error` and its caller moves on.
 //
 // `fetchServiceResolution` is NOT one of them (C10.3). It is a bearer read under
 // the `resolve` scope with the full sibling vocabulary, and it carries its own

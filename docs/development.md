@@ -673,9 +673,11 @@ client half. What it cannot prove is a real `GET /v1/preflight/deploy` answer
 preflight computation over a real index.
 
 Prereq: paired, gateway running, page access granted on a repo you have bound
-or want to bind. The verdict's two routes (`preflight/deploy`, `items/{id}`)
-are on the gateway's public read-only table — no scope, no re-pairing, no
-`nimbus clip scopes`. Step 3's seeding is the exception: `services/resolve` is
+or want to bind. The verdict's route (`preflight/deploy`) is on the gateway's
+public read-only table — no scope, no re-pairing, no `nimbus clip scopes`.
+`items/{id}` was too until gateway v10.0.0; on a newer gateway its 401 means the
+section names the branch it fell back to, or says CI was not checked. Step 3's
+seeding is the exception: `services/resolve` is
 a bearer read under the `resolve` scope, so a browser paired before scopes
 existed gets the pasteable `nimbus clip scopes` line there, and the bind form
 keeps its guess until the owner grants it.
@@ -708,13 +710,12 @@ keeps its guess until the owner grants it.
    gateway too old to have it, falls back to the guess exactly as before — this
    route's absence changes nothing visible.
 4. **(human — needs a real gateway with a real repo indexed.)** Confirm the
-   `target_ref` ladder's first rung against a live checkout: open a PR whose
-   branch Nimbus has actually indexed (`metadata.branch` on the resolved item),
-   and confirm `failing_ci_runs` is evaluated against **that** branch — not the
-   binding's `defaultBranch` fallback, which only takes over when the page
-   resolves to no item or to one carrying no branch. The mock's `GET
-   /v1/items/{id}` fixture cannot distinguish "the real branch" from "a
-   plausible one" the way a real checkout can.
+   `target_ref` ladder against a live checkout: open a PR on a gateway at
+   v10.0.0 or later and confirm the section does not claim to have checked it —
+   it names the binding's `defaultBranch`, or says CI was not checked. Forge PR
+   items carry no `metadata.branch` today, and that route now refuses this
+   client's tokenless read. The mock's `GET /v1/items/{id}` fixture answers both
+   as if neither were true, so only a real gateway can show this.
 
 ## Manual verification — Delivery metrics (C10.2)
 

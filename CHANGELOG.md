@@ -19,6 +19,11 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Fixed
 
+- **Deploy readiness no longer reads "clear" when it didn't check CI.** Nimbus
+  usually doesn't know a pull request's branch, so the failing-CI check could look
+  for a branch that doesn't exist and report zero. The section now says when CI was
+  not checked, or names the branch it checked instead of this page's.
+
 - **"What's related to this?" keeps its answer when it opens the panel.** On a
   panel the menu entry had just opened, the panel's own first lookup could land
   second and replace the results about your selection with results about the

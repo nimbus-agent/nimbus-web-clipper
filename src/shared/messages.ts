@@ -5,7 +5,13 @@
 import { isCanonicalRejection } from "./canonical.ts";
 import { isSourceShape } from "./clip.ts";
 import { CONNECTOR_STATES, type ConnectorHealth } from "./connector-health.ts";
-import { type DeployPreflightResult, parseDeployPreflight, sendableId } from "./deploy.ts";
+import {
+  type DeployPreflightResult,
+  isRefBasis,
+  parseDeployPreflight,
+  type RefBasis,
+  sendableId,
+} from "./deploy.ts";
 import {
   DORA_READ_FAILURES,
   type DoraMetricsResult,
@@ -1389,6 +1395,8 @@ export type DeployPreflightResponse =
        * one the page happened to guess.
        */
       readonly serviceId: string;
+      /** Where `preflight.target_ref` came from; only the worker knows. */
+      readonly refBasis: RefBasis;
       readonly preflight: DeployPreflightResult;
     }
   | {
@@ -1527,7 +1535,11 @@ export function isDeployPreflightResponse(v: unknown): v is DeployPreflightRespo
     return false;
   }
   if (v["ok"] === true) {
-    return typeof v["serviceId"] === "string" && parseDeployPreflight(v["preflight"]) !== null;
+    return (
+      typeof v["serviceId"] === "string" &&
+      isRefBasis(v["refBasis"]) &&
+      parseDeployPreflight(v["preflight"]) !== null
+    );
   }
   if (v["ok"] !== false || typeof v["reason"] !== "string") {
     return false;

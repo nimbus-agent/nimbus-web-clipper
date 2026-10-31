@@ -189,7 +189,7 @@ export function mountDeploySection(host: HTMLElement, ctx: DeployCtx, send: Send
     if (res.ok) {
       const serviceId = res.serviceId;
       body.replaceChildren(
-        renderDeployBody(doc, res.preflight),
+        renderDeployBody(doc, res.preflight, res.refBasis),
         renderDoraLink(doc, serviceId, () => {
           // No reply by design (`OpenDoraRequest`); nothing to await.
           void send({ kind: "open-dora", serviceId }).catch(() => undefined);

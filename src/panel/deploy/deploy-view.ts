@@ -2,7 +2,7 @@
 // The pure renderer for the deploy-readiness section (C10). No chrome.*, no
 // fetch, no DOM outside the fragment it returns — so it is unit-testable in
 // jsdom, like every other view in this folder.
-import type { DeployPreflightResult, PreflightGap } from "../../shared/deploy.ts";
+import type { DeployPreflightResult, PreflightGap, RefBasis } from "../../shared/deploy.ts";
 import type { ServiceResolutionOutcome } from "../../shared/messages.ts";
 import { scopeCommand } from "../../shared/scope-command.ts";
 import { MAX_SERVICE_ID_LEN } from "../../shared/services.ts";
@@ -62,16 +62,39 @@ function everyCheckGapped(r: DeployPreflightResult): boolean {
  * consumer; the reason travels in the gap instead. So a zero count with gaps
  * everywhere is "could not evaluate" — never "all clear", and never "0 problems
  * found".
+ *
+ * `ok` with `basis: "none"` is the same failure from the other side: the gateway
+ * looked for failing runs on the literal `HEAD`, which no branch is called, so
+ * its `ok` cannot be repeated as "clear".
  */
-export function verdictLine(r: DeployPreflightResult): string {
+export function verdictLine(r: DeployPreflightResult, basis: RefBasis): string {
   if (r.verdict === "ok") {
-    return `Clear to deploy ${r.service} at ${r.target_ref}.`;
+    return basis === "none"
+      ? `No blockers found for ${r.service}, but CI was not checked.`
+      : `Clear to deploy ${r.service} at ${r.target_ref}.`;
   }
   const total = totalCount(r);
   if (total === 0 && everyCheckGapped(r)) {
     return `Could not evaluate ${r.service} — see below.`;
   }
   return `${total} thing${total === 1 ? "" : "s"} to look at before deploying ${r.service}.`;
+}
+
+/** What the CI check's answer is about, when that is not this page's branch. */
+function ciRefNote(r: DeployPreflightResult, basis: RefBasis): string | undefined {
+  if (basis === "default_branch") {
+    return `CI was checked on ${r.target_ref}, not this page's own branch, which Nimbus doesn't know.`;
+  }
+  return basis === "none"
+    ? "CI was not checked, because Nimbus doesn't know this page's branch."
+    : undefined;
+}
+
+function gapNote(doc: Document, text: string): HTMLElement {
+  const note = doc.createElement("p");
+  note.className = "nimbus-deploy__gap";
+  note.textContent = text;
+  return note;
 }
 
 function renderCheck(
@@ -82,21 +105,24 @@ function renderCheck(
     findings: readonly { title: string; url: string | null }[];
     gap: PreflightGap;
   },
+  options: { readonly note?: string | undefined; readonly unmeasured?: boolean } = {},
 ): HTMLElement {
   const box = doc.createElement("div");
   box.className = "nimbus-deploy__check";
 
   const head = doc.createElement("p");
   head.className = "nimbus-deploy__check-head";
-  head.textContent = check.gap === null ? `${label}: ${check.count}` : label;
+  head.textContent = check.gap === null && !options.unmeasured ? `${label}: ${check.count}` : label;
   box.append(head);
 
+  // The gateway's own reason wins over a note about branches: a gapped check
+  // never ran the query that note would describe.
   if (check.gap !== null) {
-    const note = doc.createElement("p");
-    note.className = "nimbus-deploy__gap";
-    note.textContent = GAP_NOTE[check.gap];
-    box.append(note);
+    box.append(gapNote(doc, GAP_NOTE[check.gap]));
     return box;
+  }
+  if (options.note !== undefined) {
+    box.append(gapNote(doc, options.note));
   }
 
   if (check.findings.length > 0) {
@@ -126,17 +152,27 @@ function renderCheck(
   return box;
 }
 
-export function renderDeployBody(doc: Document, r: DeployPreflightResult): HTMLElement {
+export function renderDeployBody(
+  doc: Document,
+  r: DeployPreflightResult,
+  basis: RefBasis,
+): HTMLElement {
   const root = doc.createElement("div");
   root.className = "nimbus-deploy";
 
   const verdict = doc.createElement("p");
-  verdict.className = `nimbus-deploy__verdict nimbus-deploy__verdict--${r.verdict}`;
-  verdict.textContent = verdictLine(r);
+  const tone = basis === "none" ? "warn" : r.verdict;
+  verdict.className = `nimbus-deploy__verdict nimbus-deploy__verdict--${tone}`;
+  verdict.textContent = verdictLine(r, basis);
   root.append(verdict);
 
   root.append(renderCheck(doc, CHECK_LABEL.active_p1_incidents, r.checks.active_p1_incidents));
-  root.append(renderCheck(doc, CHECK_LABEL.failing_ci_runs, r.checks.failing_ci_runs));
+  root.append(
+    renderCheck(doc, CHECK_LABEL.failing_ci_runs, r.checks.failing_ci_runs, {
+      note: ciRefNote(r, basis),
+      unmeasured: basis === "none",
+    }),
+  );
   root.append(renderCheck(doc, CHECK_LABEL.merge_conflicts, r.checks.merge_conflicts));
   return root;
 }

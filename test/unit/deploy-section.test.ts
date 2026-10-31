@@ -57,6 +57,7 @@ describe("mountDeploySection", () => {
       kind: "deploy-preflight",
       ok: true,
       serviceId: "web",
+      refBasis: "page",
       preflight: okEnvelope,
     }));
     mountDeploySection(host, ctx, send);
@@ -95,6 +96,7 @@ describe("mountDeploySection", () => {
         kind: "deploy-preflight",
         ok: true,
         serviceId: "web",
+        refBasis: "page",
         preflight: okEnvelope,
       });
     mountDeploySection(host, ctx, send);
@@ -219,6 +221,7 @@ describe("mountDeploySection", () => {
       kind: "deploy-preflight",
       ok: true,
       serviceId: "web",
+      refBasis: "page",
       preflight: okEnvelope,
     }));
     mountDeploySection(host, ctx, send);
@@ -241,6 +244,7 @@ describe("mountDeploySection", () => {
       kind: "deploy-preflight",
       ok: true,
       serviceId: "web",
+      refBasis: "page",
       preflight: okEnvelope,
     }));
     mountDeploySection(host, ctx, send);
@@ -257,6 +261,7 @@ describe("mountDeploySection", () => {
       kind: "deploy-preflight",
       ok: true,
       serviceId: "web",
+      refBasis: "page",
       preflight: okEnvelope,
     }));
     mountDeploySection(host, ctx, send);
@@ -286,6 +291,7 @@ describe("mountDeploySection", () => {
         kind: "deploy-preflight",
         ok: true,
         serviceId: "other",
+        refBasis: "page",
         preflight: { ...okEnvelope, service: "other" },
       });
     });
@@ -300,6 +306,7 @@ describe("mountDeploySection", () => {
       kind: "deploy-preflight",
       ok: true,
       serviceId: "web",
+      refBasis: "page",
       preflight: okEnvelope,
     });
     await flush();
@@ -388,6 +395,7 @@ describe("mountDeploySection", () => {
       kind: "deploy-preflight",
       ok: true,
       serviceId: "web",
+      refBasis: "page",
       preflight: okEnvelope,
     }));
     const { itemId: _dropped, ...noItem } = ctx;
@@ -471,6 +479,7 @@ describe("mountDeploySection", () => {
               kind: "deploy-preflight",
               ok: true,
               serviceId: "other",
+              refBasis: "page",
               preflight: { ...okEnvelope, service: "other" },
             }
           : unbound,
@@ -516,6 +525,7 @@ describe("mountDeploySection", () => {
         kind: "deploy-preflight",
         ok: true,
         serviceId: "third",
+        refBasis: "page",
         preflight: { ...okEnvelope, service: "third" },
       });
     });
@@ -541,7 +551,13 @@ describe("mountDeploySection", () => {
     const host = document.createElement("div");
     const send = vi.fn(async (msg: unknown) =>
       (msg as { kind: string }).kind === "deploy-preflight"
-        ? { kind: "deploy-preflight", ok: true, serviceId: "web-ci", preflight: okEnvelope }
+        ? {
+            kind: "deploy-preflight",
+            ok: true,
+            serviceId: "web-ci",
+            refBasis: "page",
+            preflight: okEnvelope,
+          }
         : undefined,
     );
     mountDeploySection(host, ctx, send);

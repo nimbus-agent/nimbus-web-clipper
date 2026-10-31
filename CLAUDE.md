@@ -60,10 +60,13 @@ holds; its presence is the capability signal too), `GET /v1/services/resolve`
 roster C6 reads to decide which lanes to offer (`agents`), the five
 `/v1/briefs` routes (`briefs`) and the four `/v1/egress` reads (`egress`).
 Tokenless, on the gateway's public read-only table: `GET /v1/health`,
-`GET /v1/connectors` (per-connector health), and C10's `GET /v1/preflight/deploy`
-and `GET /v1/items/{id}` (the full row, body included — read only in the
-worker, and only its branch crosses into a page). `GET /v1/metrics/dora` and `GET /v1/metrics/stats` (C10.2's DORA page — the
-headline and the trend) sit on that table too.
+`GET /v1/connectors` (per-connector health), and C10's `GET /v1/preflight/deploy`.
+`GET /v1/metrics/dora` and `GET /v1/metrics/stats` (C10.2's DORA page — the
+headline and the trend) sit on that table too. `GET /v1/items/{id}` (the full row,
+body included — read only in the worker, and only its branch crosses into a page)
+left it in gateway **v10.0.0** for a `data` scope this client deliberately does not
+ask for, so it is still sent tokenless and answers only on an older gateway — see
+`docs/architecture.md` § What a verdict's branch is based on.
 **`src/shared/gateway.ts`'s `GATEWAY_PATHS` is the
 single list — read it rather than an enumeration in a doc.** Upstream,
 `clips/api-scopes.ts` sets `LEGACY_SCOPES = ["clip", "briefs"]`, so a browser

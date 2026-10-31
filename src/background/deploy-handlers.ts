@@ -1,7 +1,7 @@
 // The deploy-readiness handlers (C10): pure decision logic with injected deps,
 // exactly like handlers.ts. Nothing here touches chrome.* directly.
 
-import { isUnknownService } from "../shared/deploy.ts";
+import { isUnknownService, type RefBasis } from "../shared/deploy.ts";
 import type {
   BindingCheckStatus,
   DeployPreflightRequest,
@@ -99,30 +99,35 @@ async function resolutionFor(
  * and merge conflicts are service-wide and answer regardless, so an absent ref
  * costs one check of three. The empty string is never sent — the route's lower
  * bound is 1 — so the fallback is a literal "HEAD", which matches no branch and
- * therefore reports the CI check as finding nothing rather than erroring.
+ * therefore reports the CI check as finding nothing rather than erroring. That
+ * zero is not a measurement, which is what `basis: "none"` tells the panel.
  */
 async function targetRefFor(
   req: DeployPreflightRequest,
   binding: ServiceBinding,
   origin: string,
   deps: DeployDeps,
-): Promise<string> {
+): Promise<{ readonly ref: string; readonly basis: RefBasis }> {
   if (req.targetRef !== undefined && req.targetRef !== "") {
-    return req.targetRef;
+    return { ref: req.targetRef, basis: "page" };
   }
   // Rung 1: the item the PANEL resolved. The worker cannot resolve the page
   // here, so this arrives on the request or not at all.
   if (req.itemId !== undefined && req.itemId !== "") {
     const branch = await fetchItemBranch(origin, req.itemId, deps.doFetch);
     // A failed item read is not a failed answer — fall through to the binding.
+    // Since gateway v10.0.0 this read needs a `data`-scoped token and sends none,
+    // so it fails there and only an older gateway answers it.
     if (branch.ok && branch.value !== null && branch.value !== "") {
-      return branch.value;
+      return { ref: branch.value, basis: "page" };
     }
   }
   // `?? "HEAD"` alone would be wrong: `"" ?? "HEAD"` is `""`. The guard already
   // rejects an empty stored branch; this is the second lock on the same door.
   const fallback = binding.defaultBranch?.trim();
-  return fallback === undefined || fallback === "" ? "HEAD" : fallback;
+  return fallback === undefined || fallback === ""
+    ? { ref: "HEAD", basis: "none" }
+    : { ref: fallback, basis: "default_branch" };
 }
 
 export async function handleDeployPreflight(
@@ -143,8 +148,8 @@ export async function handleDeployPreflight(
       resolution: await resolutionFor(req, conn, deps),
     };
   }
-  const targetRef = await targetRefFor(req, binding, conn.origin, deps);
-  const res = await fetchPreflight(conn.origin, binding.serviceId, targetRef, deps.doFetch);
+  const { ref, basis } = await targetRefFor(req, binding, conn.origin, deps);
+  const res = await fetchPreflight(conn.origin, binding.serviceId, ref, deps.doFetch);
   if (!res.ok) {
     return { kind: "deploy-preflight", ok: false, reason: res.reason };
   }
@@ -152,6 +157,7 @@ export async function handleDeployPreflight(
     kind: "deploy-preflight",
     ok: true,
     serviceId: binding.serviceId,
+    refBasis: basis,
     preflight: res.value,
   };
 }

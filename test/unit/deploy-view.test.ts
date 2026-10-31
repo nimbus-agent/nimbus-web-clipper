@@ -58,7 +58,7 @@ describe("renderSectionFrame", () => {
 
 describe("verdictLine", () => {
   test("a clean verdict reads as clear", () => {
-    expect(verdictLine(result())).toMatch(/clear/i);
+    expect(verdictLine(result(), "page")).toMatch(/clear/i);
   });
 
   // The rule that matters: warn + count 0 + unknown_service is "could not
@@ -73,6 +73,7 @@ describe("verdictLine", () => {
           merge_conflicts: { count: 0, findings: [], gap: "unknown_service" },
         },
       }),
+      "page",
     );
     expect(line).toMatch(/could not/i);
     expect(line).not.toMatch(/clear/i);
@@ -89,6 +90,7 @@ describe("verdictLine", () => {
           merge_conflicts: { count: 1, findings: [], gap: null },
         },
       }),
+      "page",
     );
     expect(line).toMatch(/3/);
   });
@@ -106,6 +108,7 @@ describe("renderDeployBody", () => {
           merge_conflicts: { count: 0, findings: [], gap: null },
         },
       }),
+      "page",
     );
     expect(el.textContent).toContain(GAP_NOTE.no_pagerduty_mapping);
   });
@@ -124,6 +127,7 @@ describe("renderDeployBody", () => {
           merge_conflicts: { count: 0, findings: [], gap: null },
         },
       }),
+      "page",
     );
     const note = el.querySelector(".nimbus-deploy__more");
     expect(note?.textContent).toMatch(/no details/i);
@@ -155,6 +159,7 @@ describe("renderDeployBody", () => {
           merge_conflicts: { count: 0, findings: [], gap: null },
         },
       }),
+      "page",
     );
     expect(el.querySelector(".nimbus-deploy__more")?.textContent).toBe("Showing 1 of 12.");
   });
@@ -170,6 +175,7 @@ describe("renderDeployBody", () => {
           merge_conflicts: { count: 0, findings: [], gap: null },
         },
       }),
+      "page",
     );
     expect(el.textContent).toContain(GAP_NOTE[UNRECOGNISED_GAP]);
   });
@@ -199,6 +205,7 @@ describe("renderDeployBody", () => {
           merge_conflicts: { count: 0, findings: [], gap: null },
         },
       }),
+      "page",
     );
     const a = el.querySelector("a");
     expect(a?.getAttribute("href")).toBe("https://ci.example/9");
@@ -230,6 +237,7 @@ describe("renderDeployBody", () => {
           merge_conflicts: { count: 0, findings: [], gap: null },
         },
       }),
+      "page",
     );
     expect(el.querySelector("a")).toBeNull();
     expect(el.textContent).toContain("hostile");
@@ -260,9 +268,102 @@ describe("renderDeployBody", () => {
           merge_conflicts: { count: 0, findings: [], gap: null },
         },
       }),
+      "page",
     );
     expect(el.querySelector("img")).toBeNull();
     expect(el.textContent).toContain("<img src=x onerror=alert(1)>");
+  });
+});
+
+describe("what the CI check was asked about", () => {
+  const ciBox = (el: HTMLElement) =>
+    [...el.querySelectorAll(".nimbus-deploy__check")].find((b) =>
+      b.textContent?.startsWith("Failing CI runs"),
+    );
+
+  test("the page's own branch adds no note, and keeps the count", () => {
+    const el = renderDeployBody(document, result(), "page");
+    expect(ciBox(el)?.querySelector(".nimbus-deploy__gap")).toBeNull();
+    expect(ciBox(el)?.textContent).toBe("Failing CI runs: 0");
+  });
+
+  test("a default-branch fallback names the branch it did check", () => {
+    const el = renderDeployBody(document, result({ target_ref: "release" }), "default_branch");
+    const note = ciBox(el)?.querySelector(".nimbus-deploy__gap")?.textContent;
+    expect(note).toContain("release");
+    expect(note).toMatch(/not this page's own branch/);
+    expect(ciBox(el)?.textContent).toContain("Failing CI runs: 0");
+  });
+
+  // A zero against the literal HEAD is not a measurement: no branch has that name.
+  test("no branch at all drops the zero and says CI was not checked", () => {
+    const el = renderDeployBody(document, result({ target_ref: "HEAD" }), "none");
+    const box = ciBox(el);
+    expect(box?.querySelector(".nimbus-deploy__check-head")?.textContent).toBe("Failing CI runs");
+    expect(box?.querySelector(".nimbus-deploy__gap")?.textContent).toMatch(/not checked/i);
+    expect(box?.textContent).not.toContain("HEAD");
+  });
+
+  test("an ok verdict with no branch is never 'clear', nor painted as ok", () => {
+    const r = result({ target_ref: "HEAD" });
+    expect(verdictLine(r, "none")).not.toMatch(/clear/i);
+    expect(verdictLine(r, "none")).not.toContain("HEAD");
+    expect(verdictLine(r, "none")).toMatch(/CI was not checked/);
+    const verdict = renderDeployBody(document, r, "none").querySelector(".nimbus-deploy__verdict");
+    expect(verdict?.className).toContain("nimbus-deploy__verdict--warn");
+  });
+
+  test("an ok verdict on the default branch names that branch", () => {
+    expect(verdictLine(result({ target_ref: "release" }), "default_branch")).toBe(
+      "Clear to deploy web at release.",
+    );
+  });
+
+  // The gateway's own reason wins: it explains the check, and a second sentence
+  // about branches would describe a query that never ran.
+  test("a gapped CI check shows the gateway's reason, not a branch note", () => {
+    const r = result({
+      verdict: "warn",
+      checks: {
+        active_p1_incidents: { count: 0, findings: [], gap: null },
+        failing_ci_runs: { count: 0, findings: [], gap: "no_repos" },
+        merge_conflicts: { count: 0, findings: [], gap: null },
+      },
+    } as Partial<DeployPreflightResult>);
+    const notes = ciBox(renderDeployBody(document, r, "none"))?.querySelectorAll(
+      ".nimbus-deploy__gap",
+    );
+    expect(notes).toHaveLength(1);
+    expect(notes?.[0]?.textContent).toBe(GAP_NOTE.no_repos);
+  });
+
+  test("a real finding on the default branch keeps its count and gains the note", () => {
+    const r = result({
+      verdict: "warn",
+      target_ref: "main",
+      checks: {
+        active_p1_incidents: { count: 0, findings: [], gap: null },
+        failing_ci_runs: {
+          count: 1,
+          findings: [
+            {
+              id: "c1",
+              title: "build",
+              conclusion: "failure",
+              modified_at_ms: 1,
+              branch: "main",
+              head_sha: null,
+              url: null,
+            },
+          ],
+          gap: null,
+        },
+        merge_conflicts: { count: 0, findings: [], gap: null },
+      },
+    } as unknown as Partial<DeployPreflightResult>);
+    const box = ciBox(renderDeployBody(document, r, "default_branch"));
+    expect(box?.textContent).toContain("Failing CI runs: 1");
+    expect(box?.querySelector(".nimbus-deploy__gap")?.textContent).toContain("main");
   });
 });
 

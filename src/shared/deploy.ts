@@ -96,6 +96,24 @@ export interface DeployPreflightResult {
   };
 }
 
+/**
+ * Where a verdict's `target_ref` came from, which the gateway cannot report: it
+ * only ever sees a string, and answers `count: 0` for a branch that exists and is
+ * green and for one that does not exist alike.
+ *
+ * - `page`: this page's own branch.
+ * - `default_branch`: the binding's `defaultBranch`, a real branch but a different
+ *   question — the page's own branch was unknown.
+ * - `none`: nothing named a branch, so the literal `HEAD` went out. It matches no
+ *   branch, so the CI check's zero is not a measurement.
+ */
+export const REF_BASES = ["page", "default_branch", "none"] as const;
+export type RefBasis = (typeof REF_BASES)[number];
+
+export function isRefBasis(v: unknown): v is RefBasis {
+  return (REF_BASES as readonly unknown[]).includes(v);
+}
+
 function isObj(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
