@@ -182,6 +182,17 @@ describe("handleDeployPreflight", () => {
       const { r } = await ask(jsonRes({ data: {} }), bound("   "));
       expect(r).toMatchObject({ ok: true, refBasis: "none" });
     });
+
+    // Whichever rung supplied the literal, it still matches no branch.
+    test.each([
+      ["a stored default branch", jsonRes({ data: {} }), "HEAD", undefined],
+      ["an item's branch", jsonRes({ data: { metadata: { branch: "HEAD" } } }), "main", undefined],
+      ["the request", jsonRes({ data: {} }), "main", "HEAD"],
+    ])("a literal HEAD from %s is `none`", async (_label, itemRes, defaultBranch, targetRef) => {
+      const { r, sent } = await ask(itemRes, bound(defaultBranch), targetRef);
+      expect(sent).toContain("target_ref=HEAD");
+      expect(r).toMatchObject({ ok: true, refBasis: "none" });
+    });
   });
 
   // The bug this fix closes: a binding for the SAME product/scope on a

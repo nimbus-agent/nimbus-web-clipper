@@ -102,8 +102,8 @@ export interface DeployPreflightResult {
  * green and for one that does not exist alike.
  *
  * - `page`: this page's own branch.
- * - `default_branch`: the binding's `defaultBranch`, a real branch but a different
- *   question — the page's own branch was unknown.
+ * - `default_branch`: the binding's `defaultBranch`, a real branch used because the
+ *   page's own was unknown. It may or may not be the same branch.
  * - `none`: nothing named a branch, so the literal `HEAD` went out. It matches no
  *   branch, so the CI check's zero is not a measurement.
  */

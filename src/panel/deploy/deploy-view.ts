@@ -80,10 +80,13 @@ export function verdictLine(r: DeployPreflightResult, basis: RefBasis): string {
   return `${total} thing${total === 1 ? "" : "s"} to look at before deploying ${r.service}.`;
 }
 
-/** What the CI check's answer is about, when that is not this page's branch. */
+/**
+ * What the CI check's answer is about, when it is not known to be this page's
+ * branch. The default branch may BE the page's, so this never says they differ.
+ */
 function ciRefNote(r: DeployPreflightResult, basis: RefBasis): string | undefined {
   if (basis === "default_branch") {
-    return `CI was checked on ${r.target_ref}, not this page's own branch, which Nimbus doesn't know.`;
+    return `CI was checked on ${r.target_ref}, because Nimbus doesn't know this page's own branch.`;
   }
   return basis === "none"
     ? "CI was not checked, because Nimbus doesn't know this page's branch."

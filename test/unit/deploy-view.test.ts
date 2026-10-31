@@ -291,7 +291,9 @@ describe("what the CI check was asked about", () => {
     const el = renderDeployBody(document, result({ target_ref: "release" }), "default_branch");
     const note = ciBox(el)?.querySelector(".nimbus-deploy__gap")?.textContent;
     expect(note).toContain("release");
-    expect(note).toMatch(/not this page's own branch/);
+    expect(note).toMatch(/doesn't know this page's own branch/);
+    // A build page already on the default branch reads this too.
+    expect(note).not.toMatch(/not this page's/);
     expect(ciBox(el)?.textContent).toContain("Failing CI runs: 0");
   });
 

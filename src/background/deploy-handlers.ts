@@ -91,6 +91,9 @@ async function resolutionFor(
     : { kind: "resolved", serviceId: service };
 }
 
+/** Sent when nothing named a branch. No branch is called this, whoever supplied it. */
+const NO_BRANCH_REF = "HEAD";
+
 /**
  * §4.3's ladder: the resolved item's branch, then the binding's defaultBranch,
  * then nothing.
@@ -126,7 +129,7 @@ async function targetRefFor(
   // rejects an empty stored branch; this is the second lock on the same door.
   const fallback = binding.defaultBranch?.trim();
   return fallback === undefined || fallback === ""
-    ? { ref: "HEAD", basis: "none" }
+    ? { ref: NO_BRANCH_REF, basis: "none" }
     : { ref: fallback, basis: "default_branch" };
 }
 
@@ -157,7 +160,9 @@ export async function handleDeployPreflight(
     kind: "deploy-preflight",
     ok: true,
     serviceId: binding.serviceId,
-    refBasis: basis,
+    // Any rung can carry the literal: `service-bind` stores whatever defaultBranch
+    // it is sent, and a request or an item can name it too.
+    refBasis: ref === NO_BRANCH_REF ? "none" : basis,
     preflight: res.value,
   };
 }
