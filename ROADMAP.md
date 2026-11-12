@@ -127,8 +127,9 @@ of that wiring has actually landed. Re-verified against merged upstream in the
 commit `34601b24`, past the `v1.27.0` release), not against this roadmap's own
 earlier account of it:
 
-- **Thirteen agents ship today**, not the eleven this section originally
-  counted — catchup, conflicts, decisions, expert, ghost, glossary, huddle,
+- **Thirteen agents ship today** (counted on 2026-08-13; the gateway has served
+  seventeen since v7.32.2, see the 2026-10-03 update under C5.2), not the eleven
+  this section originally counted — catchup, conflicts, decisions, expert, ghost, glossary, huddle,
   impact, janitor, ownership, preflight, why and why-peek, in
   `packages/gateway/src/agents/`. `ownership` and `decisions` are the two
   added since: `agents.ownership` (reads the ownership graph derived from
@@ -824,6 +825,8 @@ answer is to ask the gateway to go and get it, not to shred the DOM.*
 > first is delivered here; the lanes are **C2**, which is unbuilt. Once C2 lands,
 > it answers against exactly the item this slice already knows how to fetch and
 > resolve — no further work needed in this slice for that to happen.
+> **Update (2026-11-12):** C2 has since shipped (see Phase C2 above), so both
+> halves of that done-when are now met.
 
 ### C3.2 Capture as the last resort · 🟢 · M — ✅ shipped
 > **What** For a surface with no connector at all — an internal wiki, a vendor

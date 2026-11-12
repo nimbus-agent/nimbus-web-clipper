@@ -119,8 +119,9 @@ bun run build      # → dist/chrome and dist/firefox
 Releases are tag-driven. Push a semver tag and CI does the rest:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+# replace X.Y.Z with the next version (the latest release is on the Releases page)
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 `publish.yml` stamps the tag version into the manifest, builds and packages a zip
