@@ -68,8 +68,8 @@ test("a resolved page's related rows carry kind, freshness and grouping", async 
     await expect(groupHeads.nth(1)).toHaveText("note · 1");
 
     // related-lane-5: the preview line is body prose, not the title repeated.
-    const title = await rows.first().locator(".nimbus-related__title").innerText();
-    const snippet = await rows.first().locator(".nimbus-related__snippet").innerText();
+    const title = await rows.first().locator(".nimbus-related__title").textContent();
+    const snippet = await rows.first().locator(".nimbus-related__snippet").textContent();
     expect(snippet).not.toBe(title);
   } finally {
     await h.close();

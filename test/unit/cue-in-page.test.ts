@@ -202,6 +202,9 @@ describe("the injected cue", () => {
     vi.useFakeTimers();
     const show = await loadCue();
     show(STATE);
+    // jsdom 31 arms its own one-shot timer when a shadow-root stylesheet connects;
+    // flush it so only the cue's 500 ms poll interval is counted below.
+    vi.advanceTimersByTime(1);
     expect(vi.getTimerCount()).toBeGreaterThan(0);
     const open = cueEl()?.querySelector('[data-action="open"]') as HTMLButtonElement;
     trustedClick(open);
@@ -212,6 +215,9 @@ describe("the injected cue", () => {
     vi.useFakeTimers();
     const show = await loadCue();
     show(STATE);
+    // jsdom 31 arms its own one-shot timer when a shadow-root stylesheet connects;
+    // flush it so only the cue's 500 ms poll interval is counted below.
+    vi.advanceTimersByTime(1);
     expect(vi.getTimerCount()).toBeGreaterThan(0);
     const dismiss = cueEl()?.querySelector('[data-action="dismiss"]') as HTMLButtonElement;
     trustedClick(dismiss);
