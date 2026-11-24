@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.6.9/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -12,6 +12,9 @@
       "!**/dist",
       "!**/node_modules",
       "!**/*.d.ts",
+      "!**/*.md",
+      "!**/*.yml",
+      "!**/*.yaml",
       "!**/.claude/settings.local.json",
       "!.claude/worktrees"
     ]
