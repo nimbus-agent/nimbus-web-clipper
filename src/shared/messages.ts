@@ -801,7 +801,7 @@ const SELECTION_INTENTS: readonly string[] = [
   "define",
   "related",
 ] satisfies readonly PanelSelection["intent"][];
-const BARE_INTENT_KINDS: readonly string[] = ["deploy", "related", "candidates"];
+const BARE_INTENT_KINDS: ReadonlySet<string> = new Set(["deploy", "related", "candidates"]);
 
 function isIntentText(v: unknown): v is string {
   return typeof v === "string" && v !== "" && v.length <= MAX_INTENT_TEXT;
@@ -831,7 +831,7 @@ export function isPanelIntent(v: unknown): v is PanelIntent {
   if (kind === "lane") {
     return isPageLane(v["lane"]);
   }
-  return typeof kind === "string" && BARE_INTENT_KINDS.includes(kind);
+  return typeof kind === "string" && BARE_INTENT_KINDS.has(kind);
 }
 
 export function isPaletteIntentRequest(v: unknown): v is PaletteIntentRequest {

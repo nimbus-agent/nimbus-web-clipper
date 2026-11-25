@@ -1396,7 +1396,7 @@ function createPanel(
   /** How to find `active`'s equivalent in the next render; see `focusKeeper`. */
   function refinder(active: HTMLElement): () => HTMLElement | null {
     if (active.classList.contains("nimbus-related__lane-title")) {
-      const lane = active.closest("[data-lane]")?.getAttribute("data-lane") ?? "";
+      const lane = active.closest<HTMLElement>("[data-lane]")?.dataset["lane"] ?? "";
       return () =>
         body.querySelector<HTMLElement>(`[data-lane="${lane}"] .nimbus-related__lane-title`);
     }
