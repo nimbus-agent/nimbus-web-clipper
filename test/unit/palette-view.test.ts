@@ -333,6 +333,20 @@ describe("reducePalette", () => {
     expect(s).toMatchObject({ activeId: null, touched: true });
     expect(enterAction(s, rows, false)).toBeNull();
   });
+  it("move under a zero-match filter has no row to land on", () => {
+    const s = reducePalette(
+      { filter: "zzz", activeId: null, touched: true },
+      { kind: "move", delta: 1 },
+      rows,
+    );
+    expect(s).toMatchObject({ activeId: null, touched: true });
+  });
+  it("move with no active row lands on the first enabled row down and the last one up", () => {
+    const enabled = rows.filter((r) => r.enabled).map((r) => r.id);
+    expect(enabled.length).toBeGreaterThan(1);
+    expect(reducePalette(fresh, { kind: "move", delta: 1 }, rows).activeId).toBe(enabled[0]);
+    expect(reducePalette(fresh, { kind: "move", delta: -1 }, rows).activeId).toBe(enabled.at(-1));
+  });
 });
 
 describe("enterAction", () => {

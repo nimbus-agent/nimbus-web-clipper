@@ -420,6 +420,15 @@ describe("fetchStatsSeries", () => {
     );
   });
 
+  test("an unsendable service id is malformed and never fetched", async () => {
+    const f = jsonFetch(200, STATS_OK);
+    expect(await fetchStatsSeries(ORIGIN, "", "13w", "mttr", f)).toEqual({
+      ok: false,
+      reason: "malformed",
+    });
+    expect(f.calls).toHaveLength(0);
+  });
+
   test.each([
     [404, "unsupported"],
     [400, "refused"],

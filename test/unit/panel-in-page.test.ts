@@ -5184,9 +5184,9 @@ describe("panel intents", () => {
       const held = heldResolve();
       script({ resolve: held.resolve });
       await loadPanel();
-      expect((callHook(PANEL_STATE_HOOK) as { pinnedRecognition: unknown }).pinnedRecognition).toBe(
-        null,
-      );
+      expect(
+        (callHook(PANEL_STATE_HOOK) as { pinnedRecognition: unknown }).pinnedRecognition,
+      ).toBeNull();
       held.release();
     });
   });

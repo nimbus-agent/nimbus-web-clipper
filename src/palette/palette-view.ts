@@ -117,13 +117,15 @@ function instantRows(input: PaletteInput): readonly PaletteRow[] {
   if (!recognition.ok || recognition.kind !== "home") {
     rows.push(intentRow("related", "Related items", { kind: "related" }));
   }
-  rows.push({
-    id: "clip-page",
-    title: "Clip page",
-    enabled: true,
-    action: { kind: "quick-clip", mode: "article" },
-  });
-  rows.push(clipSelectionRow(selectionText));
+  rows.push(
+    {
+      id: "clip-page",
+      title: "Clip page",
+      enabled: true,
+      action: { kind: "quick-clip", mode: "article" },
+    },
+    clipSelectionRow(selectionText),
+  );
   return rows;
 }
 
@@ -177,7 +179,7 @@ function movedId(
   }
   const at = enabled.findIndex((r) => r.id === activeId);
   if (at === -1) {
-    return (delta === 1 ? enabled[0] : enabled[enabled.length - 1])?.id ?? null;
+    return (delta === 1 ? enabled[0] : enabled.at(-1))?.id ?? null;
   }
   return enabled[(at + delta + enabled.length) % enabled.length]?.id ?? null;
 }
