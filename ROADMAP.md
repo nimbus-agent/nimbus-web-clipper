@@ -1607,7 +1607,8 @@ this client already recognises. Ranked by value over cost; items a and b and e
 need no gateway change, c and d do. Facts below were checked against the
 gateway source on 2026-11-26, not against a live gateway.*
 
-**Limits that do not move.** The browser never approves and never writes. The
+**Limits that do not move.** This phase adds no write and no approval. The
+browser's one existing write path, clips through `POST /v1/clips`, is unchanged. The
 HTTP write surface is the fixed `WRITE_ROUTE_ALLOWLIST` (I13: deployments,
 SCIM, admin policy, Teams events, clips, pairing, agent invoke, briefs and
 brief sources), and nothing in this phase adds to it. Approvals, remediation
@@ -1691,8 +1692,9 @@ write button.
 > `sourceType` other than `http`, `sync` or `outcome` is classed "Other", and
 > any non-null `sourceId` that is not ours lands in "others". That is the safe
 > default, so nothing breaks, but check three things: an `agent:<captureId>`
-> id renders as another caller's row and never as ours (the id is a capture id,
-> not a label); the "Other" class names the source type rather than showing a
+> row is classified by its `agent:` prefix as an outside agent's row before the
+> device-label match runs, so it is never shown as ours even if a device label
+> happens to have that form (the gateway does not forbid such a label); the "Other" class names the source type rather than showing a
 > bare "Other"; and a gateway-set incident link in a payload summary is shown
 > as text only, with no link built from it.
 > **Done when** Rows from each new source type render with a truthful class,
