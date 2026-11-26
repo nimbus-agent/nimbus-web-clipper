@@ -10,6 +10,9 @@
 > [contributor guardrails](#contributor-guardrails).** Every feature below is a
 > self-contained brief — what it is, why it wows, the files it touches, a sketch
 > of the approach, and how you know it's done.
+>
+> **Numbering:** this roadmap's phase numbers (C1–C11, 1–10) are its own and
+> are unrelated to the phase numbers of the main Nimbus repository's roadmap.
 
 ## North star
 
@@ -127,8 +130,9 @@ of that wiring has actually landed. Re-verified against merged upstream in the
 commit `34601b24`, past the `v1.27.0` release), not against this roadmap's own
 earlier account of it:
 
-- **Thirteen agents ship today** (counted on 2026-08-13; the gateway has served
-  seventeen since v7.32.2, see the 2026-10-03 update under C5.2), not the eleven
+- **Thirteen agents ship today** (counted on 2026-08-13; as of 2026-11-26 the
+  gateway registers 18 `agents.*` methods and serves 12 of them over
+  `GET /v1/agents`, see the update under C5.2), not the eleven
   this section originally counted — catchup, conflicts, decisions, expert, ghost, glossary, huddle,
   impact, janitor, ownership, preflight, why and why-peek, in
   `packages/gateway/src/agents/`. `ownership` and `decisions` are the two
@@ -299,7 +303,8 @@ Each brief follows the same shape:
 
 The base you're building on is real, not a promise. This is what is on `main`
 today and works end-to-end in both Chrome and Firefox. (The last cut release is
-**v0.10.0**, and everything below has shipped in a tagged release —
+**v0.11.0**, and everything below has shipped in a tagged release except the
+command palette (3.1), which is on `main` and not yet released —
 `CHANGELOG.md` says which; its `[Unreleased]` heading is the honest boundary
 for anything newer.)
 
@@ -1006,7 +1011,13 @@ the editor structurally cannot.*
 > flagged without fixing globally. Not fixed here either — this phase consumes no
 > agent — but noted again so the next reader does not treat it as verified.
 > **Update (2026-10-03):** fixed — the north star and pillar 1 no longer state a
-> count. Upstream serves seventeen agents as of gateway v7.32.2.
+> count. **Update (2026-11-26):** re-derived from the gateway source
+> (`packages/gateway/src/ipc/agents-rpc.ts`): 18 agent methods are registered,
+> and `EXTERNAL_EXCLUDED_AGENT_METHODS` withholds six (`preflight`, `premortem`,
+> `whyPeek`, `negotiate`, `changelog`, `standup`), so `GET /v1/agents` serves 12
+> (catchup, conflicts, decisions, expert, ghost, glossary, huddle, impact,
+> janitor, oncall, ownership, why). The figure is
+> derived (`EXTERNAL_AGENT_NAMES`), so read it from the route, not from here.
 
 ### C5.3 Passages as brief sources · 🟢 · M — ✅ shipped
 > **What** Right-click a selection anywhere → **Add to brief**. Passages
@@ -1588,6 +1599,109 @@ to; that gap is what this phase closes.*
 > "Checking a stored binding for staleness: two messages, not one". C10.3 had
 > no design spec of its own.
 
+## Phase C11 — Gateway S4 features 🟢/🟡
+
+*Theme: the gateway's S4 work (deploy risk, the on-call brief, PR pre-review,
+incident records, outside-agent ledger rows) is mostly reachable from a page
+this client already recognises. Ranked by value over cost; items a and b and e
+need no gateway change, c and d do. Facts below were checked against the
+gateway source on 2026-11-26, not against a live gateway.*
+
+**Limits that do not move.** The browser never approves and never writes. The
+HTTP write surface is the fixed `WRITE_ROUTE_ALLOWLIST` (I13: deployments,
+SCIM, admin policy, Teams events, clips, pairing, agent invoke, briefs and
+brief sources), and nothing in this phase adds to it. Approvals, remediation
+and every consent prompt belong to a `cli` or `ui` connection on the local
+socket, and an HTTP caller cannot claim those kinds. So every item here is a
+read, or a read-only brief run; none offers an approve, remediate or
+write button.
+
+### C11.1 Deploy risk on the deploy page · 🟢 · S
+> **What** Show the advisory `risk` block that `GET /v1/preflight/deploy` now
+> carries beside the deploy-readiness verdict: `level` (`low`, `elevated`,
+> `high`, or `unknown`), the one-line `why`, and the four factors
+> (`system_state`, `change_velocity`, `oncall_coverage`, `time_of_week`), each
+> with `{ id, level, evidence, known }`.
+> **Why it wows** The panel already answers "is this safe to ship?"; this adds
+> "and how risky is the moment?", from the same call.
+> **Touches** `src/background/deploy-client.ts` (parse the optional member),
+> the deploy-readiness section of the panel and the palette's deploy entry.
+> **Approach** The route is `{ kind: "public" }` in `http-route-auth.ts`, so no
+> new scope and no re-pairing. `risk` is OPTIONAL and additive: a gateway
+> without it, or a service with no risk config, simply has no member, and the
+> section renders exactly as today. `unknown` is never shown as clear or low:
+> render it as "not enough data", with the factors' `known: false` entries
+> named. The risk never changes the verdict this client shows; the gateway
+> decides that.
+> **Done when** A gateway that sends `risk` shows its level, why and factors;
+> one that does not shows no change; `unknown` and unknown factors are visibly
+> not "clear".
+> **Depends** Nothing to build upstream. **Unverified:** the handler passes the
+> risk config into the dispatcher (`metrics-reads.ts`) and the result type
+> carries `risk`, but the HTTP JSON was not exercised and the route is absent
+> from the OpenAPI document, so confirm on a live gateway before building.
+
+### C11.2 On-call brief on PagerDuty and incident pages · 🟢 · M
+> **What** On a PagerDuty or incident page, run the gateway's `oncall` agent
+> and render who is on call and what is open, using the structured renderers
+> the other lanes already have.
+> **Touches** the lane registry and the agent-run path (`POST /v1/agents/oncall`,
+> then `GET /v1/agents/runs/{id}`), plus a renderer for its payload.
+> **Approach** `oncall` is among the 12 agents served over HTTP, behind the
+> `agents` scope the extension already requests, so it needs no gateway change
+> and no re-pairing. A read-only brief: it runs nothing and approves nothing.
+> The renderer follows the findings-guard pattern: an absent or malformed
+> payload falls back to plain text, a gap is named, and a link is built only
+> through the shared safe-URL path.
+> **Done when** A PagerDuty incident page offers the lane and renders its
+> answer with gaps and freshness.
+> **Depends** Nothing upstream. Confirm the payload shape against a live
+> gateway before writing the guard.
+
+### C11.3 PR pre-review brief on pull-request pages · 🟡 · M
+> **What** On a pull-request page, a pre-review brief: files that usually
+> change together with this one, and the owner's own past review notes on this
+> repository.
+> **Depends** NEW gateway work: a read-only external agent route,
+> `POST /v1/agents/prereview`, under the `agents` scope. The brief exists today
+> only as `nimbus pre-review` on the local socket; it is not in the served
+> agent set. The gateway side is tracked as a row in the main repository's
+> Engineering Excellence phase. **Blocked on the gateway.** Not started here.
+> **Approach** Once the route exists it is an agent lane like any other
+> (C11.2's shape); nothing is posted to the pull request, as on the gateway.
+
+### C11.4 Incident records on alert pages · 🟡 · M
+> **What** On an alert or incident page, show the gateway's assembled incident
+> record: the timeline, the change and chat lanes, and the ranked cascade.
+> **Depends** NEW gateway work: no HTTP read route exists for incident
+> records today (the `incident` namespace is local-socket only and off the
+> LAN), so this needs a new read route AND a token-scope decision. It is
+> **design-first** and tracked in the main repository's Engineering
+> Excellence phase; do not build against a guessed route. Whatever ships here
+> stays read-only: viewing a record is the most this client does with one.
+
+### C11.5 The Activity page learns the new ledger rows · 🟢 · S
+> **What** `/v1/egress` now also carries rows for outside agents and for the
+> incident engine: source ids of the form `agent:<captureId>`, model and
+> chatops source types, and actions linked to an incident. The Activity page
+> must keep reading them honestly.
+> **Touches** `src/shared/egress.ts` (`partitionRows`, `actionClass`),
+> `src/ledger/ledger-view.ts`.
+> **Approach** Today a row is "ours" only on an exact device-label match, a
+> `sourceType` other than `http`, `sync` or `outcome` is classed "Other", and
+> any non-null `sourceId` that is not ours lands in "others". That is the safe
+> default, so nothing breaks, but check three things: an `agent:<captureId>`
+> id renders as another caller's row and never as ours (the id is a capture id,
+> not a label); the "Other" class names the source type rather than showing a
+> bare "Other"; and a gateway-set incident link in a payload summary is shown
+> as text only, with no link built from it.
+> **Done when** Rows from each new source type render with a truthful class,
+> the verdict and partition are unchanged for a ledger with none of them, and
+> a fixture of each new shape is in the tests.
+> **Depends** Nothing upstream. **Unverified:** the exact wire shapes of the
+> new rows were read from gateway docs and source comments, not captured from a
+> live gateway.
+
 ## Phase 1 — Trust you can see 🟢
 
 *Theme: turn the invisible privacy guarantee into a visible, provable feature —
@@ -1781,7 +1895,8 @@ organizing after.*
 > **Reframe** Retained and re-aimed: the palette becomes the keyboard route into
 > the **C2** lanes for the resolved item, not a list of capture verbs. Still not
 > a generic ask box.
-> **Status** ✅ shipped: `Alt+Shift+K` (the fourth and last suggested key Chrome
+> **Status** ✅ shipped on `main` (#134), not yet in a tagged release (it sits
+> under `[Unreleased]`; v0.11.0 predates it): `Alt+Shift+K` (the fourth and last suggested key Chrome
 > allows) opens an overlay listing exactly the lanes the panel would offer, plus
 > deploy readiness, related items and the two clip verbs, and a choice lands in the
 > panel. The brief's "restricted pages fail closed with a toast" became the toolbar
@@ -1977,9 +2092,12 @@ surface of an SDK gateway client.*
 > **Touches** `src/background/*`; the message routing, capture pipeline, and state
 > machines are untouched by design (see
 > [architecture: the SDK seam](./docs/architecture.md#the-sdk-seam-where-this-goes-next)).
-> **Depends** a gateway-client spine in the Nimbus SDK — proposed only. The SDK
-> repo's own roadmap covers the authoring contract and its language bindings
-> and carries no gateway client yet.
+> **Depends** a browser-capable gateway-client spine in the Nimbus SDK —
+> proposed only. `@nimbus-dev/client` exists, but it is a local-socket IPC
+> wrapper (the CLI and the VS Code extension use it), so it cannot serve a
+> browser, which reaches the gateway over its HTTP API with a scoped bearer
+> token. The SDK repo's own roadmap covers the authoring contract and its
+> language bindings and carries no HTTP gateway client.
 > **Done when** The bespoke gateway code is gone, the test suite is green against
 > the SDK's `MockNimbusGateway`, and behavior is unchanged.
 > **Reframe** Higher priority. Once the browser and the editor are both clients
