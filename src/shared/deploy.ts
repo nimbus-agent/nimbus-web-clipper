@@ -341,6 +341,45 @@ export function parseDeployRisk(v: unknown): DeployRisk | null {
   };
 }
 
+const PARSED_RISK_LEVELS: readonly string[] = [...RISK_LEVELS, "unrecognised"];
+
+function isDeployRiskFactor(v: unknown): v is DeployRiskFactor {
+  if (!isObj(v) || !isObj(v["id"])) return false;
+  const { known, value } = v["id"];
+  const idOk =
+    known === true
+      ? (RISK_FACTOR_IDS as readonly unknown[]).includes(value)
+      : known === false && str(value);
+  return (
+    idOk &&
+    PARSED_RISK_LEVELS.includes(v["level"] as string) &&
+    str(v["evidence"]) &&
+    typeof v["evaluated"] === "boolean"
+  );
+}
+
+/**
+ * The PARSED risk shape, for the message boundary.
+ *
+ * Not `parseDeployRisk`: the worker hands the panel its already-parsed result
+ * (camelCase, tagged ids), which the wire parser would reject as a matter of
+ * course — and since a rejected block only drops the member, re-running it at
+ * the boundary would wave ANY `risk` through to the renderer unchecked.
+ */
+export function isDeployRisk(v: unknown): v is DeployRisk {
+  if (!isObj(v)) return false;
+  const { level, why, factors, unreadableFactors, failAt, verdictEscalated } = v;
+  return (
+    PARSED_RISK_LEVELS.includes(level as string) &&
+    str(why) &&
+    Array.isArray(factors) &&
+    factors.every(isDeployRiskFactor) &&
+    count(unreadableFactors) &&
+    (failAt === null || failAt === "elevated" || failAt === "high") &&
+    typeof verdictEscalated === "boolean"
+  );
+}
+
 export function parseDeployPreflight(v: unknown): DeployPreflightResult | null {
   if (!isObj(v)) return null;
   const verdict = v["verdict"];

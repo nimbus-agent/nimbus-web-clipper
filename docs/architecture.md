@@ -2244,9 +2244,17 @@ The same `GET /v1/preflight/deploy` answer can carry an optional `risk` block
 (upstream `packages/gateway/src/preflight/deploy-risk.ts`): a level, a
 one-line `why`, four factors with their evidence, the owner's
 `[preflight.risk] fail_at`, and `verdict_escalated`. It rides the response the
-worker already fetches and is parsed inside `parseDeployPreflight`, which the
-panel's message guard `isDeployPreflightResponse` also runs — so there is no
-second fetch, message kind or guard to keep in step.
+worker already fetches and is parsed inside `parseDeployPreflight` — no second
+fetch and no new message kind.
+
+**Two shapes, two guards.** The worker hands the panel its *parsed* result
+(camelCase, tagged factor ids), not the wire body. `isDeployPreflightResponse`
+does re-run `parseDeployPreflight`, but over a parsed `risk` the wire parser
+finds no `verdict_escalated`, returns no member, and so would accept *any*
+value there. The parsed block therefore has its own guard, `isDeployRisk`
+(`src/shared/deploy.ts`), and a message whose `risk` fails it is rejected. The
+same re-parse is harmless for the checks, whose parsed and wire shapes
+coincide; it is not for any member the parser renames.
 
 **A bad advisory never costs the verdict.** `parseDeployRisk` returning `null`
 makes the member *absent*, never the envelope `null`. The split is the gap

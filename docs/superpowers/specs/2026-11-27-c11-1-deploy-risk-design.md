@@ -75,9 +75,9 @@ without the rest of this feature.
 
 1. **Chosen — parse in `parseDeployPreflight`, render in `deploy-view.ts`.**
    The risk rides the response the worker already fetches and the message the
-   panel already receives. `isDeployPreflightResponse` (`messages.ts`) already
-   calls `parseDeployPreflight`, so the wire parser and the message-boundary
-   guard are the same function and cannot drift.
+   panel already receives. (Corrected in final review: the message carries the
+   PARSED shape, which the wire parser cannot validate, so the boundary uses
+   its own `isDeployRisk` guard — see `docs/architecture.md`.)
 2. *Rejected — a separate fetch or message for risk.* Same call twice, or a
    second guard to keep in step, for no gain.
 3. *Rejected — fold risk into the verdict sentence* (option B in the

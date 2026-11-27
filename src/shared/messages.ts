@@ -7,6 +7,7 @@ import { isSourceShape } from "./clip.ts";
 import { CONNECTOR_STATES, type ConnectorHealth } from "./connector-health.ts";
 import {
   type DeployPreflightResult,
+  isDeployRisk,
   isRefBasis,
   parseDeployPreflight,
   type RefBasis,
@@ -1530,6 +1531,17 @@ function isServiceResolutionOutcome(v: unknown): v is ServiceResolutionOutcome {
   return true;
 }
 
+/**
+ * The worker sends the PARSED preflight, and `parseDeployPreflight` reads the
+ * wire shape: over a parsed `risk` it returns no member at all, so it would
+ * accept any value there. The parsed risk is checked by its own guard instead,
+ * and an absent one is fine — an older gateway sends none.
+ */
+function parsedRiskOk(preflight: unknown): boolean {
+  if (!isObject(preflight) || preflight["risk"] === undefined) return true;
+  return isDeployRisk(preflight["risk"]);
+}
+
 export function isDeployPreflightResponse(v: unknown): v is DeployPreflightResponse {
   if (!isObject(v) || v["kind"] !== "deploy-preflight") {
     return false;
@@ -1538,7 +1550,8 @@ export function isDeployPreflightResponse(v: unknown): v is DeployPreflightRespo
     return (
       typeof v["serviceId"] === "string" &&
       isRefBasis(v["refBasis"]) &&
-      parseDeployPreflight(v["preflight"]) !== null
+      parseDeployPreflight(v["preflight"]) !== null &&
+      parsedRiskOk(v["preflight"])
     );
   }
   if (v["ok"] !== false || typeof v["reason"] !== "string") {
