@@ -4,14 +4,22 @@ import { describe, expect, test, vi } from "vitest";
 import {
   DEPLOY_SECTION_TITLE,
   GAP_NOTE,
+  RISK_FACTOR_LABEL,
+  RISK_LEVEL_LABEL,
   renderBindForm,
   renderDeployBody,
   renderDoraLink,
+  renderRisk,
   renderSectionFrame,
   verdictLine,
 } from "../../src/panel/deploy/deploy-view.ts";
 import type { DeployPreflightResult, DeployRisk } from "../../src/shared/deploy.ts";
-import { PREFLIGHT_GAPS, UNRECOGNISED_GAP } from "../../src/shared/deploy.ts";
+import {
+  PREFLIGHT_GAPS,
+  RISK_FACTOR_IDS,
+  RISK_LEVELS,
+  UNRECOGNISED_GAP,
+} from "../../src/shared/deploy.ts";
 
 const result = (over: Partial<DeployPreflightResult> = {}): DeployPreflightResult =>
   ({
@@ -608,5 +616,158 @@ describe("renderDoraLink", () => {
     expect(p.querySelector("a")).toBeNull();
     b?.click();
     expect(onOpen).toHaveBeenCalledOnce();
+  });
+});
+
+describe("renderRisk (C11.1)", () => {
+  const head = (el: HTMLElement) => el.querySelector(".nimbus-deploy__risk-head");
+  const items = (el: HTMLElement) => [...el.querySelectorAll("li.nimbus-deploy__risk-factor")];
+
+  test("every level and every factor id has a non-empty label", () => {
+    for (const level of [...RISK_LEVELS, "unrecognised"] as const) {
+      expect(RISK_LEVEL_LABEL[level], `level ${level}`).toBeTruthy();
+    }
+    for (const id of RISK_FACTOR_IDS) expect(RISK_FACTOR_LABEL[id], `id ${id}`).toBeTruthy();
+  });
+
+  test.each([
+    ["low", "Risk right now: low"],
+    ["elevated", "Risk right now: elevated"],
+    ["high", "Risk right now: high"],
+    ["unknown", "Risk right now: not enough data"],
+    ["unrecognised", "Risk right now: couldn't be read by this version"],
+  ] as const)("the head line for %s", (level, text) => {
+    expect(head(renderRisk(document, risk({ level })))?.textContent).toBe(text);
+  });
+
+  test("nothing in the block ever carries the ok accent, at any level", () => {
+    for (const level of [...RISK_LEVELS, "unrecognised"] as const) {
+      const el = renderRisk(document, risk({ level }));
+      for (const node of el.querySelectorAll("*")) expect(node.className).not.toMatch(/--ok/);
+    }
+  });
+
+  test("tones: unknown head and an unevaluated factor are muted, a low factor is plain", () => {
+    const el = renderRisk(
+      document,
+      risk({
+        level: "unknown",
+        factors: [
+          {
+            id: { known: true, value: "system_state" },
+            level: "low",
+            evidence: "e",
+            evaluated: true,
+          },
+          {
+            id: { known: true, value: "time_of_week" },
+            level: "unknown",
+            evidence: "e",
+            evaluated: false,
+          },
+          {
+            id: { known: true, value: "change_velocity" },
+            level: "high",
+            evidence: "e",
+            evaluated: true,
+          },
+        ],
+      }),
+    );
+    expect(head(el)?.classList.contains("nimbus-deploy__risk--muted")).toBe(true);
+    const [low, unevaluated, high] = items(el);
+    expect(low?.classList.contains("nimbus-deploy__risk--plain")).toBe(true);
+    expect(unevaluated?.classList.contains("nimbus-deploy__risk--muted")).toBe(true);
+    expect(high?.classList.contains("nimbus-deploy__risk--warn")).toBe(true);
+  });
+
+  test("an unevaluated factor reads not enough data, whatever level it carries", () => {
+    const el = renderRisk(
+      document,
+      risk({
+        factors: [
+          {
+            id: { known: true, value: "oncall_coverage" },
+            level: "low",
+            evidence: "no shift data",
+            evaluated: false,
+          },
+        ],
+      }),
+    );
+    expect(items(el)[0]?.textContent).toBe("On-call coverage: not enough data — no shift data");
+  });
+
+  test("a factor line is label, level and evidence, in the gateway's order", () => {
+    const el = renderRisk(document, risk());
+    expect(items(el).map((li) => li.textContent)).toEqual([
+      "System state: low — clear",
+      "Change velocity: high — 5 in 24h",
+      "On-call coverage: low — covered",
+      "Time of week: low — weekday",
+    ]);
+  });
+
+  test("why and evidence are inert text, even when they look like links", () => {
+    const el = renderRisk(
+      document,
+      risk({
+        why: "see https://evil.example/why",
+        factors: [
+          {
+            id: { known: true, value: "system_state" },
+            level: "high",
+            evidence: "see https://evil.example",
+            evaluated: true,
+          },
+        ],
+      }),
+    );
+    expect(el.querySelectorAll("a")).toHaveLength(0);
+    expect(el.querySelector(".nimbus-deploy__risk-why")?.textContent).toBe(
+      "see https://evil.example/why",
+    );
+    expect(items(el)[0]?.textContent).toContain("see https://evil.example");
+  });
+
+  test("an unfamiliar factor id is named as another factor, never dropped", () => {
+    const el = renderRisk(
+      document,
+      risk({
+        factors: [
+          {
+            id: { known: false, value: "moon_phase" },
+            level: "low",
+            evidence: "full",
+            evaluated: true,
+          },
+        ],
+      }),
+    );
+    expect(items(el)[0]?.textContent?.startsWith("Other factor (`moon_phase`)")).toBe(true);
+  });
+
+  test.each([
+    [0, null],
+    [1, "1 factor could not be read."],
+    [3, "3 factors could not be read."],
+  ] as const)("%i unreadable factors", (n, text) => {
+    const el = renderRisk(document, risk({ unreadableFactors: n }));
+    expect(el.querySelector(".nimbus-deploy__risk-unreadable")?.textContent ?? null).toBe(text);
+  });
+
+  test("renderDeployBody without risk renders no risk block", () => {
+    const body = renderDeployBody(document, result(), "page");
+    expect(body.querySelector(".nimbus-deploy__risk")).toBeNull();
+  });
+
+  test("renderDeployBody with risk puts the block last, after the three checks", () => {
+    const body = renderDeployBody(
+      document,
+      result({ risk: risk({ verdictEscalated: false }) }),
+      "page",
+    );
+    expect(body.lastElementChild?.classList.contains("nimbus-deploy__risk")).toBe(true);
+    expect(body.querySelectorAll(".nimbus-deploy__check")).toHaveLength(3);
   });
 });

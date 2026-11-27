@@ -5,9 +5,11 @@
 import type {
   DeployPreflightResult,
   DeployRisk,
+  DeployRiskFactor,
   ParsedRiskLevel,
   PreflightGap,
   RefBasis,
+  RiskFactorId,
 } from "../../shared/deploy.ts";
 import type { ServiceResolutionOutcome } from "../../shared/messages.ts";
 import { scopeCommand } from "../../shared/scope-command.ts";
@@ -196,6 +198,85 @@ function renderCheck(
   return box;
 }
 
+/**
+ * The risk head line's labels (C11.1). A Record, not a switch: a new level
+ * without a label is a type error, with no unreachable backstop line for the
+ * coverage gate to count. `unknown` is "not enough data", never "low" — an
+ * empty index is not evidence that nothing is wrong.
+ */
+export const RISK_LEVEL_LABEL: Record<ParsedRiskLevel, string> = {
+  low: "low",
+  elevated: "elevated",
+  high: "high",
+  unknown: "not enough data",
+  unrecognised: "couldn't be read by this version",
+};
+
+export const RISK_FACTOR_LABEL: Record<RiskFactorId, string> = {
+  system_state: "System state",
+  change_velocity: "Change velocity",
+  oncall_coverage: "On-call coverage",
+  time_of_week: "Time of week",
+};
+
+/**
+ * `low` is `plain`, deliberately NOT the verdict's `--ok` accent: a low risk is
+ * the absence of a warning, not a second green light.
+ */
+const RISK_TONE: Record<ParsedRiskLevel, "warn" | "plain" | "muted"> = {
+  low: "plain",
+  elevated: "warn",
+  high: "warn",
+  unknown: "muted",
+  unrecognised: "muted",
+};
+
+function factorLabel(f: DeployRiskFactor): string {
+  return f.id.known ? RISK_FACTOR_LABEL[f.id.value] : `Other factor (\`${f.id.value}\`)`;
+}
+
+/**
+ * The advisory risk block. Every string the gateway wrote — `why`, each
+ * `evidence` — is `textContent`, rendered verbatim: never rewritten, never
+ * parsed, never turned into a link, whatever it looks like.
+ */
+export function renderRisk(doc: Document, risk: DeployRisk): HTMLElement {
+  const root = doc.createElement("div");
+  root.className = "nimbus-deploy__risk";
+
+  const head = doc.createElement("p");
+  head.className = `nimbus-deploy__risk-head nimbus-deploy__risk--${RISK_TONE[risk.level]}`;
+  head.textContent = `Risk right now: ${RISK_LEVEL_LABEL[risk.level]}`;
+
+  const why = doc.createElement("p");
+  why.className = "nimbus-deploy__risk-why";
+  why.textContent = risk.why;
+  root.append(head, why);
+
+  if (risk.factors.length > 0) {
+    const list = doc.createElement("ul");
+    list.className = "nimbus-deploy__risk-factors";
+    for (const f of risk.factors) {
+      // An unevaluated factor has no level, whatever the pair claimed.
+      const level = f.evaluated ? f.level : "unknown";
+      const li = doc.createElement("li");
+      li.className = `nimbus-deploy__risk-factor nimbus-deploy__risk--${RISK_TONE[level]}`;
+      li.textContent = `${factorLabel(f)}: ${RISK_LEVEL_LABEL[level]} — ${f.evidence}`;
+      list.append(li);
+    }
+    root.append(list);
+  }
+
+  if (risk.unreadableFactors > 0) {
+    const n = risk.unreadableFactors;
+    const note = doc.createElement("p");
+    note.className = "nimbus-deploy__risk-unreadable";
+    note.textContent = `${n} factor${n === 1 ? "" : "s"} could not be read.`;
+    root.append(note);
+  }
+  return root;
+}
+
 export function renderDeployBody(
   doc: Document,
   r: DeployPreflightResult,
@@ -218,6 +299,9 @@ export function renderDeployBody(
     }),
   );
   root.append(renderCheck(doc, CHECK_LABEL.merge_conflicts, r.checks.merge_conflicts));
+  if (r.risk !== undefined) {
+    root.append(renderRisk(doc, r.risk));
+  }
   return root;
 }
 

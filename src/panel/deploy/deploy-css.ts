@@ -50,5 +50,15 @@ export const DEPLOY_CSS = `
   }
   .nimbus-deploy__dora { margin: 8px 0 0; }
   .nimbus-deploy__dora-link { background: none; border: 0; padding: 0; font: inherit; color: var(--nimbus-accent); text-decoration: underline; cursor: pointer; }
+  /* C11.1's advisory risk block. Existing tokens only. --plain is deliberately
+     not the verdict's --ok accent: a low risk is not a second green light. */
+  .nimbus-deploy__risk { margin: 8px 0 0; font-size: 12px; }
+  .nimbus-deploy__risk-head { margin: 0; font-weight: 600; }
+  .nimbus-deploy__risk-why { margin: 4px 0 0; }
+  .nimbus-deploy__risk-factors { margin: 4px 0 0; padding-left: 16px; }
+  .nimbus-deploy__risk-unreadable { margin: 4px 0 0; font-size: 11px; opacity: 0.7; }
+  .nimbus-deploy__risk--warn { font-weight: 600; }
+  .nimbus-deploy__risk--plain { color: inherit; }
+  .nimbus-deploy__risk--muted { color: var(--nimbus-muted); }
   .nimbus-deploy__status { margin: 0 0 8px; font-size: 12px; color: var(--nimbus-muted); }
 `;
