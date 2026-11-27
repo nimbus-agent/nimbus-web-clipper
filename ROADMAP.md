@@ -1617,7 +1617,7 @@ socket, and an HTTP caller cannot claim those kinds. So every item here is a
 read, or a read-only brief run; none offers an approve, remediate or
 write button.
 
-### C11.1 Deploy risk on the deploy page · 🟢 · S
+### C11.1 Deploy risk on the deploy page · 🟢 · S — ✅ shipped
 > **What** Show the advisory `risk` block that `GET /v1/preflight/deploy` now
 > carries beside the deploy-readiness verdict: `level` (`low`, `elevated`,
 > `high`, or `unknown`), the one-line `why`, and the four factors
@@ -1637,10 +1637,13 @@ write button.
 > **Done when** A gateway that sends `risk` shows its level, why and factors;
 > one that does not shows no change; `unknown` and unknown factors are visibly
 > not "clear".
-> **Depends** Nothing to build upstream. **Unverified:** the handler passes the
-> risk config into the dispatcher (`metrics-reads.ts`) and the result type
-> carries `risk`, but the HTTP JSON was not exercised and the route is absent
-> from the OpenAPI document, so confirm on a live gateway before building.
+> **Depends** Nothing to build upstream. Verified against the gateway source and
+> its HTTP integration test (`preflight-deploy-route.test.ts`) on 2026-11-27; a
+> live-gateway check is the human step in `development.md`.
+> **Shipped with it** The block also carries `fail_at` and `verdict_escalated`:
+> an owner-set threshold can turn a clean `ok` into `warn`, which the section
+> used to render as "0 things to look at". The verdict line now names risk as
+> the reason.
 
 ### C11.2 On-call brief on PagerDuty and incident pages · 🟢 · M
 > **What** On a PagerDuty or incident page, run the gateway's `oncall` agent

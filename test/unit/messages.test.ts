@@ -1397,6 +1397,102 @@ describe("DeployPreflightResponse ok arm", () => {
     expect(isDeployPreflightResponse(ok(basis))).toBe(true);
   });
 
+  // The worker sends its PARSED result (camelCase, tagged ids), so the guard
+  // must check that shape — re-running the wire parser over it would skip
+  // `risk` entirely and hand the renderer whatever arrived.
+  const parsedRisk = {
+    level: "high",
+    why: "High risk.",
+    factors: [
+      {
+        id: { known: true, value: "change_velocity" },
+        level: "high",
+        evidence: "6 in 24h",
+        evaluated: true,
+      },
+      {
+        id: { known: false, value: "moon_phase" },
+        level: "unrecognised",
+        evidence: "e",
+        evaluated: true,
+      },
+      {
+        id: { known: true, value: "time_of_week" },
+        level: "unknown",
+        evidence: "no time zone configured",
+        evaluated: false,
+      },
+    ],
+    unreadableFactors: 0,
+    failAt: "high",
+    verdictEscalated: true,
+  };
+  const withParsedRisk = (risk: unknown) => {
+    const base = ok("page");
+    return { ...base, preflight: { ...base.preflight, risk } };
+  };
+
+  test("accepts a preflight carrying a well-formed parsed risk", () => {
+    expect(isDeployPreflightResponse(withParsedRisk(parsedRisk))).toBe(true);
+    expect(isDeployPreflightResponse(withParsedRisk({ ...parsedRisk, failAt: null }))).toBe(true);
+  });
+
+  test.each([
+    ["the wire shape", { level: "high", why: "w", factors: [], verdict_escalated: true }],
+    ["factors not an array", { ...parsedRisk, factors: "nope" }],
+    ["an unknown level", { ...parsedRisk, level: "dire" }],
+    ["a bad failAt", { ...parsedRisk, failAt: "low" }],
+    ["a negative unreadable count", { ...parsedRisk, unreadableFactors: -1 }],
+    ["a string verdictEscalated", { ...parsedRisk, verdictEscalated: "yes" }],
+    [
+      "a factor with a bare string id",
+      { ...parsedRisk, factors: [{ ...parsedRisk.factors[0], id: "x" }] },
+    ],
+    [
+      "a factor with an unknown known id",
+      {
+        ...parsedRisk,
+        factors: [{ ...parsedRisk.factors[0], id: { known: true, value: "moon" } }],
+      },
+    ],
+    [
+      "a factor missing evaluated",
+      {
+        ...parsedRisk,
+        factors: [{ id: { known: true, value: "system_state" }, level: "low", evidence: "e" }],
+      },
+    ],
+    [
+      "an unevaluated factor carrying a level",
+      {
+        ...parsedRisk,
+        factors: [
+          {
+            id: { known: true, value: "system_state" },
+            level: "low",
+            evidence: "e",
+            evaluated: false,
+          },
+        ],
+      },
+    ],
+    [
+      "a numeric factor level",
+      { ...parsedRisk, factors: [{ ...parsedRisk.factors[0], level: 1 }] },
+    ],
+    [
+      "an unfamiliar factor id past the cap",
+      {
+        ...parsedRisk,
+        factors: [{ ...parsedRisk.factors[0], id: { known: false, value: "z".repeat(65) } }],
+      },
+    ],
+    ["null", null],
+    ["a string", "high"],
+  ])("rejects a preflight whose parsed risk is %s", (_label, risk) => {
+    expect(isDeployPreflightResponse(withParsedRisk(risk))).toBe(false);
+  });
+
   // A verdict that cannot say what it checked must not render as if it could.
   test.each([undefined, "", "invented", 1, null])("rejects refBasis %s", (basis) => {
     expect(isDeployPreflightResponse(ok(basis))).toBe(false);

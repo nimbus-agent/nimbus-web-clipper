@@ -10,6 +10,10 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Added
 
+- **Deploy risk in Deploy readiness.** When your gateway sends it, the section now
+  shows how risky the moment is — a level, the gateway's reason, and its four
+  factors — under the checks. A factor the gateway couldn't evaluate says "not
+  enough data", never "low".
 - **A command palette.** `Alt+Shift+K` opens a small keyboard overlay on any page
   listing what Nimbus can do there: the same agent lanes the panel offers, deploy
   readiness, related items, defining a selection, and clipping the page or a
@@ -19,6 +23,8 @@ Releases are tag-driven (`vX.Y.Z`); see [README](./README.md#releasing) and `pub
 
 ### Fixed
 
+- **An escalated verdict no longer reads "0 things to look at".** If your gateway
+  is set to warn on deploy risk, the verdict now says that risk is the reason.
 - **Deploy readiness no longer reads "clear" when it didn't check CI.** Nimbus
   usually doesn't know a pull request's branch, so the failing-CI check could look
   for a branch that doesn't exist and report zero. The section now says when CI was

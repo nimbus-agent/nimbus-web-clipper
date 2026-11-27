@@ -2,7 +2,15 @@
 // The pure renderer for the deploy-readiness section (C10). No chrome.*, no
 // fetch, no DOM outside the fragment it returns — so it is unit-testable in
 // jsdom, like every other view in this folder.
-import type { DeployPreflightResult, PreflightGap, RefBasis } from "../../shared/deploy.ts";
+import type {
+  DeployPreflightResult,
+  DeployRisk,
+  DeployRiskFactor,
+  ParsedRiskLevel,
+  PreflightGap,
+  RefBasis,
+  RiskFactorId,
+} from "../../shared/deploy.ts";
 import type { ServiceResolutionOutcome } from "../../shared/messages.ts";
 import { scopeCommand } from "../../shared/scope-command.ts";
 import { MAX_SERVICE_ID_LEN } from "../../shared/services.ts";
@@ -47,6 +55,13 @@ function totalCount(r: DeployPreflightResult): number {
   return active_p1_incidents.count + failing_ci_runs.count + merge_conflicts.count;
 }
 
+function someCheckGapped(r: DeployPreflightResult): boolean {
+  const { active_p1_incidents, failing_ci_runs, merge_conflicts } = r.checks;
+  return (
+    active_p1_incidents.gap !== null || failing_ci_runs.gap !== null || merge_conflicts.gap !== null
+  );
+}
+
 function everyCheckGapped(r: DeployPreflightResult): boolean {
   const { active_p1_incidents, failing_ci_runs, merge_conflicts } = r.checks;
   return (
@@ -55,17 +70,48 @@ function everyCheckGapped(r: DeployPreflightResult): boolean {
 }
 
 /**
- * `warn` carries TWO meanings and they must never be rendered the same way.
+ * How the risk reads INSIDE the escalation sentence. The head line's labels
+ * ("not enough data") do not read after "deploy risk is", so the two
+ * non-levels get their own phrase. Upstream never escalates on `unknown`
+ * (`reachesFailAt`), so those two are contradictory payloads — say something
+ * true anyway.
+ */
+const ESCALATED_RISK_PHRASE: Record<ParsedRiskLevel, string> = {
+  low: "deploy risk is low right now",
+  elevated: "deploy risk is elevated right now",
+  high: "deploy risk is high right now",
+  unknown: "deploy risk could not be read",
+  unrecognised: "deploy risk could not be read",
+};
+
+function escalationLine(r: DeployPreflightResult, risk: DeployRisk, basis: RefBasis): string {
+  const ci = basis === "none" ? ", but CI was not checked, and " : ", but ";
+  const threshold = risk.failAt === null ? "on risk" : `at ${risk.failAt}`;
+  return `No blockers found for ${r.service}${ci}${ESCALATED_RISK_PHRASE[risk.level]} — your gateway is set to warn ${threshold}.`;
+}
+
+/**
+ * `warn` carries THREE meanings and they must never be rendered the same way.
  *
- * Upstream returns `warn` both for "found problems" and for "could not
- * evaluate", because `warn` is the only value that fails closed in every
- * consumer; the reason travels in the gap instead. So a zero count with gaps
- * everywhere is "could not evaluate" — never "all clear", and never "0 problems
- * found".
+ * Upstream returns `warn` for "found problems" and for "could not evaluate",
+ * because `warn` is the only value that fails closed in every consumer; the
+ * reason travels in the gap instead. So a zero count with gaps everywhere is
+ * "could not evaluate" — never "all clear", and never "0 problems found".
+ *
+ * The third (C11.1): the owner set `[preflight.risk] fail_at` and the risk
+ * reached it, so the gateway turned a clean `ok` into `warn` and said so in
+ * `risk.verdictEscalated`. The arms run in a fixed order — counted problems,
+ * then every-check-gapped, then escalation — because "no blockers found" is a
+ * claim about checks, and it is only true when they ran and found nothing.
+ * After escalation, a gap on SOME checks reads "could not fully evaluate" —
+ * the reason is the gap note right below. A
+ * `warn` with none of those reasons readable gets its own sentence: the
+ * "0 things to look at" line this used to fall through to can no longer be
+ * produced.
  *
  * `ok` with `basis: "none"` is the same failure from the other side: the gateway
  * looked for failing runs on the literal `HEAD`, which no branch is called, so
- * its `ok` cannot be repeated as "clear".
+ * its `ok` cannot be repeated as "clear". Escalation repeats that caveat.
  */
 export function verdictLine(r: DeployPreflightResult, basis: RefBasis): string {
   if (r.verdict === "ok") {
@@ -74,10 +120,19 @@ export function verdictLine(r: DeployPreflightResult, basis: RefBasis): string {
       : `Clear to deploy ${r.service} at ${r.target_ref}.`;
   }
   const total = totalCount(r);
-  if (total === 0 && everyCheckGapped(r)) {
+  if (total > 0) {
+    return `${total} thing${total === 1 ? "" : "s"} to look at before deploying ${r.service}.`;
+  }
+  if (everyCheckGapped(r)) {
     return `Could not evaluate ${r.service} — see below.`;
   }
-  return `${total} thing${total === 1 ? "" : "s"} to look at before deploying ${r.service}.`;
+  if (r.risk?.verdictEscalated === true) {
+    return escalationLine(r, r.risk, basis);
+  }
+  if (someCheckGapped(r)) {
+    return `Could not fully evaluate ${r.service} — see below.`;
+  }
+  return `Nimbus says to wait before deploying ${r.service}, but sent no reason this version can read.`;
 }
 
 /**
@@ -155,6 +210,85 @@ function renderCheck(
   return box;
 }
 
+/**
+ * The risk head line's labels (C11.1). A Record, not a switch: a new level
+ * without a label is a type error, with no unreachable backstop line for the
+ * coverage gate to count. `unknown` is "not enough data", never "low" — an
+ * empty index is not evidence that nothing is wrong.
+ */
+export const RISK_LEVEL_LABEL: Record<ParsedRiskLevel, string> = {
+  low: "low",
+  elevated: "elevated",
+  high: "high",
+  unknown: "not enough data",
+  unrecognised: "couldn't be read by this version",
+};
+
+export const RISK_FACTOR_LABEL: Record<RiskFactorId, string> = {
+  system_state: "System state",
+  change_velocity: "Change velocity",
+  oncall_coverage: "On-call coverage",
+  time_of_week: "Time of week",
+};
+
+/**
+ * `low` is `plain`, deliberately NOT the verdict's `--ok` accent: a low risk is
+ * the absence of a warning, not a second green light.
+ */
+const RISK_TONE: Record<ParsedRiskLevel, "warn" | "plain" | "muted"> = {
+  low: "plain",
+  elevated: "warn",
+  high: "warn",
+  unknown: "muted",
+  unrecognised: "muted",
+};
+
+function factorLabel(f: DeployRiskFactor): string {
+  return f.id.known ? RISK_FACTOR_LABEL[f.id.value] : `Other factor (\`${f.id.value}\`)`;
+}
+
+/**
+ * The advisory risk block. Every string the gateway wrote — `why`, each
+ * `evidence` — is `textContent`, rendered verbatim: never rewritten, never
+ * parsed, never turned into a link, whatever it looks like.
+ */
+export function renderRisk(doc: Document, risk: DeployRisk): HTMLElement {
+  const root = doc.createElement("div");
+  root.className = "nimbus-deploy__risk";
+
+  const head = doc.createElement("p");
+  head.className = `nimbus-deploy__risk-head nimbus-deploy__risk--${RISK_TONE[risk.level]}`;
+  head.textContent = `Risk right now: ${RISK_LEVEL_LABEL[risk.level]}`;
+
+  const why = doc.createElement("p");
+  why.className = "nimbus-deploy__risk-why";
+  why.textContent = risk.why;
+  root.append(head, why);
+
+  if (risk.factors.length > 0) {
+    const list = doc.createElement("ul");
+    list.className = "nimbus-deploy__risk-factors";
+    for (const f of risk.factors) {
+      // An unevaluated factor has no level, whatever the pair claimed.
+      const level = f.evaluated ? f.level : "unknown";
+      const li = doc.createElement("li");
+      li.className = `nimbus-deploy__risk-factor nimbus-deploy__risk--${RISK_TONE[level]}`;
+      li.textContent = `${factorLabel(f)}: ${RISK_LEVEL_LABEL[level]} — ${f.evidence}`;
+      list.append(li);
+    }
+    root.append(list);
+  }
+
+  if (risk.unreadableFactors > 0) {
+    const n = risk.unreadableFactors;
+    const note = doc.createElement("p");
+    note.className = "nimbus-deploy__risk-unreadable";
+    note.textContent = `${n} factor${n === 1 ? "" : "s"} could not be read.`;
+    root.append(note);
+  }
+  return root;
+}
+
 export function renderDeployBody(
   doc: Document,
   r: DeployPreflightResult,
@@ -177,6 +311,9 @@ export function renderDeployBody(
     }),
   );
   root.append(renderCheck(doc, CHECK_LABEL.merge_conflicts, r.checks.merge_conflicts));
+  if (r.risk !== undefined) {
+    root.append(renderRisk(doc, r.risk));
+  }
   return root;
 }
 

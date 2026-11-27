@@ -5,6 +5,9 @@
 // is never exposed on any external surface; this is a side-effect-free read on
 // the public read-only table. See the C10 design, §2.
 //
+// The optional advisory `risk` block (C11.1) is transcribed from
+// packages/gateway/src/preflight/deploy-risk.ts, same repo.
+//
 // Duplicated here rather than imported: the gateway is a SEPARATE repository and
 // this extension ships with no node_modules.
 
@@ -48,6 +51,70 @@ export const PREFLIGHT_GAPS = [
 export const UNRECOGNISED_GAP = "unrecognised_gap";
 
 export type PreflightGap = (typeof PREFLIGHT_GAPS)[number] | typeof UNRECOGNISED_GAP | null;
+
+/**
+ * The deploy-risk vocabulary (C11.1), single-sourced as arrays for the same
+ * reason as `PREFLIGHT_GAPS`: the parser reads these rather than a second
+ * literal list.
+ */
+export const RISK_LEVELS = ["low", "elevated", "high", "unknown"] as const;
+export type RiskLevel = (typeof RISK_LEVELS)[number];
+
+/**
+ * NEVER on the wire. `"unrecognised"` is a level STRING this version does not
+ * know — a newer gateway, degraded visibly — the `UNRECOGNISED_GAP` pattern. A
+ * level of the wrong TYPE is a broken shape instead, and rejects.
+ */
+export type ParsedRiskLevel = RiskLevel | "unrecognised";
+
+export const RISK_FACTOR_IDS = [
+  "system_state",
+  "change_velocity",
+  "oncall_coverage",
+  "time_of_week",
+] as const;
+export type RiskFactorId = (typeof RISK_FACTOR_IDS)[number];
+
+export type RiskFailAt = "elevated" | "high";
+
+export interface DeployRiskFactor {
+  /**
+   * A tagged pair, not `RiskFactorId | string` — that union collapses to
+   * `string` and loses the narrowing the view's label Record needs. An id this
+   * version does not know is KEPT, never dropped: a silent gap in the factor
+   * list would read as "nothing else to worry about".
+   */
+  readonly id:
+    | { readonly known: true; readonly value: RiskFactorId }
+    | { readonly known: false; readonly value: string };
+  readonly level: ParsedRiskLevel;
+  readonly evidence: string;
+  /** The wire's `known`, renamed so it cannot be confused with `id.known`. */
+  readonly evaluated: boolean;
+}
+
+/**
+ * The advisory deploy-risk block. Advisory by construction upstream: it changes
+ * the verdict only when the owner set `[preflight.risk] fail_at`, and then the
+ * gateway says so in `verdictEscalated`. This client never re-derives a verdict
+ * from it.
+ */
+export interface DeployRisk {
+  readonly level: ParsedRiskLevel;
+  readonly why: string;
+  readonly factors: readonly DeployRiskFactor[];
+  /** Factor entries dropped as unreadable or past the cap, so the view can say so. */
+  readonly unreadableFactors: number;
+  readonly failAt: RiskFailAt | null;
+  readonly verdictEscalated: boolean;
+}
+
+/** Gateway prose is short; this bounds what a hostile local answer can put in the panel. */
+export const RISK_TEXT_MAX = 500;
+/** Upstream sends four. Only this many RAW entries are examined. */
+export const RISK_FACTORS_MAX = 16;
+/** An unfamiliar factor id is shown as a label; ids upstream are short snake_case. */
+export const RISK_ID_MAX = 64;
 
 export interface IncidentFinding {
   readonly id: string;
@@ -94,6 +161,8 @@ export interface DeployPreflightResult {
     readonly failing_ci_runs: PreflightCheck<CiFinding>;
     readonly merge_conflicts: PreflightCheck<PrFinding>;
   };
+  /** Absent when the gateway sent none, or sent one this version could not read. */
+  readonly risk?: DeployRisk;
 }
 
 /**
@@ -221,6 +290,101 @@ function parseCheck<F>(v: unknown, one: (x: unknown) => F | null): PreflightChec
   return { count: v["count"], findings, gap };
 }
 
+function capText(v: string, max: number = RISK_TEXT_MAX): string {
+  return v.length > max ? `${v.slice(0, max - 1)}…` : v;
+}
+
+function parseRiskLevel(v: string): ParsedRiskLevel {
+  return (RISK_LEVELS as readonly string[]).includes(v) ? (v as RiskLevel) : "unrecognised";
+}
+
+function parseRiskFactor(v: unknown): DeployRiskFactor | null {
+  if (!isObj(v)) return null;
+  const { id, level, evidence, known } = v;
+  if (!str(id) || !str(level) || !str(evidence) || typeof known !== "boolean") return null;
+  return {
+    id: (RISK_FACTOR_IDS as readonly string[]).includes(id)
+      ? { known: true, value: id as RiskFactorId }
+      : { known: false, value: capText(id, RISK_ID_MAX) },
+    // Never trust the pair to agree: an unevaluated factor has no level.
+    level: known ? parseRiskLevel(level) : "unknown",
+    evidence: capText(evidence),
+    evaluated: known,
+  };
+}
+
+/**
+ * The advisory block, or `null` when it is unusable — which the caller turns
+ * into an ABSENT member, never a rejected envelope. A bad advisory never costs
+ * the verdict.
+ *
+ * The rule, on the `parseGap` precedent: a value of the wrong TYPE is a broken
+ * shape and rejects (the block, or that one factor); an unfamiliar STRING is a
+ * newer vocabulary and degrades visibly.
+ */
+export function parseDeployRisk(v: unknown): DeployRisk | null {
+  if (!isObj(v)) return null;
+  const { level, why, factors, fail_at: failAt, verdict_escalated: escalated } = v;
+  if (!str(level) || !str(why) || !Array.isArray(factors) || typeof escalated !== "boolean") {
+    return null;
+  }
+  const parsed: DeployRiskFactor[] = [];
+  for (const raw of factors.slice(0, RISK_FACTORS_MAX)) {
+    const f = parseRiskFactor(raw);
+    if (f !== null) parsed.push(f);
+  }
+  return {
+    level: parseRiskLevel(level),
+    why: capText(why),
+    factors: parsed,
+    unreadableFactors: factors.length - parsed.length,
+    failAt: failAt === "elevated" || failAt === "high" ? failAt : null,
+    verdictEscalated: escalated,
+  };
+}
+
+const PARSED_RISK_LEVELS: readonly unknown[] = [...RISK_LEVELS, "unrecognised"];
+
+function isDeployRiskFactor(v: unknown): v is DeployRiskFactor {
+  if (!isObj(v) || !isObj(v["id"])) return false;
+  const { known, value } = v["id"];
+  const idOk =
+    known === true
+      ? (RISK_FACTOR_IDS as readonly unknown[]).includes(value)
+      : known === false && str(value) && value.length <= RISK_ID_MAX;
+  const { level, evidence, evaluated } = v;
+  // The parser's invariant, enforced here too: an unevaluated factor has no
+  // level. Accepting the pair the parser can never produce is how a guard ends
+  // up narrower in type than at runtime.
+  const levelOk =
+    evaluated === true
+      ? PARSED_RISK_LEVELS.includes(level)
+      : evaluated === false && level === "unknown";
+  return idOk && levelOk && str(evidence);
+}
+
+/**
+ * The PARSED risk shape, for the message boundary.
+ *
+ * Not `parseDeployRisk`: the worker hands the panel its already-parsed result
+ * (camelCase, tagged ids), which the wire parser would reject as a matter of
+ * course — and since a rejected block only drops the member, re-running it at
+ * the boundary would wave ANY `risk` through to the renderer unchecked.
+ */
+export function isDeployRisk(v: unknown): v is DeployRisk {
+  if (!isObj(v)) return false;
+  const { level, why, factors, unreadableFactors, failAt, verdictEscalated } = v;
+  return (
+    PARSED_RISK_LEVELS.includes(level) &&
+    str(why) &&
+    Array.isArray(factors) &&
+    factors.every(isDeployRiskFactor) &&
+    count(unreadableFactors) &&
+    (failAt === null || failAt === "elevated" || failAt === "high") &&
+    typeof verdictEscalated === "boolean"
+  );
+}
+
 export function parseDeployPreflight(v: unknown): DeployPreflightResult | null {
   if (!isObj(v)) return null;
   const verdict = v["verdict"];
@@ -232,6 +396,7 @@ export function parseDeployPreflight(v: unknown): DeployPreflightResult | null {
   const ci = parseCheck(checks["failing_ci_runs"], parseCi);
   const conflicts = parseCheck(checks["merge_conflicts"], parsePr);
   if (incidents === null || ci === null || conflicts === null) return null;
+  const risk = parseDeployRisk(v["risk"]);
   return {
     service: v["service"],
     target_ref: v["target_ref"],
@@ -242,6 +407,7 @@ export function parseDeployPreflight(v: unknown): DeployPreflightResult | null {
       failing_ci_runs: ci,
       merge_conflicts: conflicts,
     },
+    ...(risk === null ? {} : { risk }),
   };
 }
 
