@@ -341,7 +341,7 @@ export function parseDeployRisk(v: unknown): DeployRisk | null {
   };
 }
 
-const PARSED_RISK_LEVELS: readonly string[] = [...RISK_LEVELS, "unrecognised"];
+const PARSED_RISK_LEVELS: readonly unknown[] = [...RISK_LEVELS, "unrecognised"];
 
 function isDeployRiskFactor(v: unknown): v is DeployRiskFactor {
   if (!isObj(v) || !isObj(v["id"])) return false;
@@ -350,12 +350,15 @@ function isDeployRiskFactor(v: unknown): v is DeployRiskFactor {
     known === true
       ? (RISK_FACTOR_IDS as readonly unknown[]).includes(value)
       : known === false && str(value);
-  return (
-    idOk &&
-    PARSED_RISK_LEVELS.includes(v["level"] as string) &&
-    str(v["evidence"]) &&
-    typeof v["evaluated"] === "boolean"
-  );
+  const { level, evidence, evaluated } = v;
+  // The parser's invariant, enforced here too: an unevaluated factor has no
+  // level. Accepting the pair the parser can never produce is how a guard ends
+  // up narrower in type than at runtime.
+  const levelOk =
+    evaluated === true
+      ? PARSED_RISK_LEVELS.includes(level)
+      : evaluated === false && level === "unknown";
+  return idOk && levelOk && str(evidence);
 }
 
 /**
@@ -370,7 +373,7 @@ export function isDeployRisk(v: unknown): v is DeployRisk {
   if (!isObj(v)) return false;
   const { level, why, factors, unreadableFactors, failAt, verdictEscalated } = v;
   return (
-    PARSED_RISK_LEVELS.includes(level as string) &&
+    PARSED_RISK_LEVELS.includes(level) &&
     str(why) &&
     Array.isArray(factors) &&
     factors.every(isDeployRiskFactor) &&

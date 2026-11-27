@@ -919,11 +919,14 @@ export const PREFLIGHT_WARN_CI = {
  * A clean verdict carrying the advisory `risk` block (C11.1), wire-shaped as
  * `packages/gateway/src/preflight/deploy-risk.ts` builds it: four factors in
  * the gateway's order, one of them NOT evaluated (`known: false`) so the
- * section's "not enough data" wording has something to show. `fail_at: null`,
+ * section's "not enough data" wording has something to show, and one
+ * evidence string carrying a URL, which must render as text, never a link. `fail_at: null`,
  * so the risk cannot change the verdict and the verdict still reads clear.
  */
 export const PREFLIGHT_OK_RISK = {
   ...PREFLIGHT_OK,
+  // The id the e2e binds, so the verdict names the service the test asked about.
+  service: "web-risk",
   risk: {
     level: "elevated",
     why: "Elevated risk, driven by oncall_coverage: nobody is on call now. Not evaluated: time_of_week.",
@@ -940,7 +943,12 @@ export const PREFLIGHT_OK_RISK = {
         evidence: "1 deploy in 24 hours, within the usual pattern",
         known: true,
       },
-      { id: "oncall_coverage", level: "elevated", evidence: "nobody is on call now", known: true },
+      {
+        id: "oncall_coverage",
+        level: "elevated",
+        evidence: "nobody is on call now; see https://status.example/oncall",
+        known: true,
+      },
       { id: "time_of_week", level: "unknown", evidence: "no time zone configured", known: false },
     ],
     advisory: true,
@@ -957,6 +965,7 @@ export const PREFLIGHT_OK_RISK = {
  */
 export const PREFLIGHT_ESCALATED = {
   ...PREFLIGHT_OK,
+  service: "web-escalated",
   verdict: "warn",
   risk: {
     level: "high",

@@ -1414,6 +1414,12 @@ describe("DeployPreflightResponse ok arm", () => {
         id: { known: false, value: "moon_phase" },
         level: "unrecognised",
         evidence: "e",
+        evaluated: true,
+      },
+      {
+        id: { known: true, value: "time_of_week" },
+        level: "unknown",
+        evidence: "no time zone configured",
         evaluated: false,
       },
     ],
@@ -1456,6 +1462,26 @@ describe("DeployPreflightResponse ok arm", () => {
         factors: [{ id: { known: true, value: "system_state" }, level: "low", evidence: "e" }],
       },
     ],
+    [
+      "an unevaluated factor carrying a level",
+      {
+        ...parsedRisk,
+        factors: [
+          {
+            id: { known: true, value: "system_state" },
+            level: "low",
+            evidence: "e",
+            evaluated: false,
+          },
+        ],
+      },
+    ],
+    [
+      "a numeric factor level",
+      { ...parsedRisk, factors: [{ ...parsedRisk.factors[0], level: 1 }] },
+    ],
+    ["null", null],
+    ["a string", "high"],
   ])("rejects a preflight whose parsed risk is %s", (_label, risk) => {
     expect(isDeployPreflightResponse(withParsedRisk(risk))).toBe(false);
   });

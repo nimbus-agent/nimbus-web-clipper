@@ -756,6 +756,17 @@ describe("renderRisk (C11.1)", () => {
     expect(el.querySelector(".nimbus-deploy__risk-unreadable")?.textContent ?? null).toBe(text);
   });
 
+  // Every factor unreadable: the head, the why and the count still say
+  // something, and no empty list is left behind.
+  test("no readable factors renders no list, but still the count", () => {
+    const el = renderRisk(document, risk({ factors: [], unreadableFactors: 4 }));
+    expect(el.querySelector(".nimbus-deploy__risk-factors")).toBeNull();
+    expect(head(el)?.textContent).toBe("Risk right now: high");
+    expect(el.querySelector(".nimbus-deploy__risk-unreadable")?.textContent).toBe(
+      "4 factors could not be read.",
+    );
+  });
+
   test("renderDeployBody without risk renders no risk block", () => {
     const body = renderDeployBody(document, result(), "page");
     expect(body.querySelector(".nimbus-deploy__risk")).toBeNull();

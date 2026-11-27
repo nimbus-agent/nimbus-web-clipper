@@ -178,11 +178,17 @@ test("a preflight carrying risk shows it under a still-clear verdict, as inert t
   );
   try {
     // deploy-risk: advisory — the verdict is the gateway's, and it said ok.
-    await expect(page.locator(".nimbus-deploy__verdict")).toContainText("Clear to deploy");
+    await expect(page.locator(".nimbus-deploy__verdict")).toHaveText(
+      "Clear to deploy web-risk at main.",
+    );
     await expect(page.locator(".nimbus-deploy__risk-head")).toHaveText("Risk right now: elevated");
     const factors = page.locator(".nimbus-deploy__risk-factor");
     await expect(factors).toHaveCount(4);
     await expect(factors.filter({ hasText: "Time of week" })).toContainText("not enough data");
+    // The fixture's on-call evidence carries a URL on purpose: it must stay text.
+    await expect(factors.filter({ hasText: "On-call coverage" })).toContainText(
+      "https://status.example/oncall",
+    );
     await expect(page.locator(".nimbus-deploy__risk a")).toHaveCount(0);
   } finally {
     await h.close();
@@ -196,7 +202,9 @@ test("a verdict the risk escalated names risk, never 0 things", async () => {
   );
   try {
     const verdict = page.locator(".nimbus-deploy__verdict");
-    await expect(verdict).toContainText("deploy risk is high right now");
+    await expect(verdict).toHaveText(
+      "No blockers found for web-escalated, but deploy risk is high right now — your gateway is set to warn at high.",
+    );
     await expect(verdict).not.toContainText("0 things");
   } finally {
     await h.close();
