@@ -5,6 +5,7 @@ import {
   parseServiceResolution,
   RISK_FACTOR_IDS,
   RISK_FACTORS_MAX,
+  RISK_ID_MAX,
   RISK_LEVELS,
   RISK_TEXT_MAX,
   UNRECOGNISED_GAP,
@@ -536,6 +537,21 @@ describe("parseDeployPreflight — risk", () => {
     expect(risk?.factors[1]?.id).toEqual({ known: false, value: "moon_phase" });
   });
 
+  test("an over-long unfamiliar factor id is capped visibly to RISK_ID_MAX", () => {
+    const risk = withRisk(wireRisk({ factors: [wireFactor({ id: "z".repeat(5000) })] }))?.risk;
+    const id = risk?.factors[0]?.id;
+    expect(id?.known).toBe(false);
+    expect(id?.value).toHaveLength(RISK_ID_MAX);
+    expect(id?.value.endsWith("…")).toBe(true);
+  });
+
+  test("an ordinary unfamiliar factor id is kept whole", () => {
+    const id = "deploy_freeze_window";
+    expect(withRisk(wireRisk({ factors: [wireFactor({ id })] }))?.risk?.factors[0]?.id.value).toBe(
+      id,
+    );
+  });
+
   test("malformed factor entries are dropped and counted", () => {
     const risk = withRisk(
       wireRisk({
@@ -590,6 +606,7 @@ describe("parseDeployPreflight — risk", () => {
   test("the caps are the spec's numbers", () => {
     expect(RISK_TEXT_MAX).toBe(500);
     expect(RISK_FACTORS_MAX).toBe(16);
+    expect(RISK_ID_MAX).toBe(64);
   });
 
   test("the vocabularies are the gateway's", () => {

@@ -113,6 +113,8 @@ export interface DeployRisk {
 export const RISK_TEXT_MAX = 500;
 /** Upstream sends four. Only this many RAW entries are examined. */
 export const RISK_FACTORS_MAX = 16;
+/** An unfamiliar factor id is shown as a label; ids upstream are short snake_case. */
+export const RISK_ID_MAX = 64;
 
 export interface IncidentFinding {
   readonly id: string;
@@ -288,8 +290,8 @@ function parseCheck<F>(v: unknown, one: (x: unknown) => F | null): PreflightChec
   return { count: v["count"], findings, gap };
 }
 
-function capText(v: string): string {
-  return v.length > RISK_TEXT_MAX ? `${v.slice(0, RISK_TEXT_MAX - 1)}…` : v;
+function capText(v: string, max: number = RISK_TEXT_MAX): string {
+  return v.length > max ? `${v.slice(0, max - 1)}…` : v;
 }
 
 function parseRiskLevel(v: string): ParsedRiskLevel {
@@ -303,7 +305,7 @@ function parseRiskFactor(v: unknown): DeployRiskFactor | null {
   return {
     id: (RISK_FACTOR_IDS as readonly string[]).includes(id)
       ? { known: true, value: id as RiskFactorId }
-      : { known: false, value: id },
+      : { known: false, value: capText(id, RISK_ID_MAX) },
     // Never trust the pair to agree: an unevaluated factor has no level.
     level: known ? parseRiskLevel(level) : "unknown",
     evidence: capText(evidence),
@@ -349,7 +351,7 @@ function isDeployRiskFactor(v: unknown): v is DeployRiskFactor {
   const idOk =
     known === true
       ? (RISK_FACTOR_IDS as readonly unknown[]).includes(value)
-      : known === false && str(value);
+      : known === false && str(value) && value.length <= RISK_ID_MAX;
   const { level, evidence, evaluated } = v;
   // The parser's invariant, enforced here too: an unevaluated factor has no
   // level. Accepting the pair the parser can never produce is how a guard ends

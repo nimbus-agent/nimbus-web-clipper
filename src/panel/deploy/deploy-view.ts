@@ -55,6 +55,13 @@ function totalCount(r: DeployPreflightResult): number {
   return active_p1_incidents.count + failing_ci_runs.count + merge_conflicts.count;
 }
 
+function someCheckGapped(r: DeployPreflightResult): boolean {
+  const { active_p1_incidents, failing_ci_runs, merge_conflicts } = r.checks;
+  return (
+    active_p1_incidents.gap !== null || failing_ci_runs.gap !== null || merge_conflicts.gap !== null
+  );
+}
+
 function everyCheckGapped(r: DeployPreflightResult): boolean {
   const { active_p1_incidents, failing_ci_runs, merge_conflicts } = r.checks;
   return (
@@ -95,7 +102,9 @@ function escalationLine(r: DeployPreflightResult, risk: DeployRisk, basis: RefBa
  * reached it, so the gateway turned a clean `ok` into `warn` and said so in
  * `risk.verdictEscalated`. The arms run in a fixed order — counted problems,
  * then every-check-gapped, then escalation — because "no blockers found" is a
- * claim about checks, and it is only true when they ran and found nothing. A
+ * claim about checks, and it is only true when they ran and found nothing.
+ * After escalation, a gap on SOME checks reads "could not fully evaluate" —
+ * the reason is the gap note right below. A
  * `warn` with none of those reasons readable gets its own sentence: the
  * "0 things to look at" line this used to fall through to can no longer be
  * produced.
@@ -119,6 +128,9 @@ export function verdictLine(r: DeployPreflightResult, basis: RefBasis): string {
   }
   if (r.risk?.verdictEscalated === true) {
     return escalationLine(r, r.risk, basis);
+  }
+  if (someCheckGapped(r)) {
+    return `Could not fully evaluate ${r.service} — see below.`;
   }
   return `Nimbus says to wait before deploying ${r.service}, but sent no reason this version can read.`;
 }

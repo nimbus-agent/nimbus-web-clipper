@@ -2276,8 +2276,9 @@ not rewritten, not parsed, never linked.
 **The verdict is the gateway's.** The client never derives a verdict from the
 risk. When `verdict_escalated` is true the gateway has already turned a clean
 `ok` into `warn`, and `verdictLine` says so. Its arms run in a fixed order —
-`ok`, then counted problems, then every-check-gapped, then escalation, then a
-"sent no reason this version can read" line — because "no blockers found" is a
+`ok`, then counted problems, then every-check-gapped, then escalation, then
+some-check-gapped ("could not fully evaluate"), then a "sent no reason this
+version can read" line — because "no blockers found" is a
 claim about checks and is only true when they ran clean. The old fall-through,
 "0 things to look at before deploying", can no longer be produced.
 

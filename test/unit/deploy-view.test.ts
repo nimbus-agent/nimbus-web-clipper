@@ -200,6 +200,31 @@ describe("verdictLine — risk escalation (C11.1)", () => {
     expect(line(r, "page")).toBe("Could not evaluate web — see below.");
   });
 
+  // A readable gap on SOME checks is a reason, shown right below — the
+  // no-readable-reason line would contradict it.
+  test("a partial gap with nothing counted says it could not fully evaluate", () => {
+    const r = result({
+      verdict: "warn",
+      checks: {
+        ...clean,
+        active_p1_incidents: { count: 0, findings: [], gap: "no_pagerduty_mapping" },
+      },
+    });
+    expect(line(r, "page")).toBe("Could not fully evaluate web — see below.");
+  });
+
+  test("escalation still wins over a partial gap", () => {
+    const r = result({
+      verdict: "warn",
+      checks: {
+        ...clean,
+        active_p1_incidents: { count: 0, findings: [], gap: "no_pagerduty_mapping" },
+      },
+      risk: risk(),
+    });
+    expect(line(r, "page")).toMatch(/^No blockers found for web, but deploy risk is high/);
+  });
+
   test("a warn with nothing counted and no risk says no readable reason", () => {
     expect(line(result({ verdict: "warn", checks: clean }), "page")).toBe(
       "Nimbus says to wait before deploying web, but sent no reason this version can read.",

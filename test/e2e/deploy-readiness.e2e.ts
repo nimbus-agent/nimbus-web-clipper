@@ -156,19 +156,26 @@ test("a bound repo with a failing CI run shows that finding as a link", async ()
 /** The bound-repo recipe the `web-ci` test uses, for a service id of the caller's. */
 async function openBoundPr(scenario: Scenario, serviceId: string) {
   const h = await launchExtension({ scenario });
-  await seedSelfHostedGithub(h);
-  await h.sw.evaluate(
-    async ({ origin, serviceId }) => {
-      await chrome.storage.local.set({
-        serviceBindings: [{ product: "github", origin, scope: "acme/web", serviceId }],
-      });
-    },
-    { origin: h.origin, serviceId },
-  );
-  const page = await h.context.newPage();
-  const url = await gotoRecognisedPage(page, h.origin, PR_PATH);
-  await togglePanel(h.sw, url);
-  return { h, page };
+  // Until the caller's try/finally owns `h`, a failed setup step must close it
+  // here, or the browser context and mock server outlive the test.
+  try {
+    await seedSelfHostedGithub(h);
+    await h.sw.evaluate(
+      async ({ origin, serviceId }) => {
+        await chrome.storage.local.set({
+          serviceBindings: [{ product: "github", origin, scope: "acme/web", serviceId }],
+        });
+      },
+      { origin: h.origin, serviceId },
+    );
+    const page = await h.context.newPage();
+    const url = await gotoRecognisedPage(page, h.origin, PR_PATH);
+    await togglePanel(h.sw, url);
+    return { h, page };
+  } catch (err) {
+    await h.close();
+    throw err;
+  }
 }
 
 test("a preflight carrying risk shows it under a still-clear verdict, as inert text", async () => {

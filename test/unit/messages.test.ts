@@ -1480,6 +1480,13 @@ describe("DeployPreflightResponse ok arm", () => {
       "a numeric factor level",
       { ...parsedRisk, factors: [{ ...parsedRisk.factors[0], level: 1 }] },
     ],
+    [
+      "an unfamiliar factor id past the cap",
+      {
+        ...parsedRisk,
+        factors: [{ ...parsedRisk.factors[0], id: { known: false, value: "z".repeat(65) } }],
+      },
+    ],
     ["null", null],
     ["a string", "high"],
   ])("rejects a preflight whose parsed risk is %s", (_label, risk) => {
