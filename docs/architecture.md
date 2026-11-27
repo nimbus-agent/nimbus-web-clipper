@@ -2209,9 +2209,11 @@ noise rather than a missing feature.
 ### The `warn` rule: a zero count with a gap is not "all clear"
 
 `PreflightVerdict` has two values, `"ok" | "warn"` — there is no third. `warn`
-is returned both for "found problems" and for "could not evaluate", because it
+is returned for "found problems" and for "could not evaluate", because it
 is the only value that fails closed in every consumer old and new; the reason
-travels in each check's `gap` instead. So **`count: 0` with `gap:
+travels in each check's `gap` instead. (Since C11.1 it has a third meaning —
+"the deploy risk reached the owner's threshold" — covered in the next
+section.) So **`count: 0` with `gap:
 "unknown_service"` (or any other gap) on a check means "could not evaluate" —
 never "all clear", and never "0 problems found".** `verdictLine`
 (`src/panel/deploy/deploy-view.ts`) renders the gap sentence, never the bare
@@ -2235,6 +2237,41 @@ a newer vocabulary, and still rejects the check. `GAP_NOTE` carries a sentence
 for the unrecognised member like any other, because a gapped check that says
 nothing renders as a bare label under a zero — the "all clear" this whole rule
 exists to prevent.
+
+### The risk block is advisory, and parsed to fail soft (C11.1)
+
+The same `GET /v1/preflight/deploy` answer can carry an optional `risk` block
+(upstream `packages/gateway/src/preflight/deploy-risk.ts`): a level, a
+one-line `why`, four factors with their evidence, the owner's
+`[preflight.risk] fail_at`, and `verdict_escalated`. It rides the response the
+worker already fetches and is parsed inside `parseDeployPreflight`, which the
+panel's message guard `isDeployPreflightResponse` also runs — so there is no
+second fetch, message kind or guard to keep in step.
+
+**A bad advisory never costs the verdict.** `parseDeployRisk` returning `null`
+makes the member *absent*, never the envelope `null`. The split is the gap
+rule's: a value of the wrong *type* is a broken shape and rejects (the whole
+block, or that one factor, which is counted in `unreadableFactors` so the view
+can say "N factors could not be read"); an unfamiliar *string* is a newer
+vocabulary and degrades visibly — a level becomes the client-only
+`"unrecognised"`, a factor id is kept as `{ known: false, value }` and shown
+as "Other factor". A factor whose wire `known` is false is forced to
+`"unknown"` whatever level it claims. Text is capped at `RISK_TEXT_MAX` and
+only the first `RISK_FACTORS_MAX` raw entries are read.
+
+**`unknown` never reads as clear.** It renders as "not enough data", in the
+muted tone; `low` renders in the plain body colour, deliberately not the
+verdict's `--ok` accent, so a low risk is never a second green light. The
+gateway's `why` and evidence are rendered verbatim through `textContent` —
+not rewritten, not parsed, never linked.
+
+**The verdict is the gateway's.** The client never derives a verdict from the
+risk. When `verdict_escalated` is true the gateway has already turned a clean
+`ok` into `warn`, and `verdictLine` says so. Its arms run in a fixed order —
+`ok`, then counted problems, then every-check-gapped, then escalation, then a
+"sent no reason this version can read" line — because "no blockers found" is a
+claim about checks and is only true when they ran clean. The old fall-through,
+"0 things to look at before deploying", can no longer be produced.
 
 ### The DORA page: a headline from `/dora`, a trend from `/stats`
 
