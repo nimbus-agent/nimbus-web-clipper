@@ -10,7 +10,7 @@ import {
   renderSectionFrame,
   verdictLine,
 } from "../../src/panel/deploy/deploy-view.ts";
-import type { DeployPreflightResult } from "../../src/shared/deploy.ts";
+import type { DeployPreflightResult, DeployRisk } from "../../src/shared/deploy.ts";
 import { PREFLIGHT_GAPS, UNRECOGNISED_GAP } from "../../src/shared/deploy.ts";
 
 const result = (over: Partial<DeployPreflightResult> = {}): DeployPreflightResult =>
@@ -93,6 +93,120 @@ describe("verdictLine", () => {
       "page",
     );
     expect(line).toMatch(/3/);
+  });
+});
+
+const risk = (over: Partial<DeployRisk> = {}): DeployRisk => ({
+  level: "high",
+  why: "High risk, driven by change_velocity: 5 deploys in 24 hours.",
+  factors: [
+    {
+      id: { known: true, value: "system_state" },
+      level: "low",
+      evidence: "clear",
+      evaluated: true,
+    },
+    {
+      id: { known: true, value: "change_velocity" },
+      level: "high",
+      evidence: "5 in 24h",
+      evaluated: true,
+    },
+    {
+      id: { known: true, value: "oncall_coverage" },
+      level: "low",
+      evidence: "covered",
+      evaluated: true,
+    },
+    {
+      id: { known: true, value: "time_of_week" },
+      level: "low",
+      evidence: "weekday",
+      evaluated: true,
+    },
+  ],
+  unreadableFactors: 0,
+  failAt: "high",
+  verdictEscalated: true,
+  ...over,
+});
+
+const clean = {
+  active_p1_incidents: { count: 0, findings: [], gap: null },
+  failing_ci_runs: { count: 0, findings: [], gap: null },
+  merge_conflicts: { count: 0, findings: [], gap: null },
+} as const;
+
+const escalated = (over: Partial<DeployRisk> = {}) =>
+  result({ verdict: "warn", checks: clean, risk: risk(over) });
+
+describe("verdictLine — risk escalation (C11.1)", () => {
+  const lines: string[] = [];
+  const line = (r: DeployPreflightResult, basis: "page" | "default_branch" | "none") => {
+    const out = verdictLine(r, basis);
+    lines.push(out);
+    return out;
+  };
+
+  test.each(["page", "default_branch"] as const)("escalated with basis %s names risk", (basis) => {
+    expect(line(escalated(), basis)).toBe(
+      "No blockers found for web, but deploy risk is high right now — your gateway is set to warn at high.",
+    );
+  });
+
+  test("escalated with basis none still says CI was not checked", () => {
+    expect(line(escalated(), "none")).toBe(
+      "No blockers found for web, but CI was not checked, and deploy risk is high right now — your gateway is set to warn at high.",
+    );
+  });
+
+  test("escalated with no failAt says it warns on risk, never a blank", () => {
+    expect(line(escalated({ failAt: null }), "page")).toMatch(
+      /— your gateway is set to warn on risk\.$/,
+    );
+  });
+
+  test.each(["unknown", "unrecognised"] as const)(
+    "escalated at level %s says risk could not be read",
+    (level) => {
+      expect(line(escalated({ level }), "page")).toContain("deploy risk could not be read");
+    },
+  );
+
+  test("counted problems win over escalation", () => {
+    const r = result({
+      verdict: "warn",
+      checks: { ...clean, failing_ci_runs: { count: 2, findings: [], gap: null } },
+      risk: risk(),
+    });
+    expect(line(r, "page")).toBe("2 things to look at before deploying web.");
+  });
+
+  test("every check gapped wins over escalation", () => {
+    const gapped = { count: 0, findings: [], gap: "no_repos" } as const;
+    const r = result({
+      verdict: "warn",
+      checks: { active_p1_incidents: gapped, failing_ci_runs: gapped, merge_conflicts: gapped },
+      risk: risk(),
+    });
+    expect(line(r, "page")).toBe("Could not evaluate web — see below.");
+  });
+
+  test("a warn with nothing counted and no risk says no readable reason", () => {
+    expect(line(result({ verdict: "warn", checks: clean }), "page")).toBe(
+      "Nimbus says to wait before deploying web, but sent no reason this version can read.",
+    );
+  });
+
+  test("a warn with nothing counted and an unescalated risk says the same", () => {
+    expect(line(escalated({ verdictEscalated: false }), "page")).toBe(
+      "Nimbus says to wait before deploying web, but sent no reason this version can read.",
+    );
+  });
+
+  test("no arm ever says 0 things", () => {
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) expect(l).not.toMatch(/^0 things/);
   });
 });
 

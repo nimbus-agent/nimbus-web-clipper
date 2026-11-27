@@ -2,7 +2,13 @@
 // The pure renderer for the deploy-readiness section (C10). No chrome.*, no
 // fetch, no DOM outside the fragment it returns — so it is unit-testable in
 // jsdom, like every other view in this folder.
-import type { DeployPreflightResult, PreflightGap, RefBasis } from "../../shared/deploy.ts";
+import type {
+  DeployPreflightResult,
+  DeployRisk,
+  ParsedRiskLevel,
+  PreflightGap,
+  RefBasis,
+} from "../../shared/deploy.ts";
 import type { ServiceResolutionOutcome } from "../../shared/messages.ts";
 import { scopeCommand } from "../../shared/scope-command.ts";
 import { MAX_SERVICE_ID_LEN } from "../../shared/services.ts";
@@ -55,17 +61,46 @@ function everyCheckGapped(r: DeployPreflightResult): boolean {
 }
 
 /**
- * `warn` carries TWO meanings and they must never be rendered the same way.
+ * How the risk reads INSIDE the escalation sentence. The head line's labels
+ * ("not enough data") do not read after "deploy risk is", so the two
+ * non-levels get their own phrase. Upstream never escalates on `unknown`
+ * (`reachesFailAt`), so those two are contradictory payloads — say something
+ * true anyway.
+ */
+const ESCALATED_RISK_PHRASE: Record<ParsedRiskLevel, string> = {
+  low: "deploy risk is low right now",
+  elevated: "deploy risk is elevated right now",
+  high: "deploy risk is high right now",
+  unknown: "deploy risk could not be read",
+  unrecognised: "deploy risk could not be read",
+};
+
+function escalationLine(r: DeployPreflightResult, risk: DeployRisk, basis: RefBasis): string {
+  const ci = basis === "none" ? ", but CI was not checked, and " : ", but ";
+  const threshold = risk.failAt === null ? "on risk" : `at ${risk.failAt}`;
+  return `No blockers found for ${r.service}${ci}${ESCALATED_RISK_PHRASE[risk.level]} — your gateway is set to warn ${threshold}.`;
+}
+
+/**
+ * `warn` carries THREE meanings and they must never be rendered the same way.
  *
- * Upstream returns `warn` both for "found problems" and for "could not
- * evaluate", because `warn` is the only value that fails closed in every
- * consumer; the reason travels in the gap instead. So a zero count with gaps
- * everywhere is "could not evaluate" — never "all clear", and never "0 problems
- * found".
+ * Upstream returns `warn` for "found problems" and for "could not evaluate",
+ * because `warn` is the only value that fails closed in every consumer; the
+ * reason travels in the gap instead. So a zero count with gaps everywhere is
+ * "could not evaluate" — never "all clear", and never "0 problems found".
+ *
+ * The third (C11.1): the owner set `[preflight.risk] fail_at` and the risk
+ * reached it, so the gateway turned a clean `ok` into `warn` and said so in
+ * `risk.verdictEscalated`. The arms run in a fixed order — counted problems,
+ * then every-check-gapped, then escalation — because "no blockers found" is a
+ * claim about checks, and it is only true when they ran and found nothing. A
+ * `warn` with none of those reasons readable gets its own sentence: the
+ * "0 things to look at" line this used to fall through to can no longer be
+ * produced.
  *
  * `ok` with `basis: "none"` is the same failure from the other side: the gateway
  * looked for failing runs on the literal `HEAD`, which no branch is called, so
- * its `ok` cannot be repeated as "clear".
+ * its `ok` cannot be repeated as "clear". Escalation repeats that caveat.
  */
 export function verdictLine(r: DeployPreflightResult, basis: RefBasis): string {
   if (r.verdict === "ok") {
@@ -74,10 +109,16 @@ export function verdictLine(r: DeployPreflightResult, basis: RefBasis): string {
       : `Clear to deploy ${r.service} at ${r.target_ref}.`;
   }
   const total = totalCount(r);
-  if (total === 0 && everyCheckGapped(r)) {
+  if (total > 0) {
+    return `${total} thing${total === 1 ? "" : "s"} to look at before deploying ${r.service}.`;
+  }
+  if (everyCheckGapped(r)) {
     return `Could not evaluate ${r.service} — see below.`;
   }
-  return `${total} thing${total === 1 ? "" : "s"} to look at before deploying ${r.service}.`;
+  if (r.risk?.verdictEscalated === true) {
+    return escalationLine(r, r.risk, basis);
+  }
+  return `Nimbus says to wait before deploying ${r.service}, but sent no reason this version can read.`;
 }
 
 /**
