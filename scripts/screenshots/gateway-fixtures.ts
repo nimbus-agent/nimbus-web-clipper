@@ -916,6 +916,79 @@ export const PREFLIGHT_WARN_CI = {
 } as const;
 
 /**
+ * A clean verdict carrying the advisory `risk` block (C11.1), wire-shaped as
+ * `packages/gateway/src/preflight/deploy-risk.ts` builds it: four factors in
+ * the gateway's order, one of them NOT evaluated (`known: false`) so the
+ * section's "not enough data" wording has something to show. `fail_at: null`,
+ * so the risk cannot change the verdict and the verdict still reads clear.
+ */
+export const PREFLIGHT_OK_RISK = {
+  ...PREFLIGHT_OK,
+  risk: {
+    level: "elevated",
+    why: "Elevated risk, driven by oncall_coverage: nobody is on call now. Not evaluated: time_of_week.",
+    factors: [
+      {
+        id: "system_state",
+        level: "low",
+        evidence: "PagerDuty and JSM are fresh; nothing is open",
+        known: true,
+      },
+      {
+        id: "change_velocity",
+        level: "low",
+        evidence: "1 deploy in 24 hours, within the usual pattern",
+        known: true,
+      },
+      { id: "oncall_coverage", level: "elevated", evidence: "nobody is on call now", known: true },
+      { id: "time_of_week", level: "unknown", evidence: "no time zone configured", known: false },
+    ],
+    advisory: true,
+    fail_at: null,
+    verdict_escalated: false,
+  },
+} as const;
+
+/**
+ * The escalation case: every check clean, but the owner set `[preflight.risk]
+ * fail_at = "high"` and the risk reached it, so the gateway turned `ok` into
+ * `warn` (`preflight.ts`). The verdict line must name risk as the reason — the
+ * pre-C11.1 client rendered this as "0 things to look at".
+ */
+export const PREFLIGHT_ESCALATED = {
+  ...PREFLIGHT_OK,
+  verdict: "warn",
+  risk: {
+    level: "high",
+    why: "High risk, driven by change_velocity: 6 deploys in 24 hours against a baseline of 1.0 a day.",
+    factors: [
+      {
+        id: "system_state",
+        level: "low",
+        evidence: "PagerDuty and JSM are fresh; nothing is open",
+        known: true,
+      },
+      {
+        id: "change_velocity",
+        level: "high",
+        evidence: "6 deploys in 24 hours against a baseline of 1.0 a day",
+        known: true,
+      },
+      { id: "oncall_coverage", level: "low", evidence: "2 people on call now", known: true },
+      {
+        id: "time_of_week",
+        level: "low",
+        evidence: "Tuesday 10:00, outside every quiet window",
+        known: true,
+      },
+    ],
+    advisory: true,
+    fail_at: "high",
+    verdict_escalated: true,
+  },
+} as const;
+
+/**
  * The `unconfiguredEnvelope` shape upstream sends for a service id it has never
  * heard of (`preflight-rpc.ts`): `verdict: "warn"`, `count: 0` on every check,
  * `gap: "unknown_service"` on all three — what `isUnknownService`

@@ -24,6 +24,15 @@
  * service renders a candidate button per service, and clicking one rewrites
  * the input to that candidate.
  *
+ * COVERS `deploy-risk` (C11.1): a preflight carrying the advisory `risk` block
+ * renders it under the checks — the head line, one row per factor, an
+ * unevaluated factor as "not enough data" — with the verdict still clear (the
+ * risk is advisory; `fail_at: null` means it cannot change the verdict), and
+ * no link anywhere in the block.
+ *
+ * COVERS `deploy-risk-escalated` (C11.1): a `warn` the risk escalated, with
+ * every check clean, names risk as the reason — never "0 things to look at".
+ *
  * What this suite does NOT prove: a real gateway's preflight answer, nor a
  * real `services/resolve` answer. It drives the mock, which answers whatever
  * fixture a scenario hands it — same caveat `item-links.e2e.ts` and
@@ -31,7 +40,12 @@
  */
 import { expect, test } from "@playwright/test";
 import { launchExtension } from "../../scripts/e2e/launch.ts";
-import { PREFLIGHT_WARN_CI, type Scenario } from "../../scripts/screenshots/gateway-fixtures.ts";
+import {
+  PREFLIGHT_ESCALATED,
+  PREFLIGHT_OK_RISK,
+  PREFLIGHT_WARN_CI,
+  type Scenario,
+} from "../../scripts/screenshots/gateway-fixtures.ts";
 import { gotoRecognisedPage, togglePanel } from "./helpers.ts";
 
 export const COVERS = [
@@ -39,6 +53,8 @@ export const COVERS = [
   "deploy-verdict",
   "c10-3-bind-seeded",
   "c10-3-bind-ambiguous",
+  "deploy-risk",
+  "deploy-risk-escalated",
 ] as const;
 
 /** `/{owner}/{repo}/pull/{num}` — githubRule's PR arm, which is what supplies
@@ -132,6 +148,56 @@ test("a bound repo with a failing CI run shows that finding as a link", async ()
     // clickable link — its title, not the raw url, is the link text.
     const finding = page.locator(".nimbus-deploy__check a", { hasText: "build" });
     await expect(finding).toHaveAttribute("href", "https://github.com/acme/web/actions/runs/1");
+  } finally {
+    await h.close();
+  }
+});
+
+/** The bound-repo recipe the `web-ci` test uses, for a service id of the caller's. */
+async function openBoundPr(scenario: Scenario, serviceId: string) {
+  const h = await launchExtension({ scenario });
+  await seedSelfHostedGithub(h);
+  await h.sw.evaluate(
+    async ({ origin, serviceId }) => {
+      await chrome.storage.local.set({
+        serviceBindings: [{ product: "github", origin, scope: "acme/web", serviceId }],
+      });
+    },
+    { origin: h.origin, serviceId },
+  );
+  const page = await h.context.newPage();
+  const url = await gotoRecognisedPage(page, h.origin, PR_PATH);
+  await togglePanel(h.sw, url);
+  return { h, page };
+}
+
+test("a preflight carrying risk shows it under a still-clear verdict, as inert text", async () => {
+  const { h, page } = await openBoundPr(
+    { preflight: { "web-risk": PREFLIGHT_OK_RISK } },
+    "web-risk",
+  );
+  try {
+    // deploy-risk: advisory — the verdict is the gateway's, and it said ok.
+    await expect(page.locator(".nimbus-deploy__verdict")).toContainText("Clear to deploy");
+    await expect(page.locator(".nimbus-deploy__risk-head")).toHaveText("Risk right now: elevated");
+    const factors = page.locator(".nimbus-deploy__risk-factor");
+    await expect(factors).toHaveCount(4);
+    await expect(factors.filter({ hasText: "Time of week" })).toContainText("not enough data");
+    await expect(page.locator(".nimbus-deploy__risk a")).toHaveCount(0);
+  } finally {
+    await h.close();
+  }
+});
+
+test("a verdict the risk escalated names risk, never 0 things", async () => {
+  const { h, page } = await openBoundPr(
+    { preflight: { "web-escalated": PREFLIGHT_ESCALATED } },
+    "web-escalated",
+  );
+  try {
+    const verdict = page.locator(".nimbus-deploy__verdict");
+    await expect(verdict).toContainText("deploy risk is high right now");
+    await expect(verdict).not.toContainText("0 things");
   } finally {
     await h.close();
   }

@@ -666,7 +666,7 @@ mock-gateway` makes step 1 reproducible.
 
 ## Manual verification — Deploy readiness (C10)
 
-**Every numbered step but the last runs on every PR**
+**Every numbered step except 4 and 6 runs on every PR**
 (`test/e2e/deploy-readiness.e2e.ts`), so this pass is not outstanding for the
 client half. What it cannot prove is a real `GET /v1/preflight/deploy` answer
 — the mock returns exactly the fixture a scenario hands it, never a real
@@ -716,6 +716,22 @@ keeps its guess until the owner grants it.
    items carry no `metadata.branch` today, and that route now refuses this
    client's tokenless read. The mock's `GET /v1/items/{id}` fixture answers both
    as if neither were true, so only a real gateway can show this.
+5. <!-- e2e:deploy-risk --> <!-- e2e:deploy-risk-escalated --> (C11.1) On a
+   gateway whose preflight answer carries the advisory `risk` block — there is
+   no version floor; the block's presence is the signal, and an answer without
+   it renders exactly as before — the section shows **Risk right now:**
+   with the level, the gateway's reason verbatim, and one row per factor under
+   the three checks. A factor the gateway could not evaluate reads "not enough
+   data", never "low", and nothing in the block is a link. The verdict above it
+   is unchanged by the risk, except when the gateway escalated it: a `warn` with
+   every check clean then reads "No blockers found for `<id>`, but deploy risk
+   is … right now — your gateway is set to warn at …", never "0 things to look
+   at".
+6. **(human — needs a real gateway.)** Set `[preflight.risk] fail_at = "elevated"`
+   in the gateway's `nimbus.toml`, open a pull request on a bound repo, and
+   confirm a real risk block renders with four factors; on a moment the gateway
+   scores elevated or higher with clean checks, confirm the verdict names risk.
+   The mock serves the fixture it is handed and never computes a risk.
 
 ## Manual verification — Delivery metrics (C10.2)
 
