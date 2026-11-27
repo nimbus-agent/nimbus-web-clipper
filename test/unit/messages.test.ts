@@ -1397,6 +1397,15 @@ describe("DeployPreflightResponse ok arm", () => {
     expect(isDeployPreflightResponse(ok(basis))).toBe(true);
   });
 
+  // A bad advisory never costs the verdict at the message boundary either: the
+  // guard runs the same parser, which omits the block rather than failing.
+  test("accepts a preflight whose risk block is malformed", () => {
+    const base = ok("page");
+    expect(
+      isDeployPreflightResponse({ ...base, preflight: { ...base.preflight, risk: { level: 3 } } }),
+    ).toBe(true);
+  });
+
   // A verdict that cannot say what it checked must not render as if it could.
   test.each([undefined, "", "invented", 1, null])("rejects refBasis %s", (basis) => {
     expect(isDeployPreflightResponse(ok(basis))).toBe(false);

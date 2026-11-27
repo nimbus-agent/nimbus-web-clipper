@@ -3,6 +3,10 @@ import {
   isUnknownService,
   parseDeployPreflight,
   parseServiceResolution,
+  RISK_FACTOR_IDS,
+  RISK_FACTORS_MAX,
+  RISK_LEVELS,
+  RISK_TEXT_MAX,
   UNRECOGNISED_GAP,
 } from "../../src/shared/deploy.ts";
 import { MAX_SERVICE_ID_LEN } from "../../src/shared/services.ts";
@@ -439,5 +443,162 @@ describe("parseServiceResolution", () => {
     expect(parseServiceResolution({ service: null, ambiguous: "no", candidates: [] })).toBeNull();
     expect(parseServiceResolution({ service: null, ambiguous: false, candidates: {} })).toBeNull();
     expect(parseServiceResolution({ service: null, ambiguous: false })).toBeNull();
+  });
+});
+
+const wireFactor = (over: Record<string, unknown> = {}) => ({
+  id: "system_state",
+  level: "low",
+  evidence: "PagerDuty and JSM fresh, nothing open",
+  known: true,
+  ...over,
+});
+
+const wireRisk = (over: Record<string, unknown> = {}) => ({
+  level: "elevated",
+  why: "Elevated risk, driven by oncall_coverage: nobody is on call now.",
+  factors: [
+    wireFactor(),
+    wireFactor({ id: "change_velocity" }),
+    wireFactor({ id: "oncall_coverage", level: "elevated", evidence: "nobody is on call now" }),
+    wireFactor({ id: "time_of_week" }),
+  ],
+  advisory: true,
+  fail_at: "high",
+  verdict_escalated: false,
+  ...over,
+});
+
+const withRisk = (risk: unknown) => parseDeployPreflight(envelope({ risk }));
+
+describe("parseDeployPreflight — risk", () => {
+  test("an envelope without risk has no risk key", () => {
+    const r = parseDeployPreflight(envelope());
+    expect(r).not.toBeNull();
+    expect(r !== null && "risk" in r).toBe(false);
+  });
+
+  test("a well-formed block is parsed", () => {
+    const risk = withRisk(wireRisk())?.risk;
+    expect(risk?.level).toBe("elevated");
+    expect(risk?.why).toBe("Elevated risk, driven by oncall_coverage: nobody is on call now.");
+    expect(risk?.factors.map((f) => f.id)).toEqual([
+      { known: true, value: "system_state" },
+      { known: true, value: "change_velocity" },
+      { known: true, value: "oncall_coverage" },
+      { known: true, value: "time_of_week" },
+    ]);
+    expect(risk?.factors[2]).toEqual({
+      id: { known: true, value: "oncall_coverage" },
+      level: "elevated",
+      evidence: "nobody is on call now",
+      evaluated: true,
+    });
+    expect(risk?.failAt).toBe("high");
+    expect(risk?.verdictEscalated).toBe(false);
+    expect(risk?.unreadableFactors).toBe(0);
+  });
+
+  // A bad advisory never costs the verdict: the block goes, the envelope stays.
+  test.each([
+    ["not an object", "x"],
+    ["an array", []],
+    ["a numeric level", wireRisk({ level: 3 })],
+    ["a numeric why", wireRisk({ why: 1 })],
+    ["factors not an array", wireRisk({ factors: {} })],
+    ["a string verdict_escalated", wireRisk({ verdict_escalated: "yes" })],
+  ])("%s omits risk but keeps the verdict", (_label, risk) => {
+    const r = withRisk(risk);
+    expect(r?.verdict).toBe("ok");
+    expect(r !== null && "risk" in r).toBe(false);
+  });
+
+  test("an unfamiliar level string degrades to unrecognised, overall and per factor", () => {
+    const risk = withRisk(
+      wireRisk({ level: "catastrophic", factors: [wireFactor({ level: "dire" })] }),
+    )?.risk;
+    expect(risk?.level).toBe("unrecognised");
+    expect(risk?.factors[0]?.level).toBe("unrecognised");
+  });
+
+  test("known:false forces unknown whatever level the factor claims", () => {
+    const risk = withRisk(
+      wireRisk({ factors: [wireFactor({ known: false, level: "low" })] }),
+    )?.risk;
+    expect(risk?.factors[0]?.level).toBe("unknown");
+    expect(risk?.factors[0]?.evaluated).toBe(false);
+  });
+
+  test("an unfamiliar factor id is kept, in order", () => {
+    const risk = withRisk(
+      wireRisk({ factors: [wireFactor(), wireFactor({ id: "moon_phase" })] }),
+    )?.risk;
+    expect(risk?.factors[1]?.id).toEqual({ known: false, value: "moon_phase" });
+  });
+
+  test("malformed factor entries are dropped and counted", () => {
+    const risk = withRisk(
+      wireRisk({
+        factors: [
+          null,
+          wireFactor({ id: 1 }),
+          wireFactor({ level: 2 }),
+          wireFactor({ evidence: null }),
+          wireFactor({ known: "no" }),
+          wireFactor(),
+        ],
+      }),
+    )?.risk;
+    expect(risk?.factors).toHaveLength(1);
+    expect(risk?.unreadableFactors).toBe(5);
+  });
+
+  test.each([["low"], [7], [null], [undefined]])("fail_at %s parses as null", (failAt) => {
+    expect(withRisk(wireRisk({ fail_at: failAt }))?.risk?.failAt).toBeNull();
+  });
+
+  test("fail_at elevated is kept", () => {
+    expect(withRisk(wireRisk({ fail_at: "elevated" }))?.risk?.failAt).toBe("elevated");
+  });
+
+  test("advisory is not required", () => {
+    const { advisory: _gone, ...rest } = wireRisk();
+    expect(withRisk(rest)?.risk?.level).toBe("elevated");
+  });
+
+  test("over-long why and evidence are truncated visibly to RISK_TEXT_MAX", () => {
+    const long = "x".repeat(600);
+    const risk = withRisk(wireRisk({ why: long, factors: [wireFactor({ evidence: long })] }))?.risk;
+    expect(risk?.why).toHaveLength(RISK_TEXT_MAX);
+    expect(risk?.why.endsWith("…")).toBe(true);
+    expect(risk?.factors[0]?.evidence).toHaveLength(RISK_TEXT_MAX);
+    expect(risk?.factors[0]?.evidence.endsWith("…")).toBe(true);
+  });
+
+  test("a text exactly at the cap is left alone", () => {
+    const exact = "y".repeat(RISK_TEXT_MAX);
+    expect(withRisk(wireRisk({ why: exact }))?.risk?.why).toBe(exact);
+  });
+
+  test("only the first RISK_FACTORS_MAX raw entries are read; the rest are counted", () => {
+    const many = Array.from({ length: 20 }, () => wireFactor());
+    const risk = withRisk(wireRisk({ factors: many }))?.risk;
+    expect(risk?.factors).toHaveLength(RISK_FACTORS_MAX);
+    expect(risk?.unreadableFactors).toBe(20 - RISK_FACTORS_MAX);
+  });
+
+  test("the caps are the spec's numbers", () => {
+    expect(RISK_TEXT_MAX).toBe(500);
+    expect(RISK_FACTORS_MAX).toBe(16);
+  });
+
+  test("the vocabularies are the gateway's", () => {
+    expect(RISK_LEVELS).toEqual(["low", "elevated", "high", "unknown"]);
+    expect(RISK_FACTOR_IDS).toEqual([
+      "system_state",
+      "change_velocity",
+      "oncall_coverage",
+      "time_of_week",
+    ]);
   });
 });
